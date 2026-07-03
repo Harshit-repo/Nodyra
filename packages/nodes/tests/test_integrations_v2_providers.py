@@ -7,17 +7,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import noodle_nodes.integrations_v2.providers.google_sheets  # noqa: F401
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.dynamic_options import call_loader
-from noodle_nodes.integrations_v2.providers.google_sheets.operations import (
+import nodyra_nodes.integrations_v2.providers.google_sheets  # noqa: F401
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.dynamic_options import call_loader
+from nodyra_nodes.integrations_v2.providers.google_sheets.operations import (
     append_values,
     clear_values,
     get_spreadsheet_metadata,
     read_values,
     update_values,
 )
-from noodle_nodes.integrations_v2.providers.microsoft_outlook.operations import (
+from nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations import (
     create_calendar_event,
     create_draft,
     delete_calendar_event,
@@ -72,7 +72,7 @@ def test_google_sheets_v2_manifest_is_tool_compatible() -> None:
 class TestGoogleSheetsRead:
     def test_calls_correct_endpoint(self, gs_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.operations._transport"
         ) as mock_t:
             t = _mock_transport({"values": [["a", "b"], [1, 2]]})
             mock_t.return_value = t
@@ -90,7 +90,7 @@ class TestGoogleSheetsRead:
 
     def test_range_url_encoding(self, gs_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.operations._transport"
         ) as mock_t:
             t = _mock_transport({})
             mock_t.return_value = t
@@ -103,7 +103,7 @@ class TestGoogleSheetsRead:
 class TestGoogleSheetsAppend:
     def test_appends_list_of_lists(self, gs_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.operations._transport"
         ) as mock_t:
             t = _mock_transport({"updates": {}})
             mock_t.return_value = t
@@ -118,7 +118,7 @@ class TestGoogleSheetsAppend:
 
     def test_input_coercion_dict(self, gs_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.operations._transport"
         ) as mock_t:
             t = _mock_transport({})
             mock_t.return_value = t
@@ -133,7 +133,7 @@ class TestGoogleSheetsAppend:
 
     def test_input_coercion_scalar(self, gs_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.operations._transport"
         ) as mock_t:
             t = _mock_transport({})
             mock_t.return_value = t
@@ -154,7 +154,7 @@ class TestGoogleSheetsUpdate:
 
     def test_calls_put(self, gs_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.operations._transport"
         ) as mock_t:
             t = _mock_transport({})
             mock_t.return_value = t
@@ -176,7 +176,7 @@ class TestGoogleSheetsClear:
 
     def test_calls_post(self, gs_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.operations._transport"
         ) as mock_t:
             t = _mock_transport({})
             mock_t.return_value = t
@@ -196,7 +196,7 @@ class TestGoogleSheetsMetadata:
             ],
         }
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.operations._transport"
         ) as mock_t:
             t = _mock_transport(api_response)
             mock_t.return_value = t
@@ -205,7 +205,7 @@ class TestGoogleSheetsMetadata:
 
     def test_empty_response_produces_empty_list(self, gs_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.operations._transport"
         ) as mock_t:
             t = _mock_transport({})
             mock_t.return_value = t
@@ -228,7 +228,7 @@ class TestGoogleSheetsDynamicOptions:
         }
         # options.py imported _transport directly, so patch there
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.options._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.options._transport"
         ) as mock_t:
             t = _mock_transport(fake_response)
             mock_t.return_value = t
@@ -249,7 +249,7 @@ class TestGoogleSheetsDynamicOptions:
         fake_response = {"values": [["Name", "Email", "Score"]]}
         # options.py imported _transport directly, so patch there
         with patch(
-            "noodle_nodes.integrations_v2.providers.google_sheets.options._transport"
+            "nodyra_nodes.integrations_v2.providers.google_sheets.options._transport"
         ) as mock_t:
             t = _mock_transport(fake_response)
             mock_t.return_value = t
@@ -327,7 +327,7 @@ class TestOutlookSendMail:
 
     def test_posts_to_sendmail(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport(None)
             mock_t.return_value = t
@@ -344,7 +344,7 @@ class TestOutlookSendMail:
 
     def test_multiple_recipients(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport(None)
             mock_t.return_value = t
@@ -354,7 +354,7 @@ class TestOutlookSendMail:
 
     def test_cc_and_bcc(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport(None)
             mock_t.return_value = t
@@ -374,7 +374,7 @@ class TestOutlookSendMail:
 class TestOutlookListMessages:
     def test_calls_inbox_by_default(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({"value": []})
             mock_t.return_value = t
@@ -384,7 +384,7 @@ class TestOutlookListMessages:
 
     def test_limit_clamped(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({"value": []})
             mock_t.return_value = t
@@ -394,7 +394,7 @@ class TestOutlookListMessages:
 
     def test_search_sets_search_param(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({"value": []})
             mock_t.return_value = t
@@ -413,7 +413,7 @@ class TestOutlookGetMessage:
 
     def test_calls_correct_path(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({"id": "abc"})
             mock_t.return_value = t
@@ -424,7 +424,7 @@ class TestOutlookGetMessage:
 
     def test_attachment_nodes(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({"value": []})
             mock_t.return_value = t
@@ -454,7 +454,7 @@ class TestOutlookGetMessage:
 class TestOutlookCalendar:
     def test_calls_events_endpoint(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({"value": []})
             mock_t.return_value = t
@@ -464,7 +464,7 @@ class TestOutlookCalendar:
 
     def test_date_filter_applied(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({"value": []})
             mock_t.return_value = t
@@ -481,7 +481,7 @@ class TestOutlookCalendar:
 class TestOutlookMessageActions:
     def test_create_draft_posts_message(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({"id": "draft1"})
             mock_t.return_value = t
@@ -504,7 +504,7 @@ class TestOutlookMessageActions:
 
     def test_reply_forward_send_and_delete_message(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({})
             mock_t.return_value = t
@@ -532,7 +532,7 @@ class TestOutlookMessageActions:
 
     def test_update_message_payload(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({"id": "msg1"})
             mock_t.return_value = t
@@ -553,7 +553,7 @@ class TestOutlookMessageActions:
 class TestOutlookCalendarActions:
     def test_create_update_and_delete_calendar_event(self, ms_creds):
         with patch(
-            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+            "nodyra_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
         ) as mock_t:
             t = _ms_mock_transport({"id": "evt1"})
             mock_t.return_value = t

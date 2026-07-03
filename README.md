@@ -1,17 +1,19 @@
-# Noodle
+# Nodyra
 
-Noodle is a self-hostable, Python-native workflow automation platform for
+> **Nodyra** was previously developed under the working name *Noodle*.
+
+Nodyra is a self-hostable, Python-native workflow automation platform for
 teams that want automation, data movement, and operational runbooks to live
 close to their Python stack.
 
-Every node is a plain Python function registered through the Noodle SDK. Users
+Every node is a plain Python function registered through the Nodyra SDK. Users
 build workflows on a React Flow canvas, run them in isolated Python
 environments, inspect every node input/output, persist artifacts outside the
 database, and publish versioned workflow releases for production execution.
 
 ## Security model
 
-Noodle supports three execution postures. Pick one per deployment:
+Nodyra supports three execution postures. Pick one per deployment:
 
 1. **Trusted single-tenant (default):** workflow authors are trusted; code
    nodes run in warm, per-environment worker subprocesses on the host at
@@ -32,9 +34,9 @@ Startup is fail-closed: unsafe combinations (default `SECRET_KEY` with auth
 enabled, missing internal token in a split topology, a requested-but-bypassed
 sandbox) abort boot rather than degrade silently. See [SECURITY.md](SECURITY.md).
 
-## Why Noodle
+## Why Nodyra
 
-Noodle is designed for teams that need more than point-and-click integrations:
+Nodyra is designed for teams that need more than point-and-click integrations:
 
 - Python-native execution: built-in, uploaded, and custom nodes run as Python,
   not JavaScript wrappers around Python work.
@@ -52,13 +54,13 @@ Noodle is designed for teams that need more than point-and-click integrations:
 
 ## Build workflows with an AI agent (MCP)
 
-Noodle is an MCP server. Claude, Cursor, or any MCP client can create, edit,
+Nodyra is an MCP server. Claude, Cursor, or any MCP client can create, edit,
 validate, run, and publish workflows through 61 tools. See
 [docs/mcp-quickstart.md](docs/mcp-quickstart.md) for a one-paste setup.
 
 ## Current Status
 
-Noodle is an active product codebase. The local and Docker stacks are usable,
+Nodyra is an active product codebase. The local and Docker stacks are usable,
 and the platform includes a broad v1 enterprise surface: a durable run queue
 with leases, dead-letter, and replay; scheduler leader election; runner pools
 with heartbeats and remote/SSH onboarding; pluggable local/S3 artifact storage;
@@ -171,11 +173,11 @@ RuntimePool
    |
    | per-environment subprocess
    v
-python -m noodle_runtime
+python -m nodyra_runtime
    |
    | executes WorkflowGraph
    v
-Noodle engine + node registry
+Nodyra engine + node registry
 
 Redis + the durable run queue power optional worker scale-out
 (``DISPATCH_ROLE=worker`` processes started via ``python -m app.worker_main``).
@@ -199,7 +201,7 @@ packages/
 deploy/
   docker-compose.yml
   Dockerfiles
-  helm/noodle/
+  helm/nodyra/
 
 docs/
   architecture.md
@@ -211,7 +213,7 @@ HANDOFF.md    compact engineering handoff context
 
 ### Runtime Model
 
-Noodle separates the control plane from the Python execution plane.
+Nodyra separates the control plane from the Python execution plane.
 
 - The API validates requests, stores workflows, resolves credentials, applies
   redaction, persists runs, and streams events.
@@ -252,7 +254,7 @@ run during trusted workflow execution.
 
 ### Code Execution Boundary
 
-Noodle intentionally runs workflow code in the operator's trust boundary. This
+Nodyra intentionally runs workflow code in the operator's trust boundary. This
 is appropriate for self-hosted automation, internal data operations, and trusted
 workflow authors.
 
@@ -266,7 +268,7 @@ Important boundaries:
 
 ### Recommended Production Controls
 
-- Use a strong `NOODLE_SECRET_KEY`.
+- Use a strong `NODYRA_SECRET_KEY`.
 - Use a strong `INTERNAL_API_TOKEN`.
 - Keep `AUTH_REQUIRED=true`.
 - Keep public registration disabled.
@@ -284,7 +286,7 @@ Create `deploy/.env` with production-style local secrets:
 
 ```bash
 INTERNAL_API_TOKEN=replace-with-a-long-random-token
-NOODLE_SECRET_KEY=replace-with-a-long-random-secret
+NODYRA_SECRET_KEY=replace-with-a-long-random-secret
 AUTH_REQUIRED=true
 AUTH_ALLOW_REGISTRATION=false
 ```
@@ -362,7 +364,7 @@ npm run dev
 
 ### Kubernetes
 
-A Helm chart skeleton lives in `deploy/helm/noodle`. Production Kubernetes
+A Helm chart skeleton lives in `deploy/helm/nodyra`. Production Kubernetes
 deployments should provide managed services or hardened in-cluster services for:
 
 - PostgreSQL
@@ -387,7 +389,7 @@ Core API settings are environment variables loaded by `apps/api/app/config.py`.
 | `AUTH_REQUIRED` | Require login | `true` |
 | `AUTH_ALLOW_REGISTRATION` | Allow open registration | `false` |
 | `AUTH_REGISTRATION_ROLE` | Default role when registration is open | `viewer` |
-| `NOODLE_SECRET_KEY` / `SECRET_KEY` | token and credential encryption secret | strong secret |
+| `NODYRA_SECRET_KEY` / `SECRET_KEY` | token and credential encryption secret | strong secret |
 | `INTERNAL_API_TOKEN` | API to worker shared secret | strong secret |
 | `USE_SUBPROCESS_RUNNER` | run workflows in env subprocesses | `true` |
 | `ENVS_DIR` | virtualenv storage path | persistent volume |
@@ -510,7 +512,7 @@ npm run build
 Nodes are plain Python functions decorated with `@node`.
 
 ```python
-from noodle.sdk import node
+from nodyra.sdk import node
 
 
 @node(name="Normalize Customer", id="normalize_customer", category="Data")
@@ -536,7 +538,7 @@ At runtime, modules execute inside the workflow environment subprocess.
 ### Credentials In Nodes
 
 Node parameters can declare credential metadata using helpers in
-`packages/nodes/noodle_nodes/_creds.py`:
+`packages/nodes/nodyra_nodes/_creds.py`:
 
 - `cred_single(...)` for API keys, tokens, webhook URLs, and passwords
 - `cred_multi(...)` for grouped credentials such as username/password or AWS

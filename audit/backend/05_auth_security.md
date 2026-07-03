@@ -26,7 +26,7 @@ Independent review, 2026-06-16. Files: `apps/api/app/security.py`,
 ## Findings
 
 ### AUTH-1 — Default `SECRET_KEY` is not enforced; the warning is suppressed in the shipped deploy (HIGH → Critical if shipped)
-`config.py:244` defaults `secret_key="noodle-dev-secret-change-me-in-production"`.
+`config.py:244` defaults `secret_key="nodyra-dev-secret-change-me-in-production"`.
 The only guard is `runtime_warnings()` (`config.py:353`), which:
 1. **never aborts** — it's advisory, surfaced only via `GET /ops/runtime-mode`
    (`routers/ops.py:88`); and
@@ -35,7 +35,7 @@ The only guard is `runtime_warnings()` (`config.py:353`), which:
 `deploy/docker-compose.yml` (the documented deploy path) **does not set
 `RUNTIME_MODE`** (confirmed: no match in the file), so it runs in the `local`
 default — the default-secret warning is never even emitted — while it *does*
-default `SECRET_KEY: ${NOODLE_SECRET_KEY:-noodle-dev-secret-change-me-in-production}`.
+default `SECRET_KEY: ${NODYRA_SECRET_KEY:-nodyra-dev-secret-change-me-in-production}`.
 
 - **Exploit:** with the public default secret, the token-signing HMAC key is
   known, so anyone can mint a valid `typ:"session"` token for any `user_id` →

@@ -1,13 +1,13 @@
 [project]
-name = "noodle-exporter"
+name = "nodyra-exporter"
 version = "0.0.1"
-description = "Noodle workflow exporter: .py codegen and Docker image packaging"
+description = "Nodyra workflow exporter: .py codegen and Docker image packaging"
 requires-python = ">=3.12"
-dependencies = ["noodle-core"]
+dependencies = ["nodyra-core"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["noodle_exporter"]
+packages = ["nodyra_exporter"]

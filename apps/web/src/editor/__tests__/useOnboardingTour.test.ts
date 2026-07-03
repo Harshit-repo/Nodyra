@@ -14,7 +14,7 @@ describe("useOnboardingTour", () => {
   });
 
   it("starts inactive when localStorage key is set", () => {
-    localStorage.setItem("noodle-editor-tour-v1", "true");
+    localStorage.setItem("nodyra-editor-tour-v1", "true");
     const { result } = renderHook(() => useOnboardingTour());
     expect(result.current.isActive).toBe(false);
   });
@@ -33,7 +33,7 @@ describe("useOnboardingTour", () => {
     expect(result.current.isLastStep).toBe(true);
     act(() => result.current.next());
     expect(result.current.isActive).toBe(false);
-    expect(localStorage.getItem("noodle-editor-tour-v1")).toBe("true");
+    expect(localStorage.getItem("nodyra-editor-tour-v1")).toBe("true");
   });
 
   it("goes to previous step", () => {
@@ -53,17 +53,17 @@ describe("useOnboardingTour", () => {
     const { result } = renderHook(() => useOnboardingTour());
     act(() => result.current.skip());
     expect(result.current.isActive).toBe(false);
-    expect(localStorage.getItem("noodle-editor-tour-v1")).toBe("true");
+    expect(localStorage.getItem("nodyra-editor-tour-v1")).toBe("true");
   });
 
   it("restart clears localStorage and resets", () => {
-    localStorage.setItem("noodle-editor-tour-v1", "true");
+    localStorage.setItem("nodyra-editor-tour-v1", "true");
     const { result } = renderHook(() => useOnboardingTour());
     expect(result.current.isActive).toBe(false);
     act(() => result.current.restart());
     expect(result.current.isActive).toBe(true);
     expect(result.current.currentStep).toBe(0);
-    expect(localStorage.getItem("noodle-editor-tour-v1")).toBeNull();
+    expect(localStorage.getItem("nodyra-editor-tour-v1")).toBeNull();
   });
 
   it("TOUR_STEPS has 5 steps", () => {

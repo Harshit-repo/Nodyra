@@ -8,7 +8,7 @@ afterEach(() => clearClientSession());
 
 describe("session isolation", () => {
   it("clears cached tenant data and organization selection on sign-out", () => {
-    setUser({ id: "user-a", email: "a@example.com", name: "A", company: "Noodle", role: "owner" });
+    setUser({ id: "user-a", email: "a@example.com", name: "A", company: "Nodyra", role: "owner" });
     setOrgId("org-a");
     queryClient.setQueryData(["workflows"], [{ id: "secret-a" }]);
 

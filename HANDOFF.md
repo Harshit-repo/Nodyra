@@ -1,18 +1,18 @@
-# Noodle — Session Handoff & Compact Architecture
+# Nodyra — Session Handoff & Compact Architecture
 
 > **Purpose:** drop-in context for a fresh Claude session to continue work on
-> Noodle. Captures architecture, current state, what's uncommitted, and where
+> Nodyra. Captures architecture, current state, what's uncommitted, and where
 > to pick up. See `plan.md` for the full milestone history and `docs/architecture.md`
 > for deeper reference.
 
 **Date:** 2026-05-27
 **Branch:** `feat/orchestration-upgrades`
-**Working dir:** `D:\noodle` (Windows 11, PowerShell + Bash via WSL/Git Bash)
-**Framing rule:** Noodle's scope > n8n. Do not frame designs as "n8n-faithful".
+**Working dir:** `D:\nodyra` (Windows 11, PowerShell + Bash via WSL/Git Bash)
+**Framing rule:** Nodyra's scope > n8n. Do not frame designs as "n8n-faithful".
 
 ---
 
-## 1. What Noodle is
+## 1. What Nodyra is
 
 Self-hostable, **Python-native** workflow automation platform. Every node is a
 plain Python function declared via the `@node` SDK. Users build workflows on a
@@ -29,7 +29,7 @@ produce *editable* graphs (no hidden agent execution).
 ## 2. Repo layout
 
 ```
-D:\noodle\
+D:\nodyra\
 ├── apps/
 │   ├── api/        FastAPI backend + Alembic + SQLAlchemy
 │   │   ├── app/{routers,services,models,schemas,security,config}.py
@@ -38,9 +38,9 @@ D:\noodle\
 │   └── web/        React 18 + Vite + React Flow + TS
 │       └── src/{editor,*Page.tsx,api.ts,types.ts,store.ts}
 ├── packages/
-│   ├── core/       noodle.engine, noodle.sdk, noodle.models, noodle.artifacts
-│   ├── nodes/      noodle_nodes.* — builtin + brand-icon HTTP nodes
-│   └── runtime/    noodle_runtime — subprocess runner protocol
+│   ├── core/       nodyra.engine, nodyra.sdk, nodyra.models, nodyra.artifacts
+│   ├── nodes/      nodyra_nodes.* — builtin + brand-icon HTTP nodes
+│   └── runtime/    nodyra_runtime — subprocess runner protocol
 ├── deploy/         docker-compose.yml + .env (gitignored)
 ├── plan.md         Long-form milestone history (M0–M8 + Slices 1–22)
 └── HANDOFF.md      THIS FILE
@@ -63,7 +63,7 @@ User ──UI──▶ FastAPI (apps/api)
                 │                       RuntimePool ──per-env──▶ subprocess
                 │                              │                      │
                 │                              ▼                      ▼
-                │                       _RuntimeProcess         noodle_runtime
+                │                       _RuntimeProcess         nodyra_runtime
                 │                              │                      │
                 │                              └──────WebSocket◀──────┘
                 ▼                                         events
@@ -75,7 +75,7 @@ User ──UI──▶ FastAPI (apps/api)
 | Service | Role |
 |---|---|
 | `runner.py` | Orchestrates a run: load graph, gather code modules, resolve credentials, dispatch via `runtime_pool`, persist `NodeRun`s + logs/timing/artifacts. Builds the per-run `SubworkflowMeta` (`subworkflows.meta_for_root_run`) — production-mode runs always force `published` sub-workflows via `use_published`. |
-| `subworkflows.py` | A3 host resolver (`resolve_subworkflow`): child graph lookup (draft vs published from `call.use_published`), credential resolution, trigger seeding, child `Run` rows (`mode="subworkflow"`, `parent_run_id`), inline-vs-spawn decision. Cycle/depth semantics live in `noodle.engine.subworkflows`, not here. |
+| `subworkflows.py` | A3 host resolver (`resolve_subworkflow`): child graph lookup (draft vs published from `call.use_published`), credential resolution, trigger seeding, child `Run` rows (`mode="subworkflow"`, `parent_run_id`), inline-vs-spawn decision. Cycle/depth semantics live in `nodyra.engine.subworkflows`, not here. |
 | `runtime_pool.py` | `_EnvPool(min_size, max_size)` per env. Three presets (Fixed/Elastic/Spawn-per-run) all driven by one rule: `release(): if min_size==0, close worker`. Reaper respects min floor. Global `max_concurrent_runs` semaphore at top-level dispatch only (subworkflows bypass to avoid deadlock). |
 | `triggers.py` | DB-backed in-process scheduler. `_is_due()` consults workspace `app_timezone` + per-trigger `timezone` override. `dispatch_webhook(path, payload) -> (run_ids, any_path_matched)` — 401 when path matched but auth failed. |
 | `credentials.py` + `redaction.py` | Encrypted-at-rest credential store, deterministic resolution (workflow → env → runner_pool → global). `_resolve_ref` returns whole dict when key=="*" (multi-field credentials). |
@@ -87,7 +87,7 @@ User ──UI──▶ FastAPI (apps/api)
 | `ai_builder.py` | Deterministic registry-safe AI graph drafts (no LLM yet in v1). |
 | `credential_tests.py` | Read-only test endpoints per cred type. AWS requires explicit keys (no IAM role probing). |
 
-### Engine (`packages/core/noodle/`)
+### Engine (`packages/core/nodyra/`)
 
 - `engine.execute(graph, cache, targets)` — topo DAG, context-local log capture (no global `sys.stdout` mutation), retry backoff/jitter, optional `timeout_seconds` via `asyncio.to_thread + wait_for`.
 - `GraphNode` carries optional `retry_wait_seconds`, `retry_backoff`, `timeout_seconds`, `always_output_data` (backward-compat).
@@ -96,11 +96,11 @@ User ──UI──▶ FastAPI (apps/api)
 
 ### Runtime (`packages/runtime/`)
 
-- `noodle_runtime/server.py` — stdio JSON-line protocol.
+- `nodyra_runtime/server.py` — stdio JSON-line protocol.
 - Messages: `ready`, `register {modules}`, `run {graph, cache, workflow_modules}`, `run_started`, `node_started`, `node_finished`, `run_finished`.
 - Lives inside the env's interpreter so `import pandas` resolves correctly.
 
-### Nodes (`packages/nodes/noodle_nodes/`)
+### Nodes (`packages/nodes/nodyra_nodes/`)
 
 - `builtin.py` — triggers (manual/webhook/schedule), edit_fields, code, switch, sub-workflow.
 - `integrations.py` — OpenAI Chat, Anthropic, Slack, GitHub, etc.
@@ -164,7 +164,7 @@ apps/api/tests/test_{credentials_v2,releases_errors_ai,runtime_pool_elastic,sett
 apps/web/src/{SecurityPage,SettingsPage,ToastProvider}.tsx
 apps/web/src/editor/fields/        ← TimezoneSelect lives here
 apps/web/src/theme.ts
-packages/nodes/noodle_nodes/{_creds,ai_extra,cloud_devops,communication,saas,storage,system,transform_extra}.py
+packages/nodes/nodyra_nodes/{_creds,ai_extra,cloud_devops,communication,saas,storage,system,transform_extra}.py
 packages/nodes/tests/test_{execute_command,new_node_registration,transform_extra}.py
 ```
 
@@ -195,7 +195,7 @@ packages/nodes/tests/test_{execute_command,new_node_registration,transform_extra
 - **Engine backward-compat:** any new `GraphNode` field MUST be optional with default — exported scripts and the runtime depend on it.
 - **No pickle. Ever.** Use `serialization.py` envelopes for cross-process values.
 - **Secrets at boundaries only.** Decrypt in `runner._execute_run` right before dispatch; everything downstream (events, logs, persisted output) flows through `redaction.py`.
-- **Sub-workflows bypass the global concurrency cap.** Wrapping them deadlocks parents holding the only slot. (Unchanged by A3 — `dispatch_subworkflow` and the in-process child path both skip `global_slot()`.) Sub-workflow *semantics* — cycle detection, depth limits, inline-child execution, leaf extraction — live in `noodle.engine.subworkflows`; hosts (API, runtime subprocess, remote agent, exporter) supply a `SubworkflowRunner` resolver.
+- **Sub-workflows bypass the global concurrency cap.** Wrapping them deadlocks parents holding the only slot. (Unchanged by A3 — `dispatch_subworkflow` and the in-process child path both skip `global_slot()`.) Sub-workflow *semantics* — cycle detection, depth limits, inline-child execution, leaf extraction — live in `nodyra.engine.subworkflows`; hosts (API, runtime subprocess, remote agent, exporter) supply a `SubworkflowRunner` resolver.
 - **Sub-workflows respect the run's `use_published` flag** (carried in `SubworkflowMeta`/`SubworkflowCall`, set from the root run's mode). Editor manual runs propagate draft; webhook/schedule/deployment/error runs force published. Don't break this.
 - **Frontend brand icons:** any node icon prefixed `brand:<slug>` resolves to `https://cdn.simpleicons.org/<slug>` via `NodeIcon.tsx`. Use real slugs.
 - **Credentials in node params:** declare via `cred_single(type, key, label)` for single-field or `cred_multi(type, label, [fields])` for multi-field. Multi sets `key="*"`; the resolver returns the whole dict.
@@ -239,7 +239,7 @@ cd apps/api && uv run uvicorn app.main:app --reload
 | How are credentials resolved? | `apps/api/app/services/credentials.py` `resolve_credential_refs` + `_resolve_ref` |
 | How does the scheduler decide to fire? | `apps/api/app/services/triggers.py` `_is_due` |
 | How are env pools sized? | `apps/api/app/services/runtime_pool.py` `_resolve_pool_sizes` + `_EnvPool` |
-| What does a graph node look like? | `packages/core/noodle/models.py` `GraphNode` |
+| What does a graph node look like? | `packages/core/nodyra/models.py` `GraphNode` |
 | Where is the trigger-type list? | `apps/api/app/services/runner.py` `TRIGGER_TYPES` |
 | How does a workflow get its graph? | `apps/api/app/services/subworkflows.py` `_load_workflow_graph` (respects `use_published` from the call) |
 | How does the inspector show a credential field? | `apps/web/src/editor/NodeDetails.tsx` `CredentialParamField` |

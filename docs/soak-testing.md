@@ -5,13 +5,13 @@ against the live API:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d
-NOODLE_TOKEN=ndpat_YOUR_TOKEN uv run python scripts/soak_test.py \
+NODYRA_TOKEN=ndpat_YOUR_TOKEN uv run python scripts/soak_test.py \
   --base-url http://localhost:8000 --runs 50 --cancel-ratio 0
-NOODLE_TOKEN=ndpat_YOUR_TOKEN uv run python scripts/soak_test.py \
+NODYRA_TOKEN=ndpat_YOUR_TOKEN uv run python scripts/soak_test.py \
   --base-url http://localhost:8000 --runs 100 --cancel-ratio 0.3
-NOODLE_TOKEN=ndpat_YOUR_TOKEN uv run python scripts/soak_test.py \
+NODYRA_TOKEN=ndpat_YOUR_TOKEN uv run python scripts/soak_test.py \
   --base-url http://localhost:8000 --runs 100 --cancel-ratio 0.2 \
-  --kill-container noodle-worker-1
+  --kill-container nodyra-worker-1
 ```
 
 The script asserts three invariants: every started run reaches a terminal

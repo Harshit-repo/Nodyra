@@ -1,4 +1,4 @@
-# noodle Node Expansion Plan
+# nodyra Node Expansion Plan
 
 ## Roadmap overview
 
@@ -42,7 +42,7 @@ Twilio Voice Respond ← OpenAI TTS* ← [optional: Voice Gather DTMF/Speech]
 
 **How it works:**
 
-This is a **provider trigger** (following the `ProviderTriggerSpec` pattern from `integrations_v2`). When a workflow is published, the trigger registers a Twilio webhook URL for incoming voice calls. Twilio POSTs call metadata to noodle's callback URL on every inbound call.
+This is a **provider trigger** (following the `ProviderTriggerSpec` pattern from `integrations_v2`). When a workflow is published, the trigger registers a Twilio webhook URL for incoming voice calls. Twilio POSTs call metadata to nodyra's callback URL on every inbound call.
 
 **Parameters:**
 
@@ -58,7 +58,7 @@ This is a **provider trigger** (following the `ProviderTriggerSpec` pattern from
 | `recording_enabled` | boolean | `false` | Record the call (stored as a Twilio recording artifact). |
 | `recording_channels` | string | `"mono"` | `"mono"` or `"dual"`. Dual records caller and agent on separate channels. |
 | `transcribe_callback` | boolean | `false` | Request Twilio transcription after call ends. |
-| `status_callback` | boolean | `false` | Send call status events (ringing, answered, completed) to noodle. |
+| `status_callback` | boolean | `false` | Send call status events (ringing, answered, completed) to nodyra. |
 | `response_mode` | string | `"sync"` | `"sync"` (block until entire workflow completes, then respond) or `"async"` (immediate `<Say>` + webhook on gather). |
 
 **Lifecycle hooks (ProviderTriggerSpec):**
@@ -105,7 +105,7 @@ def handle_voice_event(request: ProviderTriggerRequest, params: dict):
 - **Simultaneous calls:** Each call creates a separate run (deduped by CallSid). Twilio handles queuing.
 - **Caller hangs up mid-workflow:** Twilio sends a `CallStatus=completed` webhook. The runtime should cancel in-progress runs for that CallSid. Need `call_status_callback` handling.
 - **Phone number not found:** `activate` fails with a clear error. Workflow stays in "error" deployment state.
-- **Phone number already has a voice URL:** `activate` should warn (via `node_debug`) but overwrite. On deactivate, restore previous URL only if it was a noodle URL.
+- **Phone number already has a voice URL:** `activate` should warn (via `node_debug`) but overwrite. On deactivate, restore previous URL only if it was a nodyra URL.
 - **Twilio signature validation failure:** Return HTTP 403; log security event.
 - **Workflow timeout:** If `response_mode="sync"` and the workflow takes > 15s (Twilio's TCP timeout), the call drops. Document that `sync` mode requires fast workflows or use `async` for complex ones.
 - **Duplicate calls:** Dedup on `CallSid` + `CallStatus != "completed"`.
@@ -114,7 +114,7 @@ def handle_voice_event(request: ProviderTriggerRequest, params: dict):
 
 Reuses the existing `twilio_sms` credential type (`account_sid` + `auth_token`). The field set is identical. No new credential type needed.
 
-> **Implementation note:** The Twilio v2 integration already exists at `packages/nodes/noodle_nodes/integrations_v2/providers/twilio/` (SMS operations only). Voice trigger and voice operation nodes should be added to that same provider module rather than creating a separate file.
+> **Implementation note:** The Twilio v2 integration already exists at `packages/nodes/nodyra_nodes/integrations_v2/providers/twilio/` (SMS operations only). Voice trigger and voice operation nodes should be added to that same provider module rather than creating a separate file.
 
 **Twilio API calls:**
 
@@ -271,7 +271,7 @@ Initiates an outbound voice call via Twilio. Useful for appointment reminders, n
 | `credentials` | credential | required | Twilio Account SID + Auth Token |
 | `to` | string | required | Destination phone number (E.164). Falls back to wired input. |
 | `from_phone` | string | required | Twilio phone number to call from (must be owned or verified). |
-| `twiml_url` | string | `""` | URL that returns TwiML to execute. If empty, uses a noodle webhook URL. |
+| `twiml_url` | string | `""` | URL that returns TwiML to execute. If empty, uses a nodyra webhook URL. |
 | `status_callback` | string | `""` | URL for call status updates. |
 | `timeout` | integer | `30` | Ring timeout in seconds. |
 | `caller_id` | string | `""` | Override caller ID (for verified numbers). |
@@ -293,7 +293,7 @@ Initiates an outbound voice call via Twilio. Useful for appointment reminders, n
 **Category:** `AI`  
 **Output kind:** `artifact`
 
-Generates TTS audio and stores it as a noodle artifact. Unlike `openai_tts` which returns inline base64, this node caches the audio file for reuse across calls.
+Generates TTS audio and stores it as a nodyra artifact. Unlike `openai_tts` which returns inline base64, this node caches the audio file for reuse across calls.
 
 **Parameters:**
 
@@ -321,7 +321,7 @@ Generates TTS audio and stores it as a noodle artifact. Unlike `openai_tts` whic
 **Category:** `AI`  
 **Input kind:** `artifact`
 
-Transcribes audio from a noodle artifact (e.g., a recorded call, uploaded file). Wraps `openai_whisper_transcribe` with direct artifact input support.
+Transcribes audio from a nodyra artifact (e.g., a recorded call, uploaded file). Wraps `openai_whisper_transcribe` with direct artifact input support.
 
 **Parameters:**
 
@@ -365,7 +365,7 @@ Each port emits the full Twilio status payload when the associated status is rec
 
 ## Workstream 2 — Voice AI Service Integrations
 
-These are dedicated voice AI platforms that handle the entire real-time audio pipeline (STT → LLM → TTS) internally. noodle acts as the orchestration layer.
+These are dedicated voice AI platforms that handle the entire real-time audio pipeline (STT → LLM → TTS) internally. nodyra acts as the orchestration layer.
 
 ### Node 2.1 — Vapi.ai Integration
 
@@ -393,7 +393,7 @@ Vapi provides a managed voice agent infrastructure. The integration has these op
 
 - **Webhook vs poll:** Vapi supports both webhook callbacks and REST polling. Start with polling (simpler, no public URL needed). Add webhook trigger later.
 - **Assistant config:** The `assistant` config object in Vapi is complex (voice, model, first message, system prompt, tools, transcriber, server URL for custom functions). Expose as a JSON editor with schema validation.
-- **Concurrent calls:** Vapi handles concurrency; noodle creates one run per call completion (deduped by `call.id`).
+- **Concurrent calls:** Vapi handles concurrency; nodyra creates one run per call completion (deduped by `call.id`).
 
 ---
 
@@ -458,16 +458,16 @@ This is separate from the standalone ElevenLabs TTS node (below, §5.4) which do
 
 Twilio Media Streams sends bidirectional raw audio over a WebSocket connection during a live call. This enables sub-100ms latency voice agents where audio frames flow in real time: caller speaks → audio frames → Whisper/Deepgram → LLM → TTS → audio frames → caller hears.
 
-noodle currently uses WebSockets only for internal infrastructure (run events, remote runner agents). A **node-level WebSocket** capability is needed.
+nodyra currently uses WebSockets only for internal infrastructure (run events, remote runner agents). A **node-level WebSocket** capability is needed.
 
 ### Infrastructure change: Node WebSocket support
 
-**What's needed in `noodle.runtime` / `noodle.context`:**
+**What's needed in `nodyra.runtime` / `nodyra.context`:**
 
 1. **`ws_connect` context function:** A `ContextVar` that nodes call to open a WebSocket connection. The runtime provides a managed connection with lifecycle tracking.
 
 ```python
-# In noodle/context.py
+# In nodyra/context.py
 node_ws_connect: ContextVar[Callable[[str, dict], WebSocketConnection] | None] = (
     ContextVar("node_ws_connect", default=None)
 )
@@ -481,7 +481,7 @@ class WebSocketConnection(Protocol):
     async def close(self) -> None: ...
 ```
 
-3. **Runtime implementation:** The runtime server (`noodle_runtime/server.py`) opens and manages WebSocket connections on behalf of nodes. Connections are tracked and cleaned up when the node run finishes or times out.
+3. **Runtime implementation:** The runtime server (`nodyra_runtime/server.py`) opens and manages WebSocket connections on behalf of nodes. Connections are tracked and cleaned up when the node run finishes or times out.
 
 4. **Media Streams specific:** For Twilio Media Streams, audio arrives as `mu-law` (μ-law) encoded 8kHz audio chunks in JSON messages. Need a **codec utility** for μ-law ↔ PCM16 conversion. **`audioop` was removed in Python 3.13** (runtime is 3.13.7); use `audioop-lts` (PyPI drop-in backport, `Requirements: ["audioop-lts>=0.2"]`) or route through `pydub` + `ffmpeg`.
 
@@ -537,14 +537,14 @@ This node integrates with `Twilio Voice Respond`. When `action="start_stream"`, 
 ```xml
 <Response>
   <Connect>
-    <Stream url="wss://{noodle_host}/ws/media-stream/{run_id}">
+    <Stream url="wss://{nodyra_host}/ws/media-stream/{run_id}">
       <Parameter name="call_sid" value="{CallSid}"/>
     </Stream>
   </Connect>
 </Response>
 ```
 
-**noodle must relay:** Twilio connects to noodle's WebSocket. noodle's runtime relays audio frames to the node. The node processes them (STT → LLM → TTS) and sends audio back.
+**nodyra must relay:** Twilio connects to nodyra's WebSocket. nodyra's runtime relays audio frames to the node. The node processes them (STT → LLM → TTS) and sends audio back.
 
 **Edge cases:**
 
@@ -713,7 +713,7 @@ Fires on incoming WebSocket messages. Useful for real-time data streams, chat in
 | `max_message_size` | integer | `262144` | Max message size in bytes (default 256 KB). |
 | `rate_limit` | integer | `100` | Max messages per minute per connection. `0` = unlimited. |
 
-**Infrastructure:** noodle already supports WebSocket connections at `ws://<host>/ws/runs/{run_id}`. This trigger requires a new WS endpoint at `ws://<host>/ws/triggers/{path}` that proxies messages to the trigger system.
+**Infrastructure:** nodyra already supports WebSocket connections at `ws://<host>/ws/runs/{run_id}`. This trigger requires a new WS endpoint at `ws://<host>/ws/triggers/{path}` that proxies messages to the trigger system.
 
 **Edge cases:**
 
@@ -739,7 +739,7 @@ Consumes messages from Apache Kafka topics.
 |---|---|---|---|
 | `credentials` | credential | required | `cred_multi("kafka", "Kafka credentials", ["bootstrap_servers", "security_protocol", "sasl_mechanism", "sasl_username", "sasl_password"])` |
 | `topic` | string | required | Kafka topic to consume from. |
-| `consumer_group` | string | `"noodle"` | Consumer group ID. |
+| `consumer_group` | string | `"nodyra"` | Consumer group ID. |
 | `auto_offset_reset` | string | `"latest"` | `"latest"` or `"earliest"`. |
 | `max_poll_records` | integer | `10` | Max records per poll. |
 | `value_format` | string | `"json"` | `"json"`, `"text"`, `"avro"`. |
@@ -789,14 +789,14 @@ Subscribes to MQTT topics for IoT and sensor data.
 **Icon:** `brand:postgresql`  
 **Requirements:** `["psycopg[binary]>=3.0"]`
 
-Triggers on Postgres `NOTIFY` events. Applications can `NOTIFY noodle_events, '{"type": "order_created", "id": 123}'` and noodle fires a workflow.
+Triggers on Postgres `NOTIFY` events. Applications can `NOTIFY nodyra_events, '{"type": "order_created", "id": 123}'` and nodyra fires a workflow.
 
 **Parameters:**
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `credentials` | credential | required | Postgres connection string |
-| `channel` | string | `"noodle_events"` | Postgres LISTEN channel. |
+| `channel` | string | `"nodyra_events"` | Postgres LISTEN channel. |
 | `payload_format` | string | `"json"` | Expected payload format. |
 
 **Edge cases:**
@@ -1163,7 +1163,7 @@ Perform DataFrame operations with visual configuration (no code required).
 | `pivot_columns` | string | `""` | Pivot column. |
 | `pivot_values` | string | `""` | Pivot value column. |
 | `fill_value` | string | `""` | Fill NA value. |
-| `output_as` | string | `"dataset"` | `"dataset"` (noodle dataset format) or `"json"`. |
+| `output_as` | string | `"dataset"` | `"dataset"` (nodyra dataset format) or `"json"`. |
 
 **Edge cases:**
 

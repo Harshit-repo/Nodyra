@@ -46,4 +46,4 @@ def test_root_metadata() -> None:
     with TestClient(app) as client:
         resp = client.get("/")
     assert resp.status_code == 200
-    assert resp.json()["name"] == "Noodle API"
+    assert resp.json()["name"] == "Nodyra API"

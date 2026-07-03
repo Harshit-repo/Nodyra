@@ -1,7 +1,7 @@
 """End-to-end app tester — drives the REST API exactly as the web client does.
 
 Run:  python scripts/e2e_test.py
-Reads the auth token from NOODLE_TOKEN env var (extracted from the browser).
+Reads the auth token from NODYRA_TOKEN env var (extracted from the browser).
 """
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from typing import Any
 
 import requests
 
-BASE = os.environ.get("NOODLE_API", "http://localhost:8000")
-TOKEN = os.environ["NOODLE_TOKEN"]
+BASE = os.environ.get("NODYRA_API", "http://localhost:8000")
+TOKEN = os.environ["NODYRA_TOKEN"]
 H = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 ISSUES: list[str] = []
@@ -455,7 +455,7 @@ def t12_csv_parse_aggregate():
 
 
 def main() -> int:
-    print(f"=== Noodle E2E test against {BASE} ===\n")
+    print(f"=== Nodyra E2E test against {BASE} ===\n")
     for name, fn in TESTS:
         print(f"--- {name} ---")
         try:

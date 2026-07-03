@@ -814,7 +814,7 @@ async def sso_callback(
     session: AsyncSession = Depends(get_session),
 ):
     """OIDC callback: exchange authorization code for tokens, create session."""
-    raw = await redis_client.getdel(f"noodle:sso:state:{state}")
+    raw = await redis_client.getdel(f"nodyra:sso:state:{state}")
     if raw is None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,

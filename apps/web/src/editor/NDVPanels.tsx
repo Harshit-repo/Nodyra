@@ -842,7 +842,7 @@ function ArtifactBrowser({
         Artifacts
       </h4>
       {apiArtifacts.map((a) => {
-        const token = safeGetItem("noodle_token");
+        const token = safeGetItem("nodyra_token");
         const qs = token ? `?token=${encodeURIComponent(token)}` : "";
         const url = `/api/artifacts/${encodeURIComponent(a.id)}/download${qs}`;
         return (
@@ -1124,7 +1124,7 @@ export function NDVPanels({
           </header>
           <div className="ndv-panel-body">
             <WebhookPanel
-              path={String(node.data.params.path ?? "noodle")}
+              path={String(node.data.params.path ?? "nodyra")}
               nodeId={nodeId}
               onListeningChange={onListeningChange}
             />

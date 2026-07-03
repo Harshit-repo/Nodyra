@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from noodle_nodes.deepgram_nodes import deepgram_realtime_stt
+from nodyra_nodes.deepgram_nodes import deepgram_realtime_stt
 
 
 class _MockAdapter:

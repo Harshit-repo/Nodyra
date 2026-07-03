@@ -10,10 +10,10 @@ permanently undecryptable.**
 
 ```bash
 docker compose -f deploy/docker-compose.yml exec postgres \
-  pg_dump -U noodle -Fc noodle > noodle-$(date +%F).dump
-docker run --rm -v noodle_artifactdata:/data -v "$PWD:/backup" \
+  pg_dump -U nodyra -Fc nodyra > nodyra-$(date +%F).dump
+docker run --rm -v nodyra_artifactdata:/data -v "$PWD:/backup" \
   alpine tar czf /backup/artifacts-$(date +%F).tgz -C /data .
-docker run --rm -v noodle_envdata:/data -v "$PWD:/backup" \
+docker run --rm -v nodyra_envdata:/data -v "$PWD:/backup" \
   alpine tar czf /backup/envs-$(date +%F).tgz -C /data .
 ```
 
@@ -26,11 +26,11 @@ start the API last:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d postgres redis minio
-cat noodle-YYYY-MM-DD.dump | docker compose -f deploy/docker-compose.yml exec -T \
-  postgres pg_restore -U noodle -d noodle --clean
-docker run --rm -v noodle_artifactdata:/data -v "$PWD:/backup" \
+cat nodyra-YYYY-MM-DD.dump | docker compose -f deploy/docker-compose.yml exec -T \
+  postgres pg_restore -U nodyra -d nodyra --clean
+docker run --rm -v nodyra_artifactdata:/data -v "$PWD:/backup" \
   alpine sh -c "cd /data && tar xzf /backup/artifacts-YYYY-MM-DD.tgz"
-docker run --rm -v noodle_envdata:/data -v "$PWD:/backup" \
+docker run --rm -v nodyra_envdata:/data -v "$PWD:/backup" \
   alpine sh -c "cd /data && tar xzf /backup/envs-YYYY-MM-DD.tgz"
 docker compose -f deploy/docker-compose.yml up -d api worker web
 ```

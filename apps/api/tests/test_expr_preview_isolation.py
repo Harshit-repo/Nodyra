@@ -1,7 +1,7 @@
 """C1: expression preview must evaluate in an isolated, secret-free subprocess.
 
 The worker is the trust boundary for editor-typed ``{{ }}`` expressions: a
-sandbox escape in ``noodle.expr`` must land in a process with no app secrets
+sandbox escape in ``nodyra.expr`` must land in a process with no app secrets
 in its environment and no DB access — not in the API process.
 """
 
@@ -25,10 +25,10 @@ async def test_preview_evaluates_in_subprocess():
 
 
 async def test_worker_env_has_no_secrets(monkeypatch):
-    monkeypatch.setenv("NOODLE_SECRET_KEY", "super-secret")
+    monkeypatch.setenv("NODYRA_SECRET_KEY", "super-secret")
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pw@host/db")
     await expr_preview.shutdown()  # force respawn under the patched env
-    assert await expr_preview.probe_env("NOODLE_SECRET_KEY") is None
+    assert await expr_preview.probe_env("NODYRA_SECRET_KEY") is None
     assert await expr_preview.probe_env("DATABASE_URL") is None
     assert await expr_preview.probe_env("PATH") is not None
 

@@ -2,10 +2,10 @@
 
 Architecture
 ------------
-- Each run gets a Redis channel: ``noodle:run:<run_id>``.
+- Each run gets a Redis channel: ``nodyra:run:<run_id>``.
 - Events are published as JSON strings to that channel.
 - A full copy of every event is also pushed to a Redis list
-  ``noodle:run:<run_id>:history`` so late-joining subscribers (e.g. a WebSocket
+  ``nodyra:run:<run_id>:history`` so late-joining subscribers (e.g. a WebSocket
   that opens after the run has already emitted several events) still receive the
   complete sequence.
 - The list TTL is ``RUN_EVENT_TTL_SECONDS`` (1 hour by default).
@@ -371,7 +371,7 @@ class TopicBroker:
 class RunBroker(TopicBroker):
     def __init__(self) -> None:
         super().__init__(
-            channel_prefix="noodle:run:",
+            channel_prefix="nodyra:run:",
             name="run",
             terminal_event_type="run_finished",
         )
@@ -379,7 +379,7 @@ class RunBroker(TopicBroker):
 
 class WorkflowEventBroker(TopicBroker):
     def __init__(self) -> None:
-        super().__init__(channel_prefix="noodle:workflow:", name="workflow")
+        super().__init__(channel_prefix="nodyra:workflow:", name="workflow")
 
 
 broker = RunBroker()

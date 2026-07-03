@@ -27,8 +27,8 @@ from app.db import SessionLocal
 from app.models import Run, Runner, RunnerPool
 from app.services.executors.base import EventCallback
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, run_as_system
-from noodle.context import call_chain as _call_chain_var
-from noodle.serialization import serialize_value
+from nodyra.context import call_chain as _call_chain_var
+from nodyra.serialization import serialize_value
 
 logger = logging.getLogger("app.services.remote_dispatch")
 
@@ -107,7 +107,7 @@ async def assign_agent_run(
 
     # Multi-tenancy F/C5: remote runs carry the same org namespace and
     # amplification caps as local subprocess runs — the agent forwards
-    # both to noodle_runtime verbatim.
+    # both to nodyra_runtime verbatim.
     from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org  # noqa: PLC0415
 
     run_org = await _resolve_run_org(run_id)
@@ -305,7 +305,7 @@ async def resolve_remote_subworkflow(conn: _AgentConnection, msg: dict) -> None:
     cleanly back over the WS.
     """
     from app.services.subworkflows import resolve_subworkflow  # noqa: PLC0415
-    from noodle.engine.subworkflows import SubworkflowCall  # noqa: PLC0415
+    from nodyra.engine.subworkflows import SubworkflowCall  # noqa: PLC0415
 
     callback_id = msg.get("callback_id", "")
     try:
@@ -396,10 +396,10 @@ def bootstrap_user_data(api_url: str, token: str, runner_id: str) -> str:
     return (
         "#!/bin/bash\n"
         "set -e\n"
-        f"pip install --find-links {api_url}/runner-pools/wheels/ noodle-runner --quiet\n"
-        f"noodle-runner register --api-url {api_url} --token {token} "
+        f"pip install --find-links {api_url}/runner-pools/wheels/ nodyra-runner --quiet\n"
+        f"nodyra-runner register --api-url {api_url} --token {token} "
         f"--name cloud-{runner_id[:8]}\n"
-        "noodle-runner start &\n"
+        "nodyra-runner start &\n"
     )
 
 
@@ -498,7 +498,7 @@ async def provision_gcp_instance(session_factory, pool_id: str, cfg: dict) -> No
 
     runner_id, token = await create_runner_and_token(session_factory, pool_id, "gcp-auto")
     startup = bootstrap_user_data(api_url, token, runner_id)
-    instance_name = f"noodle-runner-{runner_id[:12]}"
+    instance_name = f"nodyra-runner-{runner_id[:12]}"
 
     def _create() -> None:
         creds = None
@@ -575,7 +575,7 @@ async def provision_azure_instance(session_factory, pool_id: str, cfg: dict) -> 
     location = cfg.get("location", "eastus")
     vm_size = cfg.get("vm_size", "Standard_B2s")
     image = cfg.get("image", "")
-    admin_user = cfg.get("admin_username", "noodle")
+    admin_user = cfg.get("admin_username", "nodyra")
     admin_password = cfg.get("admin_password")
     subnet_id = cfg.get("subnet_id", "")
 
@@ -591,7 +591,7 @@ async def provision_azure_instance(session_factory, pool_id: str, cfg: dict) -> 
     custom_data = base64.b64encode(
         bootstrap_user_data(api_url, token, runner_id).encode()
     ).decode()
-    vm_name = f"noodle-runner-{runner_id[:12]}"
+    vm_name = f"nodyra-runner-{runner_id[:12]}"
 
     def _create() -> None:
         if cfg.get("client_secret"):

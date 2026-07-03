@@ -6,15 +6,15 @@ import random
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.artifacts import LocalArtifactStore, is_artifact_ref
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.artifacts import LocalArtifactStore, is_artifact_ref
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
 
 pytest.importorskip("sklearn")
 
-from noodle_nodes.datasets import dataset_to_records, records_to_dataset  # noqa: E402
-from noodle_nodes.ml import (  # noqa: E402
+from nodyra_nodes.datasets import dataset_to_records, records_to_dataset  # noqa: E402
+from nodyra_nodes.ml import (  # noqa: E402
     evaluate_model,
     is_model_ref,
     load_model,

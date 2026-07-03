@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 import sys
 
-from noodle.packages import canonical_package_name
-from noodle.sdk import registry as node_registry
+from nodyra.packages import canonical_package_name
+from nodyra.sdk import registry as node_registry
 
 _MARKER_EQ = re.compile(r"sys_platform\s*==\s*['\"]([^'\"]+)['\"]")
 _MARKER_NE = re.compile(r"sys_platform\s*!=\s*['\"]([^'\"]+)['\"]")

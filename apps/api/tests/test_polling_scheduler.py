@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from noodle_nodes.integrations_v2.specs import (
+from nodyra_nodes.integrations_v2.specs import (
     ProviderTriggerPollResult,
     ProviderTriggerSpec,
 )
@@ -52,11 +52,11 @@ async def test_poll_subscriptions_skips_non_due():
             return_value=[mock_sub],
         ),
         patch(
-            "noodle_nodes.integrations_v2.registry.is_registered_provider_trigger",
+            "nodyra_nodes.integrations_v2.registry.is_registered_provider_trigger",
             return_value=True,
         ),
         patch(
-            "noodle_nodes.integrations_v2.registry.get_registered_provider_trigger",
+            "nodyra_nodes.integrations_v2.registry.get_registered_provider_trigger",
             return_value=mock_registered,
         ),
     ):
@@ -89,11 +89,11 @@ async def test_poll_subscriptions_fires_overdue():
             return_value=[mock_sub],
         ),
         patch(
-            "noodle_nodes.integrations_v2.registry.is_registered_provider_trigger",
+            "nodyra_nodes.integrations_v2.registry.is_registered_provider_trigger",
             return_value=True,
         ),
         patch(
-            "noodle_nodes.integrations_v2.registry.get_registered_provider_trigger",
+            "nodyra_nodes.integrations_v2.registry.get_registered_provider_trigger",
             return_value=mock_registered,
         ),
         patch(
@@ -128,11 +128,11 @@ async def test_poll_subscriptions_fires_when_no_next_poll_at():
             return_value=[mock_sub],
         ),
         patch(
-            "noodle_nodes.integrations_v2.registry.is_registered_provider_trigger",
+            "nodyra_nodes.integrations_v2.registry.is_registered_provider_trigger",
             return_value=True,
         ),
         patch(
-            "noodle_nodes.integrations_v2.registry.get_registered_provider_trigger",
+            "nodyra_nodes.integrations_v2.registry.get_registered_provider_trigger",
             return_value=mock_registered,
         ),
         patch(
@@ -174,11 +174,11 @@ async def test_poll_subscriptions_skips_non_poll_specs():
             return_value=[mock_sub],
         ),
         patch(
-            "noodle_nodes.integrations_v2.registry.is_registered_provider_trigger",
+            "nodyra_nodes.integrations_v2.registry.is_registered_provider_trigger",
             return_value=True,
         ),
         patch(
-            "noodle_nodes.integrations_v2.registry.get_registered_provider_trigger",
+            "nodyra_nodes.integrations_v2.registry.get_registered_provider_trigger",
             return_value=mock_registered,
         ),
         patch(

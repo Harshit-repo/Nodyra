@@ -20,7 +20,7 @@ import ast
 import json
 from typing import Any
 
-from noodle.sdk import discover_module_nodes
+from nodyra.sdk import discover_module_nodes
 
 
 def _literal_value(node: ast.AST) -> Any:

@@ -9,10 +9,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
-from noodle.sdk import registry
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
+from nodyra.sdk import registry
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -74,7 +74,7 @@ def _patched_openai(fake):
 
 def test_registry_loads_without_heavy_packages() -> None:
     """synthetic_data.py must register its nodes without importing openai/tiktoken."""
-    import noodle_nodes.synthetic_data  # noqa: F401
+    import nodyra_nodes.synthetic_data  # noqa: F401
     node_ids = {m.id for m in registry.manifests()}
     assert "synthetic_examples_generate" in node_ids
     assert "preference_pair_generate" in node_ids
@@ -130,7 +130,7 @@ def _has_tiktoken() -> bool:
 
 @pytest.mark.skipif(not _has_tiktoken(), reason="tiktoken not installed")
 def test_token_profile_basic(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import token_profile
+    from nodyra_nodes.synthetic_data import token_profile
     rows = [
         {"prompt": "What is machine learning?", "answer": "ML is learning from data."},
         {"prompt": "What is a neural network?", "answer": "A graph of interconnected nodes."},
@@ -151,7 +151,7 @@ def test_token_profile_basic(store_ctx) -> None:
 
 @pytest.mark.skipif(not _has_tiktoken(), reason="tiktoken not installed")
 def test_token_profile_cost_estimate(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import token_profile
+    from nodyra_nodes.synthetic_data import token_profile
     rows = [{"text": "Hello world " * 10}]
     result = token_profile(
         input=rows,
@@ -165,7 +165,7 @@ def test_token_profile_cost_estimate(store_ctx) -> None:
 
 @pytest.mark.skipif(not _has_tiktoken(), reason="tiktoken not installed")
 def test_token_profile_oversized_warning(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import token_profile
+    from nodyra_nodes.synthetic_data import token_profile
     # Create a row that will exceed the warning threshold
     rows = [
         {"text": "word " * 50},
@@ -182,7 +182,7 @@ def test_token_profile_oversized_warning(store_ctx) -> None:
 
 @pytest.mark.skipif(not _has_tiktoken(), reason="tiktoken not installed")
 def test_token_profile_missing_column(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import token_profile
+    from nodyra_nodes.synthetic_data import token_profile
     rows = [{"prompt": "test"}]
     with pytest.raises(ValueError, match="not found"):
         token_profile(input=rows, text_columns="nonexistent")
@@ -193,7 +193,7 @@ def test_token_profile_missing_column(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_weak_label_rule_contains(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import weak_label
+    from nodyra_nodes.synthetic_data import weak_label
     rows = [
         {"text": "I need help with my invoice"},
         {"text": "There's a bug in the software"},
@@ -217,7 +217,7 @@ def test_weak_label_rule_contains(store_ctx) -> None:
 
 
 def test_weak_label_rule_exact(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import weak_label
+    from nodyra_nodes.synthetic_data import weak_label
     rows = [
         {"text": "yes"},
         {"text": "no"},
@@ -239,7 +239,7 @@ def test_weak_label_rule_exact(store_ctx) -> None:
 
 
 def test_weak_label_rule_regex(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import weak_label
+    from nodyra_nodes.synthetic_data import weak_label
     rows = [
         {"text": "Error code 404"},
         {"text": "Status: OK"},
@@ -259,7 +259,7 @@ def test_weak_label_rule_regex(store_ctx) -> None:
 
 
 def test_weak_label_keyword_vote(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import weak_label
+    from nodyra_nodes.synthetic_data import weak_label
     rows = [{"text": "invoice payment billing question"},
             {"text": "software error crash bug"}]
     patterns = json.dumps({
@@ -280,7 +280,7 @@ def test_weak_label_keyword_vote(store_ctx) -> None:
 
 
 def test_weak_label_missing_column_raises(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import weak_label
+    from nodyra_nodes.synthetic_data import weak_label
     rows = [{"prompt": "test"}]
     patterns = json.dumps({"a": ["test"]})
     with pytest.raises(ValueError, match="not found"):
@@ -294,7 +294,7 @@ def test_weak_label_missing_column_raises(store_ctx) -> None:
 
 
 def test_weak_label_invalid_rule_json(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import weak_label
+    from nodyra_nodes.synthetic_data import weak_label
     rows = [{"text": "hello"}]
     with pytest.raises(ValueError, match="not valid JSON"):
         weak_label(
@@ -311,7 +311,7 @@ def test_weak_label_invalid_rule_json(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_weak_label_llm_classify(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import weak_label
+    from nodyra_nodes.synthetic_data import weak_label
     fake = _make_fake_openai('{"label": "billing", "confidence": 0.9}')
     rows = [
         {"text": "I need a refund for my subscription."},
@@ -334,7 +334,7 @@ def test_weak_label_llm_classify(store_ctx) -> None:
 
 
 def test_weak_label_llm_missing_key(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import weak_label
+    from nodyra_nodes.synthetic_data import weak_label
     rows = [{"text": "test"}]
     fake = _make_fake_openai()
     with _patched_openai(fake):
@@ -349,7 +349,7 @@ def test_weak_label_llm_missing_key(store_ctx) -> None:
 
 
 def test_weak_label_llm_rejects_large_dataset(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import weak_label
+    from nodyra_nodes.synthetic_data import weak_label
 
     rows = [{"text": f"row {i}"} for i in range(1_001)]
     fake = _make_fake_openai('{"label": "a"}')
@@ -369,7 +369,7 @@ def test_weak_label_llm_rejects_large_dataset(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_synthetic_examples_generate_basic(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import synthetic_examples_generate
+    from nodyra_nodes.synthetic_data import synthetic_examples_generate
     generated = json.dumps([
         {"user": "What is ML?", "assistant": "ML is learning from data."},
         {"user": "What is DL?", "assistant": "DL uses neural networks."},
@@ -393,7 +393,7 @@ def test_synthetic_examples_generate_basic(store_ctx) -> None:
 
 
 def test_synthetic_examples_with_seed_rows(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import synthetic_examples_generate
+    from nodyra_nodes.synthetic_data import synthetic_examples_generate
     seeds = [
         {"user": "What is gradient descent?", "assistant": "It minimizes loss."},
         {"user": "What is backprop?", "assistant": "It computes gradients."},
@@ -415,7 +415,7 @@ def test_synthetic_examples_with_seed_rows(store_ctx) -> None:
 
 
 def test_synthetic_examples_dedup(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import synthetic_examples_generate
+    from nodyra_nodes.synthetic_data import synthetic_examples_generate
     # Return 3 items where 2 have the same 'user' field
     generated = json.dumps([
         {"user": "What is ML?", "assistant": "A."},
@@ -437,7 +437,7 @@ def test_synthetic_examples_dedup(store_ctx) -> None:
 
 
 def test_synthetic_examples_missing_instruction(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import synthetic_examples_generate
+    from nodyra_nodes.synthetic_data import synthetic_examples_generate
     fake = _make_fake_openai()
     with _patched_openai(fake):
         with pytest.raises(ValueError, match="instruction is required"):
@@ -449,7 +449,7 @@ def test_synthetic_examples_missing_instruction(store_ctx) -> None:
 
 
 def test_synthetic_examples_missing_key(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import synthetic_examples_generate
+    from nodyra_nodes.synthetic_data import synthetic_examples_generate
     fake = _make_fake_openai()
     with _patched_openai(fake):
         with pytest.raises(ValueError, match="openai_api_key is required"):
@@ -461,7 +461,7 @@ def test_synthetic_examples_missing_key(store_ctx) -> None:
 
 
 def test_synthetic_examples_rejects_excessive_count(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import synthetic_examples_generate
+    from nodyra_nodes.synthetic_data import synthetic_examples_generate
 
     fake = _make_fake_openai()
     with _patched_openai(fake):
@@ -479,7 +479,7 @@ def test_synthetic_examples_rejects_excessive_count(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_preference_pair_generate_basic(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import preference_pair_generate
+    from nodyra_nodes.synthetic_data import preference_pair_generate
     call_n = [0]
     responses = ["Helpful chosen response.", "Bad rejected response."] * 5
 
@@ -511,7 +511,7 @@ def test_preference_pair_generate_basic(store_ctx) -> None:
 
 
 def test_preference_pair_generate_missing_column(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import preference_pair_generate
+    from nodyra_nodes.synthetic_data import preference_pair_generate
     fake = _make_fake_openai()
     rows = [{"question": "test"}]
     with _patched_openai(fake):
@@ -524,7 +524,7 @@ def test_preference_pair_generate_missing_column(store_ctx) -> None:
 
 
 def test_preference_pair_generate_max_rows(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import preference_pair_generate
+    from nodyra_nodes.synthetic_data import preference_pair_generate
     call_n = [0]
 
     def _create(**kwargs):
@@ -550,7 +550,7 @@ def test_preference_pair_generate_max_rows(store_ctx) -> None:
 
 
 def test_preference_pair_generate_rejects_excessive_concurrency(store_ctx) -> None:
-    from noodle_nodes.synthetic_data import preference_pair_generate
+    from nodyra_nodes.synthetic_data import preference_pair_generate
 
     fake = _make_fake_openai()
     with _patched_openai(fake):

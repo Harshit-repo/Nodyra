@@ -1,8 +1,8 @@
-Noodle Sustainable Use License
+Nodyra Sustainable Use License
 
 Version 1.0
 
-Copyright (c) 2026-present Harshit Sharma and the Noodle contributors ("Licensor").
+Copyright (c) 2026-present Harshit Sharma and the Nodyra contributors ("Licensor").
 
 ----------------------------------------------------------------------------
 Portions of this repository are NOT covered by this license. Files and
@@ -10,11 +10,11 @@ directories that are marked as Enterprise — including, without limitation,
 the license-enforcement code (e.g. apps/api/app/services/licensing.py and
 apps/api/tools/mint_license.py) and the multi-tenancy, single sign-on,
 audit-log export, external key-management, and organization features, and
-any files carrying a "Noodle Enterprise" header or living under an `ee/`
+any files carrying a "Nodyra Enterprise" header or living under an `ee/`
 directory — are licensed separately under LICENSE.enterprise and are NOT
 licensed to you under this Sustainable Use License. See LICENSE.enterprise.
 
-The name "Noodle" and the Noodle logo are trademarks and are NOT licensed
+The name "Nodyra" and the Nodyra logo are trademarks and are NOT licensed
 under this license. See TRADEMARK.md.
 ----------------------------------------------------------------------------
 

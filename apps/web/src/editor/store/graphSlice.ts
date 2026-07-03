@@ -5,7 +5,7 @@ import type { WorkflowGraph } from "../../types";
 import type {
   ClipboardResult,
   EditorStore,
-  NoodleNode,
+  NodyraNode,
   NodeSettingsPatch,
 } from "./index";
 
@@ -109,7 +109,7 @@ export const graphInitialState: GraphSliceState = {
 };
 
 export type GraphChangeBatch = {
-  nodes: NodeChange<NoodleNode>[];
+  nodes: NodeChange<NodyraNode>[];
   edges: Edge[];
 };
 

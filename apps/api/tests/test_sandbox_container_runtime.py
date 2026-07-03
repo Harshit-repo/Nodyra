@@ -14,11 +14,11 @@ from tests.sandbox_fakes import FakeDockerClient
 def test_image_tag_includes_schema_version():
     payload = {"id": "env1", "packages_hash": "abc123"}
     tag = image_tag_for(payload)
-    assert tag == f"noodle-env:env1-abc123-{IMAGE_SCHEMA_VERSION}"
+    assert tag == f"nodyra-env:env1-abc123-{IMAGE_SCHEMA_VERSION}"
 
 
 def test_image_tag_defaults():
-    assert image_tag_for({}) == f"noodle-env:default-latest-{IMAGE_SCHEMA_VERSION}"
+    assert image_tag_for({}) == f"nodyra-env:default-latest-{IMAGE_SCHEMA_VERSION}"
 
 
 def test_build_skipped_when_cached():
@@ -75,7 +75,7 @@ def test_stream_demuxer_partial_frames_across_recvs():
 
 
 def test_base_image_built_from_workspace_source():
-    """The noodle packages are not on PyPI — the base image must install them
+    """The nodyra packages are not on PyPI — the base image must install them
     from the workspace source shipped in the build context."""
     import io
     import tarfile
@@ -97,10 +97,10 @@ def test_base_image_built_from_workspace_source():
         assert f"packages/{pkg}/pyproject.toml" in names
     assert not any("__pycache__" in n or "/tests/" in n for n in names)
     # installs from the copied source, never from PyPI names
-    assert "/opt/noodle-src/packages/runtime" in df
-    assert "uv pip install --system noodle-runtime" not in df
-    assert "useradd" in df and "USER noodle" in df
-    assert df.index("uv pip install") < df.index("USER noodle")
+    assert "/opt/nodyra-src/packages/runtime" in df
+    assert "uv pip install --system nodyra-runtime" not in df
+    assert "useradd" in df and "USER nodyra" in df
+    assert df.index("uv pip install") < df.index("USER nodyra")
 
 
 def test_base_image_cached():
@@ -138,7 +138,7 @@ def test_env_image_derives_from_base():
     assert "requests==2.31.0" in df
     # install happens as root, then drops back to the base image's user
     assert df.index("USER root") < df.index("uv pip install")
-    assert df.index("uv pip install") < df.index("USER noodle")
+    assert df.index("uv pip install") < df.index("USER nodyra")
 
 
 def test_env_image_without_extra_packages_is_from_only():
@@ -218,7 +218,7 @@ from app.services.container_runtime import (  # noqa: E402
 
 
 def test_hardening_kwargs_complete():
-    kw = hardening_kwargs(runtime="runsc", network="noodle-sandbox")
+    kw = hardening_kwargs(runtime="runsc", network="nodyra-sandbox")
     assert kw["cap_drop"] == ["ALL"]
     assert kw["security_opt"] == ["no-new-privileges:true"]
     assert kw["read_only"] is True
@@ -226,7 +226,7 @@ def test_hardening_kwargs_complete():
     assert kw["mem_limit"] == "1g"
     assert kw["nano_cpus"] == 1_000_000_000
     assert kw["pids_limit"] == 256
-    assert kw["network"] == "noodle-sandbox"
+    assert kw["network"] == "nodyra-sandbox"
     assert kw["runtime"] == "runsc"
     # rootfs is read-only, so HOME must point at the writable tmpfs
     assert kw["environment"] == {"HOME": "/tmp"}
@@ -247,9 +247,9 @@ def test_hardening_kwargs_overrides():
 
 def test_ensure_sandbox_network_creates_once():
     client = FakeDockerClient()
-    assert ensure_sandbox_network(client, "noodle-sandbox") == "noodle-sandbox"
-    assert "noodle-sandbox" in client.networks.existing
-    ensure_sandbox_network(client, "noodle-sandbox")  # idempotent, no error
+    assert ensure_sandbox_network(client, "nodyra-sandbox") == "nodyra-sandbox"
+    assert "nodyra-sandbox" in client.networks.existing
+    ensure_sandbox_network(client, "nodyra-sandbox")  # idempotent, no error
 
 
 def test_ensure_sandbox_network_creation_race():
@@ -261,7 +261,7 @@ def test_ensure_sandbox_network_creation_race():
         raise RuntimeError("409 conflict")
 
     client.networks.create = create_then_appear
-    assert ensure_sandbox_network(client, "noodle-sandbox") == "noodle-sandbox"
+    assert ensure_sandbox_network(client, "nodyra-sandbox") == "nodyra-sandbox"
 
 
 def test_ensure_sandbox_network_hard_failure():
@@ -272,7 +272,7 @@ def test_ensure_sandbox_network_hard_failure():
 
     client.networks.create = always_fail
     with pytest.raises(RuntimeError, match="sandbox network"):
-        ensure_sandbox_network(client, "noodle-sandbox")
+        ensure_sandbox_network(client, "nodyra-sandbox")
 
 
 # --- docker runner-pool provider hardening -----------------------------------

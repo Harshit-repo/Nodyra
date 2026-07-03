@@ -21,7 +21,7 @@ METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
-SERVER_INFO = {"name": "noodle", "version": "0.0.1"}
+SERVER_INFO = {"name": "nodyra", "version": "0.0.1"}
 SERVER_CAPABILITIES: dict[str, Any] = {
     # This endpoint is intentionally stateless and opens no server-initiated
     # stream, so it cannot truthfully emit tools/list_changed notifications.

@@ -125,6 +125,403 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 @keyframes cursor-blink{0%,100%{opacity:0}45%,55%{opacity:1}}
 .node-cursor.blinking{animation:cursor-blink 1.1s ease-in-out 3}
 
+/* ===== NDV overlay ===== */
+.node{cursor:pointer}
+.node:hover .node-tile{border-color:rgba(76,158,255,0.55);box-shadow:0 0 0 3px rgba(76,158,255,0.13),0 9px 22px -13px rgba(0,0,0,0.85)}
+.node:focus-visible{outline:none}
+.node:focus-visible .node-tile{outline:2px solid var(--accent);outline-offset:2px;border-radius:17px}
+
+/* ---- NDV (Node Detail View) — copied from apps/web/src/editor.css + index.css ---- */
+.modal-overlay{position:fixed;inset:0;z-index:200;background:rgba(4,6,10,0.72);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:28px 20px 20px}
+.ndv-modal{position:relative;width:min(1320px,96vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column;background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 4%,var(--surface)) 0%,var(--surface) 120px);border:1px solid color-mix(in srgb,var(--accent) 9%,var(--line));border-radius:14px;box-shadow:0 1px 0 rgba(255,255,255,0.05) inset,0 40px 90px -36px rgba(0,0,0,0.86),0 0 0 1px rgba(0,0,0,0.35);height:65vh;min-height:35vh;overflow:hidden;animation:pop 170ms cubic-bezier(0.2,0.8,0.2,1)}
+.ndv-modal::before{content:'';position:absolute;left:18px;right:18px;top:0;height:1px;border-radius:1px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 70%,transparent),transparent);opacity:0.7;pointer-events:none;z-index:1}
+.ndv-modal.ndv-edge-ok::before{background:linear-gradient(90deg,transparent,#57c98a,transparent);opacity:0.85}
+@keyframes pop{from{transform:translateY(-10px) scale(0.985);opacity:0}}
+
+/* drag-to-resize handle at bottom */
+.ndv-drag-handle{height:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:ns-resize;position:relative;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 18%,transparent),transparent);border-top:1px solid color-mix(in srgb,var(--accent) 15%,var(--line-2));border-radius:0 0 14px 14px;user-select:none}
+.ndv-drag-dots{display:flex;gap:3px}
+.ndv-drag-dots span{display:block;width:3px;height:3px;border-radius:50%;background:color-mix(in srgb,var(--accent) 40%,transparent)}
+.ndv-drag-tip{position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%) translateY(4px);background:var(--surface-2);border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:7px;padding:4px 10px;font-family:var(--font-mono);font-size:10px;color:var(--accent-2);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity 160ms,transform 160ms}
+.ndv-drag-handle:hover .ndv-drag-tip{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* header */
+.ndv-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 18px;border-bottom:1px solid color-mix(in srgb,var(--accent) 8%,var(--line-2));background:transparent;flex-wrap:wrap;flex-shrink:0}
+.ndv-title{display:flex;align-items:center;gap:12px;min-width:0}
+.ndv-title h3{font-size:18px;letter-spacing:-0.025em;margin:0}
+.ndv-meta{display:flex;gap:7px;margin-top:5px;flex-wrap:wrap}
+.mono-tag{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line-2);padding:2px 7px;border-radius:5px}
+.mono-tag-cat{border-radius:999px;padding:2px 9px;font-size:10.5px;background:color-mix(in srgb,currentColor 13%,transparent);border-color:color-mix(in srgb,currentColor 28%,transparent)}
+.inspector-glyph{display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:11px;background:linear-gradient(145deg,color-mix(in srgb,currentColor 26%,var(--surface-2)),var(--surface-2));border:1px solid color-mix(in srgb,currentColor 34%,var(--line-2));box-shadow:0 0 0 4px color-mix(in srgb,currentColor 9%,transparent),0 6px 16px -8px color-mix(in srgb,currentColor 60%,transparent);flex-shrink:0}
+.ndv-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-shrink:0;flex-wrap:wrap}
+.ndv-action-sep{width:1px;height:22px;background:var(--line-2);margin:0 3px;flex-shrink:0}
+.ndv-close{background:transparent;border:1px solid transparent;color:var(--ink-3);font-size:20px;width:32px;height:32px;border-radius:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 120ms,color 120ms,border-color 120ms,transform 220ms cubic-bezier(0.2,0.8,0.2,1);font-family:var(--font-sans);line-height:1}
+.ndv-close:hover{background:rgba(240,116,122,0.12);color:#f39a9e;border-color:rgba(240,116,122,0.3);transform:rotate(90deg)}
+.ndv-close:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* buttons */
+.btn{font-size:13px;font-weight:600;padding:8px 15px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--surface-2);color:var(--ink);display:inline-flex;align-items:center;gap:7px;cursor:pointer;transition:background 120ms,border-color 120ms,transform 80ms;font-family:var(--font-sans)}
+.btn:hover{background:var(--surface-3);border-color:var(--accent-deep)}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:0.45;cursor:not-allowed}
+.btn-sm{font-size:12px;padding:6px 11px}
+.btn-ghost{background:transparent;border-color:transparent}
+.btn-ghost:hover{background:var(--surface-2);border-color:var(--accent-deep)}
+.btn-danger-soft{background:rgba(240,116,122,0.07);border-color:rgba(240,116,122,0.25);color:#f39a9e}
+.btn-danger-soft:hover{background:rgba(240,116,122,0.14);border-color:rgba(240,116,122,0.5)}
+.btn-run{background:linear-gradient(180deg,color-mix(in srgb,#7bd698 26%,transparent),color-mix(in srgb,#57c98a 16%,transparent));border-color:rgba(87,201,138,0.5);color:#aef0c4;font-weight:650;box-shadow:0 1px 0 rgba(255,255,255,0.08) inset,0 6px 16px -10px rgba(87,201,138,0.8)}
+.btn-run:hover{filter:brightness(1.08);border-color:rgba(87,201,138,0.7)}
+
+/* body */
+.ndv-body{flex:1;display:flex;flex-direction:column;min-height:0}
+.ndv-panels{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,420px) minmax(0,1fr);min-height:0}
+@media(max-width:860px){.ndv-panels{grid-template-columns:1fr}.ndv-panel:nth-child(1),.ndv-panel:nth-child(3){display:none}}
+
+/* input / output panels */
+.ndv-panel{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line-2);background:var(--bg)}
+.ndv-panel:last-child{border-right:none}
+.ndv-panel-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid var(--line-2);background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 70%,transparent),transparent);flex-shrink:0}
+.ndv-panel-head h3{font-family:var(--font-display);font-weight:600;font-size:13px;color:var(--ink-2);text-transform:uppercase;letter-spacing:0.08em;margin:0;display:inline-flex;align-items:center;gap:8px}
+.ndv-panel-body{flex:1;overflow:auto;padding:14px 16px}
+.ndv-panel-foot{padding:10px 16px;border-top:1px solid var(--line-2);background:linear-gradient(0deg,color-mix(in srgb,var(--surface) 60%,transparent),transparent);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0}
+.ndv-dir-badge{font-size:8.5px;font-weight:700;letter-spacing:0.1em;color:var(--ink-3);background:rgba(255,255,255,0.05);border:1px solid var(--line-2);padding:2px 6px;border-radius:4px;text-transform:uppercase}
+.ndv-output-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%}
+.pin-timestamp{color:var(--ink-3);font-family:var(--font-mono);font-size:10.5px}
+
+/* middle column */
+.ndv-middle{display:flex;flex-direction:column;min-height:0;background:var(--surface);border-right:1px solid color-mix(in srgb,var(--accent) 7%,var(--line-2));border-left:1px solid color-mix(in srgb,var(--accent) 7%,var(--line-2));box-shadow:0 0 40px -22px rgba(0,0,0,0.9)}
+.ndv-tabs{display:flex;background:var(--bg);border-bottom:1px solid var(--line-2);flex-shrink:0;padding:0 6px}
+.ndv-tabs button{flex:1;font-family:var(--font-display);font-weight:600;font-size:12px;letter-spacing:0.04em;color:var(--ink-3);background:transparent;border:none;padding:13px 0;border-bottom:2px solid transparent;cursor:pointer;transition:color 110ms,border-color 110ms;position:relative;margin:6px 2px 0;border-radius:8px 8px 0 0}
+.ndv-tabs button.active{color:var(--ink)}
+.ndv-tabs button.active::after{content:'';position:absolute;left:14%;right:14%;bottom:-1px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);box-shadow:0 0 10px 1px color-mix(in srgb,var(--accent) 60%,transparent)}
+.ndv-tabs button:hover:not(.active){background:color-mix(in srgb,var(--surface-2) 70%,transparent);color:var(--ink)}
+.ndv-middle-body{flex:1;overflow:auto;padding:16px 18px}
+
+/* Inspector ↔ Python mode toggle */
+.ndv-mode-toggle{display:inline-flex;gap:2px;padding:3px;background:color-mix(in srgb,var(--line) 35%,transparent);border:1px solid var(--line);border-radius:999px;margin-bottom:12px}
+.ndv-mode-toggle button{border:none;background:transparent;color:var(--ink-3);padding:4px 16px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;transition:background 120ms,color 120ms;font-family:var(--font-sans)}
+.ndv-mode-toggle button.active{background:var(--accent);color:#fff}
+
+/* fields (real app class names) */
+.field{margin-bottom:15px}
+.field-label{display:flex;align-items:baseline;gap:7px;margin-bottom:5px}
+.field-name{font-family:var(--font-mono);font-size:12px;color:var(--ink);font-weight:500}
+.field-desc{margin:0 0 6px;font-size:11.5px;color:var(--ink-3);line-height:1.45}
+.field-input{width:100%;font-family:var(--font-sans);font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-sm);padding:8px 10px;outline:none;transition:border-color 120ms,box-shadow 120ms;box-sizing:border-box}
+.field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.field-input-expr{font-family:var(--font-mono);font-size:12px;color:#c4b5fd;background:rgba(124,58,237,0.07);border-color:rgba(139,92,246,0.4)}
+.field-input-expr:focus{border-color:rgba(139,92,246,0.85);box-shadow:0 0 0 3px rgba(139,92,246,0.18)}
+.expr-inline-preview{display:flex;align-items:center;gap:7px;margin-top:6px;font-family:var(--font-mono);font-size:11px;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line-2);border-radius:6px;padding:4px 9px;overflow:hidden}
+.expr-inline-preview .eip-arrow{color:var(--ink-3);flex-shrink:0}
+.expr-inline-preview .eip-val{color:#7be0a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* code surface (Python mode) */
+.code-view{font-family:var(--font-mono);font-size:12.5px;line-height:1.72;background:#0b0e15;border:1px solid color-mix(in srgb,var(--accent) 9%,var(--line));border-radius:10px;padding:14px 18px;overflow:auto;flex:1;color:var(--ink-2);white-space:pre}
+.code-view .py-kw{color:#4c9eff}.code-view .py-fn{color:#79b6ff}.code-view .py-str{color:#8fd06f}.code-view .py-dec{color:#ffd479}.code-view .py-cm{color:var(--ink-3)}.code-view .py-arg{color:#e2b96f}
+
+/* JSON tree */
+.json-view{font-family:var(--font-mono);font-size:12px;line-height:1.6;color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.json-view .jk{color:var(--accent-2)}.json-view .js{color:#8fd06f}.json-view .jn{color:var(--amber)}.json-view .jb{color:#c084fc}.json-view .jnull{color:var(--ink-3);font-style:italic}
+.panel-empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;height:100%;color:var(--ink-3);font-size:12.5px;text-align:center;padding:24px}
+
+/* run pill */
+.run-pill{font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.05em;padding:2px 7px;border-radius:5px;text-transform:uppercase;display:inline-block}
+.status-run-success{background:#57c98a;color:#06140c}
+
+/* webhook panel */
+.webhook-listen{display:flex;flex-direction:column;gap:12px;margin-top:4px}
+.webhook-endpoint-url{font-family:var(--font-mono);font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 12px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.listening-badge{font-family:var(--font-mono);font-size:9.5px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:2px 8px;border-radius:5px;background:rgba(87,201,138,0.12);color:var(--ok);border:1px solid rgba(87,201,138,0.28);width:fit-content;display:inline-flex;align-items:center;gap:6px}
+.listening-dot{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(87,201,138,0.18);animation:pulse-soft 1.2s ease-in-out infinite}
+
+/* ---- data view toggle (Schema/JSON/Table/Raw/Copy) ---- */
+.data-view-toggle{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:2px;gap:1px;flex-shrink:0}
+.data-view-toggle button{font-family:var(--font-sans);font-size:11px;color:var(--ink-3);background:transparent;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;transition:background 100ms,color 100ms;white-space:nowrap}
+.data-view-toggle button.active{background:var(--surface);color:var(--ink)}
+.data-view-toggle button:disabled{opacity:0.45;cursor:not-allowed}
+.data-view-toggle button:hover:not(.active):not(:disabled){color:var(--ink-2)}
+.ndv-count-badge{font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--accent-2);background:var(--accent-glow);border:1px solid color-mix(in srgb,var(--accent) 26%,transparent);padding:1px 7px;border-radius:999px;letter-spacing:0.02em;text-transform:none}
+
+/* ---- interactive JSON tree ---- */
+.json-tree{font-family:var(--font-mono);font-size:11px;line-height:1.55;color:var(--ink-2);background:var(--bg);border:1px solid var(--line-2);border-radius:var(--radius-sm);padding:8px 10px;overflow:auto}
+.json-tree-block{display:flex;flex-direction:column;border-left:1px dashed var(--line-2);margin-left:6px;padding-left:8px}
+.json-tree-row{display:flex;align-items:flex-start;gap:3px;padding:1px 0}
+.json-tree-key{color:var(--ink);font-weight:600;padding:1px 4px;border-radius:3px;white-space:nowrap}
+.json-tree-colon{color:var(--ink-3)}
+.json-tree-prim{word-break:break-word}
+.json-tree-string{color:#22a06b}.json-tree-number{color:#d97706}.json-tree-boolean{color:#6366f1}.json-tree-null{color:var(--ink-3);font-style:italic}.json-tree-empty{color:var(--ink-3);font-style:italic}
+.json-tree-twist{border:0;background:transparent;color:var(--ink-3);cursor:pointer;padding:1px 2px;font-size:10px;line-height:1;flex-shrink:0;width:14px;text-align:center;user-select:none}
+.json-tree-twist:hover{color:var(--accent)}
+.json-tree-twist-empty{display:inline-block;width:14px;flex-shrink:0}
+.json-tree-summary{color:var(--ink-3);font-style:italic;font-size:10.5px}
+.json-tree-copy{border:0;background:transparent;color:var(--ink-3);font-size:10px;padding:0 4px;cursor:pointer;font-family:var(--font-mono)}
+.json-tree-copy:hover{color:var(--accent)}
+
+/* ---- schema tree ---- */
+.schema-tree{font-family:var(--font-mono);font-size:12px;color:var(--ink)}
+.schema-arrayhint{color:var(--ink-3);font-size:10.5px;margin:0 0 6px}
+.schema-node{margin:1px 0}
+.schema-row{display:flex;align-items:center;gap:7px;padding:3px 4px;border-radius:5px;cursor:default}
+.schema-row:hover{background:var(--surface-2)}
+.schema-twist{border:none;background:transparent;color:var(--ink-3);cursor:pointer;width:14px;padding:0;font-size:10px;line-height:1;flex-shrink:0}
+.schema-twist:hover{color:var(--ink)}
+.schema-twist-spacer{width:14px;flex-shrink:0;display:inline-block}
+.schema-type-icon{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;border-radius:3px;font-size:9px;font-weight:700;line-height:1;flex-shrink:0;background:var(--surface-2);color:var(--ink-3);padding:0 2px}
+.schema-type-icon[data-type=string]{color:#4ec9b0}.schema-type-icon[data-type=number]{color:#9cdcfe}.schema-type-icon[data-type=boolean]{color:#ce9178}.schema-type-icon[data-type=object]{color:#dcdcaa}.schema-type-icon[data-type=array]{color:#dcdcaa}
+.schema-key{color:var(--ink)}
+.schema-value{color:var(--ink-3);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;flex:1}
+.schema-value[data-type=string]{color:#ce9178}.schema-value[data-type=number]{color:#9cdcfe}.schema-value[data-type=boolean]{color:#569cd6}.schema-value[data-type=null]{color:var(--ink-3);font-style:italic}
+.schema-type{margin-left:auto;font-size:10px;color:var(--ink-3)}
+.schema-children{margin-left:14px;border-left:1px solid var(--line-2);padding-left:8px}
+
+/* ---- data table ---- */
+.data-table-wrap{overflow:auto;border:1px solid var(--line-2);border-radius:var(--radius-sm);background:var(--bg)}
+.data-table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px;color:var(--ink)}
+.data-table thead th{position:sticky;top:0;background:var(--surface-2);color:var(--ink-3);text-align:left;font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;padding:7px 10px;border-bottom:1px solid var(--line)}
+.data-table tbody td,.data-table tbody th{padding:7px 10px;border-bottom:1px solid var(--line-2);vertical-align:top;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.data-table tbody tr:last-child td,.data-table tbody tr:last-child th{border-bottom:none}
+.data-table tbody tr:hover{background:var(--surface-2)}
+.data-table-index{color:var(--ink-3);width:36px;font-variant-numeric:tabular-nums}
+.data-table-kv th{color:var(--ink-2);font-weight:500;background:var(--surface-2);width:38%;border-right:1px solid var(--line-2);font-size:11px;text-transform:none;letter-spacing:0}
+.data-json{font-family:var(--font-mono);font-size:11px;line-height:1.6;color:var(--ink-2);white-space:pre-wrap;word-break:break-word;margin:0}
+.muted{color:var(--ink-3);font-size:12px}
+
+/* ---- Demo sequence ---- */
+.demo-bar{position:absolute;left:0;right:0;top:20px;display:flex;justify-content:center;padding:0 20px;z-index:10;pointer-events:none;opacity:0;transform:translateY(-8px);transition:opacity 350ms,transform 350ms}
+.demo-bar.visible{opacity:1;transform:none;pointer-events:auto}
+.demo-prompt-box{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;width:100%;max-width:400px;box-shadow:0 8px 28px -10px rgba(0,0,0,0.7);display:flex;gap:8px;align-items:flex-start}
+.demo-prompt-icon{font-size:13px;flex-shrink:0;margin-top:1px;opacity:0.6;font-family:var(--font-mono);color:var(--accent)}
+.demo-prompt-body{flex:1;min-width:0}
+.demo-prompt-text{font-family:var(--font-mono);font-size:12px;color:var(--ink);line-height:1.55;min-height:18px}
+.demo-prompt-cursor{display:inline-block;width:2px;height:13px;background:var(--accent);border-radius:1px;vertical-align:middle;margin-left:1px;animation:demo-cursor-blink 700ms steps(1) infinite}
+@keyframes demo-cursor-blink{0%,100%{opacity:1}50%{opacity:0}}
+.demo-status{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin-top:5px;display:flex;align-items:center;gap:4px;min-height:16px;opacity:0;transition:opacity 300ms}
+.demo-status.visible{opacity:1}
+.demo-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--accent);animation:demo-dot-bounce 1s infinite}
+.demo-dot:nth-child(2){animation-delay:0.15s}.demo-dot:nth-child(3){animation-delay:0.3s}
+@keyframes demo-dot-bounce{0%,80%,100%{opacity:0.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
+/* node highlight ring */
+.node-hint-ring{position:absolute;inset:-7px;border-radius:23px;border:2px solid var(--accent);pointer-events:none;opacity:0;transition:opacity 400ms;animation:node-hint-pulse 2s ease-in-out infinite;z-index:2}
+.node.demo-highlight .node-hint-ring{opacity:1}
+@keyframes node-hint-pulse{0%,100%{box-shadow:0 0 0 5px var(--accent-glow),0 0 20px 4px rgba(76,158,255,0.2)}50%{box-shadow:0 0 0 9px rgba(76,158,255,0.06),0 0 30px 8px rgba(76,158,255,0.38)}}
+/* canvas tooltip */
+.canvas-tooltip{position:absolute;background:var(--accent);color:#fff;font-family:var(--font-sans);font-size:12px;font-weight:600;padding:5px 10px;border-radius:6px;white-space:nowrap;pointer-events:none;opacity:0;transform:translateY(4px) translateX(-50%);transition:opacity 350ms,transform 350ms;z-index:6;letter-spacing:0.01em}
+.canvas-tooltip::after{content:'';position:absolute;bottom:-5px;left:50%;transform:translateX(-50%);border:5px solid transparent;border-bottom:none;border-top-color:var(--accent)}
+.canvas-tooltip.visible{opacity:1;transform:translateY(0) translateX(-50%)}
+/* NDV toggle demo hint */
+.ndv-mode-toggle.demo-hint{animation:toggle-hint-pulse 1.5s ease-in-out infinite;outline:2px solid var(--accent);outline-offset:3px}
+@keyframes toggle-hint-pulse{0%,100%{box-shadow:0 0 0 4px var(--accent-glow),0 0 16px 4px rgba(76,158,255,0.2)}50%{box-shadow:0 0 0 7px rgba(76,158,255,0.06),0 0 26px 6px rgba(76,158,255,0.42)}}
+.ndv-mode-toggle.demo-hint + .demo-mode-tip{display:block!important}
+.demo-mode-tip{font-family:var(--font-mono);font-size:11px;color:var(--accent);margin:6px 0 10px;letter-spacing:0.01em}
+.demo-mode-tip strong{font-weight:700;color:var(--accent)}
+
+/* ===== Deployments & Environments ===== */
+.deploy-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:start}
+@media(max-width:860px){.deploy-grid{grid-template-columns:1fr;gap:44px}}
+.deploy-bullets{display:flex;flex-direction:column;gap:18px;margin:28px 0 32px}
+.deploy-bullet{display:flex;align-items:flex-start;gap:14px}
+.deploy-bullet-icon{width:34px;height:34px;border-radius:9px;background:var(--accent-glow);border:1px solid rgba(76,158,255,0.22);display:grid;place-items:center;color:var(--accent);flex-shrink:0}
+.deploy-bullet-title{font-size:14px;font-weight:600;color:var(--ink);line-height:1.3}
+.deploy-bullet-body{font-size:13px;color:var(--ink-3);line-height:1.5;margin-top:3px}
+.env-stack{display:flex;flex-direction:column;gap:8px}
+.env-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);padding:14px 16px;display:flex;align-items:center;gap:14px;transition:border-color 140ms ease,background 140ms ease}
+.env-card:hover{border-color:var(--accent-deep);background:var(--surface-2)}
+.env-badge{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:2px 8px;border-radius:5px;flex-shrink:0;min-width:58px;text-align:center}
+.env-badge-dev{background:rgba(87,201,138,0.1);color:var(--ok);border:1px solid rgba(87,201,138,0.25)}
+.env-badge-staging{background:rgba(255,212,121,0.1);color:var(--amber);border:1px solid rgba(255,212,121,0.25)}
+.env-badge-prod{background:rgba(76,158,255,0.1);color:var(--accent);border:1px solid rgba(76,158,255,0.25)}
+.env-info{flex:1;min-width:0}
+.env-info-name{font-size:14px;font-weight:600;color:var(--ink)}
+.env-info-meta{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin-top:2px}
+.env-status{display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10.5px;white-space:nowrap;flex-shrink:0}
+.env-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.env-dot-ok{background:var(--ok);box-shadow:0 0 0 2px rgba(87,201,138,0.18)}
+.env-dot-amber{background:var(--amber);box-shadow:0 0 0 2px rgba(255,212,121,0.18)}
+.env-dot-idle{background:var(--ink-3)}
+.mini-terminal{background:#060810;border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden;margin-top:16px}
+.mini-terminal-bar{background:var(--surface-2);padding:8px 14px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;gap:8px}
+.term-circles{display:flex;gap:5px}
+.term-circles span{width:9px;height:9px;border-radius:50%}
+.term-title{flex:1;text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--ink-3)}
+.mini-terminal-body{padding:14px 18px;font-family:var(--font-mono);font-size:12px;line-height:1.8;color:var(--ink-2);white-space:pre-wrap}
+.t-prompt{color:var(--ink-3);user-select:none}.t-ok{color:var(--ok)}.t-dim{color:var(--ink-3)}.t-accent{color:var(--accent-2)}.t-cmd{color:var(--ink)}
+
+/* ===== Enterprise Controls ===== */
+.ent-head-wrap{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:start;margin-bottom:52px}
+@media(max-width:860px){.ent-head-wrap{grid-template-columns:1fr;gap:22px}}
+.ent-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+@media(max-width:860px){.ent-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){.ent-grid{grid-template-columns:1fr}}
+.ent-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);padding:20px;display:flex;flex-direction:column;gap:10px;transition:border-color 140ms ease,background 140ms ease}
+.ent-card:hover{border-color:var(--accent-deep);background:var(--surface-2)}
+.ent-card-icon{width:34px;height:34px;border-radius:9px;background:var(--accent-glow);border:1px solid rgba(76,158,255,0.22);display:grid;place-items:center;color:var(--accent)}
+.ent-card h3{font-size:14px;font-weight:700;color:var(--ink);margin:0}
+.ent-card p{font-size:13px;color:var(--ink-2);line-height:1.5;margin:0}
+.ent-check-list{display:flex;flex-direction:column;gap:10px;margin-top:4px}
+.ent-check-item{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--ink-2)}
+.ent-check-icon{width:18px;height:18px;border-radius:5px;background:rgba(87,201,138,0.14);border:1px solid rgba(87,201,138,0.28);display:grid;place-items:center;flex-shrink:0;color:var(--ok)}
+
+/* ===== Pricing ===== */
+.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:52px}
+@media(max-width:860px){.pricing-grid{grid-template-columns:1fr}}
+.price-card{background:var(--surface);border:1px solid var(--line-2);border-radius:14px;padding:28px;display:flex;flex-direction:column;position:relative;overflow:hidden;transition:border-color 140ms ease}
+.price-card:hover{border-color:var(--accent-deep)}
+.price-card-featured{background:linear-gradient(160deg,color-mix(in srgb,var(--accent) 7%,var(--surface)),var(--surface) 65%);border-color:color-mix(in srgb,var(--accent) 32%,var(--line-2));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 12%,transparent),0 28px 60px -28px rgba(76,158,255,0.24)}
+.price-card-featured::before{content:'';position:absolute;left:20px;right:20px;top:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:0.5}
+.price-featured-tag{position:absolute;top:14px;right:14px;font-family:var(--font-mono);font-size:9.5px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--accent);background:var(--accent-glow);border:1px solid rgba(76,158,255,0.28);padding:3px 8px;border-radius:5px}
+.price-tier-name{font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-3);margin-bottom:14px}
+.price-tier-name-featured{color:var(--accent)}
+.price-amount{font-family:var(--font-display);font-size:44px;font-weight:800;letter-spacing:-0.04em;color:var(--ink);line-height:1;display:flex;align-items:flex-start;gap:2px}
+.price-amount sup{font-size:22px;font-weight:800;margin-top:6px}
+.price-custom{font-family:var(--font-display);font-size:28px;font-weight:800;color:var(--ink);line-height:1;margin-bottom:0}
+.price-cycle{font-size:13px;color:var(--ink-3);margin-top:5px;margin-bottom:16px}
+.price-tagline{font-size:13px;color:var(--ink-2);line-height:1.6;padding-bottom:20px;border-bottom:1px solid var(--line-2);margin-bottom:20px}
+.price-features{display:flex;flex-direction:column;gap:9px;flex:1}
+.price-feat{display:flex;align-items:flex-start;gap:9px;font-size:13px;color:var(--ink-2)}
+.price-feat-check{flex-shrink:0;width:16px;height:16px;color:var(--ok);margin-top:1px}
+.price-feat-muted{color:var(--ink-3)}
+.price-btn{margin-top:24px;width:100%;justify-content:center;font-size:14px;padding:10px}
+.price-note{margin-top:40px;text-align:center;font-family:var(--font-mono);font-size:11.5px;color:var(--ink-3);line-height:1.7}
+.price-note code{color:var(--accent);background:transparent}
+
+/* ===== Self-host terminal ===== */
+.selfhost-terminal{background:#060810;border:1px solid var(--line-2);border-radius:14px;overflow:hidden;max-width:600px;margin:36px auto 0}
+.selfhost-bar{background:var(--surface-2);padding:10px 16px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;gap:10px}
+.selfhost-circles{display:flex;gap:6px}
+.selfhost-circles span{width:10px;height:10px;border-radius:50%}
+.selfhost-title{flex:1;text-align:center;font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+.selfhost-body{padding:20px 24px;font-family:var(--font-mono);font-size:13px;line-height:1.85;color:var(--ink-2);white-space:pre-wrap}
+
+/* ===== Python Environment card visual ===== */
+.env-visual-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden}
+.env-visual-head{padding:13px 16px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.env-visual-name{font-size:14px;font-weight:600;color:var(--ink)}
+.env-visual-badges{display:flex;align-items:center;gap:7px}
+.env-backend-badge{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;padding:2px 7px;border-radius:4px}
+.env-backend-venv{background:rgba(87,201,138,0.1);color:var(--ok);border:1px solid rgba(87,201,138,0.25)}
+.env-backend-conda{background:rgba(76,158,255,0.1);color:var(--accent);border:1px solid rgba(76,158,255,0.28)}
+.env-backend-pixi{background:rgba(63,208,224,0.1);color:#3fd0e0;border:1px solid rgba(63,208,224,0.25)}
+.env-status-badge{font-family:var(--font-mono);font-size:9.5px;font-weight:600;letter-spacing:0.06em;padding:2px 8px;border-radius:5px}
+.env-status-ready{background:rgba(87,201,138,0.1);color:var(--ok);border:1px solid rgba(87,201,138,0.25)}
+.env-visual-meta{padding:9px 16px;border-bottom:1px solid var(--line-2);font-family:var(--font-mono);font-size:11px;color:var(--ink-3);display:flex;gap:0;flex-wrap:wrap}
+.env-visual-meta span{margin-right:8px}
+.env-visual-meta span+span::before{content:'·';margin-right:8px}
+.env-pkg-head{padding:9px 16px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;justify-content:space-between}
+.env-pkg-count{font-size:12px;font-weight:600;color:var(--ink-2)}
+.env-pkg-ram{font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+.env-pkg-row{display:flex;align-items:center;justify-content:space-between;padding:7px 16px;border-bottom:1px solid var(--line-2)}
+.env-pkg-row:last-child{border-bottom:none}
+.env-pkg-name{font-family:var(--font-mono);font-size:12px;color:var(--ink)}
+.env-pkg-usage{font-size:11px;color:var(--ink-3);white-space:nowrap}
+.env-pkg-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent-2);margin-right:5px;opacity:0.7}
+.env-pool-strip{padding:10px 16px;background:var(--bg);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.env-pool-item{font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+.env-pool-item strong{color:var(--accent-2)}
+
+/* ===== Deployment card visual ===== */
+.dep-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden}
+.dep-card-head{padding:13px 16px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.dep-card-name{font-size:14px;font-weight:600;color:var(--ink)}
+.dep-active-badge{font-family:var(--font-mono);font-size:9.5px;font-weight:600;letter-spacing:0.06em;background:rgba(87,201,138,0.1);color:var(--ok);border:1px solid rgba(87,201,138,0.25);padding:2px 8px;border-radius:5px}
+.dep-cron-block{padding:13px 16px;border-bottom:1px solid var(--line-2)}
+.dep-cron-expr{font-family:var(--font-mono);font-size:15px;font-weight:600;color:var(--ink);letter-spacing:0.04em;margin-bottom:4px}
+.dep-cron-label{font-size:12px;color:var(--ink-3)}
+.dep-stats{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line-2)}
+.dep-stat{padding:12px 16px}
+.dep-stat+.dep-stat{border-left:1px solid var(--line-2)}
+.dep-stat-label{font-size:11px;color:var(--ink-3);margin-bottom:4px}
+.dep-stat-val{font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--ink)}
+.dep-stat-val-ok{color:var(--ok)}
+.dep-card-env{padding:10px 16px;background:var(--bg);font-family:var(--font-mono);font-size:11px;color:var(--ink-3);display:flex;gap:16px;flex-wrap:wrap}
+.dep-card-env span strong{color:var(--accent-2)}
+
+/* ===== Section separator ===== */
+.section-sep{height:1px;background:linear-gradient(90deg,transparent,var(--line-2) 30%,var(--line-2) 70%,transparent);margin:0 32px}
+
+/* ===== App-faithful Environment card ===== */
+.aenv-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden}
+.aenv-head{padding:12px 16px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.aenv-name{font-size:14px;font-weight:600;color:var(--ink)}
+.aenv-meta-line{padding:8px 16px;border-bottom:1px solid var(--line-2);font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+.aenv-health{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line-2)}
+.aenv-htile{padding:10px 12px;text-align:center}
+.aenv-htile+.aenv-htile{border-left:1px solid var(--line-2)}
+.aenv-htile-label{font-size:9px;color:var(--ink-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em}
+.aenv-htile-val{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--ink)}
+.aenv-htile-click .aenv-htile-val{color:var(--accent)}
+.aenv-actions{padding:10px 14px;display:flex;gap:7px;flex-wrap:wrap;background:var(--bg)}
+.aenv-btn-primary{font-size:12px;font-weight:600;padding:5px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.aenv-btn-secondary{font-size:12px;font-weight:500;padding:5px 11px;background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line);border-radius:6px;cursor:pointer;font-family:inherit}
+.aenv-btn-ghost{font-size:12px;font-weight:500;padding:5px 11px;background:transparent;color:var(--ink-3);border:1px solid var(--line-2);border-radius:6px;cursor:pointer;font-family:inherit}
+/* ===== Package drawer ===== */
+.pkg-drawer{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden;margin-top:8px}
+.pkg-drawer-head{padding:10px 14px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.pkg-drawer-title{font-size:13px;font-weight:600;color:var(--ink)}
+.pkg-drawer-sub{font-family:var(--font-mono);font-size:10px;color:var(--ink-3);white-space:nowrap}
+.pkg-filter{padding:6px 12px;border-bottom:1px solid var(--line-2)}
+.pkg-filter-input{width:100%;background:var(--bg);border:1px solid var(--line-2);border-radius:6px;padding:5px 10px;font-family:var(--font-mono);font-size:12px;color:var(--ink-2);outline:none;box-sizing:border-box}
+.pkg-row{display:flex;align-items:flex-start;padding:7px 14px;border-bottom:1px solid var(--line-2);gap:8px}
+.pkg-dot-ok{width:7px;height:7px;border-radius:50%;background:var(--ok);flex-shrink:0;margin-top:4px}
+.pkg-name-block{flex:1;min-width:0}
+.pkg-name{font-family:var(--font-mono);font-size:12px;color:var(--ink);line-height:1.4}
+.pkg-node-tag{font-size:10px;color:var(--accent-2);margin-top:1px}
+.pkg-remove-btn{background:none;border:none;color:var(--ink-3);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;flex-shrink:0;margin-top:1px}
+.pkg-add-row{padding:8px 12px;border-bottom:1px solid var(--line-2);display:flex;gap:7px}
+.pkg-add-input{flex:1;background:var(--bg);border:1px solid var(--line-2);border-radius:6px;padding:5px 10px;font-family:var(--font-mono);font-size:12px;color:var(--ink);outline:none}
+.pkg-add-btn{font-size:12px;font-weight:600;padding:5px 14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;white-space:nowrap;font-family:inherit}
+.pkg-drop-zone{padding:9px 14px;font-size:11px;color:var(--ink-3);text-align:center;font-family:var(--font-mono);border:1px dashed var(--line);border-radius:6px;margin:8px 12px}
+/* ===== Runner Pools section ===== */
+.fleet-bar{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);padding:4px 8px;display:flex;flex-wrap:wrap;margin-bottom:24px}
+.fleet-stat{padding:10px 18px;display:flex;flex-direction:column;gap:3px}
+.fleet-stat+.fleet-stat{border-left:1px solid var(--line-2)}
+.fleet-stat-label{font-size:9.5px;text-transform:uppercase;letter-spacing:0.07em;color:var(--ink-3)}
+.fleet-stat-val{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:5px}
+.fleet-dot-ok{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;flex-shrink:0}
+.fleet-dot-warn{width:7px;height:7px;border-radius:50%;background:var(--amber);display:inline-block;flex-shrink:0}
+.pool-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden}
+.pool-head{padding:12px 18px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.pool-name-row{display:flex;align-items:center;gap:9px;flex:1;min-width:0;flex-wrap:wrap}
+.pool-name{font-size:14px;font-weight:600;color:var(--ink)}
+.pool-provider-badge{font-family:var(--font-mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;padding:2px 7px;border-radius:4px}
+.pool-provider-agent{background:rgba(76,158,255,0.1);color:var(--accent);border:1px solid rgba(76,158,255,0.25)}
+.pool-provider-docker{background:rgba(96,165,250,0.1);color:#60a5fa;border:1px solid rgba(96,165,250,0.3)}
+.pool-provider-k8s{background:rgba(192,132,252,0.1);color:#c084fc;border:1px solid rgba(192,132,252,0.3)}
+.pool-status-pill{font-family:var(--font-mono);font-size:9.5px;font-weight:600;padding:2px 9px;border-radius:20px}
+.pool-status-online{background:rgba(87,201,138,0.1);color:var(--ok);border:1px solid rgba(87,201,138,0.25)}
+.pool-status-partial{background:rgba(255,212,121,0.1);color:var(--amber);border:1px solid rgba(255,212,121,0.3)}
+.pool-meta-line{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);padding:7px 18px;border-bottom:1px solid var(--line-2)}
+.pool-actions{display:flex;gap:7px;flex-shrink:0}
+.health-strip{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line-2)}
+.hs-cell{padding:10px 16px}
+.hs-cell+.hs-cell{border-left:1px solid var(--line-2)}
+.hs-label{font-size:9.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-3);margin-bottom:5px}
+.hs-val{font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--ink)}
+.hs-bar-track{height:5px;background:var(--surface-3);border-radius:3px;margin-top:5px;overflow:hidden}
+.hs-bar-fill{height:100%;background:var(--accent);border-radius:3px}
+.sparkline{display:flex;align-items:flex-end;gap:2px;height:18px;margin-top:5px}
+.spark-bar{width:5px;border-radius:2px 2px 0 0;min-height:2px}
+.spark-ok{background:var(--ok);opacity:0.65}
+.spark-err{background:#f47067;opacity:0.8}
+.runner-table{width:100%;border-collapse:collapse}
+.runner-thead th{padding:7px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-3);font-weight:500;border-bottom:1px solid var(--line-2);background:var(--bg);white-space:nowrap}
+.runner-trow td{padding:10px 16px;border-bottom:1px solid var(--line-2);vertical-align:middle;font-size:13px}
+.runner-trow:last-child td{border-bottom:none}
+.runner-trow:hover td{background:rgba(255,255,255,0.012)}
+.rdot{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0}
+.rdot-online{background:var(--ok);box-shadow:0 0 6px rgba(87,201,138,0.45)}
+.rdot-offline{background:var(--ink-3)}
+.rdot-draining{background:var(--amber)}
+.runner-name-cell{display:flex;align-items:center;gap:8px}
+.runner-name{font-size:13px;font-weight:500;color:var(--ink)}
+.runner-lastseen{font-family:var(--font-mono);font-size:10px;color:var(--ink-3);margin-top:1px}
+.label-pill{font-family:var(--font-mono);font-size:9.5px;padding:1px 6px;background:var(--surface-3);border:1px solid var(--line);border-radius:4px;color:var(--ink-2);display:inline-block;margin:1px 1px}
+.cap-cell{display:flex;align-items:center;gap:8px}
+.cap-bar-track{width:50px;height:5px;background:var(--surface-3);border-radius:3px;overflow:hidden;flex-shrink:0}
+.cap-bar-fill{height:100%;background:var(--accent);border-radius:3px}
+.cap-text{font-family:var(--font-mono);font-size:11px;color:var(--ink-2);white-space:nowrap}
+.tact-btn{font-size:11px;padding:3px 9px;border-radius:5px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.tact-ghost{background:transparent;color:var(--ink-3);border:1px solid var(--line-2)}
+.tact-warn{background:transparent;color:var(--amber);border:1px solid rgba(255,212,121,0.3)}
 /* reduced motion */
 @media(prefers-reduced-motion:reduce){
   .node{opacity:1!important;transform:none!important;transition:none!important}
@@ -135,7 +532,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 }
 
 /* sections */
-.section-pad{padding:96px 0}
+.section-pad{padding:80px 0}
 .eyebrow{font-family:var(--font-mono);font-size:11.5px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);margin-bottom:14px}
 h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);font-weight:800;line-height:1.05;letter-spacing:-0.03em;max-width:22ch}
 
@@ -166,8 +563,8 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
 .pcard p{font-size:14px;color:var(--ink-2);line-height:1.6}
 
 /* bento grid */
-.bento{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:48px}
-@media(max-width:860px){.bento{grid-template-columns:repeat(2,1fr)}}
+.bento{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:48px}
+@media(max-width:1060px){.bento{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:540px){.bento{grid-template-columns:1fr}}
 .bento-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);padding:22px 20px;display:flex;flex-direction:column;gap:10px;transition:border-color 140ms ease,background 140ms ease}
 .bento-card:hover{border-color:var(--accent-deep);background:var(--surface-2)}
@@ -223,11 +620,14 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
       <span class="nav-brand-name">Nodyra</span>
     </a>
     <nav class="nav-links" aria-label="Site sections">
-      <a href="#how">AI Agent</a>
-      <a href="#why">Platform</a>
-      <a href="#cta">Docs</a>
+      <a href="#how">How it works</a>
+      <a href="#environments">Environments</a>
+      <a href="#runners">Runners</a>
+      <a href="#enterprise">Enterprise</a>
+      <a href="#pricing">Pricing</a>
     </nav>
     <div class="nav-cta">
+      <a href="#pricing" class="btn" style="font-size:13px">View pricing</a>
       <a href="#cta" class="btn btn-primary">Join waitlist</a>
     </div>
   </div>
@@ -243,59 +643,70 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
     <div class="canvas-stage" id="canvas-stage" aria-hidden="true">
       <svg class="canvas-edges" id="canvas-edges" aria-hidden="true"></svg>
 
+      <!-- canvas tooltip (positioned by JS) -->
+      <div class="canvas-tooltip" id="canvas-tooltip" aria-hidden="true"></div>
+
       <!-- Node 1: Webhook Trigger -->
-      <div class="node" id="n1" style="left:60px;top:calc(50% - 80px);--cat:#4c9eff">
+      <div class="node" id="n1" style="left:370px;top:calc(50% - 80px);--cat:#4c9eff" onclick="openNDV('n1')" role="button" tabindex="0" aria-label="Open Webhook Trigger node" onkeydown="if(event.key==='Enter'||event.key===' ')openNDV('n1')">
+        <div class="node-hint-ring"></div>
         <div class="node-tile">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <svg width="28" height="28" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+            <path d="M178.16,176H111.32A48,48,0,1,1,25.6,139.19a8,8,0,0,1,12.8,9.61A31.69,31.69,0,0,0,32,168a32,32,0,0,0,64,0,8,8,0,0,1,8-8h74.16a16,16,0,1,1,0,16ZM64,184a16,16,0,0,0,14.08-23.61l35.77-58.14a8,8,0,0,0-2.62-11,32,32,0,1,1,46.1-40.06A8,8,0,1,0,172,44.79a48,48,0,1,0-75.62,55.33L64.44,152c-.15,0-.29,0-.44,0a16,16,0,0,0,0,32Zm128-64a48.18,48.18,0,0,0-18,3.49L142.08,71.6A16,16,0,1,0,128,80l.44,0,35.78,58.15a8,8,0,0,0,11,2.61A32,32,0,1,1,192,200a8,8,0,0,0,0,16,48,48,0,0,0,0-96Z"/>
           </svg>
           <div class="port port-out" style="background:#4c9eff"></div>
         </div>
         <div class="node-label">Webhook Trigger</div>
       </div>
 
-      <!-- Node 2: Claude AI -->
-      <div class="node" id="n2" style="left:220px;top:calc(50% - 180px);--cat:#8fd06f">
+      <!-- Node 2: Fetch Data -->
+      <div class="node" id="n2" style="left:530px;top:calc(50% - 180px);--cat:#37c8a8" onclick="openNDV('n2')" role="button" tabindex="0" aria-label="Open Fetch Data node" onkeydown="if(event.key==='Enter'||event.key===' ')openNDV('n2')">
+        <div class="node-hint-ring"></div>
         <div class="node-tile">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
-            <path d="M8 12h8M12 8v8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <svg width="28" height="28" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+            <path d="M128,24C74.17,24,32,48.6,32,80v96c0,31.4,42.17,56,96,56s96-24.6,96-56V80C224,48.6,181.83,24,128,24Zm80,104c0,9.62-7.88,19.43-21.61,26.92C170.93,163.35,150.19,168,128,168s-42.93-4.65-58.39-13.08C55.88,147.43,48,137.62,48,128V111.36c17.06,15,46.23,24.64,80,24.64s62.94-9.68,80-24.64ZM69.61,53.08C85.07,44.65,105.81,40,128,40s42.93,4.65,58.39,13.08C200.12,60.57,208,70.38,208,80s-7.88,19.43-21.61,26.92C170.93,115.35,150.19,120,128,120s-42.93-4.65-58.39-13.08C55.88,99.43,48,89.62,48,80S55.88,60.57,69.61,53.08ZM186.39,202.92C170.93,211.35,150.19,216,128,216s-42.93-4.65-58.39-13.08C55.88,195.43,48,185.62,48,176V159.36c17.06,15,46.23,24.64,80,24.64s62.94-9.68,80-24.64V176C208,185.62,200.12,195.43,186.39,202.92Z"/>
           </svg>
           <div class="port port-in" style="background:#94a3b8"></div>
-          <div class="port port-out" style="background:#8fd06f"></div>
+          <div class="port port-out" style="background:#37c8a8"></div>
         </div>
-        <div class="node-label">Claude AI</div>
+        <div class="node-label">Fetch Data</div>
         <div class="node-cursor" id="node-cursor" aria-hidden="true"
              style="position:absolute;top:-4px;right:-4px;width:3px;height:12px;background:var(--accent);border-radius:1px;opacity:0"></div>
       </div>
 
       <!-- Node 3: Transform -->
-      <div class="node" id="n3" style="left:390px;top:calc(50% - 40px);--cat:#c084fc">
+      <div class="node" id="n3" style="left:690px;top:calc(50% - 40px);--cat:#3fd0e0" onclick="openNDV('n3')" role="button" tabindex="0" aria-label="Open Transform node" onkeydown="if(event.key==='Enter'||event.key===' ')openNDV('n3')">
+        <div class="node-hint-ring"></div>
         <div class="node-tile">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <polyline points="16 3 21 3 21 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <line x1="4" y1="20" x2="21" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            <polyline points="21 16 21 21 16 21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <line x1="15" y1="15" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <svg width="28" height="28" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+            <path d="M69.12,94.15,28.5,128l40.62,33.85a8,8,0,1,1-10.24,12.29l-48-40a8,8,0,0,1,0-12.29l48-40a8,8,0,0,1,10.24,12.3Zm176,27.7-48-40a8,8,0,1,0-10.24,12.3L227.5,128l-40.62,33.85a8,8,0,1,0,10.24,12.29l48-40a8,8,0,0,0,0-12.29ZM162.73,32.48a8,8,0,0,0-10.25,4.79l-64,176a8,8,0,0,0,4.79,10.26A8.14,8.14,0,0,0,96,224a8,8,0,0,0,7.52-5.27l64-176A8,8,0,0,0,162.73,32.48Z"/>
           </svg>
           <div class="port port-in" style="background:#94a3b8"></div>
-          <div class="port port-out" style="background:#c084fc"></div>
+          <div class="port port-out" style="background:#3fd0e0"></div>
         </div>
         <div class="node-label">Transform</div>
       </div>
 
       <!-- Node 4: HTTP Request -->
-      <div class="node" id="n4" style="left:560px;top:calc(50% - 160px);--cat:#f97316">
+      <div class="node" id="n4" style="left:860px;top:calc(50% - 160px);--cat:#2f9bff" onclick="openNDV('n4')" role="button" tabindex="0" aria-label="Open HTTP Request node" onkeydown="if(event.key==='Enter'||event.key===' ')openNDV('n4')">
+        <div class="node-hint-ring"></div>
         <div class="node-tile">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
-            <line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.8"/>
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" stroke="currentColor" stroke-width="1.8"/>
+          <svg width="28" height="28" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+            <path d="M128,24h0A104,104,0,1,0,232,128,104.12,104.12,0,0,0,128,24Zm88,104a87.61,87.61,0,0,1-3.33,24H174.16a157.44,157.44,0,0,0,0-48h38.51A87.61,87.61,0,0,1,216,128ZM102,168H154a115.11,115.11,0,0,1-26,45A115.27,115.27,0,0,1,102,168Zm-3.9-16a140.84,140.84,0,0,1,0-48h59.88a140.84,140.84,0,0,1,0,48ZM40,128a87.61,87.61,0,0,1,3.33-24H81.84a157.44,157.44,0,0,0,0,48H43.33A87.61,87.61,0,0,1,40,128ZM154,88H102a115.11,115.11,0,0,1,26-45A115.27,115.27,0,0,1,154,88Zm52.33,0H170.71a135.28,135.28,0,0,0-22.3-45.6A88.29,88.29,0,0,1,206.37,88ZM107.59,42.4A135.28,135.28,0,0,0,85.29,88H49.63A88.29,88.29,0,0,1,107.59,42.4ZM49.63,168H85.29a135.28,135.28,0,0,0,22.3,45.6A88.29,88.29,0,0,1,49.63,168Zm98.78,45.6a135.28,135.28,0,0,0,22.3-45.6h35.66A88.29,88.29,0,0,1,148.41,213.6Z"/>
           </svg>
           <div class="port port-in" style="background:#94a3b8"></div>
         </div>
         <div class="node-label">HTTP Request</div>
+      </div>
+    </div>
+
+    <!-- Demo bar: AI prompt + LLM status -->
+    <div class="demo-bar" id="demo-bar" aria-live="polite">
+      <div class="demo-prompt-box">
+        <span class="demo-prompt-icon" aria-hidden="true">⌘</span>
+        <div class="demo-prompt-body">
+          <div class="demo-prompt-text" id="demo-prompt-text"><span class="demo-prompt-cursor"></span></div>
+          <div class="demo-status" id="demo-status"></div>
+        </div>
       </div>
     </div>
 
@@ -307,19 +718,36 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
 
     <!-- Python source pane -->
     <div class="python-pane" id="python-pane">
-      <div class="py-node-tag">Transform · Python source</div>
-      <pre><span class="py-dec">@nodyra.node</span>
-<span class="py-kw">def</span> <span class="py-fn">run</span>(inputs):
-    <span class="py-cm"># inputs come from Claude AI node output</span>
+      <div class="py-node-tag">workflow · exported Python</div>
+      <pre><span class="py-cm"># nodyra export — fetch-signups-workflow.py</span>
+<span class="py-cm"># Run: python fetch-signups-workflow.py</span>
+
+<span class="py-kw">import</span> psycopg2, requests, pandas <span class="py-kw">as</span> pd
+<span class="py-kw">from</span> nodyra <span class="py-kw">import</span> workflow, node
+
+<span class="py-dec">@node</span>(trigger=<span class="py-str">"webhook"</span>, path=<span class="py-str">"/signups"</span>)
+<span class="py-kw">def</span> <span class="py-fn">webhook_trigger</span>(event):
+    <span class="py-kw">return</span> {<span class="py-str">"payload"</span>: event.<span class="py-fn">json</span>()}
+
+<span class="py-dec">@node</span>
+<span class="py-kw">def</span> <span class="py-fn">fetch_data</span>(inputs):
+    conn = psycopg2.<span class="py-fn">connect</span>(env[<span class="py-str">"POSTGRES_URL"</span>])
+    df = pd.<span class="py-fn">read_sql</span>(<span class="py-str">"SELECT * FROM signups WHERE created_at > NOW() - INTERVAL '24h'"</span>, conn)
+    <span class="py-kw">return</span> {<span class="py-str">"data"</span>: df}
+
+<span class="py-dec">@node</span>
+<span class="py-kw">def</span> <span class="py-fn">transform</span>(inputs):
     df = inputs[<span class="py-str">"data"</span>]
-
     result = df[df[<span class="py-str">"status"</span>] == <span class="py-str">"active"</span>]
+    <span class="py-kw">return</span> {<span class="py-str">"filtered"</span>: result, <span class="py-str">"count"</span>: <span class="py-fn">len</span>(result)}
 
-    <span class="py-kw">return</span> {
-        <span class="py-str">"filtered"</span>: result,
-        <span class="py-str">"count"</span>: <span class="py-fn">len</span>(result),
-        <span class="py-str">"summary"</span>: result.<span class="py-fn">describe</span>()
-    }</pre>
+<span class="py-dec">@node</span>
+<span class="py-kw">def</span> <span class="py-fn">http_request</span>(inputs):
+    requests.<span class="py-fn">post</span>(env[<span class="py-str">"SLACK_WEBHOOK"</span>],
+        json={<span class="py-str">"text"</span>: <span class="py-str">f"</span><span class="py-fn">{inputs['count']}</span><span class="py-str"> new signups today"</span>})
+    <span class="py-kw">return</span> {<span class="py-str">"sent"</span>: <span class="py-kw">True</span>}
+
+workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transform >> http_request)</pre>
     </div>
   </div>
 
@@ -327,7 +755,7 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
   <div class="hero-copy">
     <div class="status-pill">
       <span class="status-dot" aria-hidden="true"></span>
-      live on your infra
+      live on your infra · early access
     </div>
 
     <h1 class="hero-headline">
@@ -336,8 +764,9 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
     </h1>
 
     <p class="hero-sub">
-      Describe what you need. It writes the Python and lays it out as
-      <b>nodes on a canvas.</b> Every node is real code — export it, fork it, own it.
+      Describe what you need. The agent writes Python and lays it out as
+      <b>nodes on a canvas.</b> Every node is real code — inspect it, edit it, export it.
+      Deploy to any environment, run in Docker sandboxes, route to remote runners.
     </p>
 
     <form class="waitlist-form" id="waitlist-hero" novalidate>
@@ -353,7 +782,7 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
       You're on the list. We'll be in touch.
     </div>
 
-    <p class="hero-note">Self-hostable &nbsp;·&nbsp; Python-native &nbsp;·&nbsp; MCP server included</p>
+    <p class="hero-note">Self-hostable &nbsp;·&nbsp; Python-native &nbsp;·&nbsp; MCP server + client &nbsp;·&nbsp; Docker sandboxing &nbsp;·&nbsp; Runner Pools</p>
   </div>
 </section>
 
@@ -487,7 +916,7 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
           <span class="pro-badge">Pro</span>
         </div>
         <h3>Observability</h3>
-        <p>Per-node token streaming, execution timelines, run diffs, and audit logs. Know exactly what ran, when, and why.</p>
+        <p>Execution timelines, per-node token streaming, Prometheus metrics endpoint, and an ops dashboard with queue depth and success rate.</p>
       </div>
       <div class="bento-card reveal">
         <div class="bento-head">
@@ -500,10 +929,787 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
           </div>
           <span class="pro-badge">Pro</span>
         </div>
-        <h3>Remote runners</h3>
-        <p>Deploy execution agents on your cloud or on-prem servers. Route workflows to specific environments by label.</p>
+        <h3>Runner Pools</h3>
+        <p>Agent (outbound WebSocket), Docker, or Kubernetes providers. Bind Python environments to a pool for isolated remote execution.</p>
+      </div>
+      <div class="bento-card reveal">
+        <div class="bento-head">
+          <div class="bento-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <polyline points="16 18 22 12 16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <polyline points="8 6 2 12 8 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <line x1="12" y1="3" x2="12" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <h3>Code Library</h3>
+        <p>Write Python helper functions once, reuse them across every workflow. Scoped to global, environment, or a single workflow.</p>
+      </div>
+      <div class="bento-card reveal">
+        <div class="bento-head">
+          <div class="bento-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+        <h3>GitHub Sync</h3>
+        <p>Bidirectional sync between Nodyra workflows and a GitHub repo. Push changes to a branch, pull updates back — keep your code where your team lives.</p>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- PYTHON ENVIRONMENTS -->
+<section id="environments" class="layer section-pad" style="background:linear-gradient(180deg,transparent,rgba(76,158,255,0.025) 50%,transparent)">
+  <div class="wrap">
+    <p class="eyebrow reveal">Python Environments</p>
+    <h2 class="section-h reveal">Your packages. Your Python. Built fresh.</h2>
+    <div class="deploy-grid" style="margin-top:52px">
+
+      <!-- Left: copy + feature bullets -->
+      <div class="reveal">
+        <p style="font-size:16px;color:var(--ink-2);line-height:1.7;max-width:44ch">
+          Each workflow runs in its own Python environment — a real interpreter with your packages pre-installed.
+          Pick the Python version, choose a backend, configure the worker pool, bind to a runner.
+        </p>
+
+        <div class="deploy-bullets">
+          <div class="deploy-bullet">
+            <div class="deploy-bullet-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <polyline points="16 18 22 12 16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <polyline points="8 6 2 12 8 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div>
+              <div class="deploy-bullet-title">Python 3.12, 3.13, and 3.14 — your choice</div>
+              <div class="deploy-bullet-body">Select the exact Python version per environment. Backends: <code style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">venv</code> (uv-managed), <code style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">conda</code>, and <code style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">pixi</code>.</div>
+            </div>
+          </div>
+          <div class="deploy-bullet">
+            <div class="deploy-bullet-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                <path d="M8 12h8M12 8v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div>
+              <div class="deploy-bullet-title">Any package from PyPI, conda-forge, or a private index</div>
+              <div class="deploy-bullet-body">Add packages individually or import a <code style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">requirements.txt</code>. Nodyra shows which workflow nodes depend on each package before you remove one.</div>
+            </div>
+          </div>
+          <div class="deploy-bullet">
+            <div class="deploy-bullet-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2"/>
+                <line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div>
+              <div class="deploy-bullet-title">Fixed, Elastic, or Spawn-per-run worker pool</div>
+              <div class="deploy-bullet-body">Keep N warm workers (Fixed), burst from min to max on demand (Elastic), or spawn a fresh interpreter per run (lowest RAM). Bind to local, Docker, or Kubernetes runner pools.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mini-terminal" role="img" aria-label="Environment build log">
+          <div class="mini-terminal-bar">
+            <div class="term-circles">
+              <span style="background:#f47067"></span>
+              <span style="background:#ffd479"></span>
+              <span style="background:#57c98a"></span>
+            </div>
+            <span class="term-title">ml-pipeline — build log</span>
+          </div>
+          <div class="mini-terminal-body">
+<span class="t-dim">→ </span><span class="t-cmd">uv venv --python 3.13</span>
+<span class="t-dim">→ </span><span class="t-cmd">uv pip install pandas scikit-learn boto3 requests</span>
+<span class="t-ok">✓</span> Environment built in <span class="t-accent">18.4s</span>
+<span class="t-ok">✓</span> Worker RSS: <span class="t-accent">142 MB</span>  ·  Pool: <span class="t-accent">Elastic 2–8</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: app-faithful environment card + package drawer -->
+      <div class="reveal">
+        <!-- Environment card (mirrors real app EnvCard) -->
+        <div class="aenv-card">
+          <div class="aenv-head">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="aenv-name">ml-pipeline</span>
+              <span class="env-backend-badge env-backend-venv">venv</span>
+            </div>
+            <span class="env-status-badge env-status-ready">● READY</span>
+          </div>
+          <div class="aenv-meta-line">Python 3.13 &nbsp;·&nbsp; pool 2→8 &nbsp;·&nbsp; → k8s-prod</div>
+          <div class="aenv-health">
+            <div class="aenv-htile">
+              <div class="aenv-htile-label">Workers</div>
+              <div class="aenv-htile-val">8</div>
+            </div>
+            <div class="aenv-htile aenv-htile-click" title="click to manage packages">
+              <div class="aenv-htile-label">Packages</div>
+              <div class="aenv-htile-val">4</div>
+            </div>
+            <div class="aenv-htile">
+              <div class="aenv-htile-label">Worker RAM</div>
+              <div class="aenv-htile-val">142 MB</div>
+            </div>
+            <div class="aenv-htile">
+              <div class="aenv-htile-label">Max RAM</div>
+              <div class="aenv-htile-val">1.1 GB</div>
+            </div>
+          </div>
+          <div class="aenv-actions">
+            <button class="aenv-btn-primary">Manage packages</button>
+            <button class="aenv-btn-secondary">Edit</button>
+            <button class="aenv-btn-secondary">Rebuild</button>
+            <button class="aenv-btn-ghost">Delete</button>
+          </div>
+        </div>
+
+        <!-- Package drawer (open state) -->
+        <div class="pkg-drawer">
+          <div class="pkg-drawer-head">
+            <span class="pkg-drawer-title">ml-pipeline &nbsp;·&nbsp; packages</span>
+            <span class="pkg-drawer-sub">4 installed &nbsp;·&nbsp; rebuild runs on save</span>
+          </div>
+          <div class="pkg-filter">
+            <input class="pkg-filter-input" type="text" placeholder="filter" readonly>
+          </div>
+          <div class="pkg-row">
+            <span class="pkg-dot-ok"></span>
+            <div class="pkg-name-block">
+              <div class="pkg-name">pandas <span style="color:var(--ink-3)">2.2.2</span></div>
+              <div class="pkg-node-tag">node: load-csv &nbsp;·&nbsp; merge-data</div>
+            </div>
+            <button class="pkg-remove-btn" aria-label="remove pandas">×</button>
+          </div>
+          <div class="pkg-row">
+            <span class="pkg-dot-ok"></span>
+            <div class="pkg-name-block">
+              <div class="pkg-name">scikit-learn <span style="color:var(--ink-3)">1.4.0</span></div>
+              <div class="pkg-node-tag">node: train-model</div>
+            </div>
+            <button class="pkg-remove-btn" aria-label="remove scikit-learn">×</button>
+          </div>
+          <div class="pkg-row">
+            <span class="pkg-dot-ok"></span>
+            <div class="pkg-name-block">
+              <div class="pkg-name">boto3 <span style="color:var(--ink-3)">1.34</span></div>
+              <div class="pkg-node-tag">node: s3-upload</div>
+            </div>
+            <button class="pkg-remove-btn" aria-label="remove boto3">×</button>
+          </div>
+          <div class="pkg-row">
+            <span class="pkg-dot-ok"></span>
+            <div class="pkg-name-block">
+              <div class="pkg-name">requests</div>
+            </div>
+            <button class="pkg-remove-btn" aria-label="remove requests">×</button>
+          </div>
+          <div class="pkg-add-row">
+            <input class="pkg-add-input" type="text" placeholder="pandas, numpy==2.1, httpx&gt;=0.27 …" readonly>
+            <button class="pkg-add-btn">Add</button>
+          </div>
+          <div class="pkg-drop-zone">⤓ Drop a requirements.txt here, or browse</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DEPLOYMENTS & SCHEDULING -->
+<section id="deploy" class="layer section-pad">
+  <div class="wrap">
+    <p class="eyebrow reveal">Deployments &amp; Scheduling</p>
+    <h2 class="section-h reveal">Run on a cron. Ship with confidence.</h2>
+    <div class="deploy-grid" style="margin-top:52px">
+
+      <!-- Left: deployment card -->
+      <div class="reveal">
+        <div class="dep-card">
+          <div class="dep-card-head">
+            <span class="dep-card-name">daily-signups-report</span>
+            <span class="dep-active-badge">● active</span>
+          </div>
+          <div class="dep-cron-block">
+            <div class="dep-cron-expr">0 9 * * 1-5</div>
+            <div class="dep-cron-label">9:00 AM, weekdays &nbsp;·&nbsp; Australia/Sydney</div>
+          </div>
+          <div class="dep-stats">
+            <div class="dep-stat">
+              <div class="dep-stat-label">Last fired</div>
+              <div class="dep-stat-val dep-stat-val-ok">2026-07-01 09:00</div>
+            </div>
+            <div class="dep-stat">
+              <div class="dep-stat-label">Success rate</div>
+              <div class="dep-stat-val">97% &nbsp;<span style="font-weight:400;color:var(--ink-3)">· 29/30</span></div>
+            </div>
+          </div>
+          <div class="dep-card-env">
+            <span>Env <strong>ml-pipeline</strong></span>
+            <span>Runner <strong>k8s-prod</strong></span>
+            <span>Version <strong>v14</strong></span>
+          </div>
+        </div>
+
+        <div style="margin-top:10px" class="dep-card">
+          <div class="dep-card-head">
+            <span class="dep-card-name">hourly-sync</span>
+            <span class="dep-active-badge">● active</span>
+          </div>
+          <div class="dep-cron-block">
+            <div class="dep-cron-expr" style="font-size:13px">Every 1 hour</div>
+            <div class="dep-cron-label">Simple interval &nbsp;·&nbsp; UTC</div>
+          </div>
+          <div class="dep-stats">
+            <div class="dep-stat">
+              <div class="dep-stat-label">Last fired</div>
+              <div class="dep-stat-val dep-stat-val-ok">2026-07-01 08:00</div>
+            </div>
+            <div class="dep-stat">
+              <div class="dep-stat-label">Success rate</div>
+              <div class="dep-stat-val">100% &nbsp;<span style="font-weight:400;color:var(--ink-3)">· 168/168</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: copy + features -->
+      <div class="reveal">
+        <p style="font-size:16px;color:var(--ink-2);line-height:1.7;max-width:44ch;margin-bottom:28px">
+          A Deployment attaches a schedule to a published workflow version.
+          It fires on a cron expression or a simple interval, injects default parameters,
+          and can hand off to an error workflow on failure.
+        </p>
+
+        <div class="deploy-bullets">
+          <div class="deploy-bullet">
+            <div class="deploy-bullet-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div>
+              <div class="deploy-bullet-title">Full cron syntax with IANA timezone</div>
+              <div class="deploy-bullet-body">Write any valid cron expression (<code style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">0 9 * * 1-5</code>) or use a simple interval. Timezone evaluated using the IANA tz database — <code style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">Australia/Sydney</code>, not a UTC offset.</div>
+            </div>
+          </div>
+          <div class="deploy-bullet">
+            <div class="deploy-bullet-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                <polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div>
+              <div class="deploy-bullet-title">Pin to a workflow version</div>
+              <div class="deploy-bullet-body">Pin a Deployment to a specific published version, or always run the latest. Override the environment and runner pool per deployment without touching the workflow.</div>
+            </div>
+          </div>
+          <div class="deploy-bullet">
+            <div class="deploy-bullet-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div>
+              <div class="deploy-bullet-title">Error workflow on failure</div>
+              <div class="deploy-bullet-body">Route any failed run to a separate error-handling workflow. Configure alert policies — know within seconds if something breaks.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- RUNNER POOLS -->
+<section id="runners" class="layer section-pad">
+  <div class="wrap">
+    <p class="eyebrow reveal">Runner Pools</p>
+    <h2 class="section-h reveal">Your compute. Any machine, any cloud.</h2>
+    <p class="reveal" style="font-size:16px;color:var(--ink-2);line-height:1.7;max-width:52ch;margin-top:16px">
+      Connect VMs, Docker daemons, or Kubernetes clusters as runner pools. Each pool dispatches to real machines — the fleet dashboard shows every agent's health, capacity, and cached environments live.
+    </p>
+
+    <!-- Fleet summary bar -->
+    <div class="fleet-bar reveal" style="margin-top:44px">
+      <div class="fleet-stat">
+        <div class="fleet-stat-label">Runners online</div>
+        <div class="fleet-stat-val"><span class="fleet-dot-ok"></span>3 / 4 registered</div>
+      </div>
+      <div class="fleet-stat">
+        <div class="fleet-stat-label">Queue depth</div>
+        <div class="fleet-stat-val">0</div>
+      </div>
+      <div class="fleet-stat">
+        <div class="fleet-stat-label">In-flight runs</div>
+        <div class="fleet-stat-val">6</div>
+      </div>
+      <div class="fleet-stat">
+        <div class="fleet-stat-label">Dispatchers</div>
+        <div class="fleet-stat-val"><span class="fleet-dot-ok"></span>all providers served</div>
+      </div>
+    </div>
+
+    <!-- k8s-prod pool card (expanded) -->
+    <div class="pool-card reveal" style="margin-bottom:12px">
+      <div class="pool-head">
+        <div class="pool-name-row">
+          <span class="pool-name">k8s-prod</span>
+          <span class="pool-provider-badge pool-provider-k8s">kubernetes</span>
+          <span class="pool-status-pill pool-status-online">● 3/4 online</span>
+        </div>
+        <div class="pool-actions">
+          <button class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Runners ▾</button>
+          <button class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Edit</button>
+          <button class="aenv-btn-ghost" style="font-size:11px;padding:4px 11px">Delete</button>
+        </div>
+      </div>
+      <div class="pool-meta-line">max 32 concurrent &nbsp;·&nbsp; environments: ml-pipeline, etl-daily, api-gateway</div>
+      <!-- health strip -->
+      <div class="health-strip">
+        <div class="hs-cell">
+          <div class="hs-label">Capacity used</div>
+          <div class="hs-val">18 / 32 slots</div>
+          <div class="hs-bar-track"><div class="hs-bar-fill" style="width:56%"></div></div>
+        </div>
+        <div class="hs-cell">
+          <div class="hs-label">Queue (this pool)</div>
+          <div class="hs-val" style="color:var(--ok)">0 waiting</div>
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--ok);margin-top:4px;opacity:0.7">✓ no backlog</div>
+        </div>
+        <div class="hs-cell">
+          <div class="hs-label">Success (24h)</div>
+          <div class="hs-val">99%</div>
+          <div class="sparkline" aria-hidden="true">
+            <div class="spark-bar spark-ok" style="height:60%"></div>
+            <div class="spark-bar spark-ok" style="height:75%"></div>
+            <div class="spark-bar spark-ok" style="height:90%"></div>
+            <div class="spark-bar spark-ok" style="height:100%"></div>
+            <div class="spark-bar spark-ok" style="height:80%"></div>
+            <div class="spark-bar spark-ok" style="height:95%"></div>
+            <div class="spark-bar spark-err" style="height:20%"></div>
+            <div class="spark-bar spark-ok" style="height:85%"></div>
+            <div class="spark-bar spark-ok" style="height:100%"></div>
+            <div class="spark-bar spark-ok" style="height:70%"></div>
+            <div class="spark-bar spark-ok" style="height:90%"></div>
+            <div class="spark-bar spark-ok" style="height:100%"></div>
+          </div>
+        </div>
+        <div class="hs-cell">
+          <div class="hs-label">Dispatcher</div>
+          <div class="hs-val" style="color:var(--ok)">● reachable</div>
+        </div>
+      </div>
+      <!-- Runner table -->
+      <table class="runner-table">
+        <thead>
+          <tr class="runner-thead">
+            <th>Runner</th>
+            <th>Labels</th>
+            <th>Capacity</th>
+            <th>Cached envs</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="runner-trow">
+            <td>
+              <div class="runner-name-cell">
+                <span class="rdot rdot-online"></span>
+                <div>
+                  <div class="runner-name">prod-01</div>
+                  <div class="runner-lastseen">8s ago</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="label-pill">gpu=a100</span><span class="label-pill">region=us-east</span></td>
+            <td>
+              <div class="cap-cell">
+                <div class="cap-bar-track"><div class="cap-bar-fill" style="width:25%"></div></div>
+                <span class="cap-text">2 / 8</span>
+              </div>
+            </td>
+            <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--ink-2)">3 envs</span></td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="tact-btn tact-warn">Drain</button>&nbsp;
+              <button class="tact-btn tact-ghost">Edit</button>&nbsp;
+              <button class="tact-btn tact-ghost">Remove</button>
+            </td>
+          </tr>
+          <tr class="runner-trow">
+            <td>
+              <div class="runner-name-cell">
+                <span class="rdot rdot-online"></span>
+                <div>
+                  <div class="runner-name">prod-02</div>
+                  <div class="runner-lastseen">14s ago</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="label-pill">gpu=a100</span><span class="label-pill">region=us-east</span></td>
+            <td>
+              <div class="cap-cell">
+                <div class="cap-bar-track"><div class="cap-bar-fill" style="width:50%"></div></div>
+                <span class="cap-text">4 / 8</span>
+              </div>
+            </td>
+            <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--ink-2)">2 envs</span></td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="tact-btn tact-warn">Drain</button>&nbsp;
+              <button class="tact-btn tact-ghost">Edit</button>&nbsp;
+              <button class="tact-btn tact-ghost">Remove</button>
+            </td>
+          </tr>
+          <tr class="runner-trow">
+            <td>
+              <div class="runner-name-cell">
+                <span class="rdot rdot-online"></span>
+                <div>
+                  <div class="runner-name">prod-03</div>
+                  <div class="runner-lastseen">2m ago</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="label-pill">region=eu-west</span></td>
+            <td>
+              <div class="cap-cell">
+                <div class="cap-bar-track"><div class="cap-bar-fill" style="width:0%"></div></div>
+                <span class="cap-text">0 / 4</span>
+              </div>
+            </td>
+            <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--ink-2)">1 env</span></td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="tact-btn tact-warn">Drain</button>&nbsp;
+              <button class="tact-btn tact-ghost">Edit</button>&nbsp;
+              <button class="tact-btn tact-ghost">Remove</button>
+            </td>
+          </tr>
+          <tr class="runner-trow">
+            <td>
+              <div class="runner-name-cell">
+                <span class="rdot rdot-offline"></span>
+                <div>
+                  <div class="runner-name">prod-04</div>
+                  <div class="runner-lastseen">37m ago</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="label-pill">region=eu-west</span></td>
+            <td>
+              <div class="cap-cell">
+                <div class="cap-bar-track"><div class="cap-bar-fill" style="width:0%"></div></div>
+                <span class="cap-text" style="color:var(--ink-3)">— / 4</span>
+              </div>
+            </td>
+            <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--ink-3)">0 envs</span></td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="tact-btn tact-ghost" style="opacity:0.5;cursor:default">Drain</button>&nbsp;
+              <button class="tact-btn tact-ghost">Edit</button>&nbsp;
+              <button class="tact-btn tact-ghost">Remove</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- docker-dev pool (collapsed) -->
+    <div class="pool-card reveal">
+      <div class="pool-head">
+        <div class="pool-name-row">
+          <span class="pool-name">docker-dev</span>
+          <span class="pool-provider-badge pool-provider-docker">docker</span>
+          <span class="pool-status-pill pool-status-online">● 1/1 online</span>
+        </div>
+        <div class="pool-actions">
+          <button class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Runners ▸</button>
+          <button class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Edit</button>
+          <button class="aenv-btn-ghost" style="font-size:11px;padding:4px 11px">Delete</button>
+        </div>
+      </div>
+      <div class="pool-meta-line">max 4 concurrent &nbsp;·&nbsp; environments: dev-sandbox · host: local socket</div>
+      <div class="health-strip">
+        <div class="hs-cell">
+          <div class="hs-label">Capacity used</div>
+          <div class="hs-val">1 / 4 slots</div>
+          <div class="hs-bar-track"><div class="hs-bar-fill" style="width:25%"></div></div>
+        </div>
+        <div class="hs-cell">
+          <div class="hs-label">Queue (this pool)</div>
+          <div class="hs-val" style="color:var(--ok)">0 waiting</div>
+        </div>
+        <div class="hs-cell">
+          <div class="hs-label">Success (24h)</div>
+          <div class="hs-val">100%</div>
+          <div class="sparkline" aria-hidden="true">
+            <div class="spark-bar spark-ok" style="height:60%"></div>
+            <div class="spark-bar spark-ok" style="height:80%"></div>
+            <div class="spark-bar spark-ok" style="height:100%"></div>
+            <div class="spark-bar spark-ok" style="height:70%"></div>
+            <div class="spark-bar spark-ok" style="height:90%"></div>
+            <div class="spark-bar spark-ok" style="height:100%"></div>
+          </div>
+        </div>
+        <div class="hs-cell">
+          <div class="hs-label">Dispatcher</div>
+          <div class="hs-val" style="color:var(--ok)">● reachable</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ENTERPRISE CONTROLS -->
+<section id="enterprise" class="layer section-pad" style="background:linear-gradient(180deg,rgba(76,158,255,0.03),transparent)">
+  <div class="wrap">
+    <div class="ent-head-wrap">
+      <div class="reveal">
+        <p class="eyebrow">Enterprise</p>
+        <h2 class="section-h">Enterprise-grade controls — baked in, not bolted on.</h2>
+      </div>
+      <div class="reveal" style="padding-top:8px">
+        <p style="font-size:15px;color:var(--ink-2);line-height:1.7;max-width:40ch">
+          RBAC, encrypted credential vault, SSO, and immutable audit logs ship with every installation.
+          No separate security add-on required.
+        </p>
+        <div class="ent-check-list" style="margin-top:20px">
+          <div class="ent-check-item">
+            <div class="ent-check-icon" aria-hidden="true">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            SAML 2.0 &amp; OIDC — Okta, Google Workspace, Azure AD
+          </div>
+          <div class="ent-check-item">
+            <div class="ent-check-icon" aria-hidden="true">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            Air-gap friendly — license verified offline, no phone-home
+          </div>
+          <div class="ent-check-item">
+            <div class="ent-check-icon" aria-hidden="true">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            Immutable audit log — exportable to your SIEM
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ent-grid">
+      <div class="ent-card reveal">
+        <div class="ent-card-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="2"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h3>Role-Based Access Control</h3>
+        <p>Four roles — Owner, Admin, Editor, Viewer — enforced at workflow, environment, and credential level.</p>
+      </div>
+      <div class="ent-card reveal">
+        <div class="ent-card-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" stroke-width="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h3>Encrypted Credential Vault</h3>
+        <p>All secrets stored with Fernet AES-128-CBC, scoped per environment. No credential ever leaves its environment.</p>
+      </div>
+      <div class="ent-card reveal">
+        <div class="ent-card-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h3>SSO &amp; OIDC</h3>
+        <p>SAML 2.0 and OIDC support out of the box. Integrates with Okta, Azure AD, Google Workspace, and any compliant IdP.</p>
+      </div>
+      <div class="ent-card reveal">
+        <div class="ent-card-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            <polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            <line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <polyline points="10 9 9 9 8 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h3>Immutable Audit Log</h3>
+        <p>Every run, edit, and access event recorded with user, timestamp, and delta. Exportable to any SIEM or S3 bucket.</p>
+      </div>
+      <div class="ent-card reveal">
+        <div class="ent-card-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+            <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h3>Cron Triggers &amp; Retry Policy</h3>
+        <p>Schedule any workflow with a cron expression. Configure retry policies — max attempts, delay, exponential backoff, dead-letter queue.</p>
+      </div>
+      <div class="ent-card reveal">
+        <div class="ent-card-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h3>Workflow Versioning</h3>
+        <p>Every save creates a versioned snapshot. Compare diffs between versions, roll back in one click, or branch a workflow for experimentation.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section id="pricing" class="layer section-pad">
+  <div class="wrap">
+    <p class="eyebrow reveal">Pricing</p>
+    <h2 class="section-h reveal">Start free. Scale when you need to.</h2>
+    <p class="reveal" style="margin-top:16px;font-size:16px;color:var(--ink-2);max-width:48ch;line-height:1.65">All features are license-gated and verified offline. An expired license soft-downgrades to Community — your workflows never stop running.</p>
+
+    <div class="pricing-grid">
+
+      <!-- Community -->
+      <div class="price-card reveal">
+        <div class="price-tier-name">Community</div>
+        <div class="price-amount"><span>Free</span></div>
+        <div class="price-cycle">forever · MIT licensed</div>
+        <div class="price-tagline">The full Nodyra platform, self-hosted, no strings attached.</div>
+        <div class="price-features">
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Unlimited local workflows
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Python nodes — full language access
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            MCP server + client (bidirectional)
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            AI &amp; ML suite (all node types)
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Code-first export (Python package)
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Webhook + HTTP triggers
+          </div>
+          <div class="price-feat price-feat-muted">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Sandboxed execution
+          </div>
+          <div class="price-feat price-feat-muted">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Runner Pools (agent, Docker, K8s)
+          </div>
+        </div>
+        <a href="#cta" class="btn price-btn">Get started free</a>
+      </div>
+
+      <!-- Pro (featured) -->
+      <div class="price-card price-card-featured reveal">
+        <span class="price-featured-tag">Most popular</span>
+        <div class="price-tier-name price-tier-name-featured">Pro</div>
+        <div class="price-amount"><sup>$</sup><span>49</span></div>
+        <div class="price-cycle">per month · per instance</div>
+        <div class="price-tagline">Sandboxed execution, runner pools, observability, and the full security suite.</div>
+        <div class="price-features">
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Everything in Community
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Sandboxed execution (Docker-isolated)
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Runner Pools (agent, Docker, K8s)
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Observability — traces, logs, timelines
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            RBAC + Encrypted credential vault
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            SSO (SAML 2.0 + OIDC)
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Cron triggers + retry policies
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Workflow versioning + diff view
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Email support
+          </div>
+        </div>
+        <a href="#cta" class="btn btn-primary price-btn">Join the waitlist</a>
+      </div>
+
+      <!-- Enterprise -->
+      <div class="price-card reveal">
+        <div class="price-tier-name">Enterprise</div>
+        <div class="price-custom">Custom</div>
+        <div class="price-cycle">volume pricing · annual contract</div>
+        <div class="price-tagline">Dedicated support, SLA, air-gap deployment, and custom auth integrations.</div>
+        <div class="price-features">
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Everything in Pro
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Dedicated support + SLA
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Air-gap deployment (fully offline)
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Custom auth + SIEM integration
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Multi-instance volume licensing
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Onboarding, training &amp; SOC 2 docs
+          </div>
+        </div>
+        <a href="mailto:enterprise@nodyra.io" class="btn price-btn">Contact sales →</a>
+      </div>
+    </div>
+
+    <p class="price-note reveal">
+      All paid features are license-gated, verified offline — no phone-home, air-gap friendly.<br>
+      An expired license soft-downgrades to Community; your workflows never stop running.
+    </p>
   </div>
 </section>
 
@@ -512,7 +1718,26 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
   <div class="wrap">
     <div class="cta-band reveal">
       <h2>Your AI builds it. Your Python runs it. You own it all.</h2>
-      <form class="cta-form-wrap" id="waitlist-cta" novalidate>
+
+      <div class="selfhost-terminal" role="img" aria-label="Docker Compose self-hosting terminal">
+        <div class="selfhost-bar">
+          <div class="selfhost-circles">
+            <span style="background:#f47067"></span>
+            <span style="background:#ffd479"></span>
+            <span style="background:#57c98a"></span>
+          </div>
+          <span class="selfhost-title">terminal — docker compose up nodyra</span>
+        </div>
+        <div class="selfhost-body">
+<span style="color:var(--ink-3)">$ </span><span style="color:var(--ink)">docker compose up nodyra</span>
+
+<span style="color:var(--ok)">✓</span>  <span style="color:var(--accent-2)">postgres:16</span>          <span style="color:var(--ink-3)">database ready</span>
+<span style="color:var(--ok)">✓</span>  <span style="color:var(--accent-2)">nodyra/runner:latest</span> <span style="color:var(--ink-3)">runner started</span>
+<span style="color:var(--ok)">✓</span>  <span style="color:var(--accent-2)">nodyra/web:latest</span>    <span style="color:var(--ink-3)">→ </span><span style="color:var(--ink)">http://localhost:3000</span>
+        </div>
+      </div>
+
+      <form class="cta-form-wrap" id="waitlist-cta" novalidate style="margin-top:36px">
         <label for="email-cta" style="position:absolute;opacity:0;pointer-events:none">Email address</label>
         <input id="email-cta" class="field-input" type="email" placeholder="you@company.io"
                autocomplete="email" aria-label="Email address" required>
@@ -525,7 +1750,7 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
         You're on the list. We'll be in touch.
       </div>
       <p class="cta-note">
-        Self-hostable &nbsp;·&nbsp; Air-gap friendly &nbsp;·&nbsp;
+        Self-hostable &nbsp;·&nbsp; Air-gap friendly &nbsp;·&nbsp; MIT Community edition &nbsp;·&nbsp;
         One <code style="font-family:var(--font-mono);color:var(--accent)">docker compose up</code> away
       </p>
     </div>
@@ -554,14 +1779,16 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
         <span class="foot-brand-name">Nodyra</span>
       </a>
       <nav class="foot-links" aria-label="Footer links">
-        <a href="#how">AI Agent</a>
-        <a href="#why">Platform</a>
-        <a href="#cta">Docs</a>
-        <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+        <a href="#how">How it works</a>
+        <a href="#environments">Environments</a>
+        <a href="#runners">Runners</a>
+        <a href="#enterprise">Enterprise</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#cta">Get early access</a>
       </nav>
     </div>
     <div class="foot-copy">
-      <span>© 2026 Nodyra · Community edition MIT-licensed</span>
+      <span>© 2026 Nodyra &nbsp;·&nbsp; Community edition MIT-licensed &nbsp;·&nbsp; Pro features license-gated</span>
       <span>Built with Python &amp; caffeine</span>
     </div>
   </div>
@@ -671,10 +1898,82 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
     });
   }
 
+  window.animateCanvas = animateCanvas;
+
+  // ---- Demo sequence: prompt → LLM thinking → nodes → highlight ----
+  var DEMO_PROMPT = 'Fetch new signups from Postgres and notify via Slack';
+
+  function escDemo(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function runDemoSequence() {
+    if (reduceMotion) { animateCanvas(); return; }
+
+    var bar  = document.getElementById('demo-bar');
+    var ptxt = document.getElementById('demo-prompt-text');
+    var stat = document.getElementById('demo-status');
+    var tip  = document.getElementById('canvas-tooltip');
+
+    // Phase 1: show prompt bar + typewriter
+    bar.classList.add('visible');
+    var i = 0;
+    function typeNext() {
+      var typed = DEMO_PROMPT.slice(0, i);
+      ptxt.innerHTML = escDemo(typed) + '<span class="demo-prompt-cursor" aria-hidden="true"></span>';
+      if (i < DEMO_PROMPT.length) {
+        i++;
+        setTimeout(typeNext, 32);
+      } else {
+        ptxt.innerHTML = escDemo(DEMO_PROMPT);
+        setTimeout(startThinking, 420);
+      }
+    }
+    setTimeout(typeNext, 500);
+
+    // Phase 2: LLM thinking dots
+    function startThinking() {
+      stat.innerHTML =
+        '<span class="demo-dot" aria-hidden="true"></span>' +
+        '<span class="demo-dot" aria-hidden="true"></span>' +
+        '<span class="demo-dot" aria-hidden="true"></span>' +
+        '<span style="margin-left:5px">Building workflow…</span>';
+      stat.classList.add('visible');
+      setTimeout(startNodes, 1700);
+    }
+
+    // Phase 3: node animation
+    function startNodes() {
+      stat.innerHTML = '<span style="color:var(--ok)">✦</span><span style="margin-left:5px">4 nodes created</span>';
+      animateCanvas();
+      // nodes draw in over ~1800ms; then dismiss bar and show hint
+      setTimeout(function () {
+        bar.classList.remove('visible');
+        setTimeout(showNodeHint, 380);
+      }, 1950);
+    }
+
+    // Phase 4: highlight n2, show tooltip
+    function showNodeHint() {
+      var node  = document.getElementById('n2');
+      var stage = document.getElementById('canvas-stage');
+      var sr    = stage.getBoundingClientRect();
+      var tile  = node.querySelector('.node-tile');
+      var tr    = tile.getBoundingClientRect();
+      var cx    = tr.left - sr.left + tr.width / 2;
+      var cy    = tr.top  - sr.top  - 44;
+      tip.style.left = cx + 'px';
+      tip.style.top  = cy + 'px';
+      tip.textContent = 'Click to inspect ↗';
+      node.classList.add('demo-highlight');
+      tip.classList.add('visible');
+    }
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', animateCanvas);
+    document.addEventListener('DOMContentLoaded', runDemoSequence);
   } else {
-    animateCanvas();
+    runDemoSequence();
   }
 
   window.setCanvasView = function (view) {
@@ -698,6 +1997,544 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
   };
 })();
 
+// ---- NDV (Node Detail View) — exact replica of the real app panel ----
+(function () {
+  var ICON_PATHS = {
+    n1: 'M178.16,176H111.32A48,48,0,1,1,25.6,139.19a8,8,0,0,1,12.8,9.61A31.69,31.69,0,0,0,32,168a32,32,0,0,0,64,0,8,8,0,0,1,8-8h74.16a16,16,0,1,1,0,16ZM64,184a16,16,0,0,0,14.08-23.61l35.77-58.14a8,8,0,0,0-2.62-11,32,32,0,1,1,46.1-40.06A8,8,0,1,0,172,44.79a48,48,0,1,0-75.62,55.33L64.44,152c-.15,0-.29,0-.44,0a16,16,0,0,0,0,32Zm128-64a48.18,48.18,0,0,0-18,3.49L142.08,71.6A16,16,0,1,0,128,80l.44,0,35.78,58.15a8,8,0,0,0,11,2.61A32,32,0,1,1,192,200a8,8,0,0,0,0,16,48,48,0,0,0,0-96Z',
+    n2: 'M128,24C74.17,24,32,48.6,32,80v96c0,31.4,42.17,56,96,56s96-24.6,96-56V80C224,48.6,181.83,24,128,24Zm80,104c0,9.62-7.88,19.43-21.61,26.92C170.93,163.35,150.19,168,128,168s-42.93-4.65-58.39-13.08C55.88,147.43,48,137.62,48,128V111.36c17.06,15,46.23,24.64,80,24.64s62.94-9.68,80-24.64ZM69.61,53.08C85.07,44.65,105.81,40,128,40s42.93,4.65,58.39,13.08C200.12,60.57,208,70.38,208,80s-7.88,19.43-21.61,26.92C170.93,115.35,150.19,120,128,120s-42.93-4.65-58.39-13.08C55.88,99.43,48,89.62,48,80S55.88,60.57,69.61,53.08ZM186.39,202.92C170.93,211.35,150.19,216,128,216s-42.93-4.65-58.39-13.08C55.88,195.43,48,185.62,48,176V159.36c17.06,15,46.23,24.64,80,24.64s62.94-9.68,80-24.64V176C208,185.62,200.12,195.43,186.39,202.92Z',
+    n3: 'M69.12,94.15,28.5,128l40.62,33.85a8,8,0,1,1-10.24,12.29l-48-40a8,8,0,0,1,0-12.29l48-40a8,8,0,0,1,10.24,12.3Zm176,27.7-48-40a8,8,0,1,0-10.24,12.3L227.5,128l-40.62,33.85a8,8,0,1,0,10.24,12.29l48-40a8,8,0,0,0,0-12.29ZM162.73,32.48a8,8,0,0,0-10.25,4.79l-64,176a8,8,0,0,0,4.79,10.26A8.14,8.14,0,0,0,96,224a8,8,0,0,0,7.52-5.27l64-176A8,8,0,0,0,162.73,32.48Z',
+    n4: 'M128,24h0A104,104,0,1,0,232,128,104.12,104.12,0,0,0,128,24Zm88,104a87.61,87.61,0,0,1-3.33,24H174.16a157.44,157.44,0,0,0,0-48h38.51A87.61,87.61,0,0,1,216,128ZM102,168H154a115.11,115.11,0,0,1-26,45A115.27,115.27,0,0,1,102,168Zm-3.9-16a140.84,140.84,0,0,1,0-48h59.88a140.84,140.84,0,0,1,0,48ZM40,128a87.61,87.61,0,0,1,3.33-24H81.84a157.44,157.44,0,0,0,0,48H43.33A87.61,87.61,0,0,1,40,128ZM154,88H102a115.11,115.11,0,0,1,26-45A115.27,115.27,0,0,1,154,88Zm52.33,0H170.71a135.28,135.28,0,0,0-22.3-45.6A88.29,88.29,0,0,1,206.37,88ZM107.59,42.4A135.28,135.28,0,0,0,85.29,88H49.63A88.29,88.29,0,0,1,107.59,42.4ZM49.63,168H85.29a135.28,135.28,0,0,0,22.3,45.6A88.29,88.29,0,0,1,49.63,168Zm98.78,45.6a135.28,135.28,0,0,0,22.3-45.6h35.66A88.29,88.29,0,0,1,148.41,213.6Z'
+  };
+
+  var NODES = {
+    n1: {
+      name: 'Webhook Trigger', nodeId: 'webhook_trigger', category: 'Triggers', color: '#4c9eff',
+      isWebhook: true,
+      params: [],
+      pythonHtml: '<span class="py-dec">@node</span>\n<span class="py-kw">def</span> <span class="py-fn">run</span>(inputs):\n    <span class="py-cm"># Fires on each POST to /my-workflow</span>\n    body = inputs.get(<span class="py-str">"body"</span>, {})\n    headers = inputs.get(<span class="py-str">"headers"</span>, {})\n    <span class="py-kw">return</span> {\n        <span class="py-str">"body"</span>: body,\n        <span class="py-str">"headers"</span>: headers,\n        <span class="py-str">"query"</span>: inputs.get(<span class="py-str">"query"</span>, {}),\n    }',
+      inputData: null,
+      outputData: { headers: {'content-type':'application/json','user-agent':'curl/8.4.0'}, body: {user_id:'u_4821',action:'signup',plan:'pro'}, query:{} },
+      runStat: '12ms · 3 keys'
+    },
+    n2: {
+      name: 'Fetch Data', nodeId: 'postgres_query', category: 'Data', color: '#37c8a8',
+      isWebhook: false,
+      params: [
+        { name: 'Query', value: "SELECT * FROM users WHERE id = '{{ $json.user_id }}'", isExpr: true },
+        { name: 'Connection', value: 'postgres · prod-db', isExpr: false },
+        { name: 'Limit', value: '100', isExpr: false }
+      ],
+      pythonHtml: '<span class="py-dec">@node</span>\n<span class="py-kw">def</span> <span class="py-fn">run</span>(inputs):\n    user_id = inputs[<span class="py-str">"body"</span>][<span class="py-str">"user_id"</span>]\n    rows = db.execute(\n        <span class="py-str">"SELECT * FROM users WHERE id = %s"</span>,\n        [user_id]\n    )\n    <span class="py-kw">return</span> {<span class="py-str">"rows"</span>: rows, <span class="py-str">"count"</span>: len(rows)}',
+      inputData: { headers:{'content-type':'application/json'}, body:{user_id:'u_4821',action:'signup',plan:'pro'}, query:{} },
+      outputData: { rows:[{id:'u_4821',email:'alex@company.io',status:'active',plan:'pro',created_at:'2025-03-14'}], count:1 },
+      runStat: '47ms · 1 row'
+    },
+    n3: {
+      name: 'Transform', nodeId: 'code_node', category: 'Transform', color: '#3fd0e0',
+      isWebhook: false,
+      params: [],
+      pythonHtml: '<span class="py-dec">@node</span>\n<span class="py-kw">def</span> <span class="py-fn">run</span>(inputs):\n    <span class="py-cm"># inputs["data"] arrives from Fetch Data node</span>\n    df = inputs[<span class="py-str">"data"</span>]\n    result = df[df[<span class="py-str">"status"</span>] == <span class="py-str">"active"</span>]\n    <span class="py-kw">return</span> {\n        <span class="py-str">"filtered"</span>: result,\n        <span class="py-str">"count"</span>: len(result),\n        <span class="py-str">"summary"</span>: result.describe(),\n    }',
+      inputData: { rows:[{id:'u_4821',email:'alex@company.io',status:'active',plan:'pro',created_at:'2025-03-14'}], count:1 },
+      outputData: { filtered:[{id:'u_4821',email:'alex@company.io',status:'active'}], count:1, summary:{rows:1,columns:3} },
+      runStat: '8ms · 1 item'
+    },
+    n4: {
+      name: 'HTTP Request', nodeId: 'http_request', category: 'API', color: '#2f9bff',
+      isWebhook: false,
+      params: [
+        { name: 'URL', value: 'https://hooks.slack.com/services/T0.../B0.../xxx', isExpr: false },
+        { name: 'Method', value: 'POST', isExpr: false },
+        { name: 'Body', value: '{{ $json.filtered }}', isExpr: true }
+      ],
+      pythonHtml: '<span class="py-dec">@node</span>\n<span class="py-kw">def</span> <span class="py-fn">run</span>(inputs):\n    data = inputs[<span class="py-str">"filtered"</span>]\n    resp = http.post(\n        <span class="py-str">"https://hooks.slack.com/services/..."</span>,\n        json={<span class="py-str">"text"</span>: <span class="py-kw">f</span><span class="py-str">"User {data[0][\'email\']} signed up"</span>}\n    )\n    <span class="py-kw">return</span> {<span class="py-str">"status"</span>: resp.status_code, <span class="py-str">"ok"</span>: resp.ok}',
+      inputData: { filtered:[{id:'u_4821',email:'alex@company.io',status:'active'}], count:1 },
+      outputData: { status:200, ok:true, message:'Message delivered' },
+      runStat: '193ms · 3 keys'
+    }
+  };
+
+  var _currentNode = null;
+  var _currentTab = 'params';
+  var _currentMode = 'inspector';
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ---- JSON Tree (interactive, collapsible — matches DataPanel.tsx) ----
+  var _jtIdx = 0;
+
+  function jtPrim(val) {
+    if (val === null) return '<span class="json-tree-prim json-tree-null">null</span>';
+    if (typeof val === 'string') return '<span class="json-tree-prim json-tree-string">' + esc(JSON.stringify(val)) + '</span>';
+    if (typeof val === 'number') return '<span class="json-tree-prim json-tree-number">' + val + '</span>';
+    if (typeof val === 'boolean') return '<span class="json-tree-prim json-tree-boolean">' + val + '</span>';
+    return '<span class="json-tree-prim">' + esc(String(val)) + '</span>';
+  }
+
+  function jtValue(val, depth) {
+    if (val === null || typeof val !== 'object') return jtPrim(val);
+    var isArr = Array.isArray(val);
+    var entries = isArr ? val.map(function(v, i) { return [String(i), v]; }) : Object.entries(val);
+    if (entries.length === 0) return '<span class="json-tree-empty">' + (isArr ? '[]' : '{}') + '</span>';
+    return '<div class="json-tree-block">' +
+      entries.map(function(e) { return jtRow(e[0], e[1], depth); }).join('') +
+      '</div>';
+  }
+
+  function jtRow(label, val, depth) {
+    var isObj = val !== null && typeof val === 'object';
+    var isArr = Array.isArray(val);
+    var expandable = isObj && (isArr ? val.length > 0 : Object.keys(val).length > 0);
+    var collapsed = depth >= 2;
+    var id = 'jt' + (_jtIdx++);
+    var summary = '';
+    if (expandable) {
+      if (isArr) summary = '[' + val.length + (val.length === 1 ? ' item' : ' items') + ']';
+      else { var ks = Object.keys(val); summary = '{' + ks.length + (ks.length === 1 ? ' key' : ' keys') + '}'; }
+    }
+    var h = '<div class="json-tree-row">';
+    if (expandable) {
+      h += '<button class="json-tree-twist" onclick="jtt(this,\'' + id + 'b\',\'' + id + 's\')" aria-expanded="' + !collapsed + '">' + (collapsed ? '▸' : '▾') + '</button>';
+    } else {
+      h += '<span class="json-tree-twist-empty" aria-hidden="true"></span>';
+    }
+    h += '<span class="json-tree-key">' + esc(label) + '</span>';
+    h += '<span class="json-tree-colon">:</span>';
+    if (expandable) {
+      h += '<span class="json-tree-summary" id="' + id + 's"' + (collapsed ? '' : ' style="display:none"') + '>' + esc(summary) + '</span>';
+      h += '<div id="' + id + 'b"' + (collapsed ? ' style="display:none"' : '') + '>' + jtValue(val, depth + 1) + '</div>';
+    } else {
+      h += (isObj || isArr) ? jtValue(val, depth + 1) : jtPrim(val);
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function renderJsonTree(data) {
+    _jtIdx = 0;
+    return '<div class="json-tree">' + jtValue(data, 0) + '</div>';
+  }
+
+  // ---- Schema Tree (matches SchemaTree/SchemaRow in DataPanel.tsx) ----
+  var _stIdx = 0;
+
+  function stRawType(val) {
+    if (val === null || val === undefined) return 'null';
+    if (Array.isArray(val)) return 'array';
+    return typeof val;
+  }
+
+  function stIcon(val) {
+    var t = stRawType(val);
+    return t === 'string' ? 'T' : t === 'number' ? '#' : t === 'boolean' ? '⊤' : t === 'array' ? '[]' : t === 'object' ? '{}' : '∅';
+  }
+
+  function stPreview(val) {
+    if (val === null) return 'null';
+    if (val === undefined || Array.isArray(val) || (typeof val === 'object')) return null;
+    var s = String(val);
+    return s.length > 40 ? s.slice(0, 40) + '…' : s;
+  }
+
+  function renderSchemaNode(label, val, depth) {
+    var id = 'st' + (_stIdx++);
+    var t = stRawType(val);
+    var icon = stIcon(val);
+    var preview = stPreview(val);
+    var isObj = val !== null && typeof val === 'object' && !Array.isArray(val);
+    var isArr = Array.isArray(val);
+    var expandable = (isObj && Object.keys(val).length > 0) || (isArr && val.length > 0);
+    var open = depth <= 1;
+    var typeSummary = isArr ? 'array[' + val.length + ']' : t;
+
+    var h = '<div class="schema-node"><div class="schema-row">';
+    if (expandable) {
+      h += '<button class="schema-twist" onclick="stt(this,\'' + id + '\')">' + (open ? '▾' : '▸') + '</button>';
+    } else {
+      h += '<span class="schema-twist-spacer"></span>';
+    }
+    h += '<span class="schema-type-icon" data-type="' + t + '">' + icon + '</span>';
+    h += '<span class="schema-key">' + esc(label) + '</span>';
+    if (preview !== null) h += '<span class="schema-value" data-type="' + t + '">' + esc(preview) + '</span>';
+    if (expandable) h += '<span class="schema-type">' + esc(typeSummary) + '</span>';
+    h += '</div>';
+
+    if (expandable) {
+      h += '<div class="schema-children" id="' + id + '"' + (open ? '' : ' style="display:none"') + '>';
+      if (isObj) {
+        Object.entries(val).forEach(function(e) { h += renderSchemaNode(e[0], e[1], depth + 1); });
+      } else if (isArr && val.length > 0) {
+        h += renderSchemaNode('0', val[0], depth + 1);
+        if (val.length > 1) h += '<div class="schema-node"><div class="schema-row"><span class="schema-twist-spacer"></span><span style="color:var(--ink-3);font-size:10px;font-style:italic">…' + (val.length - 1) + ' more</span></div></div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function renderSchemaTree(data) {
+    _stIdx = 0;
+    var h = '<div class="schema-tree">';
+    if (Array.isArray(data)) {
+      h += '<div class="schema-arrayhint">' + data.length + (data.length === 1 ? ' item' : ' items') + '</div>';
+      if (data.length > 0) h += renderSchemaNode('0', data[0], 0);
+    } else if (data !== null && typeof data === 'object') {
+      Object.entries(data).forEach(function(e) { h += renderSchemaNode(e[0], e[1], 0); });
+    } else {
+      h += renderSchemaNode('value', data, 0);
+    }
+    return h + '</div>';
+  }
+
+  // ---- Table view (matches RecordTable / DataTable in DataPanel.tsx) ----
+  function renderTableHtml(data) {
+    // List of records → full table
+    if (Array.isArray(data) && data.length > 0 && data[0] !== null && typeof data[0] === 'object') {
+      var cols = Array.from(new Set(data.reduce(function(acc, row) { return acc.concat(Object.keys(row)); }, [])));
+      var h = '<div class="data-table-wrap"><table class="data-table"><thead><tr><th class="data-table-index">#</th>';
+      cols.forEach(function(c) { h += '<th>' + esc(c) + '</th>'; });
+      h += '</tr></thead><tbody>';
+      data.slice(0, 100).forEach(function(row, i) {
+        h += '<tr><td class="data-table-index">' + i + '</td>';
+        cols.forEach(function(c) {
+          var v = row[c]; var d = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+          h += '<td title="' + esc(d) + '">' + esc(d) + '</td>';
+        });
+        h += '</tr>';
+      });
+      return h + '</tbody></table></div>';
+    }
+    // Plain object → key-value table
+    if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
+      var entries = Object.entries(data);
+      if (!entries.length) return '<p class="muted">Empty object.</p>';
+      var h = '<div class="data-table-wrap"><table class="data-table data-table-kv"><tbody>';
+      entries.forEach(function(e) {
+        var v = e[1]; var d = v === null ? 'null' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+        h += '<tr><th>' + esc(e[0]) + '</th><td title="' + esc(d) + '">' + esc(d) + '</td></tr>';
+      });
+      return h + '</tbody></table></div>';
+    }
+    return '<p class="muted">Data is not tabular.</p>';
+  }
+
+  // ---- Data panel toggle (view switching) ----
+  var _panelViews = {};
+
+  function ndvView(pid, view) {
+    ['schema','json','table','raw'].forEach(function(v) {
+      var el = document.getElementById(pid + '-' + v);
+      if (el) el.style.display = v === view ? '' : 'none';
+    });
+    var tog = document.getElementById(pid + '-toggle');
+    if (tog) tog.querySelectorAll('button[data-view]').forEach(function(btn) {
+      btn.classList.toggle('active', btn.getAttribute('data-view') === view);
+    });
+    _panelViews[pid] = view;
+  }
+
+  function ndvCopy(pid) {
+    var raw = document.getElementById(pid + '-raw');
+    if (raw) { var pre = raw.querySelector('pre'); if (pre) void navigator.clipboard.writeText(pre.textContent); }
+  }
+
+  // ---- Full data panel section (replaces buildInputPanel / buildOutputPanel) ----
+  function buildDataPanel(pid, title, data, isInput, footer) {
+    var hasData = data !== null && data !== undefined;
+    var isArr = Array.isArray(data);
+    var itemCount = hasData ? (isArr ? data.length : (typeof data === 'object' ? Object.keys(data).length : null)) : null;
+    var defaultView = hasData ? 'schema' : 'json';
+    var dirArrow = isInput
+      ? '<svg width="13" height="13" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" style="flex-shrink:0;color:var(--ink-3)"><path d="M224 152v56a8 8 0 0 1-8 8H40a8 8 0 0 1-8-8v-56a8 8 0 0 1 16 0v48h160v-48a8 8 0 0 1 16 0ZM85.7 109.7 120 144V32a8 8 0 0 1 16 0v112l34.3-34.3a8 8 0 0 1 11.4 11.4l-48 48a8 8 0 0 1-11.4 0l-48-48a8 8 0 0 1 11.4-11.4Z"/></svg>'
+      : '<svg width="13" height="13" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true" style="flex-shrink:0;color:var(--ink-3)"><path d="M224 48v56a8 8 0 0 1-16 0V56H48v48a8 8 0 0 1-16 0V48a8 8 0 0 1 8-8h176a8 8 0 0 1 8 8Zm-101.7 82.3a8 8 0 0 0-11.4 0l-48 48a8 8 0 0 0 11.4 11.4L112 152v112a8 8 0 0 0 16 0V152l37.7 37.7a8 8 0 0 0 11.4-11.4Z"/></svg>';
+
+    var h = '<section class="ndv-panel">';
+    // header with view toggle
+    h += '<header class="ndv-panel-head"><h3>' + dirArrow + ' ' + esc(title) +
+      '<span class="ndv-dir-badge">' + (isInput ? 'IN' : 'OUT') + '</span>';
+    if (hasData && itemCount !== null) {
+      h += '<span class="ndv-count-badge">' + itemCount + (isArr ? (itemCount === 1 ? ' item' : ' items') : (itemCount === 1 ? ' key' : ' keys')) + '</span>';
+    }
+    h += '</h3>';
+    h += '<div class="data-view-toggle" id="' + pid + '-toggle">';
+    if (hasData) h += '<button data-view="schema" class="' + (defaultView === 'schema' ? 'active' : '') + '" onclick="ndvView(\'' + pid + '\',\'schema\')">Schema</button>';
+    h += '<button data-view="json" class="' + (defaultView === 'json' ? 'active' : '') + '" onclick="ndvView(\'' + pid + '\',\'json\')">JSON</button>';
+    if (hasData) {
+      h += '<button data-view="table" onclick="ndvView(\'' + pid + '\',\'table\')">Table</button>';
+      h += '<button data-view="raw" onclick="ndvView(\'' + pid + '\',\'raw\')">Raw</button>';
+    }
+    h += '<button onclick="ndvCopy(\'' + pid + '\')">Copy</button>';
+    h += '</div></header>';
+
+    // body with all four views
+    h += '<div class="ndv-panel-body">';
+    if (!hasData) {
+      h += '<p class="ndv-panel-empty muted">' + (isInput ? 'No upstream data yet. Run the workflow to see input here.' : 'This node has not run yet.') + '</p>';
+    } else {
+      var jsonTreeH = renderJsonTree(data);
+      var schemaH   = renderSchemaTree(data);
+      var tableH    = renderTableHtml(data);
+      var rawH      = '<pre class="data-json">' + esc(JSON.stringify(data, null, 2)) + '</pre>';
+      h += '<div id="' + pid + '-schema">' + schemaH + '</div>';
+      h += '<div id="' + pid + '-json" style="display:none">' + jsonTreeH + '</div>';
+      h += '<div id="' + pid + '-table" style="display:none">' + tableH + '</div>';
+      h += '<div id="' + pid + '-raw" style="display:none">' + rawH + '</div>';
+    }
+    h += '</div>';
+    if (footer) h += '<footer class="ndv-panel-foot">' + footer + '</footer>';
+    h += '</section>';
+    return h;
+  }
+
+  // ---- HTML builders — match real app class names exactly ----
+
+  function buildInspectorBody(node) {
+    var hint = '<p class="field-desc">Use <code style="font-family:var(--font-mono);color:var(--accent)">{{ $json.field }}</code> or <code style="font-family:var(--font-mono);color:var(--accent)">{{ $node[&quot;nodeId&quot;].main.field }}</code> in string fields to reference upstream data.</p>';
+    if (!node.params || !node.params.length) {
+      return hint + '<p class="field-desc" style="font-style:italic">This node has no parameters. All logic lives in the Python source.</p>';
+    }
+    return hint + node.params.map(function(p) {
+      var exprPreview = p.isExpr ? (
+        '<div class="expr-inline-preview"><span class="eip-arrow">→</span><span class="eip-val">' + esc(p.resolvedValue || p.value) + '</span></div>'
+      ) : '';
+      return '<div class="field">' +
+        '<div class="field-label"><span class="field-name">' + esc(p.name) + '</span>' +
+          (p.isExpr ? '<span style="font-family:var(--font-mono);font-size:9.5px;color:var(--accent);background:var(--accent-glow);padding:1px 5px;border-radius:3px;margin-left:auto">fx</span>' : '') +
+        '</div>' +
+        '<input class="field-input' + (p.isExpr ? ' field-input-expr' : '') + '" readonly value="' + esc(p.value) + '">' +
+        exprPreview +
+        '</div>';
+    }).join('');
+  }
+
+  function buildPythonBody(node) {
+    return '<div class="code-view" style="height:100%;min-height:220px;overflow:auto">' + node.pythonHtml + '</div>';
+  }
+
+  function buildParamsTab(node) {
+    return '<div class="ndv-mode-toggle" role="tablist" aria-label="Inspector or Python">' +
+        '<button type="button" role="tab" id="ndv-mode-inspector" class="active" onclick="ndvMode(\'inspector\')" aria-selected="true">Inspector</button>' +
+        '<button type="button" role="tab" id="ndv-mode-python" onclick="ndvMode(\'python\')" aria-selected="false">Python</button>' +
+      '</div>' +
+      '<p class="demo-mode-tip" id="demo-mode-tip" style="display:none">↳ Click <strong>Python</strong> to see the generated source code</p>' +
+      '<div id="ndv-inspector-body">' + buildInspectorBody(node) + '</div>' +
+      '<div id="ndv-python-body" style="display:none">' + buildPythonBody(node) + '</div>';
+  }
+
+  function buildSettingsTab() {
+    return '<p class="field-desc">How this node behaves on failure and what flows downstream.</p>' +
+      '<div class="field">' +
+        '<div class="field-label"><span class="field-name">On error</span></div>' +
+        '<p class="field-desc">What happens if this node throws.</p>' +
+        '<select class="field-input"><option>Stop the workflow</option><option>Continue (pass empty data downstream)</option></select>' +
+      '</div>' +
+      '<div class="field">' +
+        '<div class="field-label"><span class="field-name">Retry on fail</span></div>' +
+        '<p class="field-desc">Re-run the node a few times before giving up.</p>' +
+        '<select class="field-input"><option>Disabled</option><option>Enabled — 2 retries, 1s delay</option></select>' +
+      '</div>' +
+      '<div class="field">' +
+        '<div class="field-label"><span class="field-name">Timeout (s)</span></div>' +
+        '<p class="field-desc">Blank = no timeout.</p>' +
+        '<input class="field-input" type="number" placeholder="no timeout">' +
+      '</div>';
+  }
+
+  function buildDocsTab(node) {
+    return '<p class="field-desc">Reference for this node.</p>' +
+      '<div class="field">' +
+        '<div class="field-label"><span class="field-name">' + esc(node.name) + '</span></div>' +
+        '<p class="field-desc"><strong>Category:</strong> ' + esc(node.category) + ' &nbsp;·&nbsp; <strong>Type:</strong> <code style="font-family:var(--font-mono);font-size:11px;color:var(--accent)">' + esc(node.nodeId) + '</code></p>' +
+        '<p class="field-desc">' + esc(node.description || 'A workflow automation node.') + '</p>' +
+      '</div>';
+  }
+
+
+  window.ndvView = function(pid, view) {
+    ['schema','json','table','raw'].forEach(function(v) {
+      var el = document.getElementById(pid + '-' + v);
+      if (el) el.style.display = v === view ? '' : 'none';
+    });
+    var tog = document.getElementById(pid + '-toggle');
+    if (tog) tog.querySelectorAll('button[data-view]').forEach(function(btn) {
+      btn.classList.toggle('active', btn.getAttribute('data-view') === view);
+    });
+    _panelViews[pid] = view;
+  };
+
+  window.ndvCopy = function(pid) {
+    var raw = document.getElementById(pid + '-raw');
+    if (raw) { var pre = raw.querySelector('pre'); if (pre) void navigator.clipboard.writeText(pre.textContent); }
+  };
+
+  window.openNDV = function(id) {
+    // clear any demo highlight + tooltip
+    var prevHL = document.querySelector('.node.demo-highlight');
+    var wasDemoNode = prevHL && prevHL.id === id;
+    if (prevHL) prevHL.classList.remove('demo-highlight');
+    var tip = document.getElementById('canvas-tooltip');
+    if (tip) tip.classList.remove('visible');
+
+    _currentNode = id;
+    _currentTab = 'params';
+    _currentMode = 'inspector';
+    var node = NODES[id];
+    if (!node) return;
+
+    var iconPath = ICON_PATHS[id] || '';
+    var iconSvg = '<svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="' + iconPath + '"/></svg>';
+
+    var html =
+      '<div class="ndv-modal ndv-edge-ok" onclick="event.stopPropagation()" role="dialog" aria-modal="true" aria-labelledby="ndv-title" tabindex="-1">' +
+        // ── header ──
+        '<header class="ndv-head">' +
+          '<div class="ndv-title">' +
+            '<span class="inspector-glyph" style="color:' + node.color + '">' + iconSvg + '</span>' +
+            '<div>' +
+              '<h3 id="ndv-title" style="font-size:18px;letter-spacing:-0.025em;margin:0">' + esc(node.name) + '</h3>' +
+              '<div class="ndv-meta">' +
+                '<span class="mono-tag mono-tag-cat" style="color:' + node.color + '">' + esc(node.category) + '</span>' +
+                '<span class="mono-tag">' + esc(node.nodeId) + '</span>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="ndv-actions">' +
+            '<button class="btn btn-sm btn-run" disabled title="Demo only">&#9654; ' + (node.isWebhook ? 'Listen for event' : 'Execute step') + '</button>' +
+            (node.isWebhook ? '' : '<button class="btn btn-sm btn-ghost" disabled>&#8635; Run fresh</button>') +
+            '<span class="ndv-action-sep" aria-hidden="true"></span>' +
+            '<button class="btn btn-sm">Disable</button>' +
+            '<button class="btn btn-sm btn-danger-soft">Delete</button>' +
+            '<button class="ndv-close" onclick="closeNDV()" aria-label="Close">&#215;</button>' +
+          '</div>' +
+        '</header>' +
+        // ── 3-column body ──
+        '<div class="ndv-body">' +
+          '<div class="ndv-panels">' +
+            // Left: Input/Trigger
+            (node.isWebhook
+              ? '<section class="ndv-panel">' +
+                  '<header class="ndv-panel-head"><h3>Trigger <span class="ndv-dir-badge">IN</span></h3></header>' +
+                  '<div class="ndv-panel-body"><div class="webhook-listen">' +
+                    '<span class="listening-badge"><span class="listening-dot" aria-hidden="true"></span>Listening</span>' +
+                    '<div class="webhook-endpoint-url">https://nodyra.io/webhook/my-workflow</div>' +
+                    '<p class="field-desc">Send a POST request to this URL to trigger the workflow. The body, headers, and query params are available as <code style="font-family:var(--font-mono);color:var(--accent);font-size:11px">inputs</code>.</p>' +
+                  '</div></div>' +
+                '</section>'
+              : buildDataPanel('p-in-' + id, 'Input', node.inputData, true, null)
+            ) +
+            // Middle: Parameters/Settings/Docs
+            '<section class="ndv-middle">' +
+              '<div class="ndv-tabs" role="tablist" aria-label="Node configuration">' +
+                '<button type="button" role="tab" id="ndv-tab-params" class="active" onclick="ndvTab(\'params\')" aria-selected="true">Parameters</button>' +
+                '<button type="button" role="tab" id="ndv-tab-settings" onclick="ndvTab(\'settings\')" aria-selected="false">Settings</button>' +
+                '<button type="button" role="tab" id="ndv-tab-docs" onclick="ndvTab(\'docs\')" aria-selected="false">Docs</button>' +
+                '<button type="button" role="tab" id="ndv-tab-logs" onclick="ndvTab(\'logs\')" aria-selected="false">Logs</button>' +
+              '</div>' +
+              '<div class="ndv-middle-body" id="ndv-middle-body">' +
+                '<div id="ndv-body-params">' + buildParamsTab(node) + '</div>' +
+                '<div id="ndv-body-settings" style="display:none">' + buildSettingsTab() + '</div>' +
+                '<div id="ndv-body-docs" style="display:none">' + buildDocsTab(node) + '</div>' +
+                '<div id="ndv-body-logs" style="display:none"><p class="field-desc">No logs yet. Run this node to capture stdout, stderr, and any error trace.</p></div>' +
+              '</div>' +
+            '</section>' +
+            // Right: Output
+            buildDataPanel('p-out-' + id, 'Output', node.outputData, false,
+              '<div class="ndv-output-foot">' +
+                '<span class="run-pill status-run-success">success</span>' +
+                '<span class="pin-timestamp">' + esc(node.runStat) + '</span>' +
+                '<button class="btn btn-sm" style="margin-left:auto" disabled>&#128204; Pin this output</button>' +
+              '</div>'
+            ) +
+          '</div>' +
+        '</div>' +
+        // ── drag handle at bottom ──
+        '<div class="ndv-drag-handle" role="separator" aria-label="Drag to resize, double-click to reset">' +
+          '<div class="ndv-drag-dots"><span></span><span></span><span></span><span></span><span></span></div>' +
+          '<span class="ndv-drag-tip">double-click to reset</span>' +
+        '</div>' +
+      '</div>';
+
+    var overlay = document.getElementById('ndv-overlay');
+    overlay.innerHTML = html;
+    overlay.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    // focus the modal for keyboard nav
+    var modal = overlay.querySelector('.ndv-modal');
+    if (modal) modal.focus();
+
+    // If this was the demo-highlighted node, pulse the Inspector/Python toggle
+    if (wasDemoNode && !node.isWebhook) {
+      setTimeout(function () {
+        var tog = document.querySelector('.ndv-mode-toggle');
+        if (!tog) return;
+        tog.classList.add('demo-hint');
+        function clearHint() { tog.classList.remove('demo-hint'); }
+        var btnPy = document.getElementById('ndv-mode-python');
+        if (btnPy) btnPy.addEventListener('click', clearHint, { once: true });
+        setTimeout(clearHint, 7000);
+      }, 350);
+    }
+  };
+
+  // json tree toggle
+  window.jtt = function(btn, blockId, sumId) {
+    var exp = btn.getAttribute('aria-expanded') === 'true';
+    btn.setAttribute('aria-expanded', !exp);
+    btn.textContent = exp ? '▸' : '▾';
+    var b = document.getElementById(blockId), s = document.getElementById(sumId);
+    if (b) b.style.display = exp ? 'none' : '';
+    if (s) s.style.display = exp ? '' : 'none';
+  };
+
+  // schema tree toggle
+  window.stt = function(btn, childId) {
+    var open = btn.textContent === '▾';
+    btn.textContent = open ? '▸' : '▾';
+    var el = document.getElementById(childId);
+    if (el) el.style.display = open ? 'none' : '';
+  };
+
+  window.closeNDV = function() {
+    var overlay = document.getElementById('ndv-overlay');
+    overlay.style.display = 'none';
+    overlay.innerHTML = '';
+    document.body.style.overflow = '';
+    _currentNode = null;
+    // return focus to the node tile that opened the NDV
+  };
+
+  window.ndvTab = function(tab) {
+    _currentTab = tab;
+    ['params','settings','docs','logs'].forEach(function(t) {
+      var btn = document.getElementById('ndv-tab-' + t);
+      var body = document.getElementById('ndv-body-' + t);
+      if (btn) btn.classList.toggle('active', t === tab);
+      if (body) body.style.display = t === tab ? '' : 'none';
+    });
+  };
+
+  window.ndvMode = function(mode) {
+    _currentMode = mode;
+    var inspector = document.getElementById('ndv-inspector-body');
+    var python = document.getElementById('ndv-python-body');
+    var btnI = document.getElementById('ndv-mode-inspector');
+    var btnP = document.getElementById('ndv-mode-python');
+    if (inspector) inspector.style.display = mode === 'inspector' ? '' : 'none';
+    if (python) python.style.display = mode === 'python' ? '' : 'none';
+    if (btnI) btnI.classList.toggle('active', mode === 'inspector');
+    if (btnP) btnP.classList.toggle('active', mode === 'python');
+  };
+
+  // ESC closes NDV
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && document.getElementById('ndv-overlay').style.display !== 'none') {
+      closeNDV();
+    }
+  });
+})();
+
 // scroll reveal
 (function () {
   var els = document.querySelectorAll('.reveal');
@@ -710,5 +2547,8 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
   els.forEach(function (el) { io.observe(el); });
 })();
 </script>
+
+<!-- NDV overlay portal — populated and shown by openNDV() -->
+<div id="ndv-overlay" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Node inspector" onclick="closeNDV()"></div>
 </body>
 </html>

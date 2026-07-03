@@ -17,10 +17,10 @@ Independent review, 2026-06-16. Scope: `README.md` (591 lines), `SECURITY.md`,
   `docs/status-matrix.md`, `CONTRIBUTING.md`, `LICENSE` — no dangling links among
   the README's primary references.
 - **Deployment env instructions are correct (verified, not assumed)**: the README
-  tells operators to put `NOODLE_SECRET_KEY` / `INTERNAL_API_TOKEN` /
+  tells operators to put `NODYRA_SECRET_KEY` / `INTERNAL_API_TOKEN` /
   `AUTH_REQUIRED=true` in `deploy/.env`. The field is `secret_key` (env
   `SECRET_KEY`, no alias) — which *looks* like a mismatch, but
-  `deploy/docker-compose.yml` maps `SECRET_KEY: ${NOODLE_SECRET_KEY:-…}`, so the
+  `deploy/docker-compose.yml` maps `SECRET_KEY: ${NODYRA_SECRET_KEY:-…}`, so the
   documented var is right **for the Docker path**. The compose default equals
   `DEFAULT_SECRET_KEY`, which the new AUTH-1 startup guard rejects under
   `auth_required`/production — doc + guard are consistent.
@@ -32,11 +32,11 @@ Independent review, 2026-06-16. Scope: `README.md` (591 lines), `SECURITY.md`,
 ### DOC-1 — Local-dev (non-Docker) secret var name differs from Docker (LOW)
 In the **local developer stack** the API reads `.env` directly via
 pydantic-settings (`env_file=".env"`), so the variable is `SECRET_KEY` — *not*
-`NOODLE_SECRET_KEY` (which only works because docker-compose renames it). An
+`NODYRA_SECRET_KEY` (which only works because docker-compose renames it). An
 operator copying the Docker `.env` snippet into a bare-metal/local run would set
 an ignored var and (now) hit the AUTH-1 guard.
 - **Fix:** in the local-dev section, show `SECRET_KEY=…` explicitly (or document
-  that `NOODLE_SECRET_KEY` is a compose-only convenience mapping). One-line clarity
+  that `NODYRA_SECRET_KEY` is a compose-only convenience mapping). One-line clarity
   fix.
 - **Status:** Reviewed.
 

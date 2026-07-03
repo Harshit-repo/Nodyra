@@ -1,4 +1,4 @@
-# Noodle Production Review — 2026-06-14
+# Nodyra Production Review — 2026-06-14
 
 > **Purpose:** Pre-mortem, bug catalogue, and handover brief for agents taking over production hardening. Branch: `feat/arch-program-phase5`. Multi-tenancy is the primary new surface; treat every finding through that lens first.
 

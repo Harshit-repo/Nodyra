@@ -6,11 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle.artifacts import LocalArtifactStore, is_artifact_ref
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
-from noodle.sdk import registry
-from noodle_nodes.datasets import records_to_dataset
+from nodyra.artifacts import LocalArtifactStore, is_artifact_ref
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
+from nodyra.sdk import registry
+from nodyra_nodes.datasets import records_to_dataset
 
 
 @pytest.fixture()
@@ -51,7 +51,7 @@ def _make_fake_requests(models_ok=True, completion_ok=True, models_list=None, co
 # ---------------------------------------------------------------------------
 
 def test_registry_loads_without_requests() -> None:
-    import noodle_nodes.model_serving  # noqa: F401
+    import nodyra_nodes.model_serving  # noqa: F401
     node_ids = {m.id for m in registry.manifests()}
     assert "model_deployment_spec" in node_ids
     assert "model_endpoint_probe" in node_ids
@@ -67,7 +67,7 @@ def test_all_serving_nodes_in_ml_category() -> None:
 
 
 def test_no_requests_import_at_module_level() -> None:
-    import noodle_nodes.model_serving  # noqa: F401 — importing should succeed without requests
+    import nodyra_nodes.model_serving  # noqa: F401 — importing should succeed without requests
 
 
 def test_probe_benchmark_shadow_declare_requests_requirement() -> None:
@@ -88,7 +88,7 @@ def test_deployment_spec_no_requirements() -> None:
 # ---------------------------------------------------------------------------
 
 def test_deployment_spec_ollama_compose(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_deployment_spec
+    from nodyra_nodes.model_serving import model_deployment_spec
     result = model_deployment_spec(
         runtime="ollama", model="llama3.2", port=11434,
         format="docker-compose",
@@ -101,7 +101,7 @@ def test_deployment_spec_ollama_compose(store_ctx) -> None:
 
 
 def test_deployment_spec_vllm_shell(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_deployment_spec
+    from nodyra_nodes.model_serving import model_deployment_spec
     result = model_deployment_spec(
         runtime="vllm", model="mistralai/Mistral-7B-v0.1",
         format="shell-commands", port=8000,
@@ -112,7 +112,7 @@ def test_deployment_spec_vllm_shell(store_ctx) -> None:
 
 
 def test_deployment_spec_kubernetes(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_deployment_spec
+    from nodyra_nodes.model_serving import model_deployment_spec
     result = model_deployment_spec(
         runtime="ollama", model="phi3", format="kubernetes",
     )
@@ -121,7 +121,7 @@ def test_deployment_spec_kubernetes(store_ctx) -> None:
 
 
 def test_deployment_spec_gpu_flag(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_deployment_spec
+    from nodyra_nodes.model_serving import model_deployment_spec
     result = model_deployment_spec(
         runtime="ollama", model="llama3.2", gpu=True, format="docker-compose",
     )
@@ -129,7 +129,7 @@ def test_deployment_spec_gpu_flag(store_ctx) -> None:
 
 
 def test_deployment_spec_extra_env(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_deployment_spec
+    from nodyra_nodes.model_serving import model_deployment_spec
     result = model_deployment_spec(
         runtime="ollama", model="llama3.2",
         extra_env='{"MY_ENV_VAR": "hello"}',
@@ -142,9 +142,9 @@ def test_deployment_spec_extra_env(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_endpoint_probe_healthy(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_endpoint_probe
+    from nodyra_nodes.model_serving import model_endpoint_probe
     fake_req = _make_fake_requests()
-    with patch("noodle_nodes.model_serving._require_requests", return_value=fake_req):
+    with patch("nodyra_nodes.model_serving._require_requests", return_value=fake_req):
         result = model_endpoint_probe(
             base_url="http://localhost:11434",
             model="llama3.2",
@@ -157,9 +157,9 @@ def test_endpoint_probe_healthy(store_ctx) -> None:
 
 
 def test_endpoint_probe_unhealthy_routes_to_fail(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_endpoint_probe
+    from nodyra_nodes.model_serving import model_endpoint_probe
     fake_req = _make_fake_requests(models_ok=False)
-    with patch("noodle_nodes.model_serving._require_requests", return_value=fake_req):
+    with patch("nodyra_nodes.model_serving._require_requests", return_value=fake_req):
         result = model_endpoint_probe(
             base_url="http://localhost:11434",
             model="llama3.2",
@@ -171,9 +171,9 @@ def test_endpoint_probe_unhealthy_routes_to_fail(store_ctx) -> None:
 
 
 def test_endpoint_probe_skip_completion(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_endpoint_probe
+    from nodyra_nodes.model_serving import model_endpoint_probe
     fake_req = _make_fake_requests()
-    with patch("noodle_nodes.model_serving._require_requests", return_value=fake_req):
+    with patch("nodyra_nodes.model_serving._require_requests", return_value=fake_req):
         result = model_endpoint_probe(
             base_url="http://localhost:11434",
             model="llama3.2",
@@ -185,9 +185,9 @@ def test_endpoint_probe_skip_completion(store_ctx) -> None:
 
 
 def test_endpoint_probe_auto_selects_model(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_endpoint_probe
+    from nodyra_nodes.model_serving import model_endpoint_probe
     fake_req = _make_fake_requests(models_list=["phi3", "llama3.2"])
-    with patch("noodle_nodes.model_serving._require_requests", return_value=fake_req):
+    with patch("nodyra_nodes.model_serving._require_requests", return_value=fake_req):
         result = model_endpoint_probe(
             base_url="http://localhost:11434",
             model="",
@@ -199,8 +199,8 @@ def test_endpoint_probe_auto_selects_model(store_ctx) -> None:
 
 
 def test_endpoint_probe_missing_requests_raises() -> None:
-    from noodle_nodes.model_serving import model_endpoint_probe
-    with patch("noodle_nodes.model_serving._require_requests",
+    from nodyra_nodes.model_serving import model_endpoint_probe
+    with patch("nodyra_nodes.model_serving._require_requests",
                side_effect=RuntimeError("requests not installed")):
         with pytest.raises(RuntimeError):
             model_endpoint_probe(base_url="http://localhost:11434", model="test")
@@ -211,9 +211,9 @@ def test_endpoint_probe_missing_requests_raises() -> None:
 # ---------------------------------------------------------------------------
 
 def test_endpoint_benchmark_basic(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_endpoint_benchmark
+    from nodyra_nodes.model_serving import model_endpoint_benchmark
     fake_req = _make_fake_requests()
-    with patch("noodle_nodes.model_serving._require_requests", return_value=fake_req):
+    with patch("nodyra_nodes.model_serving._require_requests", return_value=fake_req):
         result = model_endpoint_benchmark(
             base_url="http://localhost:11434",
             model="llama3.2",
@@ -228,7 +228,7 @@ def test_endpoint_benchmark_basic(store_ctx) -> None:
 
 
 def test_endpoint_benchmark_partial_failure(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_endpoint_benchmark
+    from nodyra_nodes.model_serving import model_endpoint_benchmark
     call_count = [0]
 
     def fake_post(url, **kwargs):
@@ -248,7 +248,7 @@ def test_endpoint_benchmark_partial_failure(store_ctx) -> None:
     fake_req = MagicMock()
     fake_req.post.side_effect = fake_post
 
-    with patch("noodle_nodes.model_serving._require_requests", return_value=fake_req):
+    with patch("nodyra_nodes.model_serving._require_requests", return_value=fake_req):
         result = model_endpoint_benchmark(
             base_url="http://localhost:11434",
             model="llama3.2",
@@ -261,9 +261,9 @@ def test_endpoint_benchmark_partial_failure(store_ctx) -> None:
 
 
 def test_endpoint_benchmark_stats_structure(store_ctx) -> None:
-    from noodle_nodes.model_serving import model_endpoint_benchmark
+    from nodyra_nodes.model_serving import model_endpoint_benchmark
     fake_req = _make_fake_requests()
-    with patch("noodle_nodes.model_serving._require_requests", return_value=fake_req):
+    with patch("nodyra_nodes.model_serving._require_requests", return_value=fake_req):
         result = model_endpoint_benchmark(
             base_url="http://localhost:11434",
             model="llama3.2",
@@ -276,14 +276,14 @@ def test_endpoint_benchmark_stats_structure(store_ctx) -> None:
 
 
 def test_endpoint_benchmark_rejects_unbounded_requests(store_ctx) -> None:
-    from noodle_nodes.model_serving import MAX_ENDPOINT_REQUESTS, model_endpoint_benchmark
+    from nodyra_nodes.model_serving import MAX_ENDPOINT_REQUESTS, model_endpoint_benchmark
 
     with pytest.raises(ValueError, match="n_requests"):
         model_endpoint_benchmark(n_requests=MAX_ENDPOINT_REQUESTS + 1)
 
 
 def test_endpoint_benchmark_rejects_unbounded_concurrency(store_ctx) -> None:
-    from noodle_nodes.model_serving import (
+    from nodyra_nodes.model_serving import (
         MAX_ENDPOINT_CONCURRENCY,
         model_endpoint_benchmark,
     )
@@ -297,9 +297,9 @@ def test_endpoint_benchmark_rejects_unbounded_concurrency(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_shadow_compare_basic(store_ctx) -> None:
-    from noodle_nodes.model_serving import shadow_compare_endpoint
+    from nodyra_nodes.model_serving import shadow_compare_endpoint
     fake_req = _make_fake_requests()
-    with patch("noodle_nodes.model_serving._require_requests", return_value=fake_req):
+    with patch("nodyra_nodes.model_serving._require_requests", return_value=fake_req):
         result = shadow_compare_endpoint(
             primary_url="http://localhost:11434",
             primary_model="llama3.2",
@@ -313,11 +313,11 @@ def test_shadow_compare_basic(store_ctx) -> None:
 
 
 def test_shadow_compare_from_dataset(store_ctx) -> None:
-    from noodle_nodes.model_serving import shadow_compare_endpoint
+    from nodyra_nodes.model_serving import shadow_compare_endpoint
     fake_req = _make_fake_requests()
     rows = [{"prompt": "Explain embeddings."}, {"prompt": "What is BERT?"}]
     ds_ref = records_to_dataset(rows, name="prompts.parquet")
-    with patch("noodle_nodes.model_serving._require_requests", return_value=fake_req):
+    with patch("nodyra_nodes.model_serving._require_requests", return_value=fake_req):
         result = shadow_compare_endpoint(
             primary_url="http://localhost:11434",
             primary_model="llama3.2",
@@ -330,9 +330,9 @@ def test_shadow_compare_from_dataset(store_ctx) -> None:
 
 
 def test_shadow_compare_summary_fields(store_ctx) -> None:
-    from noodle_nodes.model_serving import shadow_compare_endpoint
+    from nodyra_nodes.model_serving import shadow_compare_endpoint
     fake_req = _make_fake_requests()
-    with patch("noodle_nodes.model_serving._require_requests", return_value=fake_req):
+    with patch("nodyra_nodes.model_serving._require_requests", return_value=fake_req):
         result = shadow_compare_endpoint(
             primary_url="http://localhost:11434",
             primary_model="llama3.2",
@@ -346,7 +346,7 @@ def test_shadow_compare_summary_fields(store_ctx) -> None:
 
 
 def test_shadow_compare_rejects_unbounded_prompt_list(store_ctx) -> None:
-    from noodle_nodes.model_serving import MAX_SHADOW_PROMPTS, shadow_compare_endpoint
+    from nodyra_nodes.model_serving import MAX_SHADOW_PROMPTS, shadow_compare_endpoint
 
     prompts = json.dumps(["hello"] * (MAX_SHADOW_PROMPTS + 1))
     with pytest.raises(ValueError, match="prompts"):

@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from httpx import AsyncClient
 
-from noodle.serialization import serialize_value
+from nodyra.serialization import serialize_value
 
 GRAPH = {
     "nodes": [

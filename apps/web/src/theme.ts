@@ -3,8 +3,8 @@ import { safeGetItem, safeSetItem } from "./safeStorage";
 export type ThemePreference = "system" | "dark" | "light";
 export type FontPreference = "brand" | "inter" | "technical" | "system";
 
-const KEY = "noodle_theme";
-const FONT_KEY = "noodle_font";
+const KEY = "nodyra_theme";
+const FONT_KEY = "nodyra_font";
 const THEMES: ThemePreference[] = ["system", "dark", "light"];
 const FONTS: FontPreference[] = ["brand", "inter", "technical", "system"];
 

@@ -2234,7 +2234,7 @@ body.is-resizing-vertical {
   user-select: none;
 }
 
-.react-flow__node-noodle {
+.react-flow__node-nodyra {
   background: transparent;
 }
 
@@ -2955,13 +2955,13 @@ body.is-resizing-vertical {
 }
 
 /* ---- custom edge toolbar ---- */
-.noodle-edge-mid {
+.nodyra-edge-mid {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 3px;
 }
-.noodle-edge-label {
+.nodyra-edge-label {
   font-size: 10px;
   font-family: var(--font-mono);
   color: var(--ink-3);
@@ -2972,17 +2972,17 @@ body.is-resizing-vertical {
   white-space: nowrap;
   pointer-events: none;
 }
-.noodle-edge-actions {
+.nodyra-edge-actions {
   display: flex;
   gap: 3px;
   opacity: 0;
   transition: opacity 140ms ease;
 }
-.noodle-edge-mid:hover .noodle-edge-actions,
-.noodle-edge-mid.is-selected .noodle-edge-actions {
+.nodyra-edge-mid:hover .nodyra-edge-actions,
+.nodyra-edge-mid.is-selected .nodyra-edge-actions {
   opacity: 1;
 }
-.noodle-edge-btn {
+.nodyra-edge-btn {
   width: 20px;
   height: 20px;
   border-radius: 50%;
@@ -2995,17 +2995,17 @@ body.is-resizing-vertical {
   cursor: pointer;
   transition: background 110ms ease, color 110ms ease, border-color 110ms ease;
 }
-.noodle-edge-btn:hover {
+.nodyra-edge-btn:hover {
   background: var(--surface-3);
   border-color: var(--line-2);
   color: var(--ink);
 }
-.noodle-edge-btn-add:hover {
+.nodyra-edge-btn-add:hover {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
   color: var(--accent);
 }
-.noodle-edge-btn:disabled {
+.nodyra-edge-btn:disabled {
   opacity: 0.66;
   cursor: not-allowed;
   background:
@@ -3017,14 +3017,14 @@ body.is-resizing-vertical {
       transparent 8px
     );
 }
-.noodle-edge-btn-delete:hover {
+.nodyra-edge-btn-delete:hover {
   background: rgba(255, 85, 85, 0.14);
   border-color: rgba(255, 85, 85, 0.28);
   color: #ff9c9c;
 }
 
 /* Edge data-type badge — visible on hover alongside the action buttons */
-.noodle-edge-type-badge {
+.nodyra-edge-type-badge {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -3037,10 +3037,10 @@ body.is-resizing-vertical {
   pointer-events: none;
   white-space: nowrap;
 }
-.noodle-edge-mid:hover .noodle-edge-type-badge {
+.nodyra-edge-mid:hover .nodyra-edge-type-badge {
   opacity: 1;
 }
-.noodle-edge-type-icon {
+.nodyra-edge-type-icon {
   font-size: 9px;
   font-weight: 700;
   font-family: var(--font-mono);
@@ -3050,7 +3050,7 @@ body.is-resizing-vertical {
   padding: 0 3px;
   line-height: 14px;
 }
-.noodle-edge-type-label {
+.nodyra-edge-type-label {
   font-size: 10px;
   font-family: var(--font-mono);
   color: var(--ink-3);

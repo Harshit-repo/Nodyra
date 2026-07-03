@@ -14,7 +14,7 @@ from fastapi import status as _http_status
 
 
 class ServiceError(Exception):
-    """Base for all Noodle service-level exceptions."""
+    """Base for all Nodyra service-level exceptions."""
     http_status: int = _http_status.HTTP_500_INTERNAL_SERVER_ERROR
 
     def __init__(self, message: str, *, detail: dict | None = None) -> None:

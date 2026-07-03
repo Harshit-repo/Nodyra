@@ -1,21 +1,21 @@
 """Live output streaming: a node can push incremental ``node_chunk`` events
-mid-execution via ``noodle.emit_chunk``. The engine wires the emit hook around
+mid-execution via ``nodyra.emit_chunk``. The engine wires the emit hook around
 every node (thread-safe for sync nodes running in a worker thread), and it is a
 no-op when no run is listening."""
 
-import noodle
-import noodle_nodes  # noqa: F401 - registers loop_start/loop_end/code on the global registry
-from noodle.context import node_emitter
-from noodle.engine import execute
-from noodle.models import GraphNode, RunStatus, WorkflowGraph
-from noodle.sdk import NodeRegistry, node
-from noodle.sdk import registry as global_registry
+import nodyra
+import nodyra_nodes  # noqa: F401 - registers loop_start/loop_end/code on the global registry
+from nodyra.context import node_emitter
+from nodyra.engine import execute
+from nodyra.models import GraphNode, RunStatus, WorkflowGraph
+from nodyra.sdk import NodeRegistry, node
+from nodyra.sdk import registry as global_registry
 
 
 @node(name="StreamBody", id="stream_body_test", inputs=["item"], registry=global_registry)
 def _stream_body_test(item: int) -> int:
     """Loop-body helper that streams one chunk per iteration (test fixture)."""
-    noodle.emit_chunk(f"i{item}")
+    nodyra.emit_chunk(f"i{item}")
     return item
 
 
@@ -32,9 +32,9 @@ async def test_sync_node_streams_chunks_in_order():
 
     @node(name="Streamer", id="streamer", inputs=[], registry=reg)
     def streamer() -> dict:
-        noodle.emit_chunk("Hel")
-        noodle.emit_chunk("lo ")
-        noodle.emit_chunk("world")
+        nodyra.emit_chunk("Hel")
+        nodyra.emit_chunk("lo ")
+        nodyra.emit_chunk("world")
         return {"text": "Hello world"}
 
     events: list[dict] = []
@@ -64,8 +64,8 @@ async def test_async_node_streams_chunks():
 
     @node(name="AStreamer", id="astreamer", inputs=[], registry=reg)
     async def astreamer() -> dict:
-        noodle.emit_chunk("a")
-        noodle.emit_chunk("b")
+        nodyra.emit_chunk("a")
+        nodyra.emit_chunk("b")
         return {"ok": True}
 
     events: list[dict] = []
@@ -83,7 +83,7 @@ async def test_emit_chunk_is_a_noop_outside_a_run():
     # Calling the public helper with nothing listening must never raise and must
     # leave no emitter installed.
     assert node_emitter.get() is None
-    noodle.emit_chunk("ignored")
+    nodyra.emit_chunk("ignored")
     assert node_emitter.get() is None
 
 

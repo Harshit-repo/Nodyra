@@ -5,7 +5,7 @@ from typing import Any
 _PROMPTS: list[dict[str, Any]] = [
     {
         "name": "build_workflow",
-        "description": "Step-by-step guide for building a new Noodle workflow via the MCP builder tools.",
+        "description": "Step-by-step guide for building a new Nodyra workflow via the MCP builder tools.",
         "arguments": [
             {"name": "description", "description": "What the workflow should do.", "required": True}
         ],
@@ -46,7 +46,7 @@ def get_prompt(name: str, arguments: dict[str, str]) -> dict[str, Any] | None:
     if name == "build_workflow":
         desc = arguments.get("description", "")
         text = (
-            f"You are building a Noodle workflow. Goal: {desc}\n\n"
+            f"You are building a Nodyra workflow. Goal: {desc}\n\n"
             "Steps:\n"
             "1. list_node_types — discover available node types.\n"
             "2. create_workflow — create the workflow.\n"

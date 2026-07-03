@@ -7,14 +7,14 @@ import imaplib
 from email.message import Message
 from unittest.mock import MagicMock, patch
 
-from noodle_nodes.integrations_v2.providers.imap.triggers import (
+from nodyra_nodes.integrations_v2.providers.imap.triggers import (
     _creds_dict,
     _decode_header_value,
     _parse_email,
     poll_imap,
 )
-from noodle_nodes.integrations_v2.registry import is_registered_provider_trigger
-from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext
+from nodyra_nodes.integrations_v2.registry import is_registered_provider_trigger
+from nodyra_nodes.integrations_v2.specs import ProviderTriggerPollContext
 
 
 def _ctx(params: dict, cursor: dict | None = None) -> ProviderTriggerPollContext:
@@ -112,7 +112,7 @@ def test_parse_email_extracts_fields():
 # ---------------------------------------------------------------------------
 
 
-@patch("noodle_nodes.integrations_v2.providers.imap.triggers._connect")
+@patch("nodyra_nodes.integrations_v2.providers.imap.triggers._connect")
 def test_first_run_seeds_without_events(mock_connect):
     conn = _mock_imap(search_uids=[b"1", b"2", b"3"])
     mock_connect.return_value = conn
@@ -124,7 +124,7 @@ def test_first_run_seeds_without_events(mock_connect):
     assert isinstance(result.cursor["seen_message_ids"], list)
 
 
-@patch("noodle_nodes.integrations_v2.providers.imap.triggers._connect")
+@patch("nodyra_nodes.integrations_v2.providers.imap.triggers._connect")
 def test_subsequent_poll_returns_new_email(mock_connect):
     raw = _make_simple_email("New email", "New body")
     conn = _mock_imap(search_uids=[b"1"], raw_email=raw)
@@ -141,7 +141,7 @@ def test_subsequent_poll_returns_new_email(mock_connect):
     assert "<test123@mail.example.com>" in result.cursor["seen_message_ids"]
 
 
-@patch("noodle_nodes.integrations_v2.providers.imap.triggers._connect")
+@patch("nodyra_nodes.integrations_v2.providers.imap.triggers._connect")
 def test_deduplication_skips_seen_emails(mock_connect):
     raw = _make_simple_email("Seen email", "seen body")
     conn = _mock_imap(search_uids=[b"1"], raw_email=raw)
@@ -154,7 +154,7 @@ def test_deduplication_skips_seen_emails(mock_connect):
     assert result.events == []
 
 
-@patch("noodle_nodes.integrations_v2.providers.imap.triggers._connect")
+@patch("nodyra_nodes.integrations_v2.providers.imap.triggers._connect")
 def test_search_failure_returns_empty(mock_connect):
     conn = MagicMock(spec=imaplib.IMAP4_SSL)
     conn.select.return_value = ("OK", [])
@@ -168,7 +168,7 @@ def test_search_failure_returns_empty(mock_connect):
     assert result.events == []
 
 
-@patch("noodle_nodes.integrations_v2.providers.imap.triggers._connect")
+@patch("nodyra_nodes.integrations_v2.providers.imap.triggers._connect")
 def test_mark_as_read_calls_store(mock_connect):
     raw = _make_simple_email()
     conn = _mock_imap(search_uids=[b"1"], raw_email=raw)
@@ -180,7 +180,7 @@ def test_mark_as_read_calls_store(mock_connect):
     conn.store.assert_called_once_with(b"1", "+FLAGS", "\\Seen")
 
 
-@patch("noodle_nodes.integrations_v2.providers.imap.triggers._connect")
+@patch("nodyra_nodes.integrations_v2.providers.imap.triggers._connect")
 def test_no_mark_as_read(mock_connect):
     raw = _make_simple_email()
     conn = _mock_imap(search_uids=[b"1"], raw_email=raw)

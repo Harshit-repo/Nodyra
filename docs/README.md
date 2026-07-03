@@ -1,4 +1,4 @@
-# Noodle docs
+# Nodyra docs
 
 - [Architecture](architecture.md) — components, execution model, schema, security.
 - [Deployment](deployment.md) — local/compose/Helm, config flags, security checklist.
@@ -16,7 +16,7 @@
   serving, monitoring, and model governance nodes.
 - [DatasetRef guide](datasetref.md) — table handles, records↔dataset conversion,
   DuckDB SQL, quick fixes, and common workflow patterns.
-- [n8n vs Noodle comparison](n8n-vs-noodle-comparison.md) — architecture,
+- [n8n vs Nodyra comparison](n8n-vs-nodyra-comparison.md) — architecture,
   performance, UI/UX polish plan, and node roadmap.
 - [Architecture improvement plan](architecture-improvement-plan.md) — production
   runtime modes, durable queueing, runner leases, artifacts, observability,

@@ -19,12 +19,12 @@ export function HomeLayout() {
   const contentRef = useRef<HTMLDivElement>(null);
   const previousPathRef = useRef(pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => safeGetItem("noodle-shell-sidebar-collapsed") === "1",
+    () => safeGetItem("nodyra-shell-sidebar-collapsed") === "1",
   );
 
   function updateSidebarCollapsed(collapsed: boolean): void {
     setSidebarCollapsed(collapsed);
-    safeSetItem("noodle-shell-sidebar-collapsed", collapsed ? "1" : "0");
+    safeSetItem("nodyra-shell-sidebar-collapsed", collapsed ? "1" : "0");
   }
 
   useEffect(() => {
@@ -35,8 +35,8 @@ export function HomeLayout() {
   }, [pathname]);
 
   return (
-    <div className={`noodle-shell-layout${sidebarCollapsed ? " noodle-shell-is-collapsed" : ""}`}>
-      <a className="noodle-shell-skip-link" href="#main-content">Skip to content</a>
+    <div className={`nodyra-shell-layout${sidebarCollapsed ? " nodyra-shell-is-collapsed" : ""}`}>
+      <a className="nodyra-shell-skip-link" href="#main-content">Skip to content</a>
       <AppSidebar
         user={user}
         workspaceRole={workspaceRole}
@@ -46,15 +46,15 @@ export function HomeLayout() {
         collapsed={sidebarCollapsed}
         onCollapsedChange={updateSidebarCollapsed}
       />
-      <div className="noodle-shell-content">
+      <div className="nodyra-shell-content">
         <HomeHeader />
-        <div id="main-content" ref={contentRef} className="noodle-shell-main" tabIndex={-1}>
+        <div id="main-content" ref={contentRef} className="nodyra-shell-main" tabIndex={-1}>
           <Suspense fallback={<BackendLoading retrying={false} />}>
             {workspace.multiTenancyEnabled && !workspace.loading && !workspace.hasActiveWorkspace ? (
-              <section className="noodle-shell-workspace-blocked" role="status">
+              <section className="nodyra-shell-workspace-blocked" role="status">
                 <span aria-hidden="true">N</span>
                 <h1>{workspace.isError ? "Workspace unavailable" : "No active workspace"}</h1>
-                <p>{workspace.isError ? "Noodle could not load your workspace memberships. Retry the request, or sign out if the problem continues." : "Your memberships are unavailable or suspended. Open the workspace menu to create or select an active workspace, or sign out and contact an administrator."}</p>
+                <p>{workspace.isError ? "Nodyra could not load your workspace memberships. Retry the request, or sign out if the problem continues." : "Your memberships are unavailable or suspended. Open the workspace menu to create or select an active workspace, or sign out and contact an administrator."}</p>
                 {workspace.isError && (
                   <button className="btn" type="button" onClick={() => void workspace.refetch()}>
                     Retry

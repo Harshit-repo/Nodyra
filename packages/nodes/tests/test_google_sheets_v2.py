@@ -2,9 +2,9 @@ import json
 from typing import Any
 from unittest.mock import MagicMock
 
-import noodle_nodes  # noqa: F401 - registers built-in and v2 nodes
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.providers.google_sheets import operations
+import nodyra_nodes  # noqa: F401 - registers built-in and v2 nodes
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.providers.google_sheets import operations
 
 
 def _mock_transport(return_value: Any) -> MagicMock:
@@ -74,7 +74,7 @@ def test_google_sheets_v2_nodes_are_registered() -> None:
 
 def test_google_sheets_v2_generated_source_is_available() -> None:
     node_def = registry.get("google_sheets")
-    source = getattr(node_def.func, "__noodle_source__", "")
+    source = getattr(node_def.func, "__nodyra_source__", "")
 
     assert "def google_sheets(" in source
     assert "execute_integration_operation" in source

@@ -14,7 +14,7 @@ interface Props {
 
 function startDrag(e: React.DragEvent<HTMLElement>, expression: string) {
   e.dataTransfer.setData("text/plain", expression);
-  e.dataTransfer.setData("application/x-noodle-expression", expression);
+  e.dataTransfer.setData("application/x-nodyra-expression", expression);
   e.dataTransfer.effectAllowed = "copy";
   const ghost = document.createElement("div");
   ghost.className = "expr-drag-ghost";

@@ -6,18 +6,18 @@ import asyncio
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers loop_start/loop_end/code
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, current_node_id
-from noodle.engine import _loop_items, _loop_regions, _validate_loop_regions, execute
-from noodle.engine.loops import (
+import nodyra_nodes  # noqa: F401 - registers loop_start/loop_end/code
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id
+from nodyra.engine import _loop_items, _loop_regions, _validate_loop_regions, execute
+from nodyra.engine.loops import (
     MAX_CONDITIONAL_LOOP_ITERATIONS,
     MAX_LOOP_CONCURRENCY,
     MAX_LOOP_ROWS,
 )
-from noodle.engine.types import GraphError
-from noodle.models import WorkflowGraph
-from noodle.sdk import registry
+from nodyra.engine.types import GraphError
+from nodyra.models import WorkflowGraph
+from nodyra.sdk import registry
 
 
 @pytest.fixture
@@ -324,8 +324,8 @@ async def test_loop_fail_cancels_inflight_iterations_eng1():
     detached. Orphaned iterations keep executing body nodes (emitting events,
     burning compute) for a run already marked failed — the REL-2 class of bug.
     """
-    from noodle.sdk import node
-    from noodle.sdk import registry as global_reg
+    from nodyra.sdk import node
+    from nodyra.sdk import registry as global_reg
 
     started: list = []
     finished: list = []
@@ -406,8 +406,8 @@ async def test_nested_loops_flatten_correctly():
 
 
 async def test_loop_output_mode_dataset_returns_ref(store_ctx):
-    from noodle.datasets import is_dataset_ref
-    from noodle_nodes.datasets import dataset_to_records  # materializes back to rows
+    from nodyra.datasets import is_dataset_ref
+    from nodyra_nodes.datasets import dataset_to_records  # materializes back to rows
 
     g = _g(
         [
@@ -739,8 +739,8 @@ async def test_concurrent_loop_iter_outputs_do_not_bleed_into_outer_node_outputs
     Upstream entries in node_outputs are wrapped in MappingProxyType by
     _freeze_outputs, making them immutable; the per-iteration shallow copy is
     therefore safe even with concurrency > 1."""
-    from noodle.sdk import node
-    from noodle.sdk import registry as global_reg
+    from nodyra.sdk import node
+    from nodyra.sdk import registry as global_reg
 
     @node(name="E09 Key Spy", id="e09_key_spy", registry=global_reg)
     async def e09_key_spy(input=None):
@@ -774,6 +774,6 @@ async def test_while_loop_max_iterations_zero_uses_default_e13():
 
 
 def test_bounded_conditional_iterations_zero_returns_default_e13():
-    from noodle.engine.loops import _bounded_conditional_iterations
+    from nodyra.engine.loops import _bounded_conditional_iterations
     assert _bounded_conditional_iterations(0) == 1000
     assert _bounded_conditional_iterations(None) == 1000

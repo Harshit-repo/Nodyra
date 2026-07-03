@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_STATUSES = ("queued", "leased", "running")
 TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "superseded")
-_NOTIFY_CHANNEL = "noodle:environment-builds:notify"
+_NOTIFY_CHANNEL = "nodyra:environment-builds:notify"
 _wakeup: asyncio.Event | None = None
 
 

@@ -27,7 +27,7 @@ describe("OnboardingTour", () => {
   });
 
   it("does not render when dismissed via localStorage", () => {
-    localStorage.setItem("noodle-editor-tour-v1", "true");
+    localStorage.setItem("nodyra-editor-tour-v1", "true");
     const canvas = document.createElement("div");
     canvas.setAttribute("data-tour-id", "canvas");
     document.body.appendChild(canvas);
@@ -71,7 +71,7 @@ describe("OnboardingTour", () => {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
-    expect(localStorage.getItem("noodle-editor-tour-v1")).toBe("true");
+    expect(localStorage.getItem("nodyra-editor-tour-v1")).toBe("true");
   });
 
   it("Skip button dismisses tour", async () => {
@@ -82,7 +82,7 @@ describe("OnboardingTour", () => {
 
     render(<OnboardingTour />);
     await user.click(screen.getByText("Skip tour"));
-    expect(localStorage.getItem("noodle-editor-tour-v1")).toBe("true");
+    expect(localStorage.getItem("nodyra-editor-tour-v1")).toBe("true");
   });
 
   it.skip("shows fallback message when target element not found (RAF-dependent, test in E2E)", async () => {

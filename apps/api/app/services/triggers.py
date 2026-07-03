@@ -142,7 +142,7 @@ async def _resolve_node_auth(
 ) -> dict:
     """Pre-resolve credential refs inside the webhook node's auth params.
 
-    Returns a copy of ``params`` with any ``{"__noodle_credential__": True}``
+    Returns a copy of ``params`` with any ``{"__nodyra_credential__": True}``
     references replaced by their decrypted values. Auth comparison happens
     in :func:`dispatch_webhook` against the resolved strings, never against
     the stored references.
@@ -422,7 +422,7 @@ def _webhook_dedup_key(node_params: dict, request_payload: dict) -> str | None:
     expr = node_params.get("dedup_key")
     if not expr:
         return None
-    from noodle.expr import build_context, evaluate
+    from nodyra.expr import build_context, evaluate
 
     try:
         value = evaluate(expr, build_context(first_input=request_payload))
@@ -463,7 +463,7 @@ def _webhook_on_received_response(node_params: dict, request_payload: dict) -> d
         first = body_in[0] if isinstance(body_in, list) and body_in else body_in
         return {"status": code, "headers": {}, "body": first, "no_body": False}
     if data_mode == "Custom":
-        from noodle.expr import build_context, evaluate
+        from nodyra.expr import build_context, evaluate
 
         ctx = build_context(first_input=request_payload)
         body = evaluate(node_params.get("response_body") or "", ctx)
@@ -489,8 +489,8 @@ def _capture_raw_body_artifact(
     """
     import mimetypes
 
-    from noodle.artifacts import LocalArtifactStore
-    from noodle.context import current_node_id
+    from nodyra.artifacts import LocalArtifactStore
+    from nodyra.context import current_node_id
 
     if not raw_body:
         return None
@@ -972,8 +972,8 @@ async def _execute_poll(
     sub: ProviderTriggerSubscription,
     now: datetime,
 ) -> None:
-    from noodle_nodes.integrations_v2.registry import get_registered_provider_trigger
-    from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext
+    from nodyra_nodes.integrations_v2.registry import get_registered_provider_trigger
+    from nodyra_nodes.integrations_v2.specs import ProviderTriggerPollContext
 
     registered = get_registered_provider_trigger(sub.node_type)
     spec = registered.spec
@@ -1050,7 +1050,7 @@ async def _execute_poll(
 
 async def _poll_subscriptions(now: datetime) -> None:
     """Fire poll hooks for any active provider trigger subscriptions that are due."""
-    from noodle_nodes.integrations_v2.registry import (
+    from nodyra_nodes.integrations_v2.registry import (
         get_registered_provider_trigger,
         is_registered_provider_trigger,
     )

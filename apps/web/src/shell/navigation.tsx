@@ -258,7 +258,7 @@ export function getMobileMoreRoutes(
   );
 }
 
-export function getRouteTitle(pathname: string, fallback = "Noodle"): string {
+export function getRouteTitle(pathname: string, fallback = "Nodyra"): string {
   return APP_ROUTES.find((route) => route.matches(pathname))?.label ?? fallback;
 }
 

@@ -54,7 +54,7 @@ async def test_restart_calls_onboard_restart(client: AsyncClient) -> None:
     runner_id = await _make_runner_with_ssh_creds(client, pool_id)
 
     with patch("app.services.ssh_onboard.onboard_restart", new_callable=AsyncMock) as mock_restart:
-        mock_restart.return_value = "[noodle] restarted via systemd"
+        mock_restart.return_value = "[nodyra] restarted via systemd"
         resp = await client.post(f"/runner-pools/{pool_id}/runners/{runner_id}/restart")
 
     assert resp.status_code == 200

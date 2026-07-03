@@ -5,7 +5,7 @@ import socket
 
 import pytest
 
-from noodle_nodes.httpx_security import (
+from nodyra_nodes.httpx_security import (
     PrivateAddressError,
     pinned_request_kwargs,
     resolve_pinned,
@@ -49,7 +49,7 @@ def test_ip_literal_url_passes_through() -> None:
 
 
 def test_private_egress_env_disables_pinning(monkeypatch) -> None:
-    monkeypatch.setenv("NOODLE_ALLOW_PRIVATE_EGRESS", "1")
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "1")
     pinned = resolve_pinned("http://10.0.0.5:8080/local", context="test")
     assert pinned.url == "http://10.0.0.5:8080/local"
 

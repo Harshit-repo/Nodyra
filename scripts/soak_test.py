@@ -2,9 +2,9 @@
 
 Usage (against the compose stack):
     docker compose -f deploy/docker-compose.yml up -d
-    NOODLE_TOKEN=... uv run python scripts/soak_test.py \
+    NODYRA_TOKEN=... uv run python scripts/soak_test.py \
         --base-url http://localhost:8000 --runs 100 --cancel-ratio 0.2 \
-        --kill-container noodle-worker-1
+        --kill-container nodyra-worker-1
 
 Invariants asserted:
   I1  every started run reaches a terminal status (success/error/cancelled)
@@ -55,7 +55,7 @@ WORKFLOW_GRAPH = {
 
 
 def _headers() -> dict[str, str]:
-    token = os.environ.get("NOODLE_TOKEN", "")
+    token = os.environ.get("NODYRA_TOKEN", "")
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 

@@ -1,7 +1,7 @@
 import { safeGetItem } from "../safeStorage";
 
 export interface ArtifactRef {
-  __noodle_artifact__: true;
+  __nodyra_artifact__: true;
   version: number;
   artifact_id: string;
   run_id?: string;
@@ -20,7 +20,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function asArtifactRef(value: unknown): ArtifactRef | null {
   if (!isRecord(value)) return null;
-  if (value.__noodle_artifact__ !== true || value.version !== 1) return null;
+  if (value.__nodyra_artifact__ !== true || value.version !== 1) return null;
   if (typeof value.artifact_id !== "string") return null;
   return value as unknown as ArtifactRef;
 }
@@ -43,7 +43,7 @@ export function artifactSummary(ref: ArtifactRef): string {
 }
 
 export function artifactDownloadUrl(ref: ArtifactRef): string {
-  const token = safeGetItem("noodle_token");
+  const token = safeGetItem("nodyra_token");
   const qs = token ? `?token=${encodeURIComponent(token)}` : "";
   return `/api/artifacts/${encodeURIComponent(ref.artifact_id)}/download${qs}`;
 }
@@ -51,7 +51,7 @@ export function artifactDownloadUrl(ref: ArtifactRef): string {
 /** Download URL that asks the server for an ``inline`` Content-Disposition so
  *  the browser renders images/PDFs/media in-page instead of downloading. */
 export function artifactInlineUrl(ref: ArtifactRef): string {
-  const token = safeGetItem("noodle_token");
+  const token = safeGetItem("nodyra_token");
   const params = new URLSearchParams({ inline: "1" });
   if (token) params.set("token", token);
   return `/api/artifacts/${encodeURIComponent(ref.artifact_id)}/download?${params.toString()}`;

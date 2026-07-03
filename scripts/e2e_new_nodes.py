@@ -5,7 +5,7 @@ Run B (separate run): load_model -> ml_predict, proving the persistent
 registry is readable across runs.
 
 Usage:
-    set NOODLE_TOKEN=<bearer token>
+    set NODYRA_TOKEN=<bearer token>
     python scripts/e2e_new_nodes.py
 """
 
@@ -17,8 +17,8 @@ import time
 import urllib.error
 import urllib.request
 
-API = os.environ.get("NOODLE_API", "http://localhost:8000")
-TOKEN = os.environ["NOODLE_TOKEN"]
+API = os.environ.get("NODYRA_API", "http://localhost:8000")
+TOKEN = os.environ["NODYRA_TOKEN"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 
@@ -185,9 +185,9 @@ def main() -> None:
     print("  registered_as:", reg.get("registered_as"))
     print("  monitor metric:", (mon.get("metrics") or {}).get("metric"),
           "value:", (mon.get("metrics") or {}).get("value"))
-    print("  chart marker:", chart.get("__noodle_chart__"),
+    print("  chart marker:", chart.get("__nodyra_chart__"),
           "series:", len(chart.get("series") or []))
-    print("  report marker:", report.get("__noodle_report__"),
+    print("  report marker:", report.get("__nodyra_report__"),
           "tiles:", [t.get("type") for t in (report.get("tiles") or [])])
 
     print("[B] load_model -> predict (cross-run registry)")

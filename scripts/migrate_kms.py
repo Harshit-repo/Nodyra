@@ -91,7 +91,7 @@ def _build_provider(kind: str):
             vault_url=os.environ.get("VAULT_URL", ""),
             token=os.environ.get("VAULT_TOKEN", ""),
             mount=os.environ.get("VAULT_TRANSIT_MOUNT", "transit"),
-            key_name=os.environ.get("VAULT_TRANSIT_KEY", "noodle-master"),
+            key_name=os.environ.get("VAULT_TRANSIT_KEY", "nodyra-master"),
         )
 
     if kind == "aws":

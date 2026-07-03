@@ -673,7 +673,7 @@ async def test_oauth_callback_stamps_credential_to_initiating_org(
         params={"code": "provider-code", "state": state},
     )
     assert resp.status_code == 200, resp.text
-    assert "noodle_oauth_success" in resp.text
+    assert "nodyra_oauth_success" in resp.text
 
     async with SessionLocal() as session:
         cred = await session.scalar(

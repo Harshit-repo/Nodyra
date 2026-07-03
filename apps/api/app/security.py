@@ -6,7 +6,7 @@ minimum for the requested permission.
 
 Dual-mode auth (C3): requests may authenticate via either:
   1. ``Authorization: Bearer <token>`` header (existing, always supported)
-  2. ``noodle_session`` httpOnly cookie set by POST /auth/login (SPA mode)
+  2. ``nodyra_session`` httpOnly cookie set by POST /auth/login (SPA mode)
 
 Bearer auth takes precedence when both are present.  Cookie-auth requests
 MUST carry a valid ``X-CSRF-Token`` header on state-changing methods; the
@@ -196,7 +196,7 @@ def _extract_token(
     authorization: str | None,
     request: HTTPConnection | None,
 ) -> tuple[str | None, bool]:
-    """Extract a Noodle session token from the request.
+    """Extract a Nodyra session token from the request.
 
     Returns ``(token_str, is_cookie_auth)``.  Bearer takes precedence over
     cookie so existing API consumers are unaffected.  ``is_cookie_auth`` lets
@@ -355,7 +355,7 @@ async def _principal_for_request(
     token: str, session: AsyncSession, request: HTTPConnection | None
 ) -> tuple[User, ApiToken | ExternalTokenGrant | None] | None:
     # Provider webhooks frequently carry third-party Bearer credentials. Never
-    # forward those to the configured OAuth introspection endpoint; Noodle PAT
+    # forward those to the configured OAuth introspection endpoint; Nodyra PAT
     # and external OAuth grants are deliberately limited to /mcp.
     if request is None or request.url.path != "/mcp":
         user = await _user_from_session_token(token, session)
@@ -420,7 +420,7 @@ async def _lenient_session_user(
 
     The global org-resolution dependency runs on EVERY request, including
     webhook ingress where the Authorization header carries the *webhook's*
-    Basic/Bearer/JWT credential, not a Noodle session token. Those must not
+    Basic/Bearer/JWT credential, not a Nodyra session token. Those must not
     401 here; endpoints that require session auth still depend on the strict
     ``current_user``/``require_role`` chain.
 

@@ -49,7 +49,7 @@ The suite is large but CI doesn't appear to enforce a coverage floor or publish 
 coverage artifact. Without it, coverage can silently erode as nodes are added.
 - **Recommendation:** add `pytest --cov` with a non-blocking report first
   (establish the baseline), then a modest floor on the core packages
-  (`noodle/engine`, `app/services/queue`, auth/crypto). Avoid a high global gate
+  (`nodyra/engine`, `app/services/queue`, auth/crypto). Avoid a high global gate
   that punishes the large node-library surface.
 - **Status:** Verify.
 

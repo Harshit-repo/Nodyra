@@ -37,15 +37,15 @@ import { useToast } from "../ToastProvider";
 import { LOOP_FRAME_ID_PREFIX, computeLoopFrames } from "./loopFrames";
 import { MetanodeBreadcrumb } from "./MetanodeBreadcrumb";
 import {
-  MiniMapNoodleNode,
+  MiniMapNodyraNode,
   miniMapNodeClassName,
   miniMapNodeColor,
-} from "./MiniMapNoodleNode";
+} from "./MiniMapNodyraNode";
 import { nodeTypes, edgeTypes } from "./nodeTypes";
 import { PortLegend } from "./PortLegend";
 import { datasetConnectionIssues, validateConnection, type ConnectionCheck } from "./connectionValidation";
 import { OnboardingTour } from "./OnboardingTour";
-import { pickEditorRunTrigger, useEditor, type NoodleNode } from "./store";
+import { pickEditorRunTrigger, useEditor, type NodyraNode } from "./store";
 
 const defaultEdgeOptions = { type: "default" };
 const CANVAS_QUICK_ADD_LIMIT = 8;
@@ -89,7 +89,7 @@ function clampCanvasQuickAddPosition(x: number, y: number): { x: number; y: numb
 }
 
 function edgeBridgeHandles(
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   edge: Edge | undefined,
   manifest: NodeManifest,
 ): { input: string; output: string } | null {
@@ -100,7 +100,7 @@ function edgeBridgeHandles(
   const candidateId = "__edge_insert_candidate__";
   const candidate = {
     id: candidateId,
-    type: manifest.id === "map_group" ? "mapGroup" : "noodle",
+    type: manifest.id === "map_group" ? "mapGroup" : "nodyra",
     position: { x: 0, y: 0 },
     data: {
       manifest,
@@ -115,7 +115,7 @@ function edgeBridgeHandles(
       alwaysOutputData: false,
       timeoutSeconds: null,
     },
-  } as NoodleNode;
+  } as NodyraNode;
   const candidateNodes = [...nodes, candidate];
   const sourceCheck = validateConnection(candidateNodes, {
     source: edge.source,
@@ -478,10 +478,10 @@ export function Canvas() {
   const enterMetanode = useEditor((s) => s.enterMetanode);
   const drillDepth = useEditor((s) => s.drillStack.length);
   const [paletteCollapsed, setPaletteCollapsed] = useState(() => {
-    try { return localStorage.getItem("noodle_palette_collapsed") === "true"; } catch { return false; }
+    try { return localStorage.getItem("nodyra_palette_collapsed") === "true"; } catch { return false; }
   });
   const [snapToGrid, setSnapToGrid] = useState(() => {
-    try { return localStorage.getItem("noodle_snap_to_grid") !== "false"; } catch { return true; }
+    try { return localStorage.getItem("nodyra_snap_to_grid") !== "false"; } catch { return true; }
   });
   const [quickAdd, setQuickAdd] = useState<CanvasQuickAddState | null>(null);
   const [quickAddActiveIndex, setQuickAddActiveIndex] = useState(0);
@@ -539,7 +539,7 @@ export function Canvas() {
   const onDrop = useCallback(
     (event: DragEvent) => {
       event.preventDefault();
-      const manifestId = event.dataTransfer.getData("application/noodle");
+      const manifestId = event.dataTransfer.getData("application/nodyra");
       if (!manifestId) return;
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
 
@@ -668,8 +668,8 @@ export function Canvas() {
     function onFitView(): void {
       void fitView({ padding: 0.22, duration: 220 });
     }
-    window.addEventListener("noodle:fit-view", onFitView);
-    return () => window.removeEventListener("noodle:fit-view", onFitView);
+    window.addEventListener("nodyra:fit-view", onFitView);
+    return () => window.removeEventListener("nodyra:fit-view", onFitView);
   }, [fitView]);
 
   useEffect(() => {
@@ -684,8 +684,8 @@ export function Canvas() {
       }
       openEdgeQuickAddAt(detail.edgeId, detail.clientX, detail.clientY);
     }
-    window.addEventListener("noodle:open-edge-quick-add", onOpenEdgeQuickAdd);
-    return () => window.removeEventListener("noodle:open-edge-quick-add", onOpenEdgeQuickAdd);
+    window.addEventListener("nodyra:open-edge-quick-add", onOpenEdgeQuickAdd);
+    return () => window.removeEventListener("nodyra:open-edge-quick-add", onOpenEdgeQuickAdd);
   }, [openEdgeQuickAddAt]);
 
   useEffect(() => {
@@ -703,8 +703,8 @@ export function Canvas() {
       autoLayout();
       setTimeout(() => { void fitView({ padding: 0.22, duration: 220 }); }, 30);
     }
-    window.addEventListener("noodle:auto-layout", onAutoLayout);
-    return () => window.removeEventListener("noodle:auto-layout", onAutoLayout);
+    window.addEventListener("nodyra:auto-layout", onAutoLayout);
+    return () => window.removeEventListener("nodyra:auto-layout", onAutoLayout);
   }, [autoLayout, fitView]);
 
   useEffect(() => {
@@ -774,10 +774,10 @@ export function Canvas() {
 
   useEffect(() => {
     function onToggle(): void {
-      try { setPaletteCollapsed(localStorage.getItem("noodle_palette_collapsed") === "true"); } catch {}
+      try { setPaletteCollapsed(localStorage.getItem("nodyra_palette_collapsed") === "true"); } catch {}
     }
-    window.addEventListener("noodle:toggle-node-palette", onToggle);
-    return () => window.removeEventListener("noodle:toggle-node-palette", onToggle);
+    window.addEventListener("nodyra:toggle-node-palette", onToggle);
+    return () => window.removeEventListener("nodyra:toggle-node-palette", onToggle);
   }, []);
 
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
@@ -907,8 +907,8 @@ export function Canvas() {
   // Merge frames + body nodes/edges from child workflows into the render list.
   const allNodes = useMemo(
     () => [
-      // Frames are render-only RF nodes; cast keeps allNodes a NoodleNode[].
-      ...(loopFrames as unknown as NoodleNode[]),
+      // Frames are render-only RF nodes; cast keeps allNodes a NodyraNode[].
+      ...(loopFrames as unknown as NodyraNode[]),
       ...nodes,
       ...Object.values(childWorkflows).flatMap((cw) => cw.nodes),
     ],
@@ -936,7 +936,7 @@ export function Canvas() {
   const toggleSnapToGrid = useCallback(() => {
     setSnapToGrid((prev) => {
       const next = !prev;
-      try { localStorage.setItem("noodle_snap_to_grid", String(next)); } catch {}
+      try { localStorage.setItem("nodyra_snap_to_grid", String(next)); } catch {}
       return next;
     });
   }, []);
@@ -1191,7 +1191,7 @@ export function Canvas() {
             window.setTimeout(() => void fitView({ padding: 0.22, duration: 220 }), 0);
             return;
           }
-          if (node.type === "noodle" || node.type === "mapGroup") openNdv(node.id);
+          if (node.type === "nodyra" || node.type === "mapGroup") openNdv(node.id);
         }}
         onPaneClick={() => { setSelected(null); setCtxMenu(null); setQuickAdd(null); }}
         onNodeContextMenu={onNodeContextMenu}
@@ -1210,7 +1210,7 @@ export function Canvas() {
         <MiniMap
           pannable
           zoomable
-          nodeComponent={MiniMapNoodleNode}
+          nodeComponent={MiniMapNodyraNode}
           nodeColor={miniMapNodeColor}
           nodeClassName={miniMapNodeClassName}
           bgColor="#0b0e14"

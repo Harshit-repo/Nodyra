@@ -3,7 +3,7 @@
 Implements ``SubworkflowRunner`` for the API: looks up the child graph,
 resolves credentials, seeds the trigger, creates a child Run row, and runs
 the child on the right substrate. Cycle detection and depth limits live in
-the ENGINE adapter (``noodle.engine.subworkflows``) — not here.
+the ENGINE adapter (``nodyra.engine.subworkflows``) — not here.
 
 Concurrency invariants preserved from the pre-A3 code (HANDOFF.md §7):
 
@@ -30,15 +30,15 @@ from app.db import SessionLocal
 from app.models import PinnedData, Run, Workflow
 from app.services.credentials import resolve_credential_refs
 from app.services.graph_utils import first_trigger_node, resolve_trigger_targets
-from noodle.engine import execute
-from noodle.engine.subworkflows import (
+from nodyra.engine import execute
+from nodyra.engine.subworkflows import (
     InlineSubworkflow,
     SubworkflowCall,
     SubworkflowMeta,
     extract_leaf_value,
 )
-from noodle.models import WorkflowGraph
-from noodle.serialization import deserialize_value
+from nodyra.models import WorkflowGraph
+from nodyra.serialization import deserialize_value
 
 logger = logging.getLogger(__name__)
 

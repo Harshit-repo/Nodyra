@@ -1,9 +1,9 @@
 # 06 — Workflow Execution Engine
 
-Independent review, 2026-06-16. Files: `packages/core/noodle/engine/scheduler.py`,
+Independent review, 2026-06-16. Files: `packages/core/nodyra/engine/scheduler.py`,
 `engine/validation.py`, `engine/loops.py`, `engine/node_exec.py` (timeout paths),
 `apps/api/app/services/runner.py` (timeout/cancellation wiring),
-`packages/nodes/noodle_nodes/builtin.py` (map node).
+`packages/nodes/nodyra_nodes/builtin.py` (map node).
 
 ## What is solid (verified)
 - **Cycle detection**: Kahn's algorithm in `_topo_order` (`scheduler.py:90-126`);

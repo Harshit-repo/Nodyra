@@ -30,7 +30,7 @@ PROVIDERS_BY_ROLE: dict[str, tuple[str, ...]] = {
 # ~3x the default dispatch poll interval, so one missed tick doesn't flap.
 HEARTBEAT_TTL_SECONDS = 30
 
-_KEY = "noodle:dispatcher:{provider}"
+_KEY = "nodyra:dispatcher:{provider}"
 _local: dict[str, float] = {}  # provider -> epoch ts (in-process fallback)
 
 

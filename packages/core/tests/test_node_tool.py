@@ -1,8 +1,8 @@
 import asyncio
 
-from noodle.models import GraphNode
-from noodle.node_tool import TOOL_MODE_OUTPUT, build_node_tool_adapter
-from noodle.sdk import NodeRegistry, node
+from nodyra.models import GraphNode
+from nodyra.node_tool import TOOL_MODE_OUTPUT, build_node_tool_adapter
+from nodyra.sdk import NodeRegistry, node
 
 
 def _registry_with_echo() -> NodeRegistry:

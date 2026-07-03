@@ -3,17 +3,17 @@ ValidationWarning, and graph schema inference."""
 
 import pytest
 
-from noodle.engine.node_exec import (
+from nodyra.engine.node_exec import (
     _sanitize_schema,
     _validate_node_input_schema,
     _validate_node_output_schema,
 )
-from noodle.engine.types import GraphError, NodeValidationError, ValidationWarning
-from noodle.engine.validation import (
+from nodyra.engine.types import GraphError, NodeValidationError, ValidationWarning
+from nodyra.engine.validation import (
     _infer_schema_port_kinds,
     validate_graph,
 )
-from noodle.models import Edge, GraphNode, WorkflowGraph
+from nodyra.models import Edge, GraphNode, WorkflowGraph
 
 # ---------------------------------------------------------------------------
 # Schema sanitization
@@ -100,7 +100,7 @@ class TestNodeValidationError:
         assert "bad data" in str(err)
 
     def test_is_node_error(self):
-        from noodle.engine.types import NodeError
+        from nodyra.engine.types import NodeError
 
         assert issubclass(NodeValidationError, NodeError)
         assert issubclass(NodeError, Exception)

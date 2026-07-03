@@ -75,7 +75,7 @@ router = APIRouter(prefix="/runner-pools", tags=["runner-pools"])
 
 # ---------------------------------------------------------------------------
 # Wheel index (program A2) — lets a runner on a clean machine install the
-# unpublished noodle-* packages. Public: the wheels are the OSS noodle packages
+# unpublished nodyra-* packages. Public: the wheels are the OSS nodyra packages
 # (no secrets) and uv sends no auth header. Exempted in main._AUTH_EXEMPT_PREFIXES.
 # ---------------------------------------------------------------------------
 
@@ -587,7 +587,7 @@ async def ssh_onboard(
     body: SSHOnboardRequest,
     session: AsyncSession = Depends(get_session),
 ) -> SSHOnboardResponse:
-    """SSH into a host, install + register + start ``noodle-runner``, and add
+    """SSH into a host, install + register + start ``nodyra-runner``, and add
     it to this (agent) pool. SSH credentials are stored encrypted on the runner
     row so the machine can be restarted later."""
     pool = await session.get(RunnerPool, pool_id)
@@ -1097,7 +1097,7 @@ async def restart_runner(
     runner_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """SSH into a previously onboarded runner and restart the noodle-runner service.
+    """SSH into a previously onboarded runner and restart the nodyra-runner service.
 
     Requires that SSH credentials were persisted during onboarding.
     Rate-limited to 3 attempts per 10 minutes per runner.

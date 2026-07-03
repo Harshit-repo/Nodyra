@@ -95,7 +95,7 @@ async def get_org_kek(
         _logger.error(
             "get_org_kek: cannot unwrap org KEK for org %s — SECRET_KEY may have "
             "changed since the KEK was minted. Falling back to master-KEK path. "
-            "To recover: restore the original NOODLE_SECRET_KEY, OR run "
+            "To recover: restore the original NODYRA_SECRET_KEY, OR run "
             "`UPDATE organizations SET wrapped_org_kek = NULL` in Postgres "
             "and delete any credentials that were encrypted under the old key.",
             org_id,

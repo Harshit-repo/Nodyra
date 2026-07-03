@@ -310,7 +310,7 @@ wf3_graph = {
             params={
                 "openai_api_key": "",
                 "model": "gpt-4.1-mini",
-                "suffix": "noodle-test",
+                "suffix": "nodyra-test",
             },
         ),
         make_node(
@@ -329,10 +329,10 @@ wf3_graph = {
             "register_fine_tuned_model",
             x=1900,
             params={
-                "name": "Noodle Test Fine-Tune",
+                "name": "Nodyra Test Fine-Tune",
                 "task": "chat",
-                "description": "Test fine-tuned model from Noodle workflow",
-                "tags": "test, noodle, gpt-4.1-mini",
+                "description": "Test fine-tuned model from Nodyra workflow",
+                "tags": "test, nodyra, gpt-4.1-mini",
             },
         ),
     ],

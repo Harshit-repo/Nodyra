@@ -1,5 +1,5 @@
 [project]
-name = "noodle"
+name = "nodyra"
 version = "0.0.1"
 description = "Self-hostable, Python-native workflow automation platform where node logic is pure Python"
 requires-python = ">=3.12"
@@ -12,11 +12,11 @@ package = false
 members = ["apps/api", "packages/*"]
 
 [tool.uv.sources]
-noodle-core = { workspace = true }
-noodle-nodes = { workspace = true }
-noodle-exporter = { workspace = true }
-noodle-runtime = { workspace = true }
-noodle-importer = { workspace = true }
+nodyra-core = { workspace = true }
+nodyra-nodes = { workspace = true }
+nodyra-exporter = { workspace = true }
+nodyra-runtime = { workspace = true }
+nodyra-importer = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -61,7 +61,7 @@ select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501", "B904"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["app", "noodle", "noodle_nodes", "noodle_runtime", "noodle_exporter"]
+known-first-party = ["app", "nodyra", "nodyra_nodes", "nodyra_runtime", "nodyra_exporter"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body", "fastapi.File", "fastapi.Header"]

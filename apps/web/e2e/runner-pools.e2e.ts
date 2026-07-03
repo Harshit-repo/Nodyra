@@ -52,7 +52,7 @@ test("creates an agent runner pool and mints a machine install token", async ({
   expect((await minted).ok()).toBe(true);
 
   const installSnippet = machineDialog.locator(".runner-install pre");
-  await expect(installSnippet).toContainText("noodle-runner register");
+  await expect(installSnippet).toContainText("nodyra-runner register");
   await expect(installSnippet).toContainText(`--name ${machineName}`);
   await expect(installSnippet).toContainText("--token");
 });

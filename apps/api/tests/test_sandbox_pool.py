@@ -21,7 +21,7 @@ def test_spawn_waits_for_ready_and_is_hardened():
             key=("org1", "env1"),
             env_payload=ENV,
             runtime="runsc",
-            network="noodle-sandbox",
+            network="nodyra-sandbox",
         )
 
     worker = asyncio.run(scenario())
@@ -31,7 +31,7 @@ def test_spawn_waits_for_ready_and_is_hardened():
     assert call["cap_drop"] == ["ALL"]
     assert call["runtime"] == "runsc"
     assert call["image"].endswith(f"-{IMAGE_SCHEMA_VERSION}")
-    assert call["name"].startswith("noodle-sbx-")
+    assert call["name"].startswith("nodyra-sbx-")
 
 
 def test_spawn_ready_timeout_kills_container(monkeypatch):
@@ -44,7 +44,7 @@ def test_spawn_ready_timeout_kills_container(monkeypatch):
             key=("org1", "env1"),
             env_payload=ENV,
             runtime="runc",
-            network="noodle-sandbox",
+            network="nodyra-sandbox",
         )
 
     with pytest.raises(RuntimeError, match="ready"):
@@ -62,7 +62,7 @@ def test_spawn_container_dies_before_ready():
                 key=("o", "e"),
                 env_payload=ENV,
                 runtime="runc",
-                network="noodle-sandbox",
+                network="nodyra-sandbox",
             )
         )
         for _ in range(50):
@@ -87,7 +87,7 @@ async def _spawned_worker(client):
         key=("org1", "env1"),
         env_payload=ENV,
         runtime="runc",
-        network="noodle-sandbox",
+        network="nodyra-sandbox",
     )
 
 
@@ -307,7 +307,7 @@ from app.services.sandbox_pool import SandboxPool  # noqa: E402
 
 def _make_pool(client) -> SandboxPool:
     p = SandboxPool()
-    p.configure(client, runtime="runc", network="noodle-sandbox")
+    p.configure(client, runtime="runc", network="nodyra-sandbox")
     return p
 
 
@@ -558,7 +558,7 @@ def test_init_required_with_daemon(monkeypatch):
     monkeypatch.setattr(sp, "_make_docker_client", lambda: client)
     assert asyncio.run(sp.init_sandbox()) == "runsc"
     assert fresh.enabled
-    assert "noodle-sandbox" in client.networks.existing
+    assert "nodyra-sandbox" in client.networks.existing
 
 
 async def test_execute_run_passes_org_to_impl_when_tracing_disabled(monkeypatch):

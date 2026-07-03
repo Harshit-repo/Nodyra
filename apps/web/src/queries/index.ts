@@ -984,7 +984,7 @@ export function useTriggerManualPullMutation() {
 export function useResolveGithubConflictMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ workflowId, side }: { workflowId: string; side: "noodle" | "github" }) =>
+    mutationFn: ({ workflowId, side }: { workflowId: string; side: "nodyra" | "github" }) =>
       api.resolveGithubConflict(workflowId, side),
     onSuccess: (_, { workflowId }) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.workflow(workflowId) });

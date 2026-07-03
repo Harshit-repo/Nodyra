@@ -5,7 +5,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from app.services.backends.base import _run, local_noodle_packages, venv_dir
+from app.services.backends.base import _run, local_nodyra_packages, venv_dir
 from app.services.backends.tools import ensure_tool
 
 
@@ -27,7 +27,7 @@ class CondaBackend:
         if code != 0:
             return "error", log[-4000:]
 
-        local_pkgs = local_noodle_packages()
+        local_pkgs = local_nodyra_packages()
         if local_pkgs:
             pip_code, pip_log = await _run(
                 str(self.python_path(env.id)), "-m", "pip", "install", *local_pkgs,

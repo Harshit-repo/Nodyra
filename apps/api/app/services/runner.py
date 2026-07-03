@@ -1,10 +1,10 @@
 """Workflow execution service.
 
-Runs a workflow graph in-process with the Noodle engine, streams per-node
+Runs a workflow graph in-process with the Nodyra engine, streams per-node
 events to the broker for live editor updates, and persists the run.
 
 Sub-workflow semantics (cycle/depth/inline) live in the engine
-(``noodle.engine.subworkflows``); this host supplies the resolver
+(``nodyra.engine.subworkflows``); this host supplies the resolver
 (``app.services.subworkflows.resolve_subworkflow``) and per-run meta.
 """
 
@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
-import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
+import nodyra_nodes  # noqa: F401 - importing registers the built-in nodes
 from app import tracing
 from app.config import settings
 from app.db import SessionLocal
@@ -83,32 +83,32 @@ from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
 from app.services.sandbox_policy import resolve_execution_mode, resolve_sandbox_overrides
 from app.services.subworkflows import meta_for_root_run, resolve_subworkflow
-from noodle.ai_runtime import AgentActionRequest
-from noodle.context import artifact_store, org_run_limits
-from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute
-from noodle.engine.types import set_call_mcp_tool_impl
-from noodle.models import WorkflowGraph
-from noodle.process_isolation import (
+from nodyra.ai_runtime import AgentActionRequest
+from nodyra.context import artifact_store, org_run_limits
+from nodyra.engine import DEFAULT_NODE_TIMEOUTS, execute
+from nodyra.engine.types import set_call_mcp_tool_impl
+from nodyra.models import WorkflowGraph
+from nodyra.process_isolation import (
     PooledProcessIsolator,
 )
-from noodle.process_isolation import (
+from nodyra.process_isolation import (
     pool_key as engine_pool_key,
 )
-from noodle.sdk import (
+from nodyra.sdk import (
     register_module_functions,
     unregister_module,
 )
-from noodle.sdk import (
+from nodyra.sdk import (
     registry as node_registry,
 )
-from noodle.serialization import (
+from nodyra.serialization import (
     deserialize_value,
     serialize_value,
 )
 
 # ContextVar that carries the current run_id into every log record emitted
 # while _execute_run is active, without requiring callers to pass it explicitly.
-_log_run_id: ContextVar[str] = ContextVar("noodle_log_run_id", default="")
+_log_run_id: ContextVar[str] = ContextVar("nodyra_log_run_id", default="")
 
 
 class _RunIdFilter(logging.Filter):
@@ -120,7 +120,7 @@ class _RunIdFilter(logging.Filter):
 
 
 def _install_run_id_filter() -> None:
-    root = logging.getLogger("noodle")
+    root = logging.getLogger("nodyra")
     for log_filter in root.filters:
         if isinstance(log_filter, _RunIdFilter):
             return
@@ -374,7 +374,7 @@ def _expanded_for_gating(graph: dict) -> dict:
     expansion fails, so gating never crashes a run request.
     """
     try:
-        from noodle.engine.metanodes import _expand_graph_dict
+        from nodyra.engine.metanodes import _expand_graph_dict
 
         return _expand_graph_dict(graph)
     except Exception:  # pragma: no cover - defensive
@@ -686,7 +686,7 @@ async def _start_run_impl(
                 park_seed["targets"] = list(targets)
         with tracing.span(
             "run.enqueue",
-            attributes={"noodle.run_id": run_id, "noodle.workflow_id": workflow_id},
+            attributes={"nodyra.run_id": run_id, "nodyra.workflow_id": workflow_id},
         ):
             trace_carrier = tracing.inject_context()
             entry = await run_queue.enqueue(
@@ -900,9 +900,9 @@ async def _execute_run(
                 run_org_id=org_id,
             )
             return
-        attrs = {"noodle.run_id": run_id, "noodle.workflow_id": workflow_id}
+        attrs = {"nodyra.run_id": run_id, "nodyra.workflow_id": workflow_id}
         if org_id:
-            attrs["noodle.org_id"] = org_id
+            attrs["nodyra.org_id"] = org_id
         with tracing.span("run.execute", carrier=trace_carrier, attributes=attrs) as sp:
             status = await _execute_run_impl(
                 run_id,
@@ -918,7 +918,7 @@ async def _execute_run(
                 run_org_id=org_id,
             )
             if sp is not None:
-                sp.set_attribute("noodle.status", status)
+                sp.set_attribute("nodyra.status", status)
     finally:
         if org_token is not None:
             current_org_id.reset(org_token)
@@ -1445,7 +1445,7 @@ async def _execute_run_impl(
                 status = str(result.status)
             finally:
                 # Reset the MCP callback so it doesn't leak across runs.
-                from noodle.engine.types import _call_mcp_tool_impl as _mcp_ctxvar
+                from nodyra.engine.types import _call_mcp_tool_impl as _mcp_ctxvar
 
                 _mcp_ctxvar.set(None)
                 artifact_store.reset(artifact_token)
@@ -1719,7 +1719,7 @@ async def _execute_queued_entry(run_id: str) -> None:
     with tracing.span(
         "run.lease",
         carrier=entry_trace_carrier,
-        attributes={"noodle.run_id": run_id, "noodle.workflow_id": workflow_id},
+        attributes={"nodyra.run_id": run_id, "nodyra.workflow_id": workflow_id},
     ):
         lease_carrier = tracing.inject_context() or entry_trace_carrier
 

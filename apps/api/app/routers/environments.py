@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
+import nodyra_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.db import get_session
 from app.models import Environment, EnvironmentBuildJob, RunnerPool, User, Workflow
 from app.schemas import (
@@ -26,8 +26,8 @@ from app.services.environment_builds import (
     notify_environment_build_workers,
 )
 from app.tenancy import active_org_id
-from noodle.packages import canonical_package_name
-from noodle.sdk import registry as node_registry
+from nodyra.packages import canonical_package_name
+from nodyra.sdk import registry as node_registry
 
 router = APIRouter(prefix="/environments", tags=["environments"])
 

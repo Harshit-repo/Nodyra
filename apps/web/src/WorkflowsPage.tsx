@@ -273,10 +273,10 @@ export function WorkflowsPage() {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
-    return safeGetItem("noodle-wf-view") === "list" ? "list" : "grid";
+    return safeGetItem("nodyra-wf-view") === "list" ? "list" : "grid";
   });
   const [onboardingDismissed, setOnboardingDismissed] = useState(
-    () => safeGetItem("noodle-onboarding-dismissed") === "1",
+    () => safeGetItem("nodyra-onboarding-dismissed") === "1",
   );
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -422,7 +422,7 @@ export function WorkflowsPage() {
 
   function setView(mode: "grid" | "list"): void {
     setViewMode(mode);
-    safeSetItem("noodle-wf-view", mode);
+    safeSetItem("nodyra-wf-view", mode);
   }
 
   async function openProviderStatus(
@@ -483,7 +483,7 @@ export function WorkflowsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `noodle-workflows-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `nodyra-workflows-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -669,6 +669,7 @@ export function WorkflowsPage() {
                       type="button"
                       className="wf-folder-action-btn"
                       title="Rename folder"
+                      aria-label={`Rename ${folder.name}`}
                       onClick={(e) => { e.stopPropagation(); setPendingFolderRename(folder); setFolderRenameName(folder.name); }}
                     >
                       <PencilSimple size={11} weight="bold" />
@@ -677,6 +678,7 @@ export function WorkflowsPage() {
                       type="button"
                       className="wf-folder-action-btn is-danger"
                       title="Delete folder"
+                      aria-label={`Delete ${folder.name}`}
                       onClick={(e) => { e.stopPropagation(); setPendingFolderDelete(folder); }}
                     >
                       <Trash size={11} weight="bold" />
@@ -686,6 +688,7 @@ export function WorkflowsPage() {
                         type="button"
                         className="wf-folder-action-btn"
                         title="Set folder color"
+                        aria-label={`Set ${folder.name} color`}
                         onClick={(e) => { e.stopPropagation(); setFolderColorPicker(folderColorPicker === folder.id ? null : folder.id); }}
                       >
                         <Palette size={11} weight="bold" />
@@ -892,7 +895,7 @@ export function WorkflowsPage() {
             {!onboardingDismissed && canWrite && (
               <div className="onboarding-welcome">
                 <Logo size={48} />
-                <h1>Welcome to Noodle</h1>
+                <h1>Welcome to Nodyra</h1>
                 <p className="muted">
                   Build Python-native workflow automations with a visual editor.
                   Connect nodes, run Python code, and deploy to production — all
@@ -918,7 +921,7 @@ export function WorkflowsPage() {
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={() => {
-                    safeSetItem("noodle-onboarding-dismissed", "1");
+                    safeSetItem("nodyra-onboarding-dismissed", "1");
                     setOnboardingDismissed(true);
                   }}
                 >

@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import noodle_nodes  # noqa: F401 - registers built-in nodes
+import nodyra_nodes  # noqa: F401 - registers built-in nodes
 from app.db import SessionLocal
 from app.models import (
     Deployment,
@@ -63,12 +63,12 @@ from app.services.workflow_events import (
     publish_workflow_graph_changed,
     record_workflow_revision,
 )
-from noodle.engine.scheduler import _topo_order
-from noodle.engine.types import GraphError
-from noodle.engine.validation import _validate_connection_kinds
-from noodle.models import WorkflowGraph
-from noodle.sdk import registry as node_registry
-from noodle_exporter import slugify
+from nodyra.engine.scheduler import _topo_order
+from nodyra.engine.types import GraphError
+from nodyra.engine.validation import _validate_connection_kinds
+from nodyra.models import WorkflowGraph
+from nodyra.sdk import registry as node_registry
+from nodyra_exporter import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -386,7 +386,7 @@ async def _search_node_catalog(session: AsyncSession, user: User | None, args: d
     include_deprecated = bool(args.get("include_deprecated", False))
     limit = max(1, min(int(args.get("limit") or 30), 100))
 
-    from noodle.packages import canonical_package_name
+    from nodyra.packages import canonical_package_name
 
     package_key = canonical_package_name(package) if package else ""
     results: list[tuple[int, dict[str, Any]]] = []
@@ -1055,7 +1055,7 @@ def _apply_graph_operations(graph: dict, operations: Any) -> tuple[dict, list[di
 def _graph_requirements(parsed: WorkflowGraph) -> list[str]:
     manifests = {manifest.id: manifest for manifest in node_registry.manifests()}
     seen: dict[str, str] = {}
-    from noodle.packages import canonical_package_name
+    from nodyra.packages import canonical_package_name
 
     for node in parsed.nodes:
         manifest = manifests.get(node.type)
@@ -1090,7 +1090,7 @@ async def _graph_validation_summary(
                 select(Environment).where(Environment.is_global.is_(True)).limit(1)
             )
         if env is not None:
-            from noodle.packages import canonical_package_name
+            from nodyra.packages import canonical_package_name
 
             installed = {canonical_package_name(package) for package in env.packages or []}
             missing_packages = [
@@ -2211,7 +2211,7 @@ async def _list_environments(session: AsyncSession, user: User | None, args: dic
 
 
 def _dedupe_packages(packages: list[str]) -> list[str]:
-    from noodle.packages import canonical_package_name
+    from nodyra.packages import canonical_package_name
 
     deduped: dict[str, str] = {}
     for raw in packages:
@@ -2395,7 +2395,7 @@ async def _remove_environment_package(session: AsyncSession, user: User | None, 
     package = str(args.get("package") or "").strip()
     if not package:
         raise McpToolError("package is required.")
-    from noodle.packages import canonical_package_name
+    from nodyra.packages import canonical_package_name
 
     target = canonical_package_name(package)
     next_packages = [
@@ -2563,7 +2563,7 @@ async def _enable_mcp_tool(session: AsyncSession, user: User | None, args: dict)
         raise McpToolError("tool_name must match [A-Za-z0-9_-]{1,64}.")
     effective_name = tool_name or workflow.mcp_tool_name or workflow_tool_name(workflow)
     if effective_name in {tool.name for tool in STATIC_TOOLS}:
-        raise McpToolError(f"Tool name {effective_name!r} is reserved by Noodle.")
+        raise McpToolError(f"Tool name {effective_name!r} is reserved by Nodyra.")
     for other in await _mcp_enabled_workflows(session):
         if other.id != workflow.id and workflow_tool_name(other) == effective_name:
             raise McpToolError(
@@ -2845,7 +2845,7 @@ STATIC_TOOLS: list[McpTool] = [
     McpTool(
         name="list_workflows",
         description=(
-            "List Noodle workflows with id, name, active state and node count. "
+            "List Nodyra workflows with id, name, active state and node count. "
             "Optionally filter by a case-insensitive name substring."
         ),
         input_schema={
@@ -3722,7 +3722,7 @@ STATIC_TOOLS: list[McpTool] = [
         name="set_error_handler",
         description=(
             "Set or clear the error-handler workflow for a workflow. "
-            "When a run fails, Noodle will trigger error_workflow_id with the error details. "
+            "When a run fails, Nodyra will trigger error_workflow_id with the error details. "
             "Pass error_workflow_id=null to remove the handler."
         ),
         input_schema={
@@ -3934,7 +3934,7 @@ async def list_workflow_tool_descriptors(session: AsyncSession) -> list[dict]:
         out.append(
             {
                 "name": name,
-                "description": wf.mcp_description or f"Run the Noodle workflow '{wf.name}'.",
+                "description": wf.mcp_description or f"Run the Nodyra workflow '{wf.name}'.",
                 "inputSchema": schema
                 if isinstance(schema, dict) and schema
                 else _PERMISSIVE_SCHEMA,

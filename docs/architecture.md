@@ -1,6 +1,6 @@
 # Architecture
 
-Noodle is a self-hostable, Python-native workflow automation platform where
+Nodyra is a self-hostable, Python-native workflow automation platform where
 every node is pure Python.
 
 ## Components
@@ -31,7 +31,7 @@ every node is pure Python.
   Sheets, Notion, GitHub, Postgres, MySQL, S3, OpenAI, Anthropic, Stripe, and
   Airtable).
 - **`packages/runtime`** — the in-environment runner package. A workflow's
-  env subprocess (`python -u -m noodle_runtime`) keeps a warm process per env
+  env subprocess (`python -u -m nodyra_runtime`) keeps a warm process per env
   and executes graphs inside the env's interpreter. Pool-managed
   (`runtime_pool`) with configurable per-env warm-process count and a global
   cap.
@@ -52,8 +52,8 @@ function parameter rendered in the inspector. The engine filters kwargs to
 what the function actually accepts before calling, so the virtual `input`
 port is not passed to functions that don't declare it.
 
-The engine (`noodle.engine.execute`, a package under
-`packages/core/noodle/engine/` — scheduler, node_exec, loops, agent,
+The engine (`nodyra.engine.execute`, a package under
+`packages/core/nodyra/engine/` — scheduler, node_exec, loops, agent,
 datasets, validation, metanodes, types — behind a re-exporting facade)
 schedules the graph by **dependency counting**: a node starts the moment all
 of its in-set predecessors complete, with no level barrier holding a fast
@@ -82,7 +82,7 @@ It supports:
   NOT mutate the process-global `sys.stdout`, so concurrent runs and
   sub-workflows on the same host don't cross-capture;
 - **typed output serialization** — DataFrame, datetime, Decimal, tuple, set,
-  bytes cross the WebSocket/storage boundary as `{__noodle_typed__: true,
+  bytes cross the WebSocket/storage boundary as `{__nodyra_typed__: true,
   ...}` envelopes that the UI renders as native types;
 - **artifacts** — Code/user-module nodes call `artifacts.write_*` to write
   bytes outside the DB; refs flow through node outputs as small JSON marker
@@ -90,7 +90,7 @@ It supports:
 - **live events** — `on_event` fires per-node start/finish with timing;
 - **process isolation** — `code` nodes run in a `ProcessIsolator` injected
   by the host via `execute(..., process_isolator=...)`
-  (`noodle.process_isolation.PooledProcessIsolator`: one pool per
+  (`nodyra.process_isolation.PooledProcessIsolator`: one pool per
   environment key, eviction keyed off task completion + in-flight counts so
   a long-running code node's pool is never reaped mid-task). The API runner
   and runtime server each own one; tests and exported scripts fall back to
@@ -98,7 +98,7 @@ It supports:
 - **sub-workflows (A3)** — the engine owns calling semantics (cycle
   detection via an explicit `call_chain`, depth limiting via
   `max_subworkflow_depth`, inline-child execution, leaf extraction) in
-  `noodle.engine.subworkflows`; hosts inject a `SubworkflowRunner` resolver
+  `nodyra.engine.subworkflows`; hosts inject a `SubworkflowRunner` resolver
   through `execute(..., subworkflow_runner=..., subworkflow_meta=...)`. The
   API resolver (`app/services/subworkflows.py`) loads the child graph
   (draft vs published from the call's `use_published`), creates a child

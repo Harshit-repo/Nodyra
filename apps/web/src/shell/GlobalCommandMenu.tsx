@@ -157,7 +157,7 @@ export function GlobalCommandMenu({
     const active = results[activeIndex];
     if (!open || !active) return;
     document
-      .getElementById(`noodle-command-${active.id}`)
+      .getElementById(`nodyra-command-${active.id}`)
       ?.scrollIntoView?.({ block: "nearest" });
   }, [activeIndex, open, results]);
 
@@ -165,7 +165,7 @@ export function GlobalCommandMenu({
     <>
       <button
         ref={triggerRef}
-        className="noodle-shell-command-trigger"
+        className="nodyra-shell-command-trigger"
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -181,7 +181,7 @@ export function GlobalCommandMenu({
 
       {open && createPortal(
         <div
-          className="noodle-shell-command-layer"
+          className="nodyra-shell-command-layer"
           onClick={(event) => {
             if (event.target === event.currentTarget) {
               close();
@@ -191,12 +191,12 @@ export function GlobalCommandMenu({
         >
           <div
             ref={dialogRef}
-            className="noodle-shell-command-dialog"
+            className="nodyra-shell-command-dialog"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="noodle-command-title"
+            aria-labelledby="nodyra-command-title"
           >
-            <div className="noodle-shell-command-head">
+            <div className="nodyra-shell-command-head">
               <MagnifyingGlass size={19} aria-hidden="true" />
               <input
                 ref={inputRef}
@@ -205,8 +205,8 @@ export function GlobalCommandMenu({
                 aria-autocomplete="list"
                 aria-expanded="true"
                 value={query}
-                aria-controls="noodle-command-results"
-                aria-activedescendant={results[activeIndex] ? `noodle-command-${results[activeIndex].id}` : undefined}
+                aria-controls="nodyra-command-results"
+                aria-activedescendant={results[activeIndex] ? `nodyra-command-${results[activeIndex].id}` : undefined}
                 placeholder="Search pages and commands…"
                 onChange={(event) => setQuery(event.target.value)}
               />
@@ -221,15 +221,15 @@ export function GlobalCommandMenu({
                 <X size={18} aria-hidden="true" />
               </button>
             </div>
-            <div className="noodle-shell-command-label" id="noodle-command-title">Navigate</div>
-            <div id="noodle-command-results" className="noodle-shell-command-results" role="listbox" aria-label="Pages">
+            <div className="nodyra-shell-command-label" id="nodyra-command-title">Navigate</div>
+            <div id="nodyra-command-results" className="nodyra-shell-command-results" role="listbox" aria-label="Pages">
               {results.length === 0 ? (
-                <div className="noodle-shell-command-empty">No matching pages or commands.</div>
+                <div className="nodyra-shell-command-empty">No matching pages or commands.</div>
               ) : results.map((route, index) => {
                 const Icon = route.icon;
                 return (
                   <button
-                    id={`noodle-command-${route.id}`}
+                    id={`nodyra-command-${route.id}`}
                     key={route.id}
                     type="button"
                     tabIndex={-1}
@@ -251,7 +251,7 @@ export function GlobalCommandMenu({
                 );
               })}
             </div>
-            <div className="noodle-shell-command-footer"><span>↑↓ Navigate</span><span>↵ Open</span><span>Esc Close</span></div>
+            <div className="nodyra-shell-command-footer"><span>↑↓ Navigate</span><span>↵ Open</span><span>Esc Close</span></div>
           </div>
         </div>,
         document.body,

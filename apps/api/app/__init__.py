@@ -1,1 +1,1 @@
-"""Noodle API server."""
+"""Nodyra API server."""

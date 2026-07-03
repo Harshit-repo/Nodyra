@@ -129,7 +129,7 @@ async def _mock_ai_draft_one_shot(
     """Mock ``build_workflow_draft`` that always returns a converged graph on
     the first call by also mocking the run outcome."""
     from app.schemas import AiWorkflowDraftResponse
-    from noodle.models import WorkflowGraph
+    from nodyra.models import WorkflowGraph
 
     return AiWorkflowDraftResponse(
         workflow_id=workflow_id,
@@ -147,7 +147,7 @@ async def _mock_ai_draft_two_iterations(
     """Mock ``build_workflow_draft`` that returns the initial graph (will
     "fail" on first run), then the fixed graph (will "succeed")."""
     from app.schemas import AiWorkflowDraftRequest, AiWorkflowDraftResponse
-    from noodle.models import WorkflowGraph
+    from nodyra.models import WorkflowGraph
 
     body = prompt_or_body if isinstance(prompt_or_body, AiWorkflowDraftRequest) else None
     mode = body.mode if body else "draft"

@@ -25,7 +25,7 @@ export interface AppNavigationProps {
   user?: Pick<UserInfo, "role"> | null;
   workspaceRole?: string | null;
   multiTenancyEnabled?: boolean;
-  /** False represents Noodle's authentication-disabled local workspace mode. */
+  /** False represents Nodyra's authentication-disabled local workspace mode. */
   authRequired?: boolean;
   organizationSlot?: ReactNode;
   profileSlot?: ReactNode;
@@ -51,7 +51,7 @@ function NavigationLink({
   const Icon = route.icon;
   return (
     <Link
-      className={classes("noodle-shell-nav-link", active && "noodle-shell-is-active")}
+      className={classes("nodyra-shell-nav-link", active && "nodyra-shell-is-active")}
       to={route.href}
       title={route.label}
       aria-current={active ? "page" : undefined}
@@ -93,8 +93,8 @@ function SidebarGroup({
   if (routes.length === 0) return null;
   const label = GROUP_LABELS[group];
   return (
-    <div className="noodle-shell-nav-group">
-      {label && <p className="noodle-shell-nav-heading">{label}</p>}
+    <div className="nodyra-shell-nav-group">
+      {label && <p className="nodyra-shell-nav-heading">{label}</p>}
       {routes.map((route) => (
         <NavigationLink route={route} pathname={pathname} key={route.id} />
       ))}
@@ -119,41 +119,41 @@ export function AppSidebar({
   return (
     <aside
       className={classes(
-        "noodle-shell-sidebar",
-        collapsed && "noodle-shell-is-collapsed",
+        "nodyra-shell-sidebar",
+        collapsed && "nodyra-shell-is-collapsed",
         className,
       )}
       aria-label="Application sidebar"
     >
-      <div className="noodle-shell-sidebar-head">
-        <Link className="noodle-shell-brand" to="/" aria-label="Noodle workflows">
+      <div className="nodyra-shell-sidebar-head">
+        <Link className="nodyra-shell-brand" to="/" aria-label="Nodyra workflows">
           <Logo size={26} />
-          <span>noodle</span>
+          <span>nodyra</span>
         </Link>
         {organizationSlot && (
-          <div className="noodle-shell-organization-slot">{organizationSlot}</div>
+          <div className="nodyra-shell-organization-slot">{organizationSlot}</div>
         )}
       </div>
 
-      <nav className="noodle-shell-sidebar-nav" aria-label="Primary navigation">
+      <nav className="nodyra-shell-sidebar-nav" aria-label="Primary navigation">
         <SidebarGroup group="primary" pathname={pathname} user={user} workspaceRole={workspaceRole} localMode={localMode} multiTenancyEnabled={multiTenancyEnabled} />
         <SidebarGroup group="resource" pathname={pathname} user={user} workspaceRole={workspaceRole} localMode={localMode} multiTenancyEnabled={multiTenancyEnabled} />
         <SidebarGroup group="admin" pathname={pathname} user={user} workspaceRole={workspaceRole} localMode={localMode} multiTenancyEnabled={multiTenancyEnabled} />
       </nav>
 
-      <div className="noodle-shell-sidebar-foot">
+      <div className="nodyra-shell-sidebar-foot">
         <SidebarGroup group="settings" pathname={pathname} user={user} workspaceRole={workspaceRole} localMode={localMode} multiTenancyEnabled={multiTenancyEnabled} />
         {profileSlot ? (
-          <div className="noodle-shell-profile-slot">{profileSlot}</div>
+          <div className="nodyra-shell-profile-slot">{profileSlot}</div>
         ) : !authRequired && !user ? (
-          <div className="noodle-shell-local-mode" role="status">
-            <span className="noodle-shell-local-mode-dot" aria-hidden="true" />
+          <div className="nodyra-shell-local-mode" role="status">
+            <span className="nodyra-shell-local-mode-dot" aria-hidden="true" />
             Local workspace
           </div>
         ) : null}
         {onCollapsedChange && (
           <button
-            className="noodle-shell-collapse-button"
+            className="nodyra-shell-collapse-button"
             type="button"
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -259,9 +259,9 @@ function MobileMoreDrawer({
   );
 
   return (
-    <div className="noodle-shell-drawer-layer">
+    <div className="nodyra-shell-drawer-layer">
       <div
-        className="noodle-shell-drawer-backdrop"
+        className="nodyra-shell-drawer-backdrop"
         role="presentation"
         onClick={(event) => {
           if (event.target === event.currentTarget) onClose();
@@ -270,7 +270,7 @@ function MobileMoreDrawer({
       <div
         id={drawerId}
         ref={drawerRef}
-        className="noodle-shell-drawer"
+        className="nodyra-shell-drawer"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -279,13 +279,13 @@ function MobileMoreDrawer({
           if (target.closest("a[href]")) onClose();
         }}
       >
-        <div className="noodle-shell-drawer-head">
+        <div className="nodyra-shell-drawer-head">
           <div>
             <h2 id={titleId}>More</h2>
             <p>Workspace navigation</p>
           </div>
           <button
-            className="noodle-shell-icon-button"
+            className="nodyra-shell-icon-button"
             type="button"
             aria-label="Close navigation menu"
             onClick={onClose}
@@ -295,10 +295,10 @@ function MobileMoreDrawer({
         </div>
 
         {organizationSlot && (
-          <div className="noodle-shell-drawer-slot">{organizationSlot}</div>
+          <div className="nodyra-shell-drawer-slot">{organizationSlot}</div>
         )}
 
-        <nav className="noodle-shell-drawer-nav" aria-label="Additional navigation">
+        <nav className="nodyra-shell-drawer-nav" aria-label="Additional navigation">
           {routes.map((route) => (
             <NavigationLink
               route={route}
@@ -310,12 +310,12 @@ function MobileMoreDrawer({
         </nav>
 
         {profileSlot ? (
-          <div className="noodle-shell-drawer-slot noodle-shell-drawer-profile">
+          <div className="nodyra-shell-drawer-slot nodyra-shell-drawer-profile">
             {profileSlot}
           </div>
         ) : !authRequired && !user ? (
-          <div className="noodle-shell-local-mode" role="status">
-            <span className="noodle-shell-local-mode-dot" aria-hidden="true" />
+          <div className="nodyra-shell-local-mode" role="status">
+            <span className="nodyra-shell-local-mode-dot" aria-hidden="true" />
             Local workspace
           </div>
         ) : null}
@@ -367,7 +367,7 @@ export function MobileNavigation({
   return (
     <>
       <nav
-        className={classes("noodle-shell-mobile-nav", className)}
+        className={classes("nodyra-shell-mobile-nav", className)}
         aria-label="Primary navigation"
       >
         {primaryRoutes.map((route) => {
@@ -376,8 +376,8 @@ export function MobileNavigation({
           return (
             <Link
               className={classes(
-                "noodle-shell-mobile-link",
-                active && "noodle-shell-is-active",
+                "nodyra-shell-mobile-link",
+                active && "nodyra-shell-is-active",
               )}
               to={route.href}
               aria-current={active ? "page" : undefined}
@@ -392,8 +392,8 @@ export function MobileNavigation({
           ref={moreButtonRef}
           type="button"
           className={classes(
-            "noodle-shell-mobile-link",
-            moreActive && "noodle-shell-is-active",
+            "nodyra-shell-mobile-link",
+            moreActive && "nodyra-shell-is-active",
           )}
           aria-haspopup="dialog"
           aria-expanded={moreOpen}

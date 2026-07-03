@@ -268,8 +268,8 @@ async def oauth_callback(
 ) -> HTMLResponse:
     """Handle provider OAuth redirect.
 
-    Returns an HTML page that posts a ``noodle_oauth_success`` (or
-    ``noodle_oauth_error``) message to the opener window and closes itself.  If
+    Returns an HTML page that posts a ``nodyra_oauth_success`` (or
+    ``nodyra_oauth_error``) message to the opener window and closes itself.  If
     no opener is present (direct navigation) the page shows a brief status
     message instead.
 
@@ -391,10 +391,10 @@ def _oauth_popup_html(
 ) -> HTMLResponse:
     """Return an HTML page that communicates back to the opener and closes.
 
-    The parent window listens for ``noodle_oauth_success`` / ``noodle_oauth_error``
+    The parent window listens for ``nodyra_oauth_success`` / ``nodyra_oauth_error``
     messages and refreshes the credentials list accordingly.
     """
-    event_type = "noodle_oauth_success" if success else "noodle_oauth_error"
+    event_type = "nodyra_oauth_success" if success else "nodyra_oauth_error"
     safe_html_message = html_lib.escape(message, quote=True)
     # JSON encoding handles quotes/backslashes/control characters. Escaping the
     # HTML closing delimiter prevents a provider-controlled error string from
@@ -409,7 +409,7 @@ def _oauth_popup_html(
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Noodle &#8212; OAuth</title>
+  <title>Nodyra &#8212; OAuth</title>
   <style nonce="{nonce}">
     *{{box-sizing:border-box;margin:0;padding:0}}
     body{{background:{bg};color:#e0e6ed;font-family:system-ui,sans-serif;

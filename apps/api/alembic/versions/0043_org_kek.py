@@ -41,12 +41,16 @@ def _master_fernet() -> Fernet:
     """Derive the master Fernet key from SECRET_KEY (matches crypto._fernet())."""
     import os as _os
 
-    secret = _os.environ.get("NOODLE_SECRET_KEY") or _os.environ.get("SECRET_KEY", "")
+    secret = (
+        _os.environ.get("NODYRA_SECRET_KEY")
+        or _os.environ.get("NOODLE_SECRET_KEY")
+        or _os.environ.get("SECRET_KEY", "")
+    )
     raw = HKDF(
         algorithm=hashes.SHA256(),
         length=32,
         salt=None,
-        info=b"noodle-credential-kek",
+        info=b"nodyra-credential-kek",
     ).derive(secret.encode())
     return Fernet(base64.urlsafe_b64encode(raw))
 
@@ -135,8 +139,6 @@ def downgrade() -> None:
             {"dek": master.encrypt(dek).decode(), "id": cred_id},
         )
     bind.execute(
-        sa.text(
-            "UPDATE organizations SET wrapped_org_kek = NULL WHERE id = :id"
-        ),
+        sa.text("UPDATE organizations SET wrapped_org_kek = NULL WHERE id = :id"),
         {"id": DEFAULT_ORG_ID},
     )

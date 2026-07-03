@@ -35,9 +35,9 @@ async def test_metrics_exposes_prometheus_text(client: AsyncClient) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/plain")
     text = resp.text
-    assert "noodle_workflows" in text
-    assert "noodle_runs_total" in text
-    assert "noodle_uptime_seconds" in text
+    assert "nodyra_workflows" in text
+    assert "nodyra_runs_total" in text
+    assert "nodyra_uptime_seconds" in text
 
 
 async def test_runtime_mode_endpoint_reports_topology(client: AsyncClient) -> None:

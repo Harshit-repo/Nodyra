@@ -75,7 +75,7 @@ export function ActivityPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "noodle-activity.csv";
+    link.download = "nodyra-activity.csv";
     link.click();
     URL.revokeObjectURL(url);
   }

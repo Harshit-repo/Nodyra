@@ -62,7 +62,7 @@ def _sign(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Noodle license minting (vendor-only).")
+    p = argparse.ArgumentParser(description="Nodyra license minting (vendor-only).")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     kg = sub.add_parser("keygen", help="generate a signing keypair")

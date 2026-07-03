@@ -20,7 +20,7 @@ def _workspace_root() -> Path | None:
     return None
 
 
-def local_noodle_packages() -> list[str]:
+def local_nodyra_packages() -> list[str]:
     """Paths to packages/core, packages/nodes, packages/runtime in the monorepo."""
     root = _workspace_root()
     if root is None:

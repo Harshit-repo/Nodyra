@@ -17,8 +17,8 @@
 
 ## Limitations (both .py modes)
 
-- Credential references resolve against the Noodle server and will not decrypt
+- Credential references resolve against the Nodyra server and will not decrypt
   in a standalone script — replace them with literals or environment lookups.
 - `user:` code-module nodes are carried as raw graph entries; their Python
-  lives in the Noodle database, so bundle it manually if needed.
+  lives in the Nodyra database, so bundle it manually if needed.
 - Expressions (`{{ $json... }}`) work unchanged — the engine evaluates them.

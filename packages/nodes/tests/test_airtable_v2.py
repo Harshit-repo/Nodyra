@@ -3,9 +3,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - importing registers provider nodes
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.providers.airtable import operations
+import nodyra_nodes  # noqa: F401 - importing registers provider nodes
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.providers.airtable import operations
 
 
 def _mock_transport(return_value: Any) -> MagicMock:
@@ -46,7 +46,7 @@ def test_airtable_v2_nodes_are_registered() -> None:
 def test_airtable_v2_generated_source_is_available() -> None:
     source = getattr(
         registry.get("airtable_create_record_v2").func,
-        "__noodle_source__",
+        "__nodyra_source__",
         "",
     )
 

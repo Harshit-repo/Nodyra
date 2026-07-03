@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 # Deterministic 32-byte test seed. Regenerating only affects tests.
-_TEST_SEED = b"noodle-test-license-signing-seed"  # exactly 32 bytes
+_TEST_SEED = b"nodyra-test-license-signing-seed"  # exactly 32 bytes
 _PRIV = Ed25519PrivateKey.from_private_bytes(_TEST_SEED)
 
 TEST_PUBLIC_KEY_PEM = _PRIV.public_key().public_bytes(

@@ -14,19 +14,19 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import httpx
-from noodle_importer import import_module
+from nodyra_importer import import_module
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import noodle_nodes  # noqa: F401 — registers built-in nodes
+import nodyra_nodes  # noqa: F401 — registers built-in nodes
 from app.db import SessionLocal
 from app.models import Credential, GithubSyncConfig, GithubSyncJob, Workflow
 from app.services import org_keys
 from app.services.audit import log_audit
 from app.tenancy import run_as_system
-from noodle.models import WorkflowGraph
-from noodle.sdk import registry as node_registry
-from noodle_exporter import slugify, workflow_to_module
+from nodyra.models import WorkflowGraph
+from nodyra.sdk import registry as node_registry
+from nodyra_exporter import slugify, workflow_to_module
 
 logger = logging.getLogger(__name__)
 
@@ -470,7 +470,7 @@ async def create_github_repo(
                 "name": name,
                 "private": private,
                 "auto_init": True,
-                "description": description or f"Noodle workflows — {owner}",
+                "description": description or f"Nodyra workflows — {owner}",
             },
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
         )

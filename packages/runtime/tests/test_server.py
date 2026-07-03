@@ -7,8 +7,8 @@ from decimal import Decimal
 
 import pytest
 
-from noodle.serialization import serialize_value
-from noodle_runtime.server import _needs_host_callbacks
+from nodyra.serialization import serialize_value
+from nodyra_runtime.server import _needs_host_callbacks
 
 GRAPH = {
     "nodes": [
@@ -42,7 +42,7 @@ async def test_runtime_subprocess_executes_a_graph() -> None:
         sys.executable,
         "-u",
         "-m",
-        "noodle_runtime",
+        "nodyra_runtime",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -123,7 +123,7 @@ async def test_runtime_subprocess_runs_a_loop() -> None:
         sys.executable,
         "-u",
         "-m",
-        "noodle_runtime",
+        "nodyra_runtime",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -216,7 +216,7 @@ WHILE_GRAPH = {
 
 async def _run_via_subprocess(graph: dict, request_id: str) -> tuple[str, dict[str, dict]]:
     process = await asyncio.create_subprocess_exec(
-        sys.executable, "-u", "-m", "noodle_runtime",
+        sys.executable, "-u", "-m", "nodyra_runtime",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -301,7 +301,7 @@ async def test_runtime_serializes_events_and_deserializes_cache() -> None:
         sys.executable,
         "-u",
         "-m",
-        "noodle_runtime",
+        "nodyra_runtime",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -372,7 +372,7 @@ async def test_runtime_subprocess_does_not_inject_artifacts_into_code_nodes() ->
         sys.executable,
         "-u",
         "-m",
-        "noodle_runtime",
+        "nodyra_runtime",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle_nodes.ai_extra import elevenlabs_tts
-from noodle_nodes.integrations_v2.providers.elevenlabs_convai.operations import (
+from nodyra_nodes.ai_extra import elevenlabs_tts
+from nodyra_nodes.integrations_v2.providers.elevenlabs_convai.operations import (
     create_agent,
     get_agent,
     get_conversation,
@@ -19,7 +19,7 @@ from noodle_nodes.integrations_v2.providers.elevenlabs_convai.operations import 
 
 _CREDS = {"api_key": "el_test_key"}
 _TRANSPORT_PATH = (
-    "noodle_nodes.integrations_v2.providers.elevenlabs_convai.operations._transport"
+    "nodyra_nodes.integrations_v2.providers.elevenlabs_convai.operations._transport"
 )
 
 
@@ -130,10 +130,10 @@ def test_elevenlabs_tts_returns_artifact():
     mock_response.content = b"fake_audio_bytes"
     mock_response.headers = {"content-type": "audio/mpeg"}
 
-    fake_artifact = {"__noodle_artifact__": True, "artifact_id": "abc"}
+    fake_artifact = {"__nodyra_artifact__": True, "artifact_id": "abc"}
 
-    with patch("noodle_nodes.ai_extra.requests.post", return_value=mock_response) as mock_post, \
-         patch("noodle_nodes.ai_extra.write_bytes", return_value=fake_artifact) as mock_wb:
+    with patch("nodyra_nodes.ai_extra.requests.post", return_value=mock_response) as mock_post, \
+         patch("nodyra_nodes.ai_extra.write_bytes", return_value=fake_artifact) as mock_wb:
         result = elevenlabs_tts(
             credentials="el_key",
             text="Hello world",
@@ -159,13 +159,13 @@ def test_elevenlabs_tts_raises_on_http_error():
     mock_response.status_code = 401
     mock_response.text = "Unauthorized"
 
-    with patch("noodle_nodes.ai_extra.requests.post", return_value=mock_response):
+    with patch("nodyra_nodes.ai_extra.requests.post", return_value=mock_response):
         with pytest.raises(RuntimeError, match="HTTP 401"):
             elevenlabs_tts(credentials="bad_key", text="Hello", voice_id="v1")
 
 
 def test_elevenlabs_convai_operations_registered():
-    from noodle_nodes.integrations_v2.registry import get_registered_operation
+    from nodyra_nodes.integrations_v2.registry import get_registered_operation
     for node_id in [
         "elevenlabs_create_agent",
         "elevenlabs_get_agent",

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import noodle_nodes  # noqa: F401
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.providers.notion import triggers as notion_triggers
-from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext
+import nodyra_nodes  # noqa: F401
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.providers.notion import triggers as notion_triggers
+from nodyra_nodes.integrations_v2.specs import ProviderTriggerPollContext
 
 
 def _mock_transport(return_value):
@@ -31,7 +31,7 @@ def test_poll_first_run_no_events() -> None:
     ]
     mock_t = _mock_transport({"results": pages, "has_more": False})
     with patch(
-        "noodle_nodes.integrations_v2.providers.notion.triggers._transport",
+        "nodyra_nodes.integrations_v2.providers.notion.triggers._transport",
         return_value=mock_t,
     ):
         result = notion_triggers.poll_new_pages(
@@ -57,7 +57,7 @@ def test_poll_returns_new_pages_after_cursor() -> None:
     ]
     mock_t = _mock_transport({"results": new_pages, "has_more": False})
     with patch(
-        "noodle_nodes.integrations_v2.providers.notion.triggers._transport",
+        "nodyra_nodes.integrations_v2.providers.notion.triggers._transport",
         return_value=mock_t,
     ):
         result = notion_triggers.poll_new_pages(
@@ -80,7 +80,7 @@ def test_poll_deduplicates_already_seen_ids() -> None:
     pages = [{"id": "page1", "created_time": "2024-01-01T10:00:00.000Z", "properties": {}}]
     mock_t = _mock_transport({"results": pages, "has_more": False})
     with patch(
-        "noodle_nodes.integrations_v2.providers.notion.triggers._transport",
+        "nodyra_nodes.integrations_v2.providers.notion.triggers._transport",
         return_value=mock_t,
     ):
         result = notion_triggers.poll_new_pages(

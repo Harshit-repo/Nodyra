@@ -24,14 +24,14 @@ if str(API_DIR) not in sys.path:
 from sqlalchemy import select  # noqa: E402
 from sqlalchemy.orm import selectinload  # noqa: E402
 
-import noodle_nodes  # noqa: E402,F401  # registers bundled nodes
+import nodyra_nodes  # noqa: E402,F401  # registers bundled nodes
 from app.db import SessionLocal  # noqa: E402
 from app.models import Environment, Workflow, WorkflowVersion  # noqa: E402
-from noodle.artifacts import LocalArtifactStore  # noqa: E402
-from noodle.context import artifact_store  # noqa: E402
-from noodle.engine import execute  # noqa: E402
-from noodle.models import WorkflowGraph  # noqa: E402
-from noodle.sdk import registry  # noqa: E402
+from nodyra.artifacts import LocalArtifactStore  # noqa: E402
+from nodyra.context import artifact_store  # noqa: E402
+from nodyra.engine import execute  # noqa: E402
+from nodyra.models import WorkflowGraph  # noqa: E402
+from nodyra.sdk import registry  # noqa: E402
 
 
 def node(
@@ -338,7 +338,7 @@ WORKFLOWS: list[dict[str, Any]] = [
                     "manual_trigger",
                     {
                         "data": {
-                            "product": "Noodle",
+                            "product": "Nodyra",
                             "audience": "workflow builders",
                             "tone": "concise",
                         }
@@ -527,7 +527,7 @@ WORKFLOWS: list[dict[str, Any]] = [
                         "query": ("What production safeguards should an AI workflow include?"),
                         "embedding_provider": "openai",
                         "embedding_model": "text-embedding-3-small",
-                        "index": "noodle-docs",
+                        "index": "nodyra-docs",
                         "namespace": "demo",
                         "top_k": 5,
                         "embedding_credentials": "",
@@ -610,7 +610,7 @@ async def seed_workflows() -> list[dict[str, str]]:
 
 async def run_local_workflows() -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    temp_root = Path(tempfile.mkdtemp(prefix="noodle-ai-demo-artifacts-"))
+    temp_root = Path(tempfile.mkdtemp(prefix="nodyra-ai-demo-artifacts-"))
     token = artifact_store.set(LocalArtifactStore(temp_root, run_id="ai-demo-seed"))
     try:
         for item in WORKFLOWS[:3]:

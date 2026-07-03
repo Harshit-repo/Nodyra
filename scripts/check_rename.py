@@ -3,12 +3,12 @@
 Historical records and the rename scripts are exempt. Run:
 python scripts/check_rename.py
 """
+
 from __future__ import annotations
 
 import re
 import subprocess
 import sys
-from pathlib import Path
 
 EXEMPT_PREFIXES = (
     "docs/audits/",
@@ -17,54 +17,45 @@ EXEMPT_PREFIXES = (
     "scripts/rename_to_nodyra.py",
     "CHANGELOG.md",
 )
-TEXT_SUFFIXES = {
-    "",
-    ".cfg",
-    ".css",
-    ".dockerfile",
-    ".env",
-    ".example",
-    ".html",
-    ".ini",
-    ".js",
-    ".json",
-    ".mako",
-    ".md",
-    ".mjs",
-    ".ps1",
-    ".py",
-    ".sh",
-    ".sql",
-    ".toml",
-    ".ts",
-    ".tsx",
-    ".txt",
-    ".yaml",
-    ".yml",
+EXEMPT_FILES = {
+    "docs/upgrading-to-nodyra.md",
 }
 PATTERN = re.compile(r"noodle", re.IGNORECASE)
 EXEMPT_LINES = {
     # Former-name SEO/support note intentionally retained after the rename.
     ("README.md", "previously developed under the working name"),
 }
+EXEMPT_LINE_PATTERNS = (
+    re.compile(r"NOODLE_[A-Z0-9_]+"),
+    re.compile(r"noodle_token"),
+)
 
 
-def _tracked_files() -> list[str]:
-    return subprocess.run(
-        ["git", "ls-files"],
+def _grep_hits() -> list[tuple[str, str, str]]:
+    result = subprocess.run(
+        ["git", "grep", "-n", "-I", "-i", "noodle", "--", "."],
         capture_output=True,
         text=True,
-        check=True,
-    ).stdout.splitlines()
-
-
-def _is_text_candidate(path: Path) -> bool:
-    return path.suffix.lower() in TEXT_SUFFIXES or path.name == "Dockerfile"
+        encoding="utf-8",
+        errors="backslashreplace",
+        check=False,
+    )
+    if result.returncode == 1:
+        return []
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "git grep failed")
+    hits: list[tuple[str, str, str]] = []
+    for raw in result.stdout.splitlines():
+        rel, line_no, line = raw.split(":", 2)
+        hits.append((rel.strip('"'), line_no, line))
+    return hits
 
 
 def _line_exempt(rel: str, line: str) -> bool:
     lower = line.lower()
-    return any(rel == path and marker.lower() in lower for path, marker in EXEMPT_LINES)
+    return any(rel == path and marker.lower() in lower for path, marker in EXEMPT_LINES) or any(
+        pattern.search(line) for pattern in EXEMPT_LINE_PATTERNS
+    )
 
 
 def _print(text: str) -> None:
@@ -72,25 +63,19 @@ def _print(text: str) -> None:
     try:
         print(text)
     except UnicodeEncodeError:
-        sys.stdout.buffer.write(text.encode(sys.stdout.encoding or "utf-8", errors="backslashreplace"))
+        sys.stdout.buffer.write(
+            text.encode(sys.stdout.encoding or "utf-8", errors="backslashreplace")
+        )
         sys.stdout.buffer.write(b"\n")
 
 
 def main() -> int:
     hits: list[str] = []
-    for rel in _tracked_files():
-        if rel.startswith(EXEMPT_PREFIXES):
+    for rel, line_no, line in _grep_hits():
+        if rel.startswith(EXEMPT_PREFIXES) or rel in EXEMPT_FILES:
             continue
-        path = Path(rel)
-        if not _is_text_candidate(path):
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for line_no, line in enumerate(text.splitlines(), 1):
-            if PATTERN.search(line) and not _line_exempt(rel, line):
-                hits.append(f"{rel}:{line_no}: {line.strip()[:120]}")
+        if PATTERN.search(line) and not _line_exempt(rel, line):
+            hits.append(f"{rel}:{line_no}: {line.strip()[:120]}")
     if hits:
         _print(f"{len(hits)} 'noodle' occurrence(s) remain:")
         _print("\n".join(hits[:200]))

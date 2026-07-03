@@ -2,11 +2,11 @@ import { Handle, NodeResizer, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 import { memo } from "react";
 
-import type { NoodleNodeData } from "./store";
+import type { NodyraNodeData } from "./store";
 import { useEditor } from "./store";
 
 function MapGroupNodeComponent({ data, id, selected }: NodeProps) {
-  const params = (data as NoodleNodeData).params ?? {};
+  const params = (data as NodyraNodeData).params ?? {};
   const openNdv = useEditor((s) => s.openNdv);
   const childWorkflow = useEditor((s) => s.childWorkflows[id]);
 

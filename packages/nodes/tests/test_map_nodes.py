@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, current_node_id, workflow_caller
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id, workflow_caller
 
 
 @pytest.fixture
@@ -25,7 +25,7 @@ def store_ctx(tmp_path):
 
 
 async def test_map_items_calls_child_once_per_item(store_ctx) -> None:
-    from noodle_nodes.builtin import map_items
+    from nodyra_nodes.builtin import map_items
 
     calls: list[dict] = []
 
@@ -48,7 +48,7 @@ async def test_map_items_calls_child_once_per_item(store_ctx) -> None:
 async def test_map_items_preserves_order(store_ctx) -> None:
     import asyncio
 
-    from noodle_nodes.builtin import map_items
+    from nodyra_nodes.builtin import map_items
 
     async def caller(wf_id: str, payload: dict) -> dict:
         await asyncio.sleep(0.01 * (3 - payload["index"]))  # reverse latency order
@@ -68,7 +68,7 @@ async def test_map_items_preserves_order(store_ctx) -> None:
 async def test_map_items_concurrency_does_not_change_output_order(store_ctx) -> None:
     import asyncio
 
-    from noodle_nodes.builtin import map_items
+    from nodyra_nodes.builtin import map_items
 
     async def caller(wf_id: str, payload: dict) -> dict:
         await asyncio.sleep(0)
@@ -89,7 +89,7 @@ async def test_map_items_concurrency_does_not_change_output_order(store_ctx) -> 
 
 
 async def test_map_items_on_error_fail_raises(store_ctx) -> None:
-    from noodle_nodes.builtin import map_items
+    from nodyra_nodes.builtin import map_items
 
     async def caller(wf_id: str, payload: dict) -> dict:
         if payload["index"] == 1:
@@ -105,7 +105,7 @@ async def test_map_items_on_error_fail_raises(store_ctx) -> None:
 
 
 async def test_map_items_on_error_continue_splits_outputs(store_ctx) -> None:
-    from noodle_nodes.builtin import map_items
+    from nodyra_nodes.builtin import map_items
 
     async def caller(wf_id: str, payload: dict) -> dict:
         if payload["index"] == 1:
@@ -127,7 +127,7 @@ async def test_map_items_on_error_continue_splits_outputs(store_ctx) -> None:
 
 
 async def test_map_items_missing_caller_raises(store_ctx) -> None:
-    from noodle_nodes.builtin import map_items
+    from nodyra_nodes.builtin import map_items
 
     with pytest.raises(RuntimeError, match="no host caller"):
         await map_items(input=[{}], workflow_id="wf-1")
@@ -137,7 +137,7 @@ async def test_map_items_workflow_id_required(store_ctx) -> None:
     # Was using asyncio.get_event_loop().run_until_complete, which raises
     # "no current event loop" on 3.12; the suite runs asyncio_mode=auto so an
     # async test awaits directly (TEST-1).
-    from noodle_nodes.builtin import map_items
+    from nodyra_nodes.builtin import map_items
 
     with pytest.raises(ValueError, match="workflow_id"):
         await map_items(input=[{}])
@@ -145,9 +145,9 @@ async def test_map_items_workflow_id_required(store_ctx) -> None:
 
 async def test_map_items_artifact_ref_passes_through(store_ctx) -> None:
     """Rows containing ArtifactRefs are forwarded to child workflow untouched."""
-    from noodle_nodes.builtin import map_items
+    from nodyra_nodes.builtin import map_items
 
-    artifact_ref = {"__noodle_artifact__": True, "artifact_id": "pdf_1"}
+    artifact_ref = {"__nodyra_artifact__": True, "artifact_id": "pdf_1"}
     received: list[dict] = []
 
     async def caller(wf_id: str, payload: dict) -> dict:
@@ -166,7 +166,7 @@ async def test_map_items_artifact_ref_passes_through(store_ctx) -> None:
 
 
 async def test_map_items_rejects_excessive_item_count(store_ctx) -> None:
-    from noodle_nodes.builtin import MAX_MAP_ITEMS, map_items
+    from nodyra_nodes.builtin import MAX_MAP_ITEMS, map_items
 
     calls: list[dict] = []
 
@@ -185,7 +185,7 @@ async def test_map_items_rejects_excessive_item_count(store_ctx) -> None:
 
 
 async def test_map_items_rejects_excessive_concurrency(store_ctx) -> None:
-    from noodle_nodes.builtin import MAX_MAP_CONCURRENCY, map_items
+    from nodyra_nodes.builtin import MAX_MAP_CONCURRENCY, map_items
 
     async def caller(wf_id: str, payload: dict) -> dict:
         return {"ok": True}
@@ -208,7 +208,7 @@ async def test_map_items_rejects_excessive_concurrency(store_ctx) -> None:
 
 
 async def test_map_group_rejects_excessive_max_items(store_ctx) -> None:
-    from noodle_nodes.builtin import MAX_MAP_ITEMS, map_group_node
+    from nodyra_nodes.builtin import MAX_MAP_ITEMS, map_group_node
 
     async def caller(wf_id: str, payload: dict) -> dict:
         return {"ok": True}
@@ -226,7 +226,7 @@ async def test_map_group_rejects_excessive_max_items(store_ctx) -> None:
 
 
 async def test_map_group_rejects_excessive_concurrency(store_ctx) -> None:
-    from noodle_nodes.builtin import MAX_MAP_CONCURRENCY, map_group_node
+    from nodyra_nodes.builtin import MAX_MAP_CONCURRENCY, map_group_node
 
     async def caller(wf_id: str, payload: dict) -> dict:
         return {"ok": True}

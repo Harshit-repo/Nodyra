@@ -19,7 +19,7 @@ function formatCreatedAt(value: string): string {
 
 function artifactRef(artifact: ArtifactInfo): ArtifactRef {
   return {
-    __noodle_artifact__: true,
+    __nodyra_artifact__: true,
     version: 1,
     artifact_id: artifact.id,
     run_id: artifact.run_id ?? undefined,

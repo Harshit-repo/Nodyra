@@ -73,7 +73,7 @@ class _FakeContainers:
     def run(self, image: str, **kwargs) -> FakeContainer:
         self._client.run_calls.append({"image": image, **kwargs})
         c = FakeContainer(kwargs.get("name", f"c{len(self._client.containers_made)}"))
-        # A real noodle_runtime emits ready as its first line.
+        # A real nodyra_runtime emits ready as its first line.
         if self._client.auto_ready:
             c.sock._sock.feed({"type": "ready"})
         self._client.containers_made.append(c)

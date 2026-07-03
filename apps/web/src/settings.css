@@ -1,23 +1,23 @@
-.noodle-settings-page {
+.nodyra-settings-page {
   max-width: 1180px;
 }
 
-.noodle-settings-heading {
+.nodyra-settings-heading {
   align-items: flex-end;
   padding: 30px 0 24px;
 }
 
-.noodle-settings-heading h1 {
+.nodyra-settings-heading h1 {
   font-size: 30px;
   margin-bottom: 5px;
 }
 
-.noodle-settings-heading .muted {
+.nodyra-settings-heading .muted {
   margin: 0;
   font-size: 13px;
 }
 
-.noodle-settings-eyebrow {
+.nodyra-settings-eyebrow {
   margin: 0 0 6px;
   color: var(--accent);
   font-family: var(--font-mono);
@@ -27,21 +27,21 @@
   text-transform: uppercase;
 }
 
-.noodle-settings-layout {
+.nodyra-settings-layout {
   display: grid;
   grid-template-columns: 188px minmax(0, 1fr);
   gap: 28px;
   align-items: start;
 }
 
-.noodle-settings-nav {
+.nodyra-settings-nav {
   position: sticky;
-  top: calc(var(--noodle-shell-topbar-height, 64px) + 22px);
+  top: calc(var(--nodyra-shell-topbar-height, 64px) + 22px);
   display: grid;
   gap: 4px;
 }
 
-.noodle-settings-nav a {
+.nodyra-settings-nav a {
   min-height: 44px;
   display: flex;
   align-items: center;
@@ -55,27 +55,27 @@
   transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
 }
 
-.noodle-settings-nav a:hover,
-.noodle-settings-nav a:focus-visible {
+.nodyra-settings-nav a:hover,
+.nodyra-settings-nav a:focus-visible {
   color: var(--ink);
   background: var(--surface);
   border-color: var(--line-2);
 }
 
-.noodle-settings-nav a.is-active {
+.nodyra-settings-nav a.is-active {
   border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
   background: var(--accent-glow);
   color: var(--accent-2);
 }
 
-.noodle-settings-content {
+.nodyra-settings-content {
   display: grid;
   gap: 16px;
   min-width: 0;
 }
 
-.noodle-settings-card {
-  scroll-margin-top: calc(var(--noodle-shell-topbar-height, 64px) + 20px);
+.nodyra-settings-card {
+  scroll-margin-top: calc(var(--nodyra-shell-topbar-height, 64px) + 20px);
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -83,14 +83,14 @@
   box-shadow: 0 14px 36px -32px rgba(0, 0, 0, 0.78);
 }
 
-.noodle-settings-card-head {
+.nodyra-settings-card-head {
   display: flex;
   align-items: flex-start;
   gap: 12px;
   padding: 20px 22px 16px;
 }
 
-.noodle-settings-card-icon {
+.nodyra-settings-card-icon {
   width: 34px;
   height: 34px;
   display: grid;
@@ -102,12 +102,12 @@
   background: var(--accent-glow);
 }
 
-.noodle-settings-card-head h2 {
+.nodyra-settings-card-head h2 {
   margin: 0;
   font-size: 17px;
 }
 
-.noodle-settings-card-head p {
+.nodyra-settings-card-head p {
   max-width: 650px;
   margin: 4px 0 0;
   color: var(--ink-3);
@@ -115,11 +115,11 @@
   line-height: 1.55;
 }
 
-.noodle-settings-card-body {
+.nodyra-settings-card-body {
   padding: 0 22px 22px;
 }
 
-.noodle-settings-card-footer {
+.nodyra-settings-card-footer {
   min-height: 62px;
   display: flex;
   align-items: center;
@@ -130,7 +130,7 @@
   background: color-mix(in srgb, var(--surface-2) 35%, var(--surface));
 }
 
-.noodle-settings-profile {
+.nodyra-settings-profile {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr) auto;
   gap: 18px;
@@ -138,7 +138,7 @@
   padding: 4px 0 2px;
 }
 
-.noodle-settings-avatar {
+.nodyra-settings-avatar {
   width: 68px;
   height: 68px;
   display: grid;
@@ -152,68 +152,68 @@
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 
-.noodle-settings-profile-copy,
-.noodle-settings-role {
+.nodyra-settings-profile-copy,
+.nodyra-settings-role {
   min-width: 0;
 }
 
-.noodle-settings-profile-copy strong,
-.noodle-settings-profile-copy span {
+.nodyra-settings-profile-copy strong,
+.nodyra-settings-profile-copy span {
   display: block;
   overflow-wrap: anywhere;
 }
 
-.noodle-settings-profile-copy strong {
+.nodyra-settings-profile-copy strong {
   font-size: 17px;
 }
 
-.noodle-settings-profile-copy span {
+.nodyra-settings-profile-copy span {
   margin-top: 3px;
   color: var(--ink-3);
   font-size: 12px;
 }
 
-.noodle-settings-role {
+.nodyra-settings-role {
   display: grid;
   justify-items: end;
   gap: 7px;
 }
 
-.noodle-settings-role > span {
+.nodyra-settings-role > span {
   color: var(--ink-3);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
-.noodle-settings-fieldset {
+.nodyra-settings-fieldset {
   min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
 }
 
-.noodle-settings-fieldset + .noodle-settings-fieldset {
+.nodyra-settings-fieldset + .nodyra-settings-fieldset {
   margin-top: 22px;
   padding-top: 20px;
   border-top: 1px solid var(--line-2);
 }
 
-.noodle-settings-fieldset legend {
+.nodyra-settings-fieldset legend {
   margin-bottom: 10px;
   color: var(--ink-2);
   font-size: 12px;
   font-weight: 650;
 }
 
-.noodle-theme-grid {
+.nodyra-theme-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
-.noodle-theme-option,
-.noodle-font-option {
+.nodyra-theme-option,
+.nodyra-font-option {
   position: relative;
   display: grid;
   min-width: 0;
@@ -224,32 +224,32 @@
   transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
-.noodle-theme-option:hover,
-.noodle-font-option:hover {
+.nodyra-theme-option:hover,
+.nodyra-font-option:hover {
   border-color: var(--accent-deep);
   background: var(--surface-2);
 }
 
-.noodle-theme-option.is-selected,
-.noodle-font-option.is-selected {
+.nodyra-theme-option.is-selected,
+.nodyra-font-option.is-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
-.noodle-theme-option input,
-.noodle-font-option input {
+.nodyra-theme-option input,
+.nodyra-font-option input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
-.noodle-theme-option:focus-within,
-.noodle-font-option:focus-within {
+.nodyra-theme-option:focus-within,
+.nodyra-font-option:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.noodle-theme-preview {
+.nodyra-theme-preview {
   height: 74px;
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
@@ -262,28 +262,28 @@
   border-radius: 7px;
 }
 
-.noodle-theme-preview.theme-dark { color: #dfe8f6; background: #0a0d12; }
-.noodle-theme-preview.theme-light { color: #314057; background: #eef3f8; }
-.noodle-theme-preview.theme-system { color: #c6d1df; background: linear-gradient(125deg, #0a0d12 49%, #eef3f8 50%); }
+.nodyra-theme-preview.theme-dark { color: #dfe8f6; background: #0a0d12; }
+.nodyra-theme-preview.theme-light { color: #314057; background: #eef3f8; }
+.nodyra-theme-preview.theme-system { color: #c6d1df; background: linear-gradient(125deg, #0a0d12 49%, #eef3f8 50%); }
 
-.noodle-theme-preview-layout {
+.nodyra-theme-preview-layout {
   height: 42px;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
 }
 
-.noodle-theme-preview-layout i {
+.nodyra-theme-preview-layout i {
   display: block;
   border-radius: 3px;
   background: currentColor;
   opacity: 0.17;
 }
 
-.noodle-theme-preview-layout i:first-child { grid-column: 1 / -1; height: 9px; }
+.nodyra-theme-preview-layout i:first-child { grid-column: 1 / -1; height: 9px; }
 
-.noodle-theme-option > strong,
-.noodle-theme-option > small {
+.nodyra-theme-option > strong,
+.nodyra-theme-option > small {
   padding: 0 11px;
 }
 
@@ -468,28 +468,28 @@
   color: var(--text-secondary);
 }
 
-.noodle-theme-option > strong { font-size: 12px; }
-.noodle-theme-option > small { padding-bottom: 10px; color: var(--ink-3); font-size: 10px; }
-.noodle-theme-check { position: absolute; top: 12px; right: 12px; color: var(--accent); }
+.nodyra-theme-option > strong { font-size: 12px; }
+.nodyra-theme-option > small { padding-bottom: 10px; color: var(--ink-3); font-size: 10px; }
+.nodyra-theme-check { position: absolute; top: 12px; right: 12px; color: var(--accent); }
 
-.noodle-font-grid {
+.nodyra-font-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-.noodle-font-option {
+.nodyra-font-option {
   gap: 4px;
   padding: 13px;
 }
 
-.noodle-font-option > span { color: var(--ink); font-size: 15px; font-weight: 650; }
-.noodle-font-option > small { color: var(--ink-3); font-size: 10px; }
-.noodle-font-option.font-inter > span { font-family: Inter, system-ui, sans-serif; }
-.noodle-font-option.font-technical > span { font-family: "Space Grotesk", Inter, system-ui, sans-serif; }
-.noodle-font-option.font-system > span { font-family: system-ui, sans-serif; }
+.nodyra-font-option > span { color: var(--ink); font-size: 15px; font-weight: 650; }
+.nodyra-font-option > small { color: var(--ink-3); font-size: 10px; }
+.nodyra-font-option.font-inter > span { font-family: Inter, system-ui, sans-serif; }
+.nodyra-font-option.font-technical > span { font-family: "Space Grotesk", Inter, system-ui, sans-serif; }
+.nodyra-font-option.font-system > span { font-family: system-ui, sans-serif; }
 
-.noodle-settings-save-status {
+.nodyra-settings-save-status {
   min-height: 20px;
   display: inline-flex;
   align-items: center;
@@ -498,9 +498,9 @@
   font-size: 11px;
 }
 
-.noodle-settings-restart-note,
-.noodle-settings-inline-warning,
-.noodle-settings-inline-error {
+.nodyra-settings-restart-note,
+.nodyra-settings-inline-warning,
+.nodyra-settings-inline-error {
   display: flex;
   align-items: flex-start;
   gap: 9px;
@@ -513,35 +513,35 @@
   line-height: 1.5;
 }
 
-.noodle-settings-inline-error {
+.nodyra-settings-inline-error {
   align-items: center;
   border-color: var(--color-error-border);
   color: var(--color-error);
   background: var(--color-error-bg);
 }
 
-.noodle-settings-inline-error > span { flex: 1; }
-.noodle-settings-inline-error svg,
-.noodle-settings-inline-warning svg,
-.noodle-settings-restart-note svg { flex: 0 0 auto; margin-top: 1px; }
+.nodyra-settings-inline-error > span { flex: 1; }
+.nodyra-settings-inline-error svg,
+.nodyra-settings-inline-warning svg,
+.nodyra-settings-restart-note svg { flex: 0 0 auto; margin-top: 1px; }
 
-.noodle-settings-form-grid {
+.nodyra-settings-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-top: 18px;
 }
 
-.noodle-settings-field {
+.nodyra-settings-field {
   min-width: 0;
   display: grid;
   align-content: start;
   gap: 7px;
 }
 
-.noodle-settings-field-wide { grid-column: 1 / -1; }
+.nodyra-settings-field-wide { grid-column: 1 / -1; }
 
-.noodle-settings-label {
+.nodyra-settings-label {
   min-height: 21px;
   display: flex;
   align-items: center;
@@ -552,28 +552,28 @@
   font-weight: 650;
 }
 
-.noodle-settings-info {
+.nodyra-settings-info {
   display: inline-grid;
   place-items: center;
   color: var(--ink-3);
   cursor: help;
 }
 
-.noodle-settings-instance-fields {
+.nodyra-settings-instance-fields {
   min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
 }
 
-.noodle-settings-instance-fields:disabled {
+.nodyra-settings-instance-fields:disabled {
   opacity: 0.72;
 }
 
-.noodle-settings-input-wrap { position: relative; }
-.noodle-settings-input-wrap .field-input { padding-right: 72px; }
+.nodyra-settings-input-wrap { position: relative; }
+.nodyra-settings-input-wrap .field-input { padding-right: 72px; }
 
-.noodle-settings-unit {
+.nodyra-settings-unit {
   position: absolute;
   top: 50%;
   right: 10px;
@@ -584,46 +584,46 @@
   pointer-events: none;
 }
 
-.noodle-settings-field small {
+.nodyra-settings-field small {
   color: var(--ink-3);
   font-size: 10px;
   line-height: 1.45;
 }
 
-.noodle-settings-field-error { color: var(--color-error) !important; }
+.nodyra-settings-field-error { color: var(--color-error) !important; }
 
-.noodle-settings-footer-status {
+.nodyra-settings-footer-status {
   color: var(--ink-3);
   font-size: 11px;
 }
 
-.noodle-settings-footer-status .error-text,
-.noodle-settings-saved {
+.nodyra-settings-footer-status .error-text,
+.nodyra-settings-saved {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.noodle-settings-saved { color: var(--color-success); }
+.nodyra-settings-saved { color: var(--color-success); }
 
-.noodle-settings-skeleton {
+.nodyra-settings-skeleton {
   display: grid;
   gap: 10px;
 }
 
-.noodle-settings-skeleton span {
+.nodyra-settings-skeleton span {
   height: 42px;
   border-radius: 8px;
   background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
   background-size: 200% 100%;
-  animation: noodle-settings-shimmer 1.4s ease-in-out infinite;
+  animation: nodyra-settings-shimmer 1.4s ease-in-out infinite;
 }
 
-@keyframes noodle-settings-shimmer {
+@keyframes nodyra-settings-shimmer {
   to { background-position: -200% 0; }
 }
 
-.noodle-license-summary {
+.nodyra-license-summary {
   display: grid;
   grid-template-columns: minmax(160px, 0.8fr) minmax(0, 2fr);
   gap: 18px;
@@ -633,39 +633,39 @@
   background: var(--bg);
 }
 
-.noodle-license-edition span,
-.noodle-license-edition strong,
-.noodle-license-edition small { display: block; }
-.noodle-license-edition span { color: var(--ink-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
-.noodle-license-edition strong { margin-top: 8px; font-size: 22px; text-transform: capitalize; }
-.noodle-license-edition small { margin-top: 2px; color: var(--ink-3); }
+.nodyra-license-edition span,
+.nodyra-license-edition strong,
+.nodyra-license-edition small { display: block; }
+.nodyra-license-edition span { color: var(--ink-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.nodyra-license-edition strong { margin-top: 8px; font-size: 22px; text-transform: capitalize; }
+.nodyra-license-edition small { margin-top: 2px; color: var(--ink-3); }
 
-.noodle-license-summary dl {
+.nodyra-license-summary dl {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
 }
 
-.noodle-license-summary dl > div {
+.nodyra-license-summary dl > div {
   padding-left: 12px;
   border-left: 1px solid var(--line-2);
 }
 
-.noodle-license-summary dt { color: var(--ink-3); font-size: 10px; }
-.noodle-license-summary dd { margin: 7px 0 0; color: var(--ink); font-family: var(--font-mono); font-size: 13px; }
-.noodle-license-expiry { margin: 10px 0 0; color: var(--ink-3); font-size: 11px; }
-.noodle-license-apply { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line-2); }
-.noodle-license-key-control {
+.nodyra-license-summary dt { color: var(--ink-3); font-size: 10px; }
+.nodyra-license-summary dd { margin: 7px 0 0; color: var(--ink); font-family: var(--font-mono); font-size: 13px; }
+.nodyra-license-expiry { margin: 10px 0 0; color: var(--ink-3); font-size: 11px; }
+.nodyra-license-apply { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line-2); }
+.nodyra-license-key-control {
   position: relative;
   display: block;
 }
-.noodle-license-key-control input {
+.nodyra-license-key-control input {
   padding-right: 50px;
   font-family: var(--font-mono);
   font-size: 11px;
 }
-.noodle-license-key-control button {
+.nodyra-license-key-control button {
   position: absolute;
   top: 50%;
   right: 2px;
@@ -680,37 +680,37 @@
   color: var(--ink-3);
   transform: translateY(-50%);
 }
-.noodle-license-key-control button:hover { background: var(--surface-2); color: var(--ink); }
-.noodle-license-key-control button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.nodyra-license-key-control button:hover { background: var(--surface-2); color: var(--ink); }
+.nodyra-license-key-control button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-.noodle-mcp-access {
+.nodyra-mcp-access {
   display: grid;
   gap: 18px;
 }
 
-.noodle-mcp-endpoint {
+.nodyra-mcp-endpoint {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(190px, 0.34fr);
   gap: 14px;
   align-items: end;
 }
 
-.noodle-mcp-copy-row,
-.noodle-mcp-secret-row {
+.nodyra-mcp-copy-row,
+.nodyra-mcp-secret-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
 }
 
-.noodle-mcp-copy-row input,
-.noodle-mcp-secret-row input {
+.nodyra-mcp-copy-row input,
+.nodyra-mcp-secret-row input {
   min-width: 0;
   font-family: var(--font-mono);
   font-size: 11px;
 }
 
-.noodle-mcp-workspace {
+.nodyra-mcp-workspace {
   min-height: 72px;
   display: grid;
   align-content: center;
@@ -721,35 +721,35 @@
   background: var(--bg);
 }
 
-.noodle-mcp-workspace span {
+.nodyra-mcp-workspace span {
   color: var(--ink-3);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
-.noodle-mcp-workspace strong,
-.noodle-mcp-workspace code {
+.nodyra-mcp-workspace strong,
+.nodyra-mcp-workspace code {
   overflow-wrap: anywhere;
 }
 
-.noodle-mcp-workspace strong {
+.nodyra-mcp-workspace strong {
   font-size: 12px;
 }
 
-.noodle-mcp-workspace code {
+.nodyra-mcp-workspace code {
   color: var(--ink-3);
   font-family: var(--font-mono);
   font-size: 10px;
 }
 
-.noodle-mcp-client-snippets {
+.nodyra-mcp-client-snippets {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-.noodle-mcp-snippet {
+.nodyra-mcp-snippet {
   min-width: 0;
   display: grid;
   gap: 8px;
@@ -759,18 +759,18 @@
   background: var(--bg);
 }
 
-.noodle-mcp-snippet-head {
+.nodyra-mcp-snippet-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-.noodle-mcp-snippet-head strong {
+.nodyra-mcp-snippet-head strong {
   font-size: 12px;
 }
 
-.noodle-mcp-snippet pre {
+.nodyra-mcp-snippet pre {
   max-height: 180px;
   min-width: 0;
   margin: 0;
@@ -787,7 +787,7 @@
   overflow-wrap: anywhere;
 }
 
-.noodle-mcp-created-token {
+.nodyra-mcp-created-token {
   display: grid;
   grid-template-columns: minmax(180px, 0.78fr) minmax(0, 1.22fr);
   gap: 14px;
@@ -798,27 +798,27 @@
   background: color-mix(in srgb, var(--color-success-bg) 70%, var(--surface));
 }
 
-.noodle-mcp-created-token strong,
-.noodle-mcp-created-token span {
+.nodyra-mcp-created-token strong,
+.nodyra-mcp-created-token span {
   display: block;
 }
 
-.noodle-mcp-created-token strong {
+.nodyra-mcp-created-token strong {
   font-size: 12px;
 }
 
-.noodle-mcp-created-token span {
+.nodyra-mcp-created-token span {
   margin-top: 3px;
   color: var(--ink-3);
   font-size: 11px;
   line-height: 1.45;
 }
 
-.noodle-mcp-secret-row {
+.nodyra-mcp-secret-row {
   grid-template-columns: minmax(0, 1fr) 42px auto;
 }
 
-.noodle-mcp-secret-row > button:not(.btn) {
+.nodyra-mcp-secret-row > button:not(.btn) {
   width: 42px;
   height: 42px;
   display: grid;
@@ -830,37 +830,37 @@
   color: var(--ink-3);
 }
 
-.noodle-mcp-secret-row > button:not(.btn):hover {
+.nodyra-mcp-secret-row > button:not(.btn):hover {
   background: var(--surface-2);
   color: var(--ink);
 }
 
-.noodle-mcp-token-form {
+.nodyra-mcp-token-form {
   display: grid;
   gap: 16px;
 }
 
-.noodle-mcp-scopes {
+.nodyra-mcp-scopes {
   min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
 }
 
-.noodle-mcp-scopes legend {
+.nodyra-mcp-scopes legend {
   margin-bottom: 10px;
   color: var(--ink-2);
   font-size: 12px;
   font-weight: 650;
 }
 
-.noodle-mcp-scope-grid {
+.nodyra-mcp-scope-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.noodle-mcp-scope {
+.nodyra-mcp-scope {
   position: relative;
   min-width: 0;
   display: grid;
@@ -875,54 +875,54 @@
   transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
 
-.noodle-mcp-scope:hover {
+.nodyra-mcp-scope:hover {
   border-color: var(--accent-deep);
   background: var(--surface-2);
 }
 
-.noodle-mcp-scope.is-selected {
+.nodyra-mcp-scope.is-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
-.noodle-mcp-scope.is-disabled {
+.nodyra-mcp-scope.is-disabled {
   opacity: 0.58;
   cursor: not-allowed;
 }
 
-.noodle-mcp-scope input {
+.nodyra-mcp-scope input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
-.noodle-mcp-scope:focus-within {
+.nodyra-mcp-scope:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.noodle-mcp-scope span {
+.nodyra-mcp-scope span {
   min-width: 0;
 }
 
-.noodle-mcp-scope strong,
-.noodle-mcp-scope small,
-.noodle-mcp-scope code {
+.nodyra-mcp-scope strong,
+.nodyra-mcp-scope small,
+.nodyra-mcp-scope code {
   display: block;
 }
 
-.noodle-mcp-scope strong {
+.nodyra-mcp-scope strong {
   font-size: 12px;
 }
 
-.noodle-mcp-scope small {
+.nodyra-mcp-scope small {
   margin-top: 4px;
   color: var(--ink-3);
   font-size: 10px;
   line-height: 1.45;
 }
 
-.noodle-mcp-scope code {
+.nodyra-mcp-scope code {
   margin-top: 7px;
   color: var(--ink-3);
   font-family: var(--font-mono);
@@ -930,7 +930,7 @@
   overflow-wrap: anywhere;
 }
 
-.noodle-mcp-scope em {
+.nodyra-mcp-scope em {
   padding: 3px 6px;
   border: 1px solid var(--line-2);
   border-radius: 999px;
@@ -942,7 +942,7 @@
   letter-spacing: 0.04em;
 }
 
-.noodle-mcp-token-list {
+.nodyra-mcp-token-list {
   display: grid;
   gap: 10px;
   margin-top: 2px;
@@ -950,24 +950,24 @@
   border-top: 1px solid var(--line-2);
 }
 
-.noodle-mcp-token-list-head {
+.nodyra-mcp-token-list-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.noodle-mcp-token-list-head strong {
+.nodyra-mcp-token-list-head strong {
   font-size: 12px;
 }
 
-.noodle-mcp-token-table {
+.nodyra-mcp-token-table {
   overflow-x: auto;
   border: 1px solid var(--line-2);
   border-radius: 9px;
 }
 
-.noodle-mcp-token-row {
+.nodyra-mcp-token-row {
   min-width: 900px;
   display: grid;
   grid-template-columns: minmax(160px, 1.1fr) 120px minmax(220px, 1.5fr) 130px 90px 104px;
@@ -978,11 +978,11 @@
   font-size: 11px;
 }
 
-.noodle-mcp-token-row:first-child {
+.nodyra-mcp-token-row:first-child {
   border-top: 0;
 }
 
-.noodle-mcp-token-row.is-head {
+.nodyra-mcp-token-row.is-head {
   color: var(--ink-3);
   background: var(--surface-2);
   font-size: 10px;
@@ -991,30 +991,30 @@
   letter-spacing: 0.04em;
 }
 
-.noodle-mcp-token-row strong,
-.noodle-mcp-token-row small {
+.nodyra-mcp-token-row strong,
+.nodyra-mcp-token-row small {
   display: block;
   min-width: 0;
 }
 
-.noodle-mcp-token-row strong,
-.noodle-mcp-token-row span {
+.nodyra-mcp-token-row strong,
+.nodyra-mcp-token-row span {
   overflow-wrap: anywhere;
 }
 
-.noodle-mcp-token-row small {
+.nodyra-mcp-token-row small {
   margin-top: 3px;
   color: var(--ink-3);
   font-size: 10px;
 }
 
-.noodle-mcp-token-row code {
+.nodyra-mcp-token-row code {
   color: var(--ink-3);
   font-family: var(--font-mono);
   font-size: 10px;
 }
 
-.noodle-mcp-token-status {
+.nodyra-mcp-token-status {
   justify-self: start;
   padding: 4px 7px;
   border-radius: 999px;
@@ -1022,29 +1022,29 @@
   font-weight: 650;
 }
 
-.noodle-mcp-token-status.is-active {
+.nodyra-mcp-token-status.is-active {
   color: var(--color-success);
   background: var(--color-success-bg);
 }
 
-.noodle-mcp-token-status.is-expired,
-.noodle-mcp-token-status.is-revoked {
+.nodyra-mcp-token-status.is-expired,
+.nodyra-mcp-token-status.is-revoked {
   color: var(--ink-3);
   background: var(--surface-2);
 }
 
-.noodle-mcp-server-card {
+.nodyra-mcp-server-card {
   display: grid;
   gap: 14px;
 }
 
-.noodle-mcp-server-actions {
+.nodyra-mcp-server-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.noodle-sandbox-status {
+.nodyra-sandbox-status {
   display: grid;
   grid-template-columns: minmax(190px, 0.6fr) minmax(0, 1.4fr);
   gap: 14px;
@@ -1055,29 +1055,29 @@
   background: var(--bg);
 }
 
-.noodle-sandbox-status.is-active {
+.nodyra-sandbox-status.is-active {
   border-color: color-mix(in srgb, var(--color-success) 34%, var(--line));
   background: color-mix(in srgb, var(--color-success-bg) 40%, var(--bg));
 }
 
-.noodle-sandbox-status.is-warn {
+.nodyra-sandbox-status.is-warn {
   border-color: color-mix(in srgb, var(--color-warning) 34%, var(--line));
   background: color-mix(in srgb, var(--color-warning-bg) 44%, var(--bg));
 }
 
-.noodle-sandbox-status.is-off {
+.nodyra-sandbox-status.is-off {
   border-color: color-mix(in srgb, var(--color-error) 26%, var(--line));
   background: color-mix(in srgb, var(--color-error-bg) 34%, var(--bg));
 }
 
-.noodle-sandbox-status > div {
+.nodyra-sandbox-status > div {
   display: grid;
   align-content: center;
   gap: 6px;
 }
 
-.noodle-sandbox-status > div span,
-.noodle-sandbox-status dt {
+.nodyra-sandbox-status > div span,
+.nodyra-sandbox-status dt {
   color: var(--ink-3);
   font-size: 10px;
   font-weight: 650;
@@ -1085,25 +1085,25 @@
   letter-spacing: 0.06em;
 }
 
-.noodle-sandbox-status > div strong {
+.nodyra-sandbox-status > div strong {
   font-size: 14px;
   line-height: 1.35;
 }
 
-.noodle-sandbox-status dl {
+.nodyra-sandbox-status dl {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
 }
 
-.noodle-sandbox-status dl > div {
+.nodyra-sandbox-status dl > div {
   min-width: 0;
   padding-left: 10px;
   border-left: 1px solid var(--line-2);
 }
 
-.noodle-sandbox-status dd {
+.nodyra-sandbox-status dd {
   margin: 5px 0 0;
   overflow-wrap: anywhere;
   color: var(--ink);
@@ -1111,13 +1111,13 @@
   font-size: 11px;
 }
 
-.noodle-management-links {
+.nodyra-management-links {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
-.noodle-management-links a {
+.nodyra-management-links a {
   min-height: 84px;
   display: flex;
   align-items: flex-start;
@@ -1129,16 +1129,16 @@
   transition: border-color 140ms ease, background 140ms ease;
 }
 
-.noodle-management-links a:hover { border-color: var(--accent-deep); background: var(--surface-2); }
-.noodle-management-links a > svg { flex: 0 0 auto; color: var(--accent); margin-top: 1px; }
-.noodle-management-links strong,
-.noodle-management-links small { display: block; }
-.noodle-management-links strong { font-size: 12px; }
-.noodle-management-links small { margin-top: 4px; color: var(--ink-3); font-size: 10px; line-height: 1.4; }
+.nodyra-management-links a:hover { border-color: var(--accent-deep); background: var(--surface-2); }
+.nodyra-management-links a > svg { flex: 0 0 auto; color: var(--accent); margin-top: 1px; }
+.nodyra-management-links strong,
+.nodyra-management-links small { display: block; }
+.nodyra-management-links strong { font-size: 12px; }
+.nodyra-management-links small { margin-top: 4px; color: var(--ink-3); font-size: 10px; line-height: 1.4; }
 
 @media (max-width: 900px) {
-  .noodle-settings-layout { grid-template-columns: 1fr; gap: 14px; }
-  .noodle-settings-nav {
+  .nodyra-settings-layout { grid-template-columns: 1fr; gap: 14px; }
+  .nodyra-settings-nav {
     position: static;
     display: flex;
     gap: 7px;
@@ -1147,57 +1147,57 @@
     overflow-x: auto;
     scrollbar-width: none;
   }
-  .noodle-settings-nav::-webkit-scrollbar { display: none; }
-  .noodle-settings-nav a { flex: 0 0 auto; border-color: var(--line-2); background: var(--surface); }
+  .nodyra-settings-nav::-webkit-scrollbar { display: none; }
+  .nodyra-settings-nav a { flex: 0 0 auto; border-color: var(--line-2); background: var(--surface); }
 }
 
 @media (max-width: 700px) {
-  .noodle-settings-heading { padding-top: 22px; }
-  .noodle-settings-heading h1 { font-size: 26px; }
-  .noodle-settings-card-head { padding: 17px 16px 14px; }
-  .noodle-settings-card-body { padding: 0 16px 18px; }
-  .noodle-settings-card-footer { padding: 12px 16px; flex-wrap: wrap; }
-  .noodle-settings-profile { grid-template-columns: 58px minmax(0, 1fr); gap: 13px; }
-  .noodle-settings-avatar { width: 56px; height: 56px; border-radius: 15px; font-size: 15px; }
-  .noodle-settings-role { grid-column: 1 / -1; justify-items: start; padding-top: 12px; border-top: 1px solid var(--line-2); }
-  .noodle-theme-grid { grid-template-columns: 1fr; }
-  .noodle-theme-option { grid-template-columns: 76px minmax(0, 1fr); align-items: center; padding: 7px; }
-  .noodle-theme-preview { grid-row: 1 / span 2; width: 70px; height: 58px; margin: 0; }
-  .noodle-theme-option > strong,
-  .noodle-theme-option > small { padding: 0 8px; }
-  .noodle-theme-option > small { padding-bottom: 0; }
-  .noodle-font-grid,
-  .noodle-settings-form-grid,
-  .noodle-license-summary,
-  .noodle-mcp-endpoint,
-  .noodle-mcp-client-snippets,
-  .noodle-mcp-created-token,
-  .noodle-mcp-scope-grid,
-  .noodle-sandbox-status,
-  .noodle-management-links { grid-template-columns: 1fr; }
-  .noodle-sandbox-status dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .noodle-mcp-copy-row,
-  .noodle-mcp-secret-row { grid-template-columns: 1fr; }
-  .noodle-mcp-secret-row > button:not(.btn) { width: 100%; }
-  .noodle-license-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .noodle-settings-field-wide { grid-column: auto; }
+  .nodyra-settings-heading { padding-top: 22px; }
+  .nodyra-settings-heading h1 { font-size: 26px; }
+  .nodyra-settings-card-head { padding: 17px 16px 14px; }
+  .nodyra-settings-card-body { padding: 0 16px 18px; }
+  .nodyra-settings-card-footer { padding: 12px 16px; flex-wrap: wrap; }
+  .nodyra-settings-profile { grid-template-columns: 58px minmax(0, 1fr); gap: 13px; }
+  .nodyra-settings-avatar { width: 56px; height: 56px; border-radius: 15px; font-size: 15px; }
+  .nodyra-settings-role { grid-column: 1 / -1; justify-items: start; padding-top: 12px; border-top: 1px solid var(--line-2); }
+  .nodyra-theme-grid { grid-template-columns: 1fr; }
+  .nodyra-theme-option { grid-template-columns: 76px minmax(0, 1fr); align-items: center; padding: 7px; }
+  .nodyra-theme-preview { grid-row: 1 / span 2; width: 70px; height: 58px; margin: 0; }
+  .nodyra-theme-option > strong,
+  .nodyra-theme-option > small { padding: 0 8px; }
+  .nodyra-theme-option > small { padding-bottom: 0; }
+  .nodyra-font-grid,
+  .nodyra-settings-form-grid,
+  .nodyra-license-summary,
+  .nodyra-mcp-endpoint,
+  .nodyra-mcp-client-snippets,
+  .nodyra-mcp-created-token,
+  .nodyra-mcp-scope-grid,
+  .nodyra-sandbox-status,
+  .nodyra-management-links { grid-template-columns: 1fr; }
+  .nodyra-sandbox-status dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nodyra-mcp-copy-row,
+  .nodyra-mcp-secret-row { grid-template-columns: 1fr; }
+  .nodyra-mcp-secret-row > button:not(.btn) { width: 100%; }
+  .nodyra-license-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nodyra-settings-field-wide { grid-column: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .noodle-settings-skeleton span { animation: none; }
+  .nodyra-settings-skeleton span { animation: none; }
 }
 
 /* SSO Settings */
-.noodle-sso-settings {
+.nodyra-sso-settings {
   max-width: 740px;
 }
-.noodle-sso-protocol-selector {
+.nodyra-sso-protocol-selector {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-bottom: 24px;
 }
-.noodle-sso-protocol-option {
+.nodyra-sso-protocol-option {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1207,39 +1207,39 @@
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
-.noodle-sso-protocol-option:hover {
+.nodyra-sso-protocol-option:hover {
   border-color: var(--accent);
   background: var(--surface-2);
 }
-.noodle-sso-protocol-option.is-selected {
+.nodyra-sso-protocol-option.is-selected {
   border-color: var(--accent);
   background: var(--accent-glow);
 }
-.noodle-sso-protocol-option input {
+.nodyra-sso-protocol-option input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
-.noodle-sso-protocol-option strong {
+.nodyra-sso-protocol-option strong {
   font-size: 14px;
 }
-.noodle-sso-protocol-option small {
+.nodyra-sso-protocol-option small {
   font-size: 12px;
   color: var(--ink-3);
   line-height: 1.4;
 }
-.noodle-sso-form {
+.nodyra-sso-form {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
-.noodle-sso-secret-wrap {
+.nodyra-sso-secret-wrap {
   position: relative;
 }
-.noodle-sso-secret-wrap .field-input {
+.nodyra-sso-secret-wrap .field-input {
   padding-right: 40px;
 }
-.noodle-sso-toggle-vis {
+.nodyra-sso-toggle-vis {
   position: absolute;
   right: 8px;
   top: 50%;
@@ -1250,13 +1250,13 @@
   color: var(--ink-3);
   padding: 4px;
 }
-.noodle-sso-cert-input {
+.nodyra-sso-cert-input {
   min-height: 80px;
   font-family: var(--font-mono, monospace);
   font-size: 12px;
   resize: vertical;
 }
-.noodle-sso-test-result {
+.nodyra-sso-test-result {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1266,22 +1266,22 @@
   font-size: 13px;
   line-height: 1.4;
 }
-.noodle-sso-test-ok {
+.nodyra-sso-test-ok {
   background: #132a1e;
   color: #4caf50;
 }
-.noodle-sso-test-error {
+.nodyra-sso-test-error {
   background: var(--color-error-bg);
   color: var(--color-error);
 }
-.noodle-sso-actions {
+.nodyra-sso-actions {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
   width: 100%;
 }
-.noodle-sso-save-actions {
+.nodyra-sso-save-actions {
   display: flex;
   align-items: center;
   gap: 8px;

@@ -11,8 +11,8 @@ from typing import Any
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.ai_runtime import (
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.ai_runtime import (
     AgentActionRequest,
     AgentResumeInput,
     AIMessage,
@@ -36,11 +36,11 @@ from noodle.ai_runtime import (
     ToolSchema,
     VectorStoreAdapter,
 )
-from noodle.context import node_debug, workflow_caller
-from noodle.engine import execute
-from noodle.models import Edge, GraphNode, WorkflowGraph
-from noodle.sdk import NodeRegistry, node, registry
-from noodle_nodes.ai_v2.agents import _session_id, _task_text
+from nodyra.context import node_debug, workflow_caller
+from nodyra.engine import execute
+from nodyra.models import Edge, GraphNode, WorkflowGraph
+from nodyra.sdk import NodeRegistry, node, registry
+from nodyra_nodes.ai_v2.agents import _session_id, _task_text
 
 # ---------------------------------------------------------------------------
 # Registration + typed ports
@@ -336,7 +336,7 @@ def test_document_loader_and_splitter_return_chunks() -> None:
 
 
 def test_text_document_loader_rejects_oversized_text() -> None:
-    from noodle_nodes.ai_v2.document_loaders import MAX_AI_DOCUMENT_CHARS
+    from nodyra_nodes.ai_v2.document_loaders import MAX_AI_DOCUMENT_CHARS
 
     loader = registry.get("ai_text_document_loader").func(
         text="x" * (MAX_AI_DOCUMENT_CHARS + 1),
@@ -351,7 +351,7 @@ def test_text_document_loader_rejects_oversized_text() -> None:
 
 
 def test_file_document_loader_rejects_oversized_file(tmp_path) -> None:
-    from noodle_nodes.ai_v2.document_loaders import MAX_AI_DOCUMENT_BYTES
+    from nodyra_nodes.ai_v2.document_loaders import MAX_AI_DOCUMENT_BYTES
 
     path = tmp_path / "huge.txt"
     path.write_bytes(b"x" * (MAX_AI_DOCUMENT_BYTES + 1))
@@ -702,7 +702,7 @@ async def test_rag_workflow_executes_through_engine() -> None:
 
 
 def test_buffer_memory_returns_adapter_and_windows() -> None:
-    from noodle.ai_runtime import MessageRole
+    from nodyra.ai_runtime import MessageRole
 
     fn = registry.get("ai_buffer_memory").func
     adapter = fn(window=2)
@@ -917,7 +917,7 @@ def test_agent_v2_requests_tool_and_resumes_to_final() -> None:
     assert request.tool_calls[0].name == "lookup"
     assert model.requests[0].tools[0].name == "lookup"
     assert model.requests[0].messages[0].role == MessageRole.system
-    assert "Noodle tools available" in model.requests[0].messages[0].content
+    assert "Nodyra tools available" in model.requests[0].messages[0].content
     assert "lookup" in model.requests[0].messages[0].content
     assert "query: string, required" in model.requests[0].messages[0].content
     assert (
@@ -1125,9 +1125,9 @@ def test_agent_v2_tool_instruction_is_not_saved_to_memory() -> None:
         memory=memory,
     )
 
-    assert "Noodle tools available" in model.requests[0].messages[0].content
+    assert "Nodyra tools available" in model.requests[0].messages[0].content
     saved = memory.load(session_id="s1")
-    assert all("Noodle tools available" not in msg.content for msg in saved)
+    assert all("Nodyra tools available" not in msg.content for msg in saved)
 
 
 # ---------------------------------------------------------------------------
@@ -1175,7 +1175,7 @@ def test_output_parser_format_instructions() -> None:
 def test_guardrail_blocks_terms() -> None:
     import pytest
 
-    from noodle.ai_runtime import ChatResponse
+    from nodyra.ai_runtime import ChatResponse
 
     fn = registry.get("ai_guardrail").func
     guard = fn(blocked_terms='["secret"]')
@@ -1198,7 +1198,7 @@ def test_guardrail_blocks_terms() -> None:
 
 
 def test_guardrail_redacts_patterns() -> None:
-    from noodle.ai_runtime import ChatResponse
+    from nodyra.ai_runtime import ChatResponse
 
     fn = registry.get("ai_guardrail").func
     guard = fn(redact_patterns='["\\\\d{3}-\\\\d{2}-\\\\d{4}"]')
@@ -1222,7 +1222,7 @@ def test_guardrail_redacts_patterns() -> None:
 def test_guardrail_enforces_max_length() -> None:
     import pytest
 
-    from noodle.ai_runtime import ChatResponse
+    from nodyra.ai_runtime import ChatResponse
 
     fn = registry.get("ai_guardrail").func
     guard = fn(max_length=5)
@@ -1231,7 +1231,7 @@ def test_guardrail_enforces_max_length() -> None:
 
 
 def test_guardrail_passes_clean_response() -> None:
-    from noodle.ai_runtime import ChatResponse
+    from nodyra.ai_runtime import ChatResponse
 
     fn = registry.get("ai_guardrail").func
     guard = fn(blocked_terms='["bad"]')
@@ -1256,7 +1256,7 @@ def test_ai_subnodes_have_no_phantom_main_input() -> None:
     # Suppliers, tools, and output parsers plug into the AI Agent through their
     # own ports; none should carry a default main "input" port (that would make
     # them look like they need data from the trigger).
-    from noodle.sdk import registry
+    from nodyra.sdk import registry
 
     sub_roles = {"supplier", "tool", "output_parser"}
     offenders = [
@@ -1268,7 +1268,7 @@ def test_ai_subnodes_have_no_phantom_main_input() -> None:
 
 
 def test_ai_chat_model_supplier_has_no_inputs() -> None:
-    from noodle.sdk import registry
+    from nodyra.sdk import registry
 
     by_id = {m.id: m for m in registry.manifests()}
     assert [p.name for p in by_id["ai_chat_model_openai"].inputs] == []
@@ -1286,7 +1286,7 @@ class _FakeResponse:
 def test_raise_if_tools_unsupported_gives_actionable_error() -> None:
     import pytest
 
-    from noodle_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
+    from nodyra_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
 
     resp = _FakeResponse(
         404,
@@ -1300,7 +1300,7 @@ def test_raise_if_tools_unsupported_gives_actionable_error() -> None:
 
 
 def test_raise_if_tools_unsupported_ignored_without_tools() -> None:
-    from noodle_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
+    from nodyra_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
 
     # No tools attached → not our concern; let the normal error path handle it.
     resp = _FakeResponse(404, '{"error":"tool_choice unsupported"}')
@@ -1310,7 +1310,7 @@ def test_raise_if_tools_unsupported_ignored_without_tools() -> None:
 
 
 def test_raise_if_tools_unsupported_ignores_unrelated_errors() -> None:
-    from noodle_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
+    from nodyra_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
 
     # A 401 about the api key is not a tool-capability problem.
     resp = _FakeResponse(401, '{"error":"invalid api key"}')
@@ -1323,7 +1323,7 @@ def test_openai_normalize_response_joins_list_content_parts() -> None:
     """Some OpenAI-compatible providers (via OpenRouter) return ``content`` as
     a list of typed parts instead of a string; the text parts must be joined,
     not stringified into a Python repr."""
-    from noodle_nodes.ai_v2.providers.openai import _normalize_response
+    from nodyra_nodes.ai_v2.providers.openai import _normalize_response
 
     body = {
         "choices": [

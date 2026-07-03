@@ -1,13 +1,13 @@
-Noodle Enterprise Edition License
+Nodyra Enterprise Edition License
 
 Version 1.0
 
-Copyright (c) 2026-present Harshit Sharma and the Noodle contributors
+Copyright (c) 2026-present Harshit Sharma and the Nodyra contributors
 ("Licensor"). All rights reserved.
 
 ## 1. Scope
 
-This license governs the "Enterprise Software": the portions of the Noodle
+This license governs the "Enterprise Software": the portions of the Nodyra
 repository that implement licensing/enforcement and the paid Enterprise and Pro
 features. This includes, without limitation:
 
@@ -16,11 +16,11 @@ features. This includes, without limitation:
   - multi-tenancy / organizations, single sign-on (SSO/SAML/OIDC), SCIM
     provisioning, audit-log export, external secrets/KMS integration,
     dedicated runner pools, advanced RBAC, and any successor features; and
-  - any file that carries a "Noodle Enterprise" notice or resides under an
+  - any file that carries a "Nodyra Enterprise" notice or resides under an
     `ee/` directory.
 
 The Enterprise Software is provided in source form for transparency and ease of
-deployment. It is NOT open source and is NOT licensed under the Noodle
+deployment. It is NOT open source and is NOT licensed under the Nodyra
 Sustainable Use License (LICENSE) or any other open-source or free-software
 license. The rest of the repository is licensed under LICENSE.
 

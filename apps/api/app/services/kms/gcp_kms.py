@@ -3,7 +3,7 @@
 Uses the ``google-cloud-kms`` library.  Application Default Credentials (ADC)
 are picked up from the environment (``GOOGLE_APPLICATION_CREDENTIALS`` env var,
 GCE metadata server, or Workload Identity).  No explicit GCP auth config is
-needed in Noodle settings.
+needed in Nodyra settings.
 
 The key name must point to a symmetric ``CryptoKey`` (resource path format
 ``projects/*/locations/*/keyRings/*/cryptoKeys/*``).  Do NOT include a version

@@ -1,11 +1,11 @@
 """Tests for system_requirements on @node manifests."""
 from __future__ import annotations
 
-import noodle_nodes  # noqa: F401
+import nodyra_nodes  # noqa: F401
 
 
 def test_node_with_system_requirements_manifest() -> None:
-    from noodle.sdk import NodeRegistry, node
+    from nodyra.sdk import NodeRegistry, node
 
     _reg = NodeRegistry()
 
@@ -37,7 +37,7 @@ def test_node_with_system_requirements_manifest() -> None:
 
 
 def test_node_without_system_requirements_defaults_to_empty() -> None:
-    from noodle.sdk import NodeRegistry, node
+    from nodyra.sdk import NodeRegistry, node
 
     _reg = NodeRegistry()
 
@@ -50,7 +50,7 @@ def test_node_without_system_requirements_defaults_to_empty() -> None:
 
 
 def test_system_requirement_all_fields_optional_except_name() -> None:
-    from noodle.models import SystemRequirement
+    from nodyra.models import SystemRequirement
     sr = SystemRequirement(name="libssl")
     assert sr.name == "libssl"
     assert sr.apt == ""

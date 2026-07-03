@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle.ai_runtime import (
+from nodyra.ai_runtime import (
     ChatModelAdapter,
     ChatRequest,
     ChatResponse,
@@ -17,7 +17,7 @@ from noodle.ai_runtime import (
     EmbeddingResponse,
     ModelUsage,
 )
-from noodle_nodes.ai_analytical_nodes import (
+from nodyra_nodes.ai_analytical_nodes import (
     _chunk_text,
     _cosine_similarity,
     _parse_json_response,
@@ -285,7 +285,7 @@ class TestHuggingFaceInference:
 
         with patch.dict(sys.modules, {"huggingface_hub": mock_hf}):
             with patch(
-                "noodle_nodes.ai_analytical_nodes.safe_request",
+                "nodyra_nodes.ai_analytical_nodes.safe_request",
                 return_value=mock_resp,
             ) as mock_post:
                 result = huggingface_inference(
@@ -306,7 +306,7 @@ class TestHuggingFaceInference:
 
         with patch.dict(sys.modules, {"huggingface_hub": mock_hf}):
             with patch(
-                "noodle_nodes.ai_analytical_nodes.safe_request",
+                "nodyra_nodes.ai_analytical_nodes.safe_request",
                 return_value=mock_resp,
             ):
                 with pytest.raises(RuntimeError, match="503"):

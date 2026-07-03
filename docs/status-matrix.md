@@ -1,4 +1,4 @@
-# Noodle architecture status matrix
+# Nodyra architecture status matrix
 
 Live status of the components called out in
 [architecture-improvement-plan.md](architecture-improvement-plan.md). Updated as
@@ -93,7 +93,7 @@ outside the 20 tasks above.
 
 | Gap | Status |
 | --- | --- |
-| CI against Postgres + real subprocess run | Shipped (`.github/workflows/ci.yml` `postgres` job runs the SKIP-LOCKED queue path + a real `noodle_runtime` subprocess against `postgres:16`; `conftest` honours `NOODLE_TEST_DATABASE_URL`) |
+| CI against Postgres + real subprocess run | Shipped (`.github/workflows/ci.yml` `postgres` job runs the SKIP-LOCKED queue path + a real `nodyra_runtime` subprocess against `postgres:16`; `conftest` honours `NODYRA_TEST_DATABASE_URL`) |
 | Graceful drain on SIGTERM | Shipped (`queue_drain` flag stops new leases; lifespan drains in-flight runs within `queue_dispatch_shutdown_timeout_seconds`, then cancels) |
 | Migrate-then-start ordering documented + enforced | Partial (compose/Helm run `alembic upgrade` before the API starts; not yet documented as a hard contract) |
 | Queue/lease config surface (lease seconds, backoff, max attempts) | Shipped (`queue_lease_seconds`, `queue_retry_backoff_*`, `queue_default_max_attempts`, etc. in `config.py`) |
@@ -109,7 +109,7 @@ outside the 20 tasks above.
 | `run_chat_turn` service — surface-agnostic core; seeds trigger cache, runs workflow, extracts last-node text | Shipped |
 | `POST /workflows/{id}/chat` — in-editor chat endpoint (auth required) | Shipped |
 | In-editor `ChatPanel` — right-docked, animates canvas via run-event WebSocket, threads memory by sessionId | Shipped |
-| Hosted chat page (`/chat/:workflowId`) — dual-auth: login-required mode (Noodle JWT) or secret-link mode (`?token=<uuid>`) | Shipped |
+| Hosted chat page (`/chat/:workflowId`) — dual-auth: login-required mode (Nodyra JWT) or secret-link mode (`?token=<uuid>`) | Shipped |
 | `GET/POST /chat/p/{id}` — public chat API; conditional auth based on `require_login` param | Shipped |
 | `ChatTriggerPanel` — inspector section showing shareable URL, "Generate secret link" / "Regenerate" buttons | Shipped |
 | Embeddable JS widget (Phase 3) — JS bundle, CORS widening, theming | Planned |

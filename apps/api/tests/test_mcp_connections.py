@@ -209,7 +209,7 @@ class TestDiscoverTools:
         conn.auth_type = "none"
 
         with patch(
-            "noodle_nodes.http_security.private_egress_allowed",
+            "nodyra_nodes.http_security.private_egress_allowed",
             return_value=False,
         ):
             with pytest.raises(Exception, match="private|blocked"):
@@ -222,7 +222,7 @@ class TestDiscoverTools:
         conn.auth_type = "none"
 
         with patch(
-            "noodle_nodes.http_security.private_egress_allowed",
+            "nodyra_nodes.http_security.private_egress_allowed",
             return_value=False,
         ):
             with pytest.raises(Exception, match="private|blocked"):

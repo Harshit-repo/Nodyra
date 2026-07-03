@@ -1,6 +1,6 @@
 /** Helpers for the per-parameter "From AI" control in tool mode. A From-AI
  *  param stores a positional `$fromAI(name, description, type)` expression that
- *  the engine resolves at tool-call time (see packages/core/noodle/expr.py). */
+ *  the engine resolves at tool-call time (see packages/core/nodyra/expr.py). */
 
 function esc(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");

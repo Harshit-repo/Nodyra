@@ -11,15 +11,15 @@ interface Props {
 export function GitHubConflictModal({ workflowId, workflowName, onClose }: Props) {
   const { notify } = useToast();
   const resolve = useResolveGithubConflictMutation();
-  const [resolving, setResolving] = useState<"noodle" | "github" | null>(null);
+  const [resolving, setResolving] = useState<"nodyra" | "github" | null>(null);
 
-  async function handleResolve(side: "noodle" | "github") {
+  async function handleResolve(side: "nodyra" | "github") {
     setResolving(side);
     try {
       await resolve.mutateAsync({ workflowId, side });
       notify(
-        side === "noodle"
-          ? "Kept Noodle version — GitHub will be overwritten on next sync."
+        side === "nodyra"
+          ? "Kept Nodyra version — GitHub will be overwritten on next sync."
           : "GitHub version applied — draft updated.",
         "success",
       );
@@ -52,21 +52,21 @@ export function GitHubConflictModal({ workflowId, workflowName, onClose }: Props
         </header>
 
         <p className="conflict-description">
-          Both <strong>{workflowName}</strong> in Noodle and the file on GitHub were
+          Both <strong>{workflowName}</strong> in Nodyra and the file on GitHub were
           edited since the last sync. Choose which version to keep.
         </p>
 
         <div className="conflict-actions">
           <div className="conflict-option">
-            <h3>Keep Noodle version</h3>
+            <h3>Keep Nodyra version</h3>
             <p>Your current draft stays as-is. GitHub will be overwritten on the next push.</p>
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => void handleResolve("noodle")}
+              onClick={() => void handleResolve("nodyra")}
               disabled={resolving !== null}
             >
-              {resolving === "noodle" ? "Applying…" : "Keep Noodle"}
+              {resolving === "nodyra" ? "Applying…" : "Keep Nodyra"}
             </button>
           </div>
 

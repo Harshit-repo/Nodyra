@@ -1,8 +1,8 @@
-"""Drive the Noodle MCP server over HTTP to build, run, and publish a workflow.
+"""Drive the Nodyra MCP server over HTTP to build, run, and publish a workflow.
 
 Usage:
     python scripts/mcp_smoke.py            # uses BASE/TOKEN below or env vars
-    NOODLE_MCP_TOKEN=... python scripts/mcp_smoke.py
+    NODYRA_MCP_TOKEN=... python scripts/mcp_smoke.py
 
 This is a self-contained MCP client (no SDK) showing the exact JSON-RPC calls an
 LLM makes against POST /mcp: initialize -> tools/call (create -> set_graph ->
@@ -14,8 +14,8 @@ import os
 import sys
 import urllib.request
 
-BASE = os.environ.get("NOODLE_MCP_URL", "http://localhost:8000/mcp")
-TOKEN = os.environ.get("NOODLE_MCP_TOKEN", "")
+BASE = os.environ.get("NODYRA_MCP_URL", "http://localhost:8000/mcp")
+TOKEN = os.environ.get("NODYRA_MCP_TOKEN", "")
 
 _id = 0
 
@@ -93,5 +93,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     if not TOKEN and "--no-token" not in sys.argv:
-        print("warning: NOODLE_MCP_TOKEN not set (ok only if AUTH_REQUIRED=false)", file=sys.stderr)
+        print("warning: NODYRA_MCP_TOKEN not set (ok only if AUTH_REQUIRED=false)", file=sys.stderr)
     main()

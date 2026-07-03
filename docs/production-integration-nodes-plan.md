@@ -1,6 +1,6 @@
 # Production Integration Nodes Phased Plan
 
-This plan turns Noodle's current integration work into a phased backlog for
+This plan turns Nodyra's current integration work into a phased backlog for
 production-level provider nodes. It assumes the existing v2 integration
 architecture remains the standard path:
 
@@ -89,7 +89,7 @@ A provider node pack is production-ready only when it includes the following.
 ### Provider Metadata
 
 - provider package under
-  `packages/nodes/noodle_nodes/integrations_v2/providers/<provider>/`;
+  `packages/nodes/nodyra_nodes/integrations_v2/providers/<provider>/`;
 - stable provider id, display name, icon, documentation links, and resource
   names;
 - coverage matrix row updated for operations, triggers, credentials, status,

@@ -80,7 +80,7 @@ export function MonacoEditor({
   useEffect(() => () => { completionDisposableRef.current?.dispose(); }, []);
 
   // ── theme sync ────────────────────────────────────────────────────────
-  // Monaco ships its own themes; we pick the closest match to Noodle's
+  // Monaco ships its own themes; we pick the closest match to Nodyra's
   // current palette so the editor doesn't flash light-on-dark.
 
   const isLight =
@@ -95,7 +95,7 @@ export function MonacoEditor({
     monacoRef.current = monaco;
     setReady(true);
 
-    // Register Noodle SDK completions; store the disposable so the provider
+    // Register Nodyra SDK completions; store the disposable so the provider
     // is removed when this editor instance unmounts (prevents accumulation).
     completionDisposableRef.current = monaco.languages.registerCompletionItemProvider("python", {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -141,9 +141,9 @@ export function MonacoEditor({
             range,
           },
           {
-            label: "__noodle_credential__",
+            label: "__nodyra_credential__",
             kind: monaco.languages.CompletionItemKind.Property,
-            insertText: "__noodle_credential__",
+            insertText: "__nodyra_credential__",
             documentation: "Credential reference marker (internal)",
             range,
           },
@@ -192,7 +192,7 @@ export function MonacoEditor({
       message: d.message,
     }));
 
-    monaco.editor.setModelMarkers(model, "noodle-lint", markers);
+    monaco.editor.setModelMarkers(model, "nodyra-lint", markers);
   }, [diagnostics, ready]);
 
   // ── auto-height ───────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ but authentication is enforced **globally** by middleware, so it is not a gap:
 
 - **`auth_gate` middleware** (`main.py:563-596`): when `auth_required=True`, every
   request is rejected with 401 unless it carries a valid Bearer token, a valid
-  `noodle_session` cookie, or a valid `?token=` — except the explicit exempt set
+  `nodyra_session` cookie, or a valid `?token=` — except the explicit exempt set
   (`/auth/*`, `/health/*`, webhook ingress). So `export`/`expressions`/read
   endpoints **do** require authentication in production. Confirmed by reading the
   middleware end-to-end.

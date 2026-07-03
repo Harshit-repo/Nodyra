@@ -32,7 +32,7 @@ describe("GlobalCommandMenu", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /Go to pages and commands/i }));
-    expect(document.getElementById("noodle-command-organization")).toBeTruthy();
+    expect(document.getElementById("nodyra-command-organization")).toBeTruthy();
     expect(screen.queryByRole("option", { name: /Team & access/i })).toBeNull();
     expect(screen.getByRole("option", { name: /Activity/i })).toBeTruthy();
   });

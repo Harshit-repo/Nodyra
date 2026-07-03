@@ -5,10 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import noodle_nodes  # noqa: F401
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.providers.rss import triggers as rss_triggers
-from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext
+import nodyra_nodes  # noqa: F401
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.providers.rss import triggers as rss_triggers
+from nodyra_nodes.integrations_v2.specs import ProviderTriggerPollContext
 
 RSS_FEED = """\
 <?xml version="1.0"?>
@@ -77,7 +77,7 @@ def test_rss_trigger_is_registered() -> None:
 def test_rss_first_run_no_events() -> None:
     """First run with no cursor (seen_guids=None) fires no events."""
     with patch(
-        "noodle_nodes.integrations_v2.providers.rss.triggers.safe_request"
+        "nodyra_nodes.integrations_v2.providers.rss.triggers.safe_request"
     ) as mock_req:
         mock_req.return_value = _mock_response(RSS_FEED)
         result = rss_triggers.poll_rss_feed(
@@ -93,7 +93,7 @@ def test_rss_first_run_no_events() -> None:
 
 def test_rss_new_items_after_cursor() -> None:
     with patch(
-        "noodle_nodes.integrations_v2.providers.rss.triggers.safe_request"
+        "nodyra_nodes.integrations_v2.providers.rss.triggers.safe_request"
     ) as mock_req:
         mock_req.return_value = _mock_response(RSS_FEED)
         result = rss_triggers.poll_rss_feed(
@@ -110,7 +110,7 @@ def test_rss_new_items_after_cursor() -> None:
 
 def test_atom_feed_parses_entries() -> None:
     with patch(
-        "noodle_nodes.integrations_v2.providers.rss.triggers.safe_request"
+        "nodyra_nodes.integrations_v2.providers.rss.triggers.safe_request"
     ) as mock_req:
         mock_req.return_value = _mock_response(ATOM_FEED)
         result = rss_triggers.poll_rss_feed(
@@ -125,7 +125,7 @@ def test_atom_feed_parses_entries() -> None:
 
 def test_rss_rejects_unsafe_xml_entities() -> None:
     with patch(
-        "noodle_nodes.integrations_v2.providers.rss.triggers.safe_request"
+        "nodyra_nodes.integrations_v2.providers.rss.triggers.safe_request"
     ) as mock_req:
         mock_req.return_value = _mock_response(UNSAFE_FEED)
         with pytest.raises(ValueError, match="unsafe feed XML"):

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import noodle_nodes  # noqa: F401
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.providers.google_sheets import triggers as gs_triggers
-from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext
+import nodyra_nodes  # noqa: F401
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.providers.google_sheets import triggers as gs_triggers
+from nodyra_nodes.integrations_v2.specs import ProviderTriggerPollContext
 
 
 def _mock_transport(return_value):
@@ -29,7 +29,7 @@ def test_poll_first_run_establishes_cursor_no_events() -> None:
         {"values": [["Name", "Age"], ["Alice", "30"], ["Bob", "25"]]}
     )
     with patch(
-        "noodle_nodes.integrations_v2.providers.google_sheets.triggers._transport",
+        "nodyra_nodes.integrations_v2.providers.google_sheets.triggers._transport",
         return_value=mock_t,
     ):
         result = gs_triggers.poll_new_rows(
@@ -60,7 +60,7 @@ def test_poll_detects_new_rows() -> None:
         }
     )
     with patch(
-        "noodle_nodes.integrations_v2.providers.google_sheets.triggers._transport",
+        "nodyra_nodes.integrations_v2.providers.google_sheets.triggers._transport",
         return_value=mock_t,
     ):
         result = gs_triggers.poll_new_rows(
@@ -82,7 +82,7 @@ def test_poll_detects_new_rows() -> None:
 def test_poll_no_new_rows_returns_empty() -> None:
     mock_t = _mock_transport({"values": [["Name", "Age"], ["Alice", "30"]]})
     with patch(
-        "noodle_nodes.integrations_v2.providers.google_sheets.triggers._transport",
+        "nodyra_nodes.integrations_v2.providers.google_sheets.triggers._transport",
         return_value=mock_t,
     ):
         result = gs_triggers.poll_new_rows(

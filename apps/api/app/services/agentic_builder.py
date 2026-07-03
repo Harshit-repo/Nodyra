@@ -236,7 +236,7 @@ async def _ai_fix(
     """
     if cancel_event and cancel_event.is_set():
         return current_graph, ""
-    from noodle.models import WorkflowGraph
+    from nodyra.models import WorkflowGraph
 
     error_summary = "; ".join(
         f"{e['node_id']}: {e['error']}" for e in error_details

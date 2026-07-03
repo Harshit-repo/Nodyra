@@ -8,7 +8,7 @@ export interface DatasetSchemaColumn {
 }
 
 export interface DatasetRef {
-  __noodle_dataset__: true;
+  __nodyra_dataset__: true;
   version: number;
   dataset_id: string;
   format: string;
@@ -27,7 +27,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function asDatasetRef(value: unknown): DatasetRef | null {
   if (!isRecord(value)) return null;
-  if (value.__noodle_dataset__ !== true || value.version !== 1) return null;
+  if (value.__nodyra_dataset__ !== true || value.version !== 1) return null;
   if (typeof value.dataset_id !== "string") return null;
   if (!asArtifactRef(value.artifact)) return null;
   return value as unknown as DatasetRef;
@@ -40,7 +40,7 @@ export function datasetSummary(ref: DatasetRef): string {
 }
 
 export function datasetDownloadUrl(ref: DatasetRef): string {
-  const token = safeGetItem("noodle_token");
+  const token = safeGetItem("nodyra_token");
   const qs = token ? `?token=${encodeURIComponent(token)}` : "";
   return `/api/artifacts/${encodeURIComponent(ref.artifact.artifact_id)}/download${qs}`;
 }

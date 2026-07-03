@@ -5,9 +5,9 @@ import hmac
 import json
 from typing import Any
 
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.providers.github import triggers as github_triggers
-from noodle_nodes.integrations_v2.specs import (
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.providers.github import triggers as github_triggers
+from nodyra_nodes.integrations_v2.specs import (
     ProviderTriggerActivationContext,
     ProviderTriggerDeactivationContext,
     ProviderTriggerRequest,

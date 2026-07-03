@@ -14,7 +14,7 @@ from sqlalchemy.orm import aliased, selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 from starlette.websockets import WebSocketDisconnect
 
-import noodle_nodes  # noqa: F401 - registers built-in nodes
+import nodyra_nodes  # noqa: F401 - registers built-in nodes
 from app.config import settings
 from app.db import SessionLocal, get_session
 from app.models import (
@@ -70,10 +70,10 @@ from app.services.workflow_events import (
     record_workflow_revision,
 )
 from app.tenancy import current_org_id, run_as_org
-from noodle.models import WorkflowGraph
-from noodle.sdk import registry as node_registry
+from nodyra.models import WorkflowGraph
+from nodyra.sdk import registry as node_registry
 
-logger = logging.getLogger("noodle")
+logger = logging.getLogger("nodyra")
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 ws_router = APIRouter(tags=["workflows"])
@@ -727,7 +727,7 @@ async def update_workflow(
             if name_value in {tool.name for tool in STATIC_TOOLS}:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
-                    "mcp_tool_name is reserved by a built-in Noodle tool.",
+                    "mcp_tool_name is reserved by a built-in Nodyra tool.",
                 )
             others = list(
                 (
@@ -771,7 +771,7 @@ async def update_workflow(
         if effective_name in {tool.name for tool in STATIC_TOOLS}:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "The effective MCP tool name is reserved by Noodle.",
+                "The effective MCP tool name is reserved by Nodyra.",
             )
         others = list(
             (

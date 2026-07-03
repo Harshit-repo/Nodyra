@@ -111,12 +111,12 @@ function CreateCredentialModal({
         type?: string;
         message?: string;
       };
-      if (type === "noodle_oauth_success") {
+      if (type === "nodyra_oauth_success") {
         setOauthStarted("");
         notify(`Connected${msg ? ` — ${msg.replace(/^Connected — /, "")}` : ""}`, "success");
         oauthPopupRef.current = null;
         onCreated();
-      } else if (type === "noodle_oauth_error") {
+      } else if (type === "nodyra_oauth_error") {
         setOauthStarted("");
         setError(msg ?? "OAuth failed.");
         notify(msg ?? "OAuth failed.", "error");
@@ -216,7 +216,7 @@ function CreateCredentialModal({
       });
       const popup = window.open(
         started.authorization_url,
-        "noodle_oauth",
+        "nodyra_oauth",
         "width=600,height=720,resizable=yes,scrollbars=yes",
       );
       if (!popup) {
@@ -383,7 +383,7 @@ function CreateCredentialModal({
           <div>
             <h2 id="new-credential-title">New credential</h2>
             <p className="muted">
-              Choose the service first. Noodle only asks for fields this
+              Choose the service first. Nodyra only asks for fields this
               credential type uses.
             </p>
           </div>

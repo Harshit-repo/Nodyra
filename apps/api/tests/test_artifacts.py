@@ -219,7 +219,7 @@ async def test_persist_artifact_refs_rehomes_to_configured_backend(
     local_path.write_bytes(b'payload-bytes')
 
     ref = {
-        '__noodle_artifact__': True,
+        '__nodyra_artifact__': True,
         'artifact_id': 'aid',
         'run_id': run_id,
         'node_id': 'n1',
@@ -276,7 +276,7 @@ async def test_persist_artifact_refs_keeps_local_when_upload_fails(
     local_path.write_bytes(b'x')
 
     ref = {
-        '__noodle_artifact__': True,
+        '__nodyra_artifact__': True,
         'artifact_id': 'aid-fail',
         'run_id': run_id,
         'node_id': 'n1',
@@ -359,7 +359,7 @@ async def _make_dataset_run(client: AsyncClient) -> tuple[str, str]:
     run = (await client.get(f"/runs/{run_id}")).json()
     results = {node["node_id"]: node for node in run["node_runs"]}
     dataset_ref = results["ds"]["output"]["main"]
-    assert dataset_ref["__noodle_dataset__"] is True
+    assert dataset_ref["__nodyra_dataset__"] is True
     return workflow_id, dataset_ref["artifact"]["artifact_id"]
 
 
@@ -491,8 +491,8 @@ async def test_dataset_ref_survives_small_output_cap(client: AsyncClient) -> Non
         settings.max_output_bytes = previous
 
     output = next(nr for nr in run["node_runs"] if nr["node_id"] == "ds")["output"]["main"]
-    assert output["__noodle_dataset__"] is True
-    assert output["artifact"]["__noodle_artifact__"] is True
+    assert output["__nodyra_dataset__"] is True
+    assert output["artifact"]["__nodyra_artifact__"] is True
     assert output["artifact"]["artifact_id"]
     assert output["row_count"] == 3
     assert output.get("_truncated") is not True

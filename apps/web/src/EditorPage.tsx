@@ -117,7 +117,7 @@ function isCredentialRef(value: unknown): boolean {
     Boolean(value) &&
     typeof value === "object" &&
     !Array.isArray(value) &&
-    (value as Record<string, unknown>).__noodle_credential__ === true
+    (value as Record<string, unknown>).__nodyra_credential__ === true
   );
 }
 
@@ -611,7 +611,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
     setPinned(pinnedMap);
     loadedWorkflowIdRef.current = id;
     setStatus("ready");
-    window.setTimeout(() => window.dispatchEvent(new Event("noodle:fit-view")), 60);
+    window.setTimeout(() => window.dispatchEvent(new Event("nodyra:fit-view")), 60);
 
     // Load child workflows for any map_group nodes.
     const mapGroupNodes = useEditor.getState().nodes.filter(
@@ -1132,7 +1132,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
         "Fix this failed workflow run.",
         failedNodeId ? `Failed node id: ${failedNodeId}.` : "",
         failedError ? `Error: ${failedError}` : "",
-        "Return an editable Noodle workflow draft that avoids the failure.",
+        "Return an editable Nodyra workflow draft that avoids the failure.",
       ]
         .filter(Boolean)
         .join("\n"),
@@ -1291,7 +1291,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
     cache?: RunCache,
   ): Promise<void> {
     if (!id || webhookListen) return;
-    const path = String(node.params.path ?? "").trim() || "noodle";
+    const path = String(node.params.path ?? "").trim() || "nodyra";
     const url = `${window.location.origin}/api/webhook-test/${path}`;
     const runTargets =
       targets?.length === 1 && targets[0] === node.id ? undefined : targets;
@@ -1459,27 +1459,27 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
       }
       if (e.key === "/") {
         e.preventDefault();
-        window.dispatchEvent(new Event("noodle:focus-node-search"));
+        window.dispatchEvent(new Event("nodyra:focus-node-search"));
         return;
       }
       if (e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        window.dispatchEvent(new Event("noodle:fit-view"));
+        window.dispatchEvent(new Event("nodyra:fit-view"));
         return;
       }
       if (e.shiftKey && e.key.toLowerCase() === "l") {
         e.preventDefault();
-        window.dispatchEvent(new Event("noodle:auto-layout"));
+        window.dispatchEvent(new Event("nodyra:auto-layout"));
         return;
       }
       if (e.shiftKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
-        window.dispatchEvent(new Event("noodle:toggle-node-palette"));
+        window.dispatchEvent(new Event("nodyra:toggle-node-palette"));
         return;
       }
       if (e.shiftKey && e.key.toLowerCase() === "i") {
         e.preventDefault();
-        window.dispatchEvent(new Event("noodle:toggle-inspector"));
+        window.dispatchEvent(new Event("nodyra:toggle-inspector"));
         return;
       }
       if (e.shiftKey && e.key.toLowerCase() === "n") {
@@ -1509,14 +1509,14 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
 
   useEffect(() => {
     function onOpenShortcuts() { setShortcutsOpen(true); }
-    window.addEventListener("noodle:open-shortcuts", onOpenShortcuts);
-    return () => window.removeEventListener("noodle:open-shortcuts", onOpenShortcuts);
+    window.addEventListener("nodyra:open-shortcuts", onOpenShortcuts);
+    return () => window.removeEventListener("nodyra:open-shortcuts", onOpenShortcuts);
   }, []);
 
   useEffect(() => {
     function onOpenGenerateNode() { setGenerateNodeOpen(true); }
-    window.addEventListener("noodle:open-generate-modal", onOpenGenerateNode);
-    return () => window.removeEventListener("noodle:open-generate-modal", onOpenGenerateNode);
+    window.addEventListener("nodyra:open-generate-modal", onOpenGenerateNode);
+    return () => window.removeEventListener("nodyra:open-generate-modal", onOpenGenerateNode);
   }, []);
 
   async function viewRun(runId: string): Promise<void> {

@@ -9,12 +9,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.artifacts import LocalArtifactStore, is_artifact_ref
-from noodle.context import artifact_store, current_node_id
-from noodle.sdk import registry
-from noodle_nodes.datasets import records_to_dataset
-from noodle_nodes.llm_training import (
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.artifacts import LocalArtifactStore, is_artifact_ref
+from nodyra.context import artifact_store, current_node_id
+from nodyra.sdk import registry
+from nodyra_nodes.datasets import records_to_dataset
+from nodyra_nodes.llm_training import (
     _FT_DATASET_MARKER,
     _FT_JOB_MARKER,
     _MODEL_REGISTRY_MARKER,
@@ -71,7 +71,7 @@ def _ft_job_ref(status: str = "succeeded", model: str = "ft:gpt-4.1-mini:xx") ->
 # ---------------------------------------------------------------------------
 
 def test_llm_training_does_not_import_heavy_packages() -> None:
-    """Importing noodle_nodes must not pull in openai, pandas, tiktoken."""
+    """Importing nodyra_nodes must not pull in openai, pandas, tiktoken."""
     heavy = {"openai", "tiktoken", "torch", "transformers", "trl", "peft"}
     loaded = set(sys.modules.keys())
     for pkg in heavy:
@@ -267,7 +267,7 @@ def test_fine_tune_dataset_prompt_completion_format(store_ctx) -> None:
     assert result["format"] == "prompt_completion_jsonl"
     assert result["n_examples"] == 20
     # Verify the artifact contains valid JSONL
-    from noodle.artifacts import read_bytes
+    from nodyra.artifacts import read_bytes
     data = read_bytes(result["artifact"])
     lines = data.decode().strip().split("\n")
     parsed = json.loads(lines[0])
@@ -300,7 +300,7 @@ def test_fine_tune_dataset_artifact_contains_valid_jsonl(store_ctx) -> None:
         user_column="user", assistant_column="assistant",
         min_examples=5,
     )
-    from noodle.artifacts import read_bytes
+    from nodyra.artifacts import read_bytes
     data = read_bytes(result["artifact"])
     lines = [line for line in data.decode().strip().split("\n") if line]
     assert len(lines) == 15
@@ -388,7 +388,7 @@ def test_upload_fine_tune_file_from_ft_dataset(store_ctx) -> None:
 
 
 def test_upload_fine_tune_file_from_artifact(store_ctx) -> None:
-    from noodle.artifacts import write_bytes
+    from nodyra.artifacts import write_bytes
     artifact = write_bytes(
         b'{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}\n',
         "test.jsonl",
@@ -430,14 +430,14 @@ def test_create_fine_tune_job_returns_job_ref(store_ctx) -> None:
             input=upload_result,
             openai_api_key="sk-test",
             model="gpt-4.1-mini",
-            suffix="noodle-test",
+            suffix="nodyra-test",
         )
 
     assert result[_FT_JOB_MARKER] is True
     assert result["job_id"] == "ftjob_test_001"
     assert result["provider"] == "openai"
     assert result["model"] == "gpt-4.1-mini"
-    assert result["suffix"] == "noodle-test"
+    assert result["suffix"] == "nodyra-test"
 
 
 def test_create_fine_tune_job_accepts_raw_file_id(store_ctx) -> None:
@@ -640,7 +640,7 @@ def test_register_model_artifact_is_valid_json(store_ctx) -> None:
     job_ref = _ft_job_ref(status="succeeded", model="ft:gpt-4.1-mini:test::999")
     result = register_fine_tuned_model(input=job_ref, name="Test Model")
 
-    from noodle.artifacts import read_text
+    from nodyra.artifacts import read_text
     text = read_text(result["artifact"])
     parsed = json.loads(text)
     assert parsed[_MODEL_REGISTRY_MARKER] is True

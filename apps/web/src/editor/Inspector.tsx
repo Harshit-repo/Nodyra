@@ -13,8 +13,8 @@ const NodeDetails = lazy(() =>
 const MIN_WIDTH = 260;
 const MAX_WIDTH = 720;
 const DEFAULT_WIDTH = 320;
-const WIDTH_KEY = "noodle_inspector_width";
-const COLLAPSED_KEY = "noodle_inspector_collapsed";
+const WIDTH_KEY = "nodyra_inspector_width";
+const COLLAPSED_KEY = "nodyra_inspector_collapsed";
 
 function clampWidth(value: number): number {
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, value));
@@ -80,8 +80,8 @@ export function Inspector() {
     function toggleInspector(): void {
       toggleCollapsed();
     }
-    window.addEventListener("noodle:toggle-inspector", toggleInspector);
-    return () => window.removeEventListener("noodle:toggle-inspector", toggleInspector);
+    window.addEventListener("nodyra:toggle-inspector", toggleInspector);
+    return () => window.removeEventListener("nodyra:toggle-inspector", toggleInspector);
   }, []);
 
   function handleResizeKey(event: ReactKeyboardEvent<HTMLDivElement>): void {
@@ -193,13 +193,13 @@ export function Inspector() {
             <div className="inspector-empty-actions">
               <button
                 type="button"
-                onClick={() => window.dispatchEvent(new Event("noodle:focus-node-search"))}
+                onClick={() => window.dispatchEvent(new Event("nodyra:focus-node-search"))}
               >
                 Search nodes
               </button>
               <button
                 type="button"
-                onClick={() => window.dispatchEvent(new Event("noodle:fit-view"))}
+                onClick={() => window.dispatchEvent(new Event("nodyra:fit-view"))}
               >
                 Fit view
               </button>

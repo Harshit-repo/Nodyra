@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle_nodes import cloud_devops
+from nodyra_nodes import cloud_devops
 
 
 def test_ssh_execute_rejects_unknown_host_keys() -> None:

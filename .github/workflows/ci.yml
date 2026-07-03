@@ -19,6 +19,7 @@ jobs:
       - run: uv lock --check
       - run: uv sync --locked --all-packages
       - run: uv run ruff check .
+      - run: uv run python scripts/check_rename.py
       # --timeout guards against a hung test wedging the whole run (see the
       # event-broker fix); 300s is generous for the subprocess-spawning tests.
       - run: uv run pytest --timeout=300 --timeout-method=thread
@@ -62,13 +63,13 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: noodle
-          POSTGRES_PASSWORD: noodle
-          POSTGRES_DB: noodle
+          POSTGRES_USER: nodyra
+          POSTGRES_PASSWORD: nodyra
+          POSTGRES_DB: nodyra
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U noodle"
+          --health-cmd "pg_isready -U nodyra"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -82,7 +83,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      NOODLE_TEST_DATABASE_URL: postgresql+asyncpg://noodle:noodle@localhost:5432/noodle
+      NODYRA_TEST_DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra
       REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
@@ -99,16 +100,16 @@ jobs:
       - name: Alembic migration drift check (Postgres, required)
         working-directory: apps/api
         env:
-          DATABASE_URL: postgresql+asyncpg://noodle:noodle@localhost:5432/noodle_alembic
+          DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra_alembic
         run: |
           uv run python - <<'PY'
           import asyncio, asyncpg
           async def main():
               conn = await asyncpg.connect(
-                  host="localhost", user="noodle", password="noodle", database="noodle"
+                  host="localhost", user="nodyra", password="nodyra", database="nodyra"
               )
               try:
-                  await conn.execute("CREATE DATABASE noodle_alembic")
+                  await conn.execute("CREATE DATABASE nodyra_alembic")
               except asyncpg.DuplicateDatabaseError:
                   pass
               finally:
@@ -121,7 +122,7 @@ jobs:
       # REQUIRED — verified green on Postgres. Gates the lane.
       #   * test_run_queue: the durable queue incl. the Postgres-only
       #     SKIP LOCKED lease path (the crown jewel that SQLite can't cover).
-      #   * packages/runtime: spawns the `noodle_runtime` subprocess and runs a
+      #   * packages/runtime: spawns the `nodyra_runtime` subprocess and runs a
       #     real workflow graph through it end to end.
       - name: Postgres queue + real subprocess (required)
         run: >-
@@ -165,8 +166,8 @@ jobs:
         run: >-
           uvx bandit -ll -r
           apps/api/app
-          packages/core/noodle
-          packages/nodes/noodle_nodes
+          packages/core/nodyra
+          packages/nodes/nodyra_nodes
       - name: mypy — security-critical modules (blocking)
         run: >-
           uvx mypy --ignore-missing-imports --follow-imports=skip
@@ -184,7 +185,7 @@ jobs:
         env:
           MINIO_ROOT_PASSWORD: ci-placeholder
           INTERNAL_API_TOKEN: ci-placeholder
-          NOODLE_SECRET_KEY: ci-placeholder
+          NODYRA_SECRET_KEY: ci-placeholder
       - name: compose config — sandbox overlay
         run: >-
           docker compose -f deploy/docker-compose.yml
@@ -192,9 +193,9 @@ jobs:
         env:
           MINIO_ROOT_PASSWORD: ci-placeholder
           INTERNAL_API_TOKEN: ci-placeholder
-          NOODLE_SECRET_KEY: ci-placeholder
+          NODYRA_SECRET_KEY: ci-placeholder
       - name: helm lint
-        run: helm lint deploy/helm/noodle
+        run: helm lint deploy/helm/nodyra
 
   web:
     runs-on: ubuntu-latest

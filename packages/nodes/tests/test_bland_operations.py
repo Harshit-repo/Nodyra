@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle_nodes.integrations_v2.providers.bland.operations import (
+from nodyra_nodes.integrations_v2.providers.bland.operations import (
     analyze_call,
     get_call,
     list_calls,
@@ -16,7 +16,7 @@ from noodle_nodes.integrations_v2.providers.bland.operations import (
 )
 
 _CREDS = {"api_key": "bland_test_key"}
-_TRANSPORT_PATH = "noodle_nodes.integrations_v2.providers.bland.operations._transport"
+_TRANSPORT_PATH = "nodyra_nodes.integrations_v2.providers.bland.operations._transport"
 
 
 def _mock_transport(return_value: object = None) -> tuple[MagicMock, MagicMock]:
@@ -119,7 +119,7 @@ def test_analyze_call():
 
 
 def test_bland_operations_registered():
-    from noodle_nodes.integrations_v2.registry import get_registered_operation
+    from nodyra_nodes.integrations_v2.registry import get_registered_operation
     for node_id in [
         "bland_send_call",
         "bland_get_call",

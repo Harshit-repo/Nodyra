@@ -2,11 +2,11 @@
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task only after user approval.
 
-**Goal:** Refine Noodle's AI workflow draft builder and make "Fix with AI" produce targeted, actionable draft repairs instead of a generic replacement prompt.
+**Goal:** Refine Nodyra's AI workflow draft builder and make "Fix with AI" produce targeted, actionable draft repairs instead of a generic replacement prompt.
 
 **Architecture:** Keep the current Slice 13 contract: AI builder returns a normal editable `WorkflowGraph`, not hidden agent execution. Upgrade the backend planner into a real LLM-backed planner with deterministic fallback, strict server-side validation, registry-safe node IDs, credential-safe parameter handling, and current workflow/run context for Fix with AI. Upgrade the frontend modal into a clear preview/apply flow with context-aware Fix mode and safer application choices.
 
-**Tech Stack:** FastAPI, Pydantic, SQLAlchemy async, Noodle `WorkflowGraph`, React/Vite/TypeScript, Zustand editor store, pytest, `npm run build`.
+**Tech Stack:** FastAPI, Pydantic, SQLAlchemy async, Nodyra `WorkflowGraph`, React/Vite/TypeScript, Zustand editor store, pytest, `npm run build`.
 
 ---
 
@@ -22,7 +22,7 @@
 
 ## Product principles for this polish
 
-1. AI output remains editable Noodle graph JSON.
+1. AI output remains editable Nodyra graph JSON.
 2. No hidden workflow execution.
 3. Draft preview is safe: user sees what will change before applying.
 4. Fix with AI should repair the existing draft when possible, not blindly replace it.
@@ -89,7 +89,7 @@ Add a provider abstraction in `apps/api/app/services/ai_builder.py` or a small a
 
 - Configuration source:
   - Prefer existing credential store if exactly one visible `openai` or `anthropic` credential exists for the workflow/environment.
-  - Also support environment/config values for self-hosting, e.g. `NOODLE_AI_PROVIDER`, `NOODLE_AI_MODEL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` if aligned with `app.config` conventions.
+  - Also support environment/config values for self-hosting, e.g. `NODYRA_AI_PROVIDER`, `NODYRA_AI_MODEL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` if aligned with `app.config` conventions.
   - If no provider is configured, return deterministic fallback output with `planner="deterministic_fallback"` and an assumption explaining that AI planning is not configured.
 - Provider support:
   - OpenAI chat/completions or responses endpoint.
@@ -249,7 +249,7 @@ Keep styles consistent with existing `.ai-preview` and modal classes.
 1. Add prompt classification for trigger, transforms, actions, and integrations.
 2. Add schedule/manual/webhook trigger selection.
 3. Add HTTP/code/edit_fields/switch support where prompt indicates them.
-4. Keep supported node IDs restricted to actual built-in node IDs inspected in `packages/nodes/noodle_nodes/*`.
+4. Keep supported node IDs restricted to actual built-in node IDs inspected in `packages/nodes/nodyra_nodes/*`.
 5. Add tests for scheduled prompts, API-fetch prompts, and unknown safe fallback.
 
 ### Task 5: Implement Fix mode backend with minimal and replacement strategies

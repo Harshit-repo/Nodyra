@@ -14,7 +14,7 @@ from app.services.oauth import OAuthError, refresh_credential_if_needed
 from app.services.org_keys import decrypt_credential_for
 from app.tenancy import active_org_id
 
-CREDENTIAL_REF_MARKER = "__noodle_credential__"
+CREDENTIAL_REF_MARKER = "__nodyra_credential__"
 
 
 def is_credential_ref(value: Any) -> bool:

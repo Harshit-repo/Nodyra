@@ -23,7 +23,7 @@ def test_initialize_echoes_known_version() -> None:
 
 def test_initialize_falls_back_for_unknown_version() -> None:
     assert initialize_result("1999-01-01")["protocolVersion"] == "2025-11-25"
-    assert initialize_result(None)["serverInfo"]["name"] == "noodle"
+    assert initialize_result(None)["serverInfo"]["name"] == "nodyra"
 
 
 def test_tool_result_wraps_dict_with_structured_content() -> None:

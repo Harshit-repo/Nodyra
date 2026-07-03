@@ -1,5 +1,5 @@
-<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Noodle — squiggle node">
-  <!-- minimal: a node with a wavy noodle tail -->
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodyra - squiggle node">
+  <!-- minimal: a node with a wavy tail -->
   <path d="M16 24 C 22 24, 22 16, 28 16 C 34 16, 34 24, 40 24"
         stroke="#E29A2C" stroke-width="4" stroke-linecap="round"/>
   <circle cx="14" cy="24" r="7" fill="#1C1A17"/>

@@ -1,7 +1,7 @@
 """Tests for Vapi.ai v2 operations and poll trigger."""
 from unittest.mock import MagicMock, patch
 
-from noodle_nodes.integrations_v2.providers.vapi.operations import (
+from nodyra_nodes.integrations_v2.providers.vapi.operations import (
     create_assistant,
     end_call,
     get_call,
@@ -9,9 +9,9 @@ from noodle_nodes.integrations_v2.providers.vapi.operations import (
     poll_completed_calls,
     start_call,
 )
-from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext
+from nodyra_nodes.integrations_v2.specs import ProviderTriggerPollContext
 
-_TRANSPORT_PATH = "noodle_nodes.integrations_v2.providers.vapi.operations._transport"
+_TRANSPORT_PATH = "nodyra_nodes.integrations_v2.providers.vapi.operations._transport"
 _CREDS = {"api_key": "vapi_test_key"}
 
 

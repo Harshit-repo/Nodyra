@@ -1,13 +1,13 @@
 """Warm per-(org, environment) sandbox container pool (MT Phase D slice 1).
 
-SandboxWorker wraps one hardened container running ``noodle_runtime`` plus
+SandboxWorker wraps one hardened container running ``nodyra_runtime`` plus
 its attach socket. SandboxPool hands a worker to at most one run at a time
 and returns clean workers to a bounded warm list keyed by
 ``(org_id, environment_id, spawn_overrides)`` — reuse is strictly within one
 key, so cross-tenant container reuse is impossible by construction.
 
-The wire protocol is the same newline-framed JSON ``noodle_runtime`` speaks
-to the subprocess pool (see packages/runtime/noodle_runtime/server.py),
+The wire protocol is the same newline-framed JSON ``nodyra_runtime`` speaks
+to the subprocess pool (see packages/runtime/nodyra_runtime/server.py),
 including the ``call_workflow`` host callback that runtime_pool brokers.
 """
 
@@ -28,7 +28,7 @@ from app.services.container_runtime import (
     hardening_kwargs,
     image_tag_for,
 )
-from noodle.serialization import deserialize_value, serialize_value
+from nodyra.serialization import deserialize_value, serialize_value
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class SandboxWorker:
         loop = asyncio.get_running_loop()
         tag = image_tag_for(env_payload)
         await loop.run_in_executor(None, ensure_docker_image, client, tag, env_payload)
-        name = f"noodle-sbx-{uuid.uuid4().hex[:12]}"
+        name = f"nodyra-sbx-{uuid.uuid4().hex[:12]}"
         spawn_kwargs = hardening_kwargs(
             runtime=runtime, network=network, overrides=overrides
         )
@@ -273,7 +273,7 @@ class SandboxWorker:
         self, event: dict, subworkflow_resolver, loop: asyncio.AbstractEventLoop
     ) -> None:
         """Mirror of runtime_pool._handle_call_workflow over the attach socket."""
-        from noodle.engine.subworkflows import (  # noqa: PLC0415
+        from nodyra.engine.subworkflows import (  # noqa: PLC0415
             InlineSubworkflow,
             SubworkflowCall,
         )

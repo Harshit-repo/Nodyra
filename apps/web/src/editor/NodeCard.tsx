@@ -22,7 +22,7 @@ import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { asArtifactRef, formatBytes } from "./artifactValues";
 import { missingFor } from "./missingPackages";
 import { SdkModal } from "./SdkModal";
-import { isTriggerManifest, type NoodleNode, useEditor } from "./store";
+import { isTriggerManifest, type NodyraNode, useEditor } from "./store";
 import { webhookAuthLabel } from "./node-details/webhookRules";
 import { useShallow } from "zustand/react/shallow";
 import { META_BAR_INPUT_ID } from "./store/drillSlice";
@@ -245,7 +245,7 @@ function isCredentialRef(value: unknown): boolean {
     Boolean(value) &&
     typeof value === "object" &&
     !Array.isArray(value) &&
-    (value as Record<string, unknown>).__noodle_credential__ === true
+    (value as Record<string, unknown>).__nodyra_credential__ === true
   );
 }
 
@@ -255,7 +255,7 @@ function compactLabel(value: unknown): string {
 }
 
 export function hasTriggerUpstream(
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   edges: Edge[],
   nodeId: string,
 ): boolean {
@@ -282,7 +282,7 @@ export function hasTriggerUpstream(
   return false;
 }
 
-function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
+function NodeCardComponent({ id, data, selected }: NodeProps<NodyraNode>) {
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const hideTimerRef = useRef<number | null>(null);
   const { manifest, disabled, outputsOverride } = data;

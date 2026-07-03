@@ -10,10 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import noodle_nodes  # noqa: F401 — registers nodes
-from noodle.artifacts import LocalArtifactStore, is_artifact_ref
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
+import nodyra_nodes  # noqa: F401 — registers nodes
+from nodyra.artifacts import LocalArtifactStore, is_artifact_ref
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
 
 # Snapshot immediately after module import — captures only what leaked at module scope,
 # not what later tests lazily import from installed packages.
@@ -56,7 +56,7 @@ def _make_pw_mocks():
 def test_browser_automation_importable_without_optional_packages() -> None:
     """Module must import cleanly even when no browser packages are installed."""
     import importlib
-    mod = importlib.import_module("noodle_nodes.browser_automation")
+    mod = importlib.import_module("nodyra_nodes.browser_automation")
     assert hasattr(mod, "html_extract_records")
     assert hasattr(mod, "web_feed_parse")
     assert hasattr(mod, "browser_screenshot")
@@ -81,7 +81,7 @@ HTML_SAMPLE = """
 
 
 def test_html_extract_raises_without_input(store_ctx) -> None:
-    from noodle_nodes.browser_automation import html_extract_records
+    from nodyra_nodes.browser_automation import html_extract_records
     with pytest.raises(ValueError, match="input is required"):
         html_extract_records(input=None)
 
@@ -96,14 +96,14 @@ def test_html_extract_raises_missing_package(store_ctx, monkeypatch) -> None:
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", mock_import)
-    from noodle_nodes.browser_automation import html_extract_records
+    from nodyra_nodes.browser_automation import html_extract_records
     with pytest.raises(RuntimeError, match="beautifulsoup4"):
         html_extract_records(input=HTML_SAMPLE)
 
 
 def test_html_extract_container_returns_records(store_ctx) -> None:
     pytest.importorskip("bs4")
-    from noodle_nodes.browser_automation import html_extract_records
+    from nodyra_nodes.browser_automation import html_extract_records
 
     result = html_extract_records(
         input=HTML_SAMPLE,
@@ -119,7 +119,7 @@ def test_html_extract_container_returns_records(store_ctx) -> None:
 
 def test_html_extract_no_container_single_record(store_ctx) -> None:
     pytest.importorskip("bs4")
-    from noodle_nodes.browser_automation import html_extract_records
+    from nodyra_nodes.browser_automation import html_extract_records
 
     result = html_extract_records(
         input=HTML_SAMPLE,
@@ -131,7 +131,7 @@ def test_html_extract_no_container_single_record(store_ctx) -> None:
 
 def test_html_extract_missing_selector_returns_empty_string(store_ctx) -> None:
     pytest.importorskip("bs4")
-    from noodle_nodes.browser_automation import html_extract_records
+    from nodyra_nodes.browser_automation import html_extract_records
 
     result = html_extract_records(
         input=HTML_SAMPLE,
@@ -167,7 +167,7 @@ RSS_XML = """<?xml version="1.0"?>
 
 
 def test_web_feed_parse_raises_without_input(store_ctx) -> None:
-    from noodle_nodes.browser_automation import web_feed_parse
+    from nodyra_nodes.browser_automation import web_feed_parse
     with pytest.raises(ValueError, match="input is required"):
         web_feed_parse(input=None)
 
@@ -182,14 +182,14 @@ def test_web_feed_parse_raises_missing_package(store_ctx, monkeypatch) -> None:
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", mock_import)
-    from noodle_nodes.browser_automation import web_feed_parse
+    from nodyra_nodes.browser_automation import web_feed_parse
     with pytest.raises(RuntimeError, match="feedparser"):
         web_feed_parse(input="https://example.com/feed.xml")
 
 
 def test_web_feed_parse_parses_rss_string(store_ctx) -> None:
     pytest.importorskip("feedparser")
-    from noodle_nodes.browser_automation import web_feed_parse
+    from nodyra_nodes.browser_automation import web_feed_parse
 
     result = web_feed_parse(input=RSS_XML)
     assert result["entry_count"] == 2
@@ -201,7 +201,7 @@ def test_web_feed_parse_parses_rss_string(store_ctx) -> None:
 
 def test_web_feed_parse_respects_max_items(store_ctx) -> None:
     pytest.importorskip("feedparser")
-    from noodle_nodes.browser_automation import web_feed_parse
+    from nodyra_nodes.browser_automation import web_feed_parse
 
     result = web_feed_parse(input=RSS_XML, max_items=1)
     assert result["entry_count"] == 1
@@ -210,7 +210,7 @@ def test_web_feed_parse_respects_max_items(store_ctx) -> None:
 
 def test_web_feed_parse_raises_on_invalid_feed(store_ctx) -> None:
     pytest.importorskip("feedparser")
-    from noodle_nodes.browser_automation import web_feed_parse
+    from nodyra_nodes.browser_automation import web_feed_parse
 
     with pytest.raises(ValueError, match="No feed entries"):
         web_feed_parse(input="<html><body>not a feed</body></html>")
@@ -261,7 +261,7 @@ def test_sitemap_crawl_rejects_entity_expansion_bomb(store_ctx) -> None:
     Pass the payload directly as `input` — the internal _load closure treats
     any string that doesn't start with http(s):// as raw XML.
     """
-    from noodle_nodes.browser_automation import sitemap_crawl
+    from nodyra_nodes.browser_automation import sitemap_crawl
 
     with pytest.raises(ValueError, match="(?i)(invalid|sitemap|xml|entity|dtd)"):
         sitemap_crawl(input=_BILLION_LAUGHS)
@@ -274,7 +274,7 @@ def test_sitemap_crawl_rejects_external_entity(store_ctx) -> None:
     and inject file contents into parsed fields. After the fix: defusedxml
     blocks external entity references at parse time.
     """
-    from noodle_nodes.browser_automation import sitemap_crawl
+    from nodyra_nodes.browser_automation import sitemap_crawl
 
     with pytest.raises(ValueError, match="(?i)(invalid|sitemap|xml|entity|dtd)"):
         sitemap_crawl(input=_EXTERNAL_ENTITY)
@@ -283,7 +283,7 @@ def test_sitemap_crawl_rejects_external_entity(store_ctx) -> None:
 def test_sitemap_crawl_valid_xml_still_works(store_ctx) -> None:
     """Valid sitemap XML must still be parsed correctly after the fix."""
     pytest.importorskip("defusedxml")
-    from noodle_nodes.browser_automation import sitemap_crawl
+    from nodyra_nodes.browser_automation import sitemap_crawl
 
     result = sitemap_crawl(input=_VALID_SITEMAP)
     assert result["url_count"] == 2
@@ -292,7 +292,7 @@ def test_sitemap_crawl_valid_xml_still_works(store_ctx) -> None:
 def test_sitemap_crawl_does_not_fetch_duplicate_nested_sitemaps(
     store_ctx, monkeypatch
 ) -> None:
-    from noodle_nodes.browser_automation import sitemap_crawl
+    from nodyra_nodes.browser_automation import sitemap_crawl
 
     index = """\
 <?xml version="1.0"?>
@@ -320,7 +320,7 @@ def test_sitemap_crawl_does_not_fetch_duplicate_nested_sitemaps(
         calls.append(url)
         return Response(child if url.endswith("child.xml") else index)
 
-    monkeypatch.setattr("noodle_nodes.http_security.safe_request", fake_request)
+    monkeypatch.setattr("nodyra_nodes.http_security.safe_request", fake_request)
     result = sitemap_crawl(url="https://example.com/index.xml")
 
     assert result["url_count"] == 1
@@ -335,7 +335,7 @@ FAKE_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 
 
 def test_browser_screenshot_raises_without_url(store_ctx) -> None:
-    from noodle_nodes.browser_automation import browser_screenshot
+    from nodyra_nodes.browser_automation import browser_screenshot
     with pytest.raises(ValueError, match="url is required"):
         browser_screenshot(input=None, url="")
 
@@ -350,7 +350,7 @@ def test_browser_screenshot_raises_missing_package(store_ctx, monkeypatch) -> No
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", mock_import)
-    from noodle_nodes.browser_automation import browser_screenshot
+    from nodyra_nodes.browser_automation import browser_screenshot
     with pytest.raises(RuntimeError, match="playwright"):
         browser_screenshot(url="https://example.com")
 
@@ -360,7 +360,7 @@ def test_browser_screenshot_returns_png_artifact(store_ctx) -> None:
     mock_page.screenshot.return_value = FAKE_PNG
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_screenshot
+        from nodyra_nodes.browser_automation import browser_screenshot
         result = browser_screenshot(url="https://example.com")
 
     assert is_artifact_ref(result["artifact"])
@@ -374,7 +374,7 @@ def test_browser_screenshot_uses_url_from_input(store_ctx) -> None:
     mock_page.screenshot.return_value = FAKE_PNG
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_screenshot
+        from nodyra_nodes.browser_automation import browser_screenshot
         result = browser_screenshot(input="https://from-input.com")
 
     assert result["url"] == "https://from-input.com"
@@ -387,7 +387,7 @@ def test_browser_screenshot_selector_mode(store_ctx) -> None:
     mock_page.query_selector.return_value = mock_element
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_screenshot
+        from nodyra_nodes.browser_automation import browser_screenshot
         result = browser_screenshot(url="https://example.com", selector="#hero")
 
     mock_page.query_selector.assert_called_with("#hero")
@@ -400,7 +400,7 @@ def test_browser_screenshot_raises_when_selector_not_found(store_ctx) -> None:
     mock_page.query_selector.return_value = None
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_screenshot
+        from nodyra_nodes.browser_automation import browser_screenshot
         with pytest.raises(ValueError, match="matched no elements"):
             browser_screenshot(url="https://example.com", selector=".no-such-element")
 
@@ -410,7 +410,7 @@ def test_browser_screenshot_timeout_raises_runtime_error(store_ctx) -> None:
     mock_page.goto.side_effect = TimeoutError("Timeout")
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_screenshot
+        from nodyra_nodes.browser_automation import browser_screenshot
         with pytest.raises(RuntimeError, match="timed out"):
             browser_screenshot(url="https://example.com", page_timeout_ms=5000)
 
@@ -420,7 +420,7 @@ def test_browser_screenshot_timeout_raises_runtime_error(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_browser_scrape_raises_without_url(store_ctx) -> None:
-    from noodle_nodes.browser_automation import browser_scrape
+    from nodyra_nodes.browser_automation import browser_scrape
     with pytest.raises(ValueError, match="url is required"):
         browser_scrape(input=None, url="")
 
@@ -428,7 +428,7 @@ def test_browser_scrape_raises_without_url(store_ctx) -> None:
 def test_browser_scrape_raises_without_selectors(store_ctx) -> None:
     mock_sync_playwright, mock_page, mock_pw_sync_api = _make_pw_mocks()
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_scrape
+        from nodyra_nodes.browser_automation import browser_scrape
         with pytest.raises(ValueError, match="selectors_json"):
             browser_scrape(url="https://example.com", selectors_json="")
 
@@ -450,7 +450,7 @@ def test_browser_scrape_extracts_records_with_container(store_ctx) -> None:
     mock_page.query_selector.return_value = None  # no pagination link
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_scrape
+        from nodyra_nodes.browser_automation import browser_scrape
         result = browser_scrape(
             url="https://shop.example.com",
             container_selector="li.product",
@@ -472,7 +472,7 @@ def test_browser_scrape_missing_field_returns_empty_string(store_ctx) -> None:
     mock_page.query_selector.return_value = None
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_scrape
+        from nodyra_nodes.browser_automation import browser_scrape
         result = browser_scrape(
             url="https://example.com",
             container_selector="div.item",
@@ -502,7 +502,7 @@ def test_browser_scrape_paginates_to_max_pages(store_ctx) -> None:
     mock_page.query_selector.side_effect = [next_link_mock, None]
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_scrape
+        from nodyra_nodes.browser_automation import browser_scrape
         result = browser_scrape(
             url="https://example.com/list",
             container_selector="li.item",
@@ -527,13 +527,13 @@ CLICK_FILL_ACTIONS = [
 
 
 def test_browser_click_fill_raises_without_url(store_ctx) -> None:
-    from noodle_nodes.browser_automation import browser_click_fill
+    from nodyra_nodes.browser_automation import browser_click_fill
     with pytest.raises(ValueError, match="url is required"):
         browser_click_fill(input=None, url="", actions_json="[]")
 
 
 def test_browser_click_fill_raises_without_actions(store_ctx) -> None:
-    from noodle_nodes.browser_automation import browser_click_fill
+    from nodyra_nodes.browser_automation import browser_click_fill
     with pytest.raises(ValueError, match="actions_json is required"):
         browser_click_fill(url="https://example.com", actions_json="")
 
@@ -545,7 +545,7 @@ def test_browser_click_fill_executes_fill_and_click(store_ctx) -> None:
     mock_page.screenshot.return_value = FAKE_PNG
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_click_fill
+        from nodyra_nodes.browser_automation import browser_click_fill
         result = browser_click_fill(
             url="https://example.com/login",
             actions_json=json.dumps(CLICK_FILL_ACTIONS),
@@ -568,7 +568,7 @@ def test_browser_click_fill_wait_for_selector_action(store_ctx) -> None:
     actions = [{"action": "wait_for_selector", "selector": ".success-banner", "timeout_ms": 3000}]
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_click_fill
+        from nodyra_nodes.browser_automation import browser_click_fill
         result = browser_click_fill(
             url="https://example.com",
             actions_json=json.dumps(actions),
@@ -586,7 +586,7 @@ def test_browser_click_fill_raises_on_unknown_action(store_ctx) -> None:
     actions = [{"action": "unknown_action", "selector": "#x"}]
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_click_fill
+        from nodyra_nodes.browser_automation import browser_click_fill
         with pytest.raises(ValueError, match="Unknown action"):
             browser_click_fill(url="https://example.com", actions_json=json.dumps(actions))
 
@@ -599,7 +599,7 @@ FAKE_PDF = b"%PDF-1.4\n" + b"\x00" * 64
 
 
 def test_browser_pdf_from_url_raises_without_url(store_ctx) -> None:
-    from noodle_nodes.browser_automation import browser_pdf_from_url
+    from nodyra_nodes.browser_automation import browser_pdf_from_url
     with pytest.raises(ValueError, match="url is required"):
         browser_pdf_from_url(input=None, url="")
 
@@ -609,7 +609,7 @@ def test_browser_pdf_from_url_returns_pdf_artifact(store_ctx) -> None:
     mock_page.pdf.return_value = FAKE_PDF
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_pdf_from_url
+        from nodyra_nodes.browser_automation import browser_pdf_from_url
         result = browser_pdf_from_url(url="https://example.com")
 
     assert is_artifact_ref(result["artifact"])
@@ -623,7 +623,7 @@ def test_browser_pdf_from_url_passes_format_to_page(store_ctx) -> None:
     mock_page.pdf.return_value = FAKE_PDF
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_pdf_from_url
+        from nodyra_nodes.browser_automation import browser_pdf_from_url
         browser_pdf_from_url(url="https://example.com", paper_format="A4", print_background=True)
 
     call_kwargs = mock_page.pdf.call_args[1]
@@ -636,7 +636,7 @@ def test_browser_pdf_from_url_uses_input_as_url(store_ctx) -> None:
     mock_page.pdf.return_value = FAKE_PDF
 
     with patch_dict_pw(mock_pw_sync_api):
-        from noodle_nodes.browser_automation import browser_pdf_from_url
+        from nodyra_nodes.browser_automation import browser_pdf_from_url
         result = browser_pdf_from_url(input="https://from-input.com")
 
     assert result["url"] == "https://from-input.com"
@@ -647,7 +647,7 @@ def test_browser_pdf_from_url_uses_input_as_url(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_browser_automation_nodes_registered() -> None:
-    from noodle.sdk import registry
+    from nodyra.sdk import registry
     ids = {m.id for m in registry.manifests()}
     expected = {
         "html_extract_records",
@@ -661,7 +661,7 @@ def test_browser_automation_nodes_registered() -> None:
 
 
 def test_browser_automation_nodes_have_requirements() -> None:
-    from noodle.sdk import registry
+    from nodyra.sdk import registry
     ids_with_reqs = {
         "html_extract_records",
         "web_feed_parse",
@@ -678,7 +678,7 @@ def test_browser_automation_nodes_have_requirements() -> None:
 
 
 def test_browser_nodes_are_side_effecting() -> None:
-    from noodle.sdk import registry
+    from nodyra.sdk import registry
     browser_ids = {
         "browser_screenshot",
         "browser_scrape",

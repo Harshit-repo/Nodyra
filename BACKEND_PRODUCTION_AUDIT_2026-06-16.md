@@ -1,6 +1,6 @@
-# Noodle Backend Production Audit
+# Nodyra Backend Production Audit
 
-*Independent production-readiness audit — fresh pass, 2026-06-16. Auditor role: Principal Backend Engineer / Staff Architect. This audit was conducted by reading the source directly; it does not reuse or defer to the prior `NOODLE_AUDIT_FINAL_REPORT.md` or the in-tree audit trackers.*
+*Independent production-readiness audit — fresh pass, 2026-06-16. Auditor role: Principal Backend Engineer / Staff Architect. This audit was conducted by reading the source directly; it does not reuse or defer to the prior `NODYRA_AUDIT_FINAL_REPORT.md` or the in-tree audit trackers.*
 
 ---
 
@@ -15,11 +15,11 @@ Depth legend: **D** = read in full / line-by-line; **S** = sampled the security/
 | Crypto / secrets / tokens | D | `app/services/crypto.py` |
 | Multi-tenancy enforcement | D | `app/tenancy.py`, `app/db.py` |
 | Durable run queue | D | `app/services/queue.py` |
-| Workflow engine / scheduler | D | `packages/core/noodle/engine/scheduler.py`, `node_exec.py` |
-| Expression sandbox | D | `packages/core/noodle/expr.py` |
-| Process isolation | D | `packages/core/noodle/process_isolation.py` |
-| Code-node execution | S | `packages/nodes/noodle_nodes/builtin.py` |
-| SSRF / HTTP node safety | D | `packages/nodes/noodle_nodes/http_security.py`, `builtin.py:http_request` |
+| Workflow engine / scheduler | D | `packages/core/nodyra/engine/scheduler.py`, `node_exec.py` |
+| Expression sandbox | D | `packages/core/nodyra/expr.py` |
+| Process isolation | D | `packages/core/nodyra/process_isolation.py` |
+| Code-node execution | S | `packages/nodes/nodyra_nodes/builtin.py` |
+| SSRF / HTTP node safety | D | `packages/nodes/nodyra_nodes/http_security.py`, `builtin.py:http_request` |
 | Webhook ingress | D | `app/routers/webhooks.py` |
 | Sandbox executor + pool | S | `app/services/executors/sandbox.py`, `sandbox_pool.py` |
 | Runner / credential injection / redaction | S | `app/services/runner.py` (grep + spot reads) |
@@ -77,7 +77,7 @@ This is, frankly, one of the more mature "prototype-grade" codebases I have audi
 
 ### C2 — SSRF guard bypass via HTTP redirects and DNS rebinding
 - **Severity:** Critical (in untrusted-input / multi-tenant context) · High (trusted single-tenant) · **Category:** Security
-- **Files:** `packages/nodes/noodle_nodes/http_security.py` (`assert_public_http_url`), `packages/nodes/noodle_nodes/builtin.py` (`http_request` ~L1166-1179, `graphql_request` ~L1232)
+- **Files:** `packages/nodes/nodyra_nodes/http_security.py` (`assert_public_http_url`), `packages/nodes/nodyra_nodes/builtin.py` (`http_request` ~L1166-1179, `graphql_request` ~L1232)
 - **What is wrong:** `assert_public_http_url` resolves DNS once and rejects private targets, but:
   1. `requests.request(...)` is called with **default `allow_redirects=True`**, and the redirect *target* is never re-validated. A public host returning `302 -> http://169.254.169.254/latest/meta-data/...` or `-> http://10.0.0.5/...` is followed straight to the internal resource.
   2. The check resolves DNS, then `requests` resolves DNS again at connect time — a **DNS-rebinding** attacker (low-TTL record flipping public→private between the two lookups) defeats the pre-check.
@@ -103,14 +103,14 @@ This is, frankly, one of the more mature "prototype-grade" codebases I have audi
 
 ### H2 — Code-node import blocklist is security theater (bypassable; invites false confidence)
 - **Severity:** High · **Category:** Security / DX
-- **Files:** `packages/nodes/noodle_nodes/builtin.py` (`_CODE_NODE_BLOCKED_IMPORTS`, `_make_sandboxed_import`, `_build_safe_builtins`, `_run_code_isolated`), `packages/core/noodle/expr.py` (`_CodeValidator`)
+- **Files:** `packages/nodes/nodyra_nodes/builtin.py` (`_CODE_NODE_BLOCKED_IMPORTS`, `_make_sandboxed_import`, `_build_safe_builtins`, `_run_code_isolated`), `packages/core/nodyra/expr.py` (`_CodeValidator`)
 - **What is wrong:** `_build_safe_builtins()` copies **all** builtins and only overrides `__import__`; `open`, `eval`, `exec`, `compile` remain present (the `_CodeValidator` blocks them only as *identifiers/attributes*, which is trivially sidesteppable). The import blocklist is a root-module string check on `__import__` and is bypassable in numerous ways (transitive imports, `importlib` if not blocked, builtins still holding references). The code comment honestly says "this is a guard, not a sandbox" — but the layering (AST validator + blocked names + sandboxed import) reads like a sandbox and will be trusted as one by operators.
 - **Why it matters:** Anyone who relies on "Code node is sandboxed" in a non-container deployment is wrong. The only real boundary is `execution_sandbox` (containers + `sandbox_network` + non-privileged runtime). This is correctly enforced for multi-tenancy via `sandbox_policy_strict`, but the in-code guard muddies the threat model.
 - **Recommended fix:** Either (a) drop the pretense — keep the footgun-import warning but document plainly that Code nodes are arbitrary RCE and isolation = containers only; or (b) if you want a true in-process restriction, that path is a dead end in CPython — invest in the container sandbox instead and make it the documented requirement for any untrusted-author deployment. Add a config flag to *disable the Code node entirely* for deployments that accept untrusted input but can't run containers.
 
 ### H3 — Expression alias substitution corrupts string literals
 - **Severity:** High (correctness) → realistically Medium · **Category:** Bug
-- **Files:** `packages/core/noodle/expr.py` (`_eval_one`, `_ALIASES`)
+- **Files:** `packages/core/nodyra/expr.py` (`_eval_one`, `_ALIASES`)
 - **What is wrong:** `_eval_one` rewrites `$json`→`_json` etc. with naive `str.replace` over the *entire* expression source, including inside string literals. `{{ "$json.foo" }}` becomes `{{ "_json.foo" }}`; `{{ x if y else "$now" }}` mangles the literal. Also any user data containing `$json` as a substring in a templated literal is altered.
 - **Why it matters:** Silent wrong results in expressions — the hardest class of bug for users to diagnose, in a feature (expressions) that's used everywhere.
 - **Recommended fix:** Replace the string-level alias swap with an AST `NodeTransformer` that renames only `ast.Name` nodes whose `id` is an alias, or bind the `$`-prefixed names directly in the eval namespace by mapping `$json`→a key the parser accepts. Cleanest: tokenize and rename only identifier tokens, or pre-bind `_json` and rewrite via AST after parse.
@@ -133,7 +133,7 @@ This is, frankly, one of the more mature "prototype-grade" codebases I have audi
 - **Severity:** High · **Category:** Security / DevOps
 - **Files:** `deploy/Dockerfile.python` (no `USER`), `deploy/docker-compose.yml` (worker `docker.sock` mount, commented but documented as the sandbox path)
 - **What is wrong:** The image has no non-root `USER`. The worker, when running `execution_sandbox`, mounts `/var/run/docker.sock`. Root inside a container with the host docker socket is effectively host root. Even without the socket, running app processes as root is a needless escalation surface.
-- **Recommended fix:** Add a dedicated non-root user in the Dockerfile and `USER appuser`. For the sandbox worker, prefer a rootless/socket-proxy approach (e.g. a constrained docker-socket-proxy that only permits container create/run on the `noodle-sandbox` network) rather than the raw socket. Document that the worker host is part of the trust boundary.
+- **Recommended fix:** Add a dedicated non-root user in the Dockerfile and `USER appuser`. For the sandbox worker, prefer a rootless/socket-proxy approach (e.g. a constrained docker-socket-proxy that only permits container create/run on the `nodyra-sandbox` network) rather than the raw socket. Document that the worker host is part of the trust boundary.
 
 ### H7 — `/health/ready` hard-fails on Redis even when Redis isn't required
 - **Severity:** High (operational) → Medium · **Category:** Reliability / DevOps
@@ -162,12 +162,12 @@ This is, frankly, one of the more mature "prototype-grade" codebases I have audi
 - **Severity:** Medium · **Category:** Code quality / DX
 - **Files:** `pyproject.toml` (ruff only), `.github/workflows/ci.yml`
 - **What:** The codebase is heavily type-hinted but there's no mypy/pyright gate, so the hints can and will drift from reality.
-- **Fix:** Add `mypy` (or `pyright`) to dev deps and a CI step, even if initially scoped to `app/` and `noodle/engine/` with a baseline.
+- **Fix:** Add `mypy` (or `pyright`) to dev deps and a CI step, even if initially scoped to `app/` and `nodyra/engine/` with a baseline.
 
 ### M4 — Stateless CSRF cookie is not bound to the session (cookie-fixation class)
 - **Severity:** Medium · **Category:** Security
 - **Files:** `app/routers/auth.py` (`_set_session_cookies`), `app/main.py` (`_csrf_gate`)
-- **What:** Double-submit CSRF compares `noodle_csrf` cookie to `X-CSRF-Token` header. The CSRF value is random but not cryptographically bound to the session token. A network/subdomain attacker who can set cookies could fix both. This is the known limitation of stateless double-submit and is acceptable, but worth tightening.
+- **What:** Double-submit CSRF compares `nodyra_csrf` cookie to `X-CSRF-Token` header. The CSRF value is random but not cryptographically bound to the session token. A network/subdomain attacker who can set cookies could fix both. This is the known limitation of stateless double-submit and is acceptable, but worth tightening.
 - **Fix:** Derive/sign the CSRF token from the session (HMAC of the session jti) so the server can verify binding, or set `__Host-` cookie prefix + `Secure` to harden against subdomain cookie injection.
 
 ### M5 — No dependency vulnerability scanning in CI
@@ -199,7 +199,7 @@ This is, frankly, one of the more mature "prototype-grade" codebases I have audi
 ## Low Priority / Polish Improvements
 
 - **L1 — Developer-specific bind mount shipped in tracked compose.** `deploy/docker-compose.yml:125` mounts `D:/output_grainbrokers_parquet:/data/grainbrokers:ro`. This is a local artifact of the author's machine and should not be in the shipped file. *(Bug/Polish.)* Remove it.
-- **L2 — Weak default infra creds in compose** (`postgres noodle/noodle`, `minio noodle/noodle123`) with ports published to host. Fine for local; add a clear "change these / not for production" banner and an override file. *(DevOps.)*
+- **L2 — Weak default infra creds in compose** (`postgres nodyra/nodyra`, `minio nodyra/nodyra123`) with ports published to host. Fine for local; add a clear "change these / not for production" banner and an override file. *(DevOps.)*
 - **L3 — `master KEK` derived from `SECRET_KEY` via plain SHA-256** (`crypto._fernet`). Acceptable because `SECRET_KEY` should be high-entropy, but if an operator sets a weak secret it's directly hashable. Consider HKDF with a fixed salt/info, and document the entropy requirement. *(Security/polish.)*
 - **L4 — PBKDF2-HMAC-SHA256 @ 200k rounds** (`crypto.hash_password`) is OK but Argon2id is the modern default. Consider migrating with a transparent rehash-on-login. *(Security/polish.)*
 - **L5 — Broad `except Exception` swallowing** is pervasive (often justified with comments). A few hide useful signal silently (e.g. `notify_queue_workers` swallows all Redis errors with no debug log on the publish path). Audit for at least DEBUG logging. *(Code quality.)*
@@ -211,8 +211,8 @@ This is, frankly, one of the more mature "prototype-grade" codebases I have audi
 ## Architecture Review
 
 The backend is a clean monorepo with the right seams:
-- `packages/core/noodle` — the pure execution engine (graph model, scheduler, expr, datasets, agent runtime). It has **no dependency on the API/DB**, which is exactly right: the same engine runs in-process, in env-runner subprocesses, in sandbox containers, and in exported scripts. This is the single best architectural decision in the codebase.
-- `packages/nodes/noodle_nodes` — the node library, registered via a decorator/registry (`sdk.NodeRegistry`).
+- `packages/core/nodyra` — the pure execution engine (graph model, scheduler, expr, datasets, agent runtime). It has **no dependency on the API/DB**, which is exactly right: the same engine runs in-process, in env-runner subprocesses, in sandbox containers, and in exported scripts. This is the single best architectural decision in the codebase.
+- `packages/nodes/nodyra_nodes` — the node library, registered via a decorator/registry (`sdk.NodeRegistry`).
 - `apps/api/app` — FastAPI app, split into `routers/` (HTTP surface) and `services/` (domain logic). Service layer is real, not anemic; routers stay thin.
 
 **Execution topology** is a genuine strength. `dispatch_role` (inline/worker/control/disabled), `scheduler_role` (inline/leader/disabled), and `webhook_role` (inline/ingress/disabled) compose into coherent deployment shapes, and misconfigurations that would silently lose runs are converted into hard startup errors (`dispatch_topology_errors`). The control/worker split correctly reasons about *where a WebSocket terminates* (agent/k8s pools must be dispatched by the replica holding the WS).
@@ -347,7 +347,7 @@ This is the heart of the system and it's well built (`engine/scheduler.py`, `nod
 
 - **Dockerfile** (`deploy/Dockerfile.python`): single shared image for API + worker, `uv sync --locked --no-dev --all-packages`, `UV_LINK_MODE=copy`. Reproducible build with a locked file gate in CI. **Runs as root (H6)** and has **no HEALTHCHECK**.
 - **compose:** Postgres/Redis healthchecked; API runs `alembic upgrade head` on boot then uvicorn; worker is `python -m app.worker_main`; sandbox via optional docker.sock mount documented. `INTERNAL_API_TOKEN` is *required* via `${VAR:?}` — good. `SECRET_KEY` defaults to the placeholder, but with `AUTH_REQUIRED=true` the startup guard will (correctly) abort, so the compose fails closed. **L1 dev bind-mount must be removed.** `web` service runs the Vite dev server, not a production build — fine for the dev compose but make sure the Helm/production path serves a built bundle.
-- **Helm chart** present (`deploy/helm/noodle`) with separate api/web/worker deployments + ingress — not deep-read; verify it sets a non-default SECRET_KEY via Secret, resource limits, readiness/liveness probes wired to `/health/*`, and the worker's drain on `SIGTERM`.
+- **Helm chart** present (`deploy/helm/nodyra`) with separate api/web/worker deployments + ingress — not deep-read; verify it sets a non-default SECRET_KEY via Secret, resource limits, readiness/liveness probes wired to `/health/*`, and the worker's drain on `SIGTERM`.
 - **No backup/restore documentation** for Postgres + artifact store surfaced in what I read. For a product holding workflows + credentials + run history, document a backup/restore runbook (incl. that artifacts in `local` mode aren't in the DB).
 
 ---

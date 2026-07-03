@@ -1,13 +1,13 @@
 # Production AI/ML Nodes Plan
 
 This plan describes how to add production-grade AI, ML, fine-tuning,
-evaluation, RAG, model-serving, and model-monitoring nodes to Noodle without
+evaluation, RAG, model-serving, and model-monitoring nodes to Nodyra without
 turning the global node registry into a heavy ML import surface.
 
-The strategy is to make Noodle stronger than generic automation platforms by
+The strategy is to make Nodyra stronger than generic automation platforms by
 leaning into its Python-native runtime, environment package management,
 DatasetRef tables, artifacts, durable runs, and runner pools. The goal is not
-to add random AI wrappers; the goal is to make Noodle a visual ML operations
+to add random AI wrappers; the goal is to make Nodyra a visual ML operations
 and AI application workflow system.
 
 ## Goals
@@ -17,7 +17,7 @@ and AI application workflow system.
 - Preserve fast node registry loading even when heavy packages such as
   `torch`, `transformers`, `trl`, `peft`, `ragas`, `mlflow`, `onnxruntime`, or
   `vllm` are not installed.
-- Use Noodle's existing `requirements` metadata so the editor can prompt users
+- Use Nodyra's existing `requirements` metadata so the editor can prompt users
   to install packages into the workflow environment.
 - Keep large data and model payloads artifact-backed instead of inline JSON.
 - Make long-running training workflows observable, cancellable, resumable where
@@ -28,17 +28,17 @@ and AI application workflow system.
 ## Non-Goals
 
 - Do not import heavy optional packages at module import time.
-- Do not make base Noodle installs include GPU or ML training packages.
+- Do not make base Nodyra installs include GPU or ML training packages.
 - Do not make a single "do everything AI" node that hides data, training,
   evaluation, and deployment steps.
 - Do not store full model weights, large eval rows, or raw documents inline in
   run outputs.
 - Do not require untrusted multi-tenant sandboxing for v1. These nodes follow
-  Noodle's current trusted workflow-author model.
+  Nodyra's current trusted workflow-author model.
 
 ## Existing Capabilities To Reuse
 
-Noodle already has the architecture needed for the first implementation slice:
+Nodyra already has the architecture needed for the first implementation slice:
 
 - Node manifests expose `requirements`.
 - The editor computes missing packages and offers an environment install action.
@@ -62,7 +62,7 @@ Every new AI/ML node must follow these rules.
 Allowed at module scope:
 
 - Standard library modules.
-- Noodle SDK/core helpers.
+- Nodyra SDK/core helpers.
 - Lightweight typing helpers.
 
 Not allowed at module scope:
@@ -172,7 +172,7 @@ Production deployments should surface warnings for:
 Add focused modules instead of one giant AI file:
 
 ```text
-packages/nodes/noodle_nodes/
+packages/nodes/nodyra_nodes/
   llm_training.py          # fine-tuning datasets, provider jobs, local SFT
   llm_evals.py             # model comparisons, judges, eval gates, RAG evals
   synthetic_data.py        # synthetic examples, labels, preference pairs
@@ -183,7 +183,7 @@ packages/nodes/noodle_nodes/
 
 Update:
 
-- `packages/nodes/noodle_nodes/__init__.py`
+- `packages/nodes/nodyra_nodes/__init__.py`
 - `packages/nodes/tests/test_llm_training.py`
 - `packages/nodes/tests/test_llm_evals.py`
 - `packages/nodes/tests/test_synthetic_data.py`
@@ -201,10 +201,10 @@ packages need them.
 
 ```json
 {
-  "__noodle_finetune_dataset__": true,
+  "__nodyra_finetune_dataset__": true,
   "version": 1,
   "format": "openai_chat_jsonl",
-  "artifact": {"__noodle_artifact__": true},
+  "artifact": {"__nodyra_artifact__": true},
   "n_examples": 128,
   "token_estimate": 42000,
   "columns": ["messages"],
@@ -219,7 +219,7 @@ packages need them.
 
 ```json
 {
-  "__noodle_finetune_job__": true,
+  "__nodyra_finetune_job__": true,
   "version": 1,
   "provider": "openai",
   "job_id": "ftjob_...",
@@ -235,11 +235,11 @@ packages need them.
 
 ```json
 {
-  "__noodle_model_artifact__": true,
+  "__nodyra_model_artifact__": true,
   "version": 1,
   "kind": "lora_adapter",
   "base_model": "meta-llama/Llama-3.1-8B",
-  "artifact": {"__noodle_artifact__": true},
+  "artifact": {"__nodyra_artifact__": true},
   "metrics": {},
   "metadata": {}
 }
@@ -249,14 +249,14 @@ packages need them.
 
 ```json
 {
-  "__noodle_eval_result__": true,
+  "__nodyra_eval_result__": true,
   "version": 1,
   "summary": {
     "accuracy": 0.91,
     "win_rate": 0.62
   },
-  "rows": {"__noodle_dataset__": true},
-  "report": {"__noodle_artifact__": true}
+  "rows": {"__nodyra_dataset__": true},
+  "report": {"__nodyra_artifact__": true}
 }
 ```
 
@@ -274,12 +274,12 @@ Tasks:
 4. Confirm DatasetRef can feed dataset-builder and eval nodes.
 5. Confirm workflow-level and node-level timeouts are visible enough for long
    training runs.
-6. Add a smoke test that importing `noodle_nodes` does not import any of:
+6. Add a smoke test that importing `nodyra_nodes` does not import any of:
    `openai`, `torch`, `transformers`, `trl`, `peft`, `ragas`, `mlflow`, `vllm`.
 
 Acceptance:
 
-- `import noodle_nodes` succeeds in a base environment with no optional ML
+- `import nodyra_nodes` succeeds in a base environment with no optional ML
   packages.
 - Missing package UI and preflight work for at least one new test node.
 - A JSONL artifact written by a node can be read by a downstream node.
@@ -586,7 +586,7 @@ drivers, large dependencies, model licenses, disk usage, and memory pressure.
 - Requirements: `datasets>=2.0`, `pandas>=2.0`
 - Inputs: DatasetRef
 - Outputs: artifact/model dataset ref
-- Purpose: convert Noodle DatasetRef to HF dataset format.
+- Purpose: convert Nodyra DatasetRef to HF dataset format.
 
 #### Train LoRA Adapter
 
@@ -745,7 +745,7 @@ Objective: support production RAG systems beyond simple chunk/embed/query.
 
 ## Phase 6 - Model Serving And Deployment Nodes
 
-Objective: let Noodle build, start, test, and monitor model endpoints.
+Objective: let Nodyra build, start, test, and monitor model endpoints.
 
 ### Nodes
 
@@ -804,7 +804,7 @@ Objective: keep models and AI workflows healthy after deployment.
 #### AI Trace Export
 
 - ID: `ai_trace_export`
-- Requirements: none for Noodle run data; optional provider SDK
+- Requirements: none for Nodyra run data; optional provider SDK
 - Purpose: export prompts, responses, tool calls, costs, and labels into a
   DatasetRef for eval/fine-tuning.
 
@@ -854,7 +854,7 @@ Objective: keep models and AI workflows healthy after deployment.
 
 - ID: `mlflow_log_metrics`
 - Requirements: `mlflow`
-- Purpose: log Noodle eval/training metrics to MLflow.
+- Purpose: log Nodyra eval/training metrics to MLflow.
 
 #### Weights & Biases Log
 
@@ -1044,7 +1044,7 @@ The engine currently has node started/finished events. For long local training,
 add a supported progress channel later:
 
 ```python
-from noodle.context import node_progress
+from nodyra.context import node_progress
 
 node_progress.emit({
     "step": 100,
@@ -1234,8 +1234,8 @@ Ship:
 
 Start with this exact PR shape:
 
-1. Add `packages/nodes/noodle_nodes/llm_training.py`.
-2. Register it in `packages/nodes/noodle_nodes/__init__.py`.
+1. Add `packages/nodes/nodyra_nodes/llm_training.py`.
+2. Register it in `packages/nodes/nodyra_nodes/__init__.py`.
 3. Add helper envelope functions and lazy import helpers.
 4. Implement:
    - `llm_fine_tune_dataset`
@@ -1243,7 +1243,7 @@ Start with this exact PR shape:
    - `openai_create_fine_tune_job`
    - `openai_fine_tune_status`
    - `openai_cancel_fine_tune_job`
-5. Add `packages/nodes/noodle_nodes/llm_evals.py`.
+5. Add `packages/nodes/nodyra_nodes/llm_evals.py`.
 6. Implement:
    - `llm_rule_eval`
    - `eval_gate`
@@ -1325,7 +1325,7 @@ Use stable, explicit ids:
 - Should long-running local training use normal workflow timeouts or a separate
   training-job lease?
 - Which eval package should be blessed first: built-in deterministic evals,
-  `ragas`, `deepeval`, or a Noodle-native lightweight evaluator?
+  `ragas`, `deepeval`, or a Nodyra-native lightweight evaluator?
 
 ## Recommendation
 

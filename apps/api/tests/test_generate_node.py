@@ -44,13 +44,13 @@ class TestBuildNodeGenSystemPrompt:
         assert "@node(" in prompt
         assert "PortDataKind" in prompt
         assert "from typing import Any" in prompt
-        assert "from noodle import node" in prompt
+        assert "from nodyra import node" in prompt
 
     def test_contains_examples(self):
         prompt = _build_node_gen_system_prompt()
         assert "HTTP GET" in prompt
         assert "Filter Items" in prompt
-        assert "noodle" in prompt
+        assert "nodyra" in prompt
 
     def test_blocked_imports_listed(self):
         prompt = _build_node_gen_system_prompt()

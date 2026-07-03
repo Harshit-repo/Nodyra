@@ -50,7 +50,7 @@ def upgrade() -> None:
                 {"enc": enc_data, "dek": enc_dek, "id": row.id},
             )
         except Exception:
-            # If encryption is unavailable (no NOODLE_SECRET_KEY), leave the
+            # If encryption is unavailable (no NODYRA_SECRET_KEY), leave the
             # plaintext column intact — decrypted_webhook_secret() falls back to it.
             pass
 

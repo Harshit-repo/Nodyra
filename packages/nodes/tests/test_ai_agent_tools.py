@@ -5,10 +5,10 @@ from unittest.mock import patch
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-import noodle_nodes.ai_v2.agent_tools as agent_tools_module
-from noodle.sdk import registry
-from noodle_nodes.ai_v2.agent_tools import (
+import nodyra_nodes  # noqa: F401 - registers nodes
+import nodyra_nodes.ai_v2.agent_tools as agent_tools_module
+from nodyra.sdk import registry
+from nodyra_nodes.ai_v2.agent_tools import (
     CalculatorToolAdapter,
     CodeExecToolAdapter,
     WebSearchToolAdapter,
@@ -294,7 +294,7 @@ def test_web_search_formats_tavily() -> None:
         ]
     }
     with patch(
-        "noodle_nodes.ai_v2.agent_tools.httpx.post", return_value=_FakeHttpResponse(payload)
+        "nodyra_nodes.ai_v2.agent_tools.httpx.post", return_value=_FakeHttpResponse(payload)
     ):
         out = json.loads(_tavily_adapter().invoke({"query": "indexing"}))
     assert out["total"] == 1
@@ -304,7 +304,7 @@ def test_web_search_formats_tavily() -> None:
 
 def test_web_search_empty_results() -> None:
     with patch(
-        "noodle_nodes.ai_v2.agent_tools.httpx.post", return_value=_FakeHttpResponse({"results": []})
+        "nodyra_nodes.ai_v2.agent_tools.httpx.post", return_value=_FakeHttpResponse({"results": []})
     ):
         out = json.loads(_tavily_adapter().invoke({"query": "x"}))
     assert out == {"results": [], "total": 0, "provider": "tavily"}
@@ -312,7 +312,7 @@ def test_web_search_empty_results() -> None:
 
 def test_web_search_rate_limit() -> None:
     with patch(
-        "noodle_nodes.ai_v2.agent_tools.httpx.post",
+        "nodyra_nodes.ai_v2.agent_tools.httpx.post",
         return_value=_FakeHttpResponse({}, status_code=429),
     ):
         out = json.loads(_tavily_adapter().invoke({"query": "x"}))
@@ -324,7 +324,7 @@ def test_web_search_truncates_snippet() -> None:
         "results": [{"title": "T", "url": "https://a.com", "content": "z" * 2000, "score": 0.1}]
     }
     with patch(
-        "noodle_nodes.ai_v2.agent_tools.httpx.post", return_value=_FakeHttpResponse(payload)
+        "nodyra_nodes.ai_v2.agent_tools.httpx.post", return_value=_FakeHttpResponse(payload)
     ):
         out = json.loads(_tavily_adapter().invoke({"query": "x"}))
     assert len(out["results"][0]["snippet"]) <= 500
@@ -336,7 +336,7 @@ def test_web_search_truncates_snippet() -> None:
 
 import asyncio  # noqa: E402
 
-from noodle_nodes.ai_v2.agent_tools import BrowserToolAdapter  # noqa: E402
+from nodyra_nodes.ai_v2.agent_tools import BrowserToolAdapter  # noqa: E402
 
 
 def _browser(**kw):
@@ -389,8 +389,8 @@ def test_browser_missing_url() -> None:
 # RAG Tool tests
 # ---------------------------------------------------------------------------
 
-from noodle.ai_runtime import RetrievedDocument, RetrieverAdapter  # noqa: E402
-from noodle_nodes.ai_v2.agent_tools import RetrieverToolAdapter  # noqa: E402
+from nodyra.ai_runtime import RetrievedDocument, RetrieverAdapter  # noqa: E402
+from nodyra_nodes.ai_v2.agent_tools import RetrieverToolAdapter  # noqa: E402
 
 
 class _FakeRetriever(RetrieverAdapter):
@@ -459,8 +459,8 @@ def test_rag_node_registered() -> None:
 # Sub-Agent adapter tests
 # ---------------------------------------------------------------------------
 
-from noodle.ai_runtime import ChatResponse, ToolCall  # noqa: E402
-from noodle_nodes.ai_v2.agent_tools import (  # noqa: E402
+from nodyra.ai_runtime import ChatResponse, ToolCall  # noqa: E402
+from nodyra_nodes.ai_v2.agent_tools import (  # noqa: E402
     SubAgentAdapter,
     SubAgentToolAdapter,
     subagent_tool_adapters,
@@ -560,7 +560,7 @@ def test_subagent_dup_names_raise() -> None:
 
 
 def test_subagent_node_requires_model() -> None:
-    from noodle_nodes.ai_v2.agent_tools import ai_sub_agent
+    from nodyra_nodes.ai_v2.agent_tools import ai_sub_agent
 
     with pytest.raises(ValueError):
         ai_sub_agent(model=None)

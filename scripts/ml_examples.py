@@ -1,10 +1,10 @@
 """Provision the ML environment and run the two shippable ML example workflows.
 
 Usage:
-    set NOODLE_TOKEN=<bearer token>
+    set NODYRA_TOKEN=<bearer token>
     python scripts/ml_examples.py
 
-Reads the API at NOODLE_API (default http://localhost:8000).
+Reads the API at NODYRA_API (default http://localhost:8000).
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import time
 import urllib.error
 import urllib.request
 
-API = os.environ.get("NOODLE_API", "http://localhost:8000")
-TOKEN = os.environ["NOODLE_TOKEN"]
+API = os.environ.get("NODYRA_API", "http://localhost:8000")
+TOKEN = os.environ["NODYRA_TOKEN"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 

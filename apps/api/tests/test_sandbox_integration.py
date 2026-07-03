@@ -1,8 +1,8 @@
-"""Real-daemon sandbox integration. Skipped unless NOODLE_SANDBOX_IT=1.
+"""Real-daemon sandbox integration. Skipped unless NODYRA_SANDBOX_IT=1.
 
 Run manually on a machine with Docker:
-    NOODLE_SANDBOX_IT=1 python -m pytest tests/test_sandbox_integration.py -v
-Builds a real noodle-env image on first run (slow); subsequent runs reuse it.
+    NODYRA_SANDBOX_IT=1 python -m pytest tests/test_sandbox_integration.py -v
+Builds a real nodyra-env image on first run (slow); subsequent runs reuse it.
 """
 import asyncio
 import os
@@ -10,8 +10,8 @@ import os
 import pytest
 
 pytestmark = pytest.mark.skipif(
-    os.environ.get("NOODLE_SANDBOX_IT") != "1",
-    reason="set NOODLE_SANDBOX_IT=1 to run sandbox integration tests",
+    os.environ.get("NODYRA_SANDBOX_IT") != "1",
+    reason="set NODYRA_SANDBOX_IT=1 to run sandbox integration tests",
 )
 
 # Same minimal passing graph as tests/test_runs.py.

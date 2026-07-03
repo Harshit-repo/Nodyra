@@ -14,7 +14,7 @@ def _format(record: logging.LogRecord) -> dict:
 
 def _record(msg: str = "hello", level: int = logging.INFO) -> logging.LogRecord:
     return logging.LogRecord(
-        name="noodle.test", level=level, pathname=__file__, lineno=1,
+        name="nodyra.test", level=level, pathname=__file__, lineno=1,
         msg=msg, args=(), exc_info=None,
     )
 
@@ -22,7 +22,7 @@ def _record(msg: str = "hello", level: int = logging.INFO) -> logging.LogRecord:
 def test_json_formatter_emits_core_fields() -> None:
     out = _format(_record("a message"))
     assert out["level"] == "INFO"
-    assert out["logger"] == "noodle.test"
+    assert out["logger"] == "nodyra.test"
     assert out["message"] == "a message"
     assert "timestamp" in out
 

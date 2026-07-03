@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.artifacts import LocalArtifactStore, is_artifact_ref
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
-from noodle_nodes.datasets import (
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.artifacts import LocalArtifactStore, is_artifact_ref
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
+from nodyra_nodes.datasets import (
     csv_parse,
     csv_write,
     dataset_filter,
@@ -131,8 +131,8 @@ def test_duckdb_sql_blocks_server_file_read(store_ctx, tmp_path) -> None:
 
 def test_dataset_filter_input_kind_validation_via_engine(store_ctx) -> None:
     # filter expects DatasetRef on its input
-    from noodle.engine import _validate_input_kinds
-    from noodle.sdk import registry
+    from nodyra.engine import _validate_input_kinds
+    from nodyra.sdk import registry
 
     node_def = registry.get("dataset_filter")
     with pytest.raises(ValueError, match="DatasetRef"):
@@ -140,7 +140,7 @@ def test_dataset_filter_input_kind_validation_via_engine(store_ctx) -> None:
 
 
 def test_materialize_dataset_expands_rows(store_ctx) -> None:
-    from noodle_nodes.datasets import materialize_dataset
+    from nodyra_nodes.datasets import materialize_dataset
 
     ref = csv_parse(text="x\n1\n2\n3\n", has_header=True)
     rows = materialize_dataset(ref, cap=10)
@@ -148,7 +148,7 @@ def test_materialize_dataset_expands_rows(store_ctx) -> None:
 
 
 def test_materialize_dataset_caps(store_ctx) -> None:
-    from noodle_nodes.datasets import materialize_dataset
+    from nodyra_nodes.datasets import materialize_dataset
 
     ref = csv_parse(text="x\n1\n2\n3\n", has_header=True)
     with pytest.raises(ValueError):
@@ -158,9 +158,9 @@ def test_materialize_dataset_caps(store_ctx) -> None:
 
 async def test_engine_expands_dataset_ref_into_loop_items(store_ctx) -> None:
     """A DatasetRef wired into a per-item node is expanded into its rows."""
-    from noodle.engine import execute
-    from noodle.models import Edge, GraphNode, WorkflowGraph
-    from noodle.sdk import registry
+    from nodyra.engine import execute
+    from nodyra.models import Edge, GraphNode, WorkflowGraph
+    from nodyra.sdk import registry
 
     graph = WorkflowGraph(
         nodes=[
@@ -257,7 +257,7 @@ def test_polars_transform_requires_dataset_ref(store_ctx) -> None:
 
 
 async def test_map_dataset_calls_child_per_row(store_ctx) -> None:
-    from noodle.context import workflow_caller
+    from nodyra.context import workflow_caller
 
     calls: list[dict] = []
 
@@ -282,7 +282,7 @@ async def test_map_dataset_calls_child_per_row(store_ctx) -> None:
 
 
 async def test_map_dataset_dataset_output_is_ref(store_ctx) -> None:
-    from noodle.context import workflow_caller
+    from nodyra.context import workflow_caller
 
     async def caller(wf_id: str, payload: dict) -> dict:
         return {"val": payload["row"]["x"]}
@@ -302,7 +302,7 @@ async def test_map_dataset_dataset_output_is_ref(store_ctx) -> None:
 
 
 async def test_map_dataset_max_rows_raises_before_mapping(store_ctx) -> None:
-    from noodle.context import workflow_caller
+    from nodyra.context import workflow_caller
 
     calls: list = []
 
@@ -322,7 +322,7 @@ async def test_map_dataset_max_rows_raises_before_mapping(store_ctx) -> None:
 
 
 async def test_map_dataset_rejects_excessive_row_cap(store_ctx) -> None:
-    from noodle.context import workflow_caller
+    from nodyra.context import workflow_caller
 
     async def caller(wf_id: str, payload: dict) -> dict:
         return {}
@@ -337,7 +337,7 @@ async def test_map_dataset_rejects_excessive_row_cap(store_ctx) -> None:
 
 
 async def test_map_dataset_rejects_excessive_concurrency(store_ctx) -> None:
-    from noodle.context import workflow_caller
+    from nodyra.context import workflow_caller
 
     async def caller(wf_id: str, payload: dict) -> dict:
         return {}
@@ -352,7 +352,7 @@ async def test_map_dataset_rejects_excessive_concurrency(store_ctx) -> None:
 
 
 async def test_map_dataset_continue_on_error(store_ctx) -> None:
-    from noodle.context import workflow_caller
+    from nodyra.context import workflow_caller
 
     async def caller(wf_id: str, payload: dict) -> dict:
         if payload["row"]["x"] == 2:
@@ -375,8 +375,8 @@ async def test_map_dataset_continue_on_error(store_ctx) -> None:
 
 def test_auto_expand_skips_code_and_dataset_ports(store_ctx) -> None:
     """Code nodes and dataset ports keep the raw DatasetRef; others expand."""
-    from noodle.engine import _auto_expand_dataset_inputs
-    from noodle.sdk import registry
+    from nodyra.engine import _auto_expand_dataset_inputs
+    from nodyra.sdk import registry
 
     ref = csv_parse(text="x\n1\n2\n", has_header=True)
 

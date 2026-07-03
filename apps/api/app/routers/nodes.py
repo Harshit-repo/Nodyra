@@ -5,15 +5,15 @@ import textwrap
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
+import nodyra_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.db import get_session
 from app.models import CodeModule, Credential
 from app.routers.credentials import _scope_rank
 from app.security import require_permission
 from app.services.org_keys import decrypt_credential_for
-from noodle.models import NodeManifest
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.dynamic_options import call_loader, list_loader_ids
+from nodyra.models import NodeManifest
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.dynamic_options import call_loader, list_loader_ids
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 
@@ -126,7 +126,7 @@ async def get_node_source(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, f"Unknown node type '{node_type}'"
         ) from None
-    generated_source = getattr(node_def.func, "__noodle_source__", None)
+    generated_source = getattr(node_def.func, "__nodyra_source__", None)
     if isinstance(generated_source, str) and generated_source.strip():
         raw = textwrap.dedent(generated_source)
     else:

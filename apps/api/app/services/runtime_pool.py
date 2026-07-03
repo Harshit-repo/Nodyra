@@ -1,7 +1,7 @@
 """Env-runner subprocess pool.
 
 When ``settings.use_subprocess_runner`` is enabled, the runner dispatches
-executions to a long-lived ``noodle_runtime`` subprocess per environment id.
+executions to a long-lived ``nodyra_runtime`` subprocess per environment id.
 This is the productionization path that gives a workflow real isolation
 inside its assigned ``uv`` venv.
 
@@ -30,14 +30,14 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from noodle.engine.subworkflows import SubworkflowMeta
+    from nodyra.engine.subworkflows import SubworkflowMeta
 
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Environment
 from app.services.artifacts import artifact_base_dir
 from app.services.venv import ensure_environment_ready
-from noodle.serialization import deserialize_value, serialize_value
+from nodyra.serialization import deserialize_value, serialize_value
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ async def _rss_soft_budget_bytes() -> int:
 # — SECRET_KEY (the master KEK), DATABASE_URL, OAuth client secrets, cloud
 # credentials — must NOT reach user code, which can trivially read
 # ``os.environ`` from a Code node. The runtime itself reads only
-# ``NOODLE_CODE_NODE_TIMEOUT_SECONDS`` (set explicitly below); the rest of the
+# ``NODYRA_CODE_NODE_TIMEOUT_SECONDS`` (set explicitly below); the rest of the
 # allowlist is OS plumbing the interpreter needs to boot and make TLS/temp-file
 # syscalls work, cross-platform.
 #
@@ -167,9 +167,9 @@ _WORKER_ENV_CACHE_TTL = 60.0
 def _worker_env() -> dict[str, str]:
     """Allowlisted environment for runtime worker subprocesses.
 
-    Passes through OS plumbing and ``NOODLE_*`` variables only; never the
+    Passes through OS plumbing and ``NODYRA_*`` variables only; never the
     API's secrets. Name matching is case-insensitive (Windows semantics).
-    ``NOODLE_CODE_NODE_TIMEOUT_SECONDS`` is set fresh on every call so a
+    ``NODYRA_CODE_NODE_TIMEOUT_SECONDS`` is set fresh on every call so a
     live-settings change takes effect for the next spawned worker without
     waiting for the allowlist cache to expire.
     """
@@ -181,24 +181,24 @@ def _worker_env() -> dict[str, str]:
         env = {
             key: value
             for key, value in os.environ.items()
-            if key.upper() in _WORKER_ENV_ALLOWLIST or key.upper().startswith("NOODLE_")
+            if key.upper() in _WORKER_ENV_ALLOWLIST
+            or key.upper().startswith("NODYRA_")
+            or key.upper() == "NOODLE_ALLOW_PRIVATE_EGRESS"
         }
         _WORKER_ENV_CACHE = dict(env)
         _WORKER_ENV_CACHE_AT = now
-    env["NOODLE_CODE_NODE_TIMEOUT_SECONDS"] = str(
-        settings.code_node_timeout_seconds
-    )
+    env["NODYRA_CODE_NODE_TIMEOUT_SECONDS"] = str(settings.code_node_timeout_seconds)
     # SEC-3: egress policy for node HTTP/DB. If the operator pinned
-    # NOODLE_ALLOW_PRIVATE_EGRESS it was copied through the allowlist above and
+    # NODYRA_ALLOW_PRIVATE_EGRESS it was copied through the allowlist above and
     # wins; otherwise the default follows the deployment model — hosted
     # multi-tenant blocks private targets (a tenant must never reach internal
     # services or 169.254.169.254), single-tenant self-hosted trusts its own
     # network so Ollama/localhost, VPC databases, and self-hosted integrations
     # work out of the box.
-    if "NOODLE_ALLOW_PRIVATE_EGRESS" not in env:
-        env["NOODLE_ALLOW_PRIVATE_EGRESS"] = (
-            "0" if settings.multi_tenancy_enabled else "1"
-        )
+    if "NODYRA_ALLOW_PRIVATE_EGRESS" not in env and "NOODLE_ALLOW_PRIVATE_EGRESS" in env:
+        env["NODYRA_ALLOW_PRIVATE_EGRESS"] = env["NOODLE_ALLOW_PRIVATE_EGRESS"]
+    if "NODYRA_ALLOW_PRIVATE_EGRESS" not in env:
+        env["NODYRA_ALLOW_PRIVATE_EGRESS"] = "0" if settings.multi_tenancy_enabled else "1"
     return env
 
 
@@ -210,9 +210,7 @@ async def _org_subworkflow_cap(org_id: str) -> int:
     ``max_concurrent_runs``). Degrades to the global cap if the DB is
     unreachable — a throttle must never block dispatch outright.
     """
-    fallback = max(
-        1, settings.max_concurrent_subworkflows or settings.max_concurrent_runs
-    )
+    fallback = max(1, settings.max_concurrent_subworkflows or settings.max_concurrent_runs)
     try:
         from app.services.org_limits import effective_limits
         from app.tenancy import run_as_system
@@ -220,9 +218,11 @@ async def _org_subworkflow_cap(org_id: str) -> int:
         with run_as_system():
             async with SessionLocal() as session:
                 limits = await effective_limits(session, org_id)
-        return max(1, limits.max_inflight_subworkflows) if (
-            limits.max_inflight_subworkflows
-        ) else fallback
+        return (
+            max(1, limits.max_inflight_subworkflows)
+            if (limits.max_inflight_subworkflows)
+            else fallback
+        )
     except Exception:  # noqa: BLE001
         return fallback
 
@@ -276,9 +276,7 @@ async def _python_for_env(env_id: str | None) -> str:
     if env_id:
         candidate = await ensure_environment_ready(env_id)
         if not candidate.exists():
-            raise RuntimeError(
-                f"environment '{env_id}' Python was not found at {candidate}"
-            )
+            raise RuntimeError(f"environment '{env_id}' Python was not found at {candidate}")
         return str(candidate)
     return sys.executable
 
@@ -313,7 +311,7 @@ class _RuntimeProcess:
             python,
             "-u",
             "-m",
-            "noodle_runtime",
+            "nodyra_runtime",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -323,9 +321,7 @@ class _RuntimeProcess:
             raise RuntimeError("runtime subprocess pipes were not opened")
         _startup_timeout = 30.0
         try:
-            line = await asyncio.wait_for(
-                process.stdout.readline(), timeout=_startup_timeout
-            )
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=_startup_timeout)
         except TimeoutError:
             process.kill()
             await process.wait()
@@ -334,9 +330,7 @@ class _RuntimeProcess:
                 f"({_startup_timeout}s)"
             ) from None
         if not line:
-            raise RuntimeError(
-                f"runtime for env {env_id!r} did not emit a ready event"
-            )
+            raise RuntimeError(f"runtime for env {env_id!r} did not emit a ready event")
         ready = json.loads(line)
         if ready.get("type") != "ready":
             raise RuntimeError(f"unexpected first event: {ready}")
@@ -377,14 +371,12 @@ class _RuntimeProcess:
         event: dict,
         subworkflow_resolver: SubworkflowResolver | None,
     ) -> None:
-        from noodle.engine.subworkflows import InlineSubworkflow, SubworkflowCall
+        from nodyra.engine.subworkflows import InlineSubworkflow, SubworkflowCall
 
         callback_id = event.get("callback_id", "")
         try:
             if subworkflow_resolver is None:
-                raise RuntimeError(
-                    "subprocess runner has no host-side sub-workflow resolver"
-                )
+                raise RuntimeError("subprocess runner has no host-side sub-workflow resolver")
             call = SubworkflowCall.from_payload(
                 {**event, "input": deserialize_value(event.get("input"))}
             )
@@ -565,8 +557,12 @@ class _EnvPool:
     """
 
     def __init__(
-        self, env_id: str | None, min_size: int, max_size: int,
-        rss_estimate: int = 0, max_runs_per_subprocess: int = 0,
+        self,
+        env_id: str | None,
+        min_size: int,
+        max_size: int,
+        rss_estimate: int = 0,
+        max_runs_per_subprocess: int = 0,
     ) -> None:
         self.env_id = env_id
         self.min_size = max(0, min_size)
@@ -582,6 +578,7 @@ class _EnvPool:
         self._idle: list[_RuntimeProcess] = []
         self._all: set[_RuntimeProcess] = set()
         self._lock = asyncio.Lock()
+
     @staticmethod
     def _alive(proc: _RuntimeProcess) -> bool:
         return not proc.dead and proc.process.returncode is None
@@ -869,7 +866,10 @@ class RuntimePool:
                 min_size, max_size = await _resolve_pool_sizes(env_id)
                 rss_estimate = await _resolve_env_rss_estimate(env_id)
                 envpool = _EnvPool(
-                    env_id, min_size, max_size, rss_estimate,
+                    env_id,
+                    min_size,
+                    max_size,
+                    rss_estimate,
                     max_runs_per_subprocess=settings.runner_max_runs_per_subprocess,
                 )
                 self._envs[key] = envpool
@@ -929,9 +929,7 @@ class RuntimePool:
                     return result
                 except TimeoutError as exc:
                     await proc.close()
-                    raise RuntimeError(
-                        f"workflow run timed out after {timeout}s"
-                    ) from exc
+                    raise RuntimeError(f"workflow run timed out after {timeout}s") from exc
                 finally:
                     envpool.release(proc)
 
@@ -978,9 +976,7 @@ class RuntimePool:
                     targets,
                     on_event,
                     subworkflow_resolver,
-                    subworkflow_meta=(
-                        subworkflow_meta.to_payload() if subworkflow_meta else {}
-                    ),
+                    subworkflow_meta=(subworkflow_meta.to_payload() if subworkflow_meta else {}),
                     workflow_modules=workflow_modules,
                     artifact_key_prefix=run_org,
                     org_limits=await _org_run_limits_for(run_org),
@@ -991,8 +987,7 @@ class RuntimePool:
                 return await run
             except TimeoutError as exc:
                 raise RuntimeError(
-                    f"sub-workflow run timed out after "
-                    f"{settings.workflow_run_timeout_seconds}s"
+                    f"sub-workflow run timed out after {settings.workflow_run_timeout_seconds}s"
                 ) from exc
             finally:
                 await proc.close()
@@ -1048,6 +1043,7 @@ async def pool_autoscaler_loop() -> None:
     burst tests — 2,847 queued with only 8 slots — from persisting.
     """
     import logging
+
     _log = logging.getLogger(__name__)
 
     base = max(1, settings.max_concurrent_runs)
@@ -1073,7 +1069,8 @@ async def pool_autoscaler_loop() -> None:
                 await pool.resize(target)
                 _log.info(
                     "autoscaler: scaled up to %d slots (queued=%d)",
-                    target, queued,
+                    target,
+                    queued,
                 )
                 last_scale_up = time.monotonic()
             elif queued < scale_threshold and current > base:
@@ -1084,7 +1081,8 @@ async def pool_autoscaler_loop() -> None:
                     await pool.resize(base)
                     _log.info(
                         "autoscaler: scaled down to %d slots (queued=%d, below threshold)",
-                        base, queued,
+                        base,
+                        queued,
                     )
         except asyncio.CancelledError:
             raise

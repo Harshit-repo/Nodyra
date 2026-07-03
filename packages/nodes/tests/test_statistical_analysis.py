@@ -8,10 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
-import noodle_nodes  # noqa: F401 — registers nodes
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
+import nodyra_nodes  # noqa: F401 — registers nodes
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ ROWS_TS = [
 
 
 def test_statistical_analysis_importable_without_optional_packages() -> None:
-    import noodle_nodes.statistical_analysis as mod
+    import nodyra_nodes.statistical_analysis as mod
 
     for node_id in [
         "statistical_test",
@@ -73,7 +73,7 @@ def test_import_does_not_import_optional_packages() -> None:
     import subprocess
 
     code = (
-        "import sys, noodle_nodes.statistical_analysis;"
+        "import sys, nodyra_nodes.statistical_analysis;"
         "leaked = {'scipy','statsmodels','pulp','sklearn'} & set(sys.modules);"
         "assert not leaked, leaked"
     )
@@ -89,14 +89,14 @@ def test_import_does_not_import_optional_packages() -> None:
 
 
 def test_statistical_test_raises_without_input() -> None:
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     with pytest.raises((ValueError, TypeError)):
         statistical_test(input=None, test="t_test_1samp", column="value")
 
 
 def test_statistical_test_raises_without_column() -> None:
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     with pytest.raises(ValueError, match="column"):
         statistical_test(input=ROWS_NUMERIC, test="t_test_1samp", column="")
@@ -104,7 +104,7 @@ def test_statistical_test_raises_without_column() -> None:
 
 def test_statistical_test_ttest_1samp() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     result = statistical_test(
         input=ROWS_NUMERIC, test="t_test_1samp", column="value", alpha=0.05
@@ -119,7 +119,7 @@ def test_statistical_test_ttest_1samp() -> None:
 
 def test_statistical_test_ttest_ind_with_group() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     result = statistical_test(
         input=ROWS_NUMERIC,
@@ -133,7 +133,7 @@ def test_statistical_test_ttest_ind_with_group() -> None:
 
 def test_statistical_test_ttest_ind_with_second_column() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     result = statistical_test(
         input=ROWS_NUMERIC,
@@ -147,7 +147,7 @@ def test_statistical_test_ttest_ind_with_second_column() -> None:
 
 def test_statistical_test_anova() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     result = statistical_test(
         input=ROWS_NUMERIC,
@@ -162,7 +162,7 @@ def test_statistical_test_anova() -> None:
 
 def test_statistical_test_mann_whitney() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     result = statistical_test(
         input=ROWS_NUMERIC,
@@ -176,7 +176,7 @@ def test_statistical_test_mann_whitney() -> None:
 
 def test_statistical_test_ks_2samp() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     result = statistical_test(
         input=ROWS_NUMERIC,
@@ -190,7 +190,7 @@ def test_statistical_test_ks_2samp() -> None:
 
 def test_statistical_test_shapiro_wilk() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     result = statistical_test(
         input=ROWS_NUMERIC, test="shapiro_wilk", column="value"
@@ -201,7 +201,7 @@ def test_statistical_test_shapiro_wilk() -> None:
 
 def test_statistical_test_small_sample_warning() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     small = [{"value": float(i)} for i in range(5)]
     result = statistical_test(input=small, test="t_test_1samp", column="value")
@@ -211,7 +211,7 @@ def test_statistical_test_small_sample_warning() -> None:
 
 def test_statistical_test_unknown_test_raises() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import statistical_test
+    from nodyra_nodes.statistical_analysis import statistical_test
 
     with pytest.raises(ValueError, match="Unknown test"):
         statistical_test(input=ROWS_NUMERIC, test="bogus_test", column="value")
@@ -219,7 +219,7 @@ def test_statistical_test_unknown_test_raises() -> None:
 
 def test_statistical_test_raises_missing_scipy() -> None:
     with patch.dict(sys.modules, {"scipy": None, "scipy.stats": None}):
-        from noodle_nodes.statistical_analysis import statistical_test
+        from nodyra_nodes.statistical_analysis import statistical_test
 
         with pytest.raises((RuntimeError, ImportError)):
             statistical_test(
@@ -233,14 +233,14 @@ def test_statistical_test_raises_missing_scipy() -> None:
 
 
 def test_distribution_fit_raises_without_input() -> None:
-    from noodle_nodes.statistical_analysis import distribution_fit
+    from nodyra_nodes.statistical_analysis import distribution_fit
 
     with pytest.raises((ValueError, TypeError)):
         distribution_fit(input=None, column="value")
 
 
 def test_distribution_fit_raises_without_column() -> None:
-    from noodle_nodes.statistical_analysis import distribution_fit
+    from nodyra_nodes.statistical_analysis import distribution_fit
 
     with pytest.raises(ValueError, match="column"):
         distribution_fit(input=ROWS_NUMERIC, column="")
@@ -248,7 +248,7 @@ def test_distribution_fit_raises_without_column() -> None:
 
 def test_distribution_fit_returns_dataset_ref(store_ctx) -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import distribution_fit
+    from nodyra_nodes.statistical_analysis import distribution_fit
 
     result = distribution_fit(
         input=ROWS_NUMERIC, column="value", distributions="norm,expon"
@@ -260,7 +260,7 @@ def test_distribution_fit_returns_dataset_ref(store_ctx) -> None:
 
 def test_distribution_fit_skips_bad_distribution_name(store_ctx) -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import distribution_fit
+    from nodyra_nodes.statistical_analysis import distribution_fit
 
     result = distribution_fit(
         input=ROWS_NUMERIC,
@@ -272,8 +272,8 @@ def test_distribution_fit_skips_bad_distribution_name(store_ctx) -> None:
 
 def test_distribution_fit_sorted_by_ks_statistic(store_ctx) -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.datasets import materialize_dataset
-    from noodle_nodes.statistical_analysis import distribution_fit
+    from nodyra_nodes.datasets import materialize_dataset
+    from nodyra_nodes.statistical_analysis import distribution_fit
 
     result = distribution_fit(
         input=ROWS_NUMERIC, column="value", distributions="norm,expon,lognorm"
@@ -289,14 +289,14 @@ def test_distribution_fit_sorted_by_ks_statistic(store_ctx) -> None:
 
 
 def test_correlation_analysis_raises_without_input() -> None:
-    from noodle_nodes.statistical_analysis import correlation_analysis
+    from nodyra_nodes.statistical_analysis import correlation_analysis
 
     with pytest.raises((ValueError, TypeError)):
         correlation_analysis(input=None)
 
 
 def test_correlation_analysis_raises_too_few_columns() -> None:
-    from noodle_nodes.statistical_analysis import correlation_analysis
+    from nodyra_nodes.statistical_analysis import correlation_analysis
 
     with pytest.raises(ValueError, match="2 numeric"):
         correlation_analysis(input=ROWS_NUMERIC, columns="value", method="pearson")
@@ -304,7 +304,7 @@ def test_correlation_analysis_raises_too_few_columns() -> None:
 
 def test_correlation_analysis_returns_dataset_ref(store_ctx) -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import correlation_analysis
+    from nodyra_nodes.statistical_analysis import correlation_analysis
 
     result = correlation_analysis(
         input=ROWS_NUMERIC, columns="value,value2", method="pearson"
@@ -316,7 +316,7 @@ def test_correlation_analysis_returns_dataset_ref(store_ctx) -> None:
 
 def test_correlation_analysis_spearman(store_ctx) -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import correlation_analysis
+    from nodyra_nodes.statistical_analysis import correlation_analysis
 
     result = correlation_analysis(
         input=ROWS_NUMERIC, columns="value,value2", method="spearman"
@@ -326,8 +326,8 @@ def test_correlation_analysis_spearman(store_ctx) -> None:
 
 def test_correlation_analysis_long_format_structure(store_ctx) -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.datasets import materialize_dataset
-    from noodle_nodes.statistical_analysis import correlation_analysis
+    from nodyra_nodes.datasets import materialize_dataset
+    from nodyra_nodes.statistical_analysis import correlation_analysis
 
     result = correlation_analysis(
         input=ROWS_NUMERIC, columns="value,value2", method="pearson"
@@ -342,14 +342,14 @@ def test_correlation_analysis_long_format_structure(store_ctx) -> None:
 
 
 def test_monte_carlo_simulate_raises_without_variables() -> None:
-    from noodle_nodes.statistical_analysis import monte_carlo_simulate
+    from nodyra_nodes.statistical_analysis import monte_carlo_simulate
 
     with pytest.raises(ValueError):
         monte_carlo_simulate(variables_json="", expression="x")
 
 
 def test_monte_carlo_simulate_raises_without_expression() -> None:
-    from noodle_nodes.statistical_analysis import monte_carlo_simulate
+    from nodyra_nodes.statistical_analysis import monte_carlo_simulate
 
     variables = json.dumps([{"name": "x", "distribution": "normal", "loc": 0.0, "scale": 1.0}])
     with pytest.raises(ValueError):
@@ -357,7 +357,7 @@ def test_monte_carlo_simulate_raises_without_expression() -> None:
 
 
 def test_monte_carlo_simulate_returns_dataset(store_ctx) -> None:
-    from noodle_nodes.statistical_analysis import monte_carlo_simulate
+    from nodyra_nodes.statistical_analysis import monte_carlo_simulate
 
     variables = json.dumps([
         {"name": "x", "distribution": "normal", "loc": 10.0, "scale": 1.0},
@@ -373,7 +373,7 @@ def test_monte_carlo_simulate_returns_dataset(store_ctx) -> None:
 
 
 def test_monte_carlo_simulate_uniform_distribution(store_ctx) -> None:
-    from noodle_nodes.statistical_analysis import monte_carlo_simulate
+    from nodyra_nodes.statistical_analysis import monte_carlo_simulate
 
     variables = json.dumps([
         {"name": "a", "distribution": "uniform", "low": 0.0, "high": 1.0},
@@ -386,7 +386,7 @@ def test_monte_carlo_simulate_uniform_distribution(store_ctx) -> None:
 
 
 def test_monte_carlo_simulate_unknown_distribution_raises() -> None:
-    from noodle_nodes.statistical_analysis import monte_carlo_simulate
+    from nodyra_nodes.statistical_analysis import monte_carlo_simulate
 
     variables = json.dumps([
         {"name": "x", "distribution": "bogus_dist", "loc": 0.0, "scale": 1.0}
@@ -397,7 +397,7 @@ def test_monte_carlo_simulate_unknown_distribution_raises() -> None:
 
 def test_monte_carlo_simulate_blocks_sandbox_escape() -> None:
     """SA-1: a sandbox-escape expression must be rejected, not executed."""
-    from noodle_nodes.statistical_analysis import monte_carlo_simulate
+    from nodyra_nodes.statistical_analysis import monte_carlo_simulate
 
     variables = json.dumps([
         {"name": "x", "distribution": "normal", "loc": 0.0, "scale": 1.0}
@@ -412,14 +412,14 @@ def test_monte_carlo_simulate_blocks_sandbox_escape() -> None:
 
 
 def test_monte_carlo_simulate_invalid_json_raises() -> None:
-    from noodle_nodes.statistical_analysis import monte_carlo_simulate
+    from nodyra_nodes.statistical_analysis import monte_carlo_simulate
 
     with pytest.raises(ValueError):
         monte_carlo_simulate(variables_json="not json", expression="x", n_iterations=10)
 
 
 def test_monte_carlo_simulate_rejects_unbounded_iterations() -> None:
-    from noodle_nodes.statistical_analysis import (
+    from nodyra_nodes.statistical_analysis import (
         MAX_MONTE_CARLO_ITERATIONS,
         monte_carlo_simulate,
     )
@@ -441,14 +441,14 @@ def test_monte_carlo_simulate_rejects_unbounded_iterations() -> None:
 
 
 def test_bootstrap_ci_raises_without_input() -> None:
-    from noodle_nodes.statistical_analysis import bootstrap_ci
+    from nodyra_nodes.statistical_analysis import bootstrap_ci
 
     with pytest.raises((ValueError, TypeError)):
         bootstrap_ci(input=None, column="value")
 
 
 def test_bootstrap_ci_raises_without_column() -> None:
-    from noodle_nodes.statistical_analysis import bootstrap_ci
+    from nodyra_nodes.statistical_analysis import bootstrap_ci
 
     with pytest.raises(ValueError, match="column"):
         bootstrap_ci(input=ROWS_NUMERIC, column="")
@@ -456,7 +456,7 @@ def test_bootstrap_ci_raises_without_column() -> None:
 
 def test_bootstrap_ci_mean_returns_interval() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import bootstrap_ci
+    from nodyra_nodes.statistical_analysis import bootstrap_ci
 
     result = bootstrap_ci(
         input=ROWS_NUMERIC,
@@ -472,7 +472,7 @@ def test_bootstrap_ci_mean_returns_interval() -> None:
 
 def test_bootstrap_ci_median() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import bootstrap_ci
+    from nodyra_nodes.statistical_analysis import bootstrap_ci
 
     result = bootstrap_ci(input=ROWS_NUMERIC, column="value", statistic="median")
     assert "estimate" in result
@@ -481,14 +481,14 @@ def test_bootstrap_ci_median() -> None:
 
 def test_bootstrap_ci_invalid_statistic_raises() -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import bootstrap_ci
+    from nodyra_nodes.statistical_analysis import bootstrap_ci
 
     with pytest.raises(ValueError, match="statistic"):
         bootstrap_ci(input=ROWS_NUMERIC, column="value", statistic="bogus_stat")
 
 
 def test_bootstrap_ci_rejects_unbounded_resamples() -> None:
-    from noodle_nodes.statistical_analysis import MAX_BOOTSTRAP_RESAMPLES, bootstrap_ci
+    from nodyra_nodes.statistical_analysis import MAX_BOOTSTRAP_RESAMPLES, bootstrap_ci
 
     with pytest.raises(ValueError, match="n_resamples"):
         bootstrap_ci(
@@ -499,7 +499,7 @@ def test_bootstrap_ci_rejects_unbounded_resamples() -> None:
 
 
 def test_bootstrap_ci_rejects_invalid_confidence_level() -> None:
-    from noodle_nodes.statistical_analysis import bootstrap_ci
+    from nodyra_nodes.statistical_analysis import bootstrap_ci
 
     with pytest.raises(ValueError, match="confidence_level"):
         bootstrap_ci(input=ROWS_NUMERIC, column="value", confidence_level=1.0)
@@ -511,7 +511,7 @@ def test_bootstrap_ci_rejects_invalid_confidence_level() -> None:
 
 
 def test_regression_analysis_raises_without_input() -> None:
-    from noodle_nodes.statistical_analysis import regression_analysis
+    from nodyra_nodes.statistical_analysis import regression_analysis
 
     with pytest.raises((ValueError, TypeError)):
         regression_analysis(
@@ -520,7 +520,7 @@ def test_regression_analysis_raises_without_input() -> None:
 
 
 def test_regression_analysis_raises_without_target() -> None:
-    from noodle_nodes.statistical_analysis import regression_analysis
+    from nodyra_nodes.statistical_analysis import regression_analysis
 
     with pytest.raises(ValueError):
         regression_analysis(
@@ -529,7 +529,7 @@ def test_regression_analysis_raises_without_target() -> None:
 
 
 def test_regression_analysis_raises_without_features() -> None:
-    from noodle_nodes.statistical_analysis import regression_analysis
+    from nodyra_nodes.statistical_analysis import regression_analysis
 
     with pytest.raises(ValueError):
         regression_analysis(
@@ -546,7 +546,7 @@ def test_regression_analysis_raises_missing_statsmodels() -> None:
             "statsmodels.formula.api": None,
         },
     ):
-        from noodle_nodes.statistical_analysis import regression_analysis
+        from nodyra_nodes.statistical_analysis import regression_analysis
 
         with pytest.raises(RuntimeError, match="statsmodels"):
             regression_analysis(
@@ -558,7 +558,7 @@ def test_regression_analysis_raises_missing_statsmodels() -> None:
 
 def test_regression_analysis_ols_returns_dataset(store_ctx) -> None:
     pytest.importorskip("statsmodels")
-    from noodle_nodes.statistical_analysis import regression_analysis
+    from nodyra_nodes.statistical_analysis import regression_analysis
 
     result = regression_analysis(
         input=ROWS_NUMERIC,
@@ -574,8 +574,8 @@ def test_regression_analysis_ols_returns_dataset(store_ctx) -> None:
 
 def test_regression_analysis_coefficient_structure(store_ctx) -> None:
     pytest.importorskip("statsmodels")
-    from noodle_nodes.datasets import materialize_dataset
-    from noodle_nodes.statistical_analysis import regression_analysis
+    from nodyra_nodes.datasets import materialize_dataset
+    from nodyra_nodes.statistical_analysis import regression_analysis
 
     result = regression_analysis(
         input=ROWS_NUMERIC,
@@ -598,7 +598,7 @@ def test_regression_analysis_coefficient_structure(store_ctx) -> None:
 
 
 def test_optimization_solve_raises_without_variables() -> None:
-    from noodle_nodes.statistical_analysis import optimization_solve
+    from nodyra_nodes.statistical_analysis import optimization_solve
 
     with pytest.raises(ValueError):
         optimization_solve(
@@ -609,7 +609,7 @@ def test_optimization_solve_raises_without_variables() -> None:
 
 
 def test_optimization_solve_raises_without_objective() -> None:
-    from noodle_nodes.statistical_analysis import optimization_solve
+    from nodyra_nodes.statistical_analysis import optimization_solve
 
     with pytest.raises(ValueError):
         optimization_solve(
@@ -621,7 +621,7 @@ def test_optimization_solve_raises_without_objective() -> None:
 
 def test_optimization_solve_raises_missing_pulp() -> None:
     with patch.dict(sys.modules, {"pulp": None}):
-        from noodle_nodes.statistical_analysis import optimization_solve
+        from nodyra_nodes.statistical_analysis import optimization_solve
 
         with pytest.raises(RuntimeError, match="pulp"):
             optimization_solve(
@@ -634,7 +634,7 @@ def test_optimization_solve_raises_missing_pulp() -> None:
 
 def test_optimization_solve_simple_lp() -> None:
     pytest.importorskip("pulp")
-    from noodle_nodes.statistical_analysis import optimization_solve
+    from nodyra_nodes.statistical_analysis import optimization_solve
 
     # maximize 3x + 2y subject to x + y <= 4, x >= 0, y >= 0
     result = optimization_solve(
@@ -654,7 +654,7 @@ def test_optimization_solve_simple_lp() -> None:
 
 def test_optimization_solve_invalid_constraint_sense() -> None:
     pytest.importorskip("pulp")
-    from noodle_nodes.statistical_analysis import optimization_solve
+    from nodyra_nodes.statistical_analysis import optimization_solve
 
     with pytest.raises(ValueError, match="constraint sense"):
         optimization_solve(
@@ -673,7 +673,7 @@ def test_optimization_solve_invalid_constraint_sense() -> None:
 
 
 def test_time_series_decompose_raises_without_input() -> None:
-    from noodle_nodes.statistical_analysis import time_series_decompose
+    from nodyra_nodes.statistical_analysis import time_series_decompose
 
     with pytest.raises((ValueError, TypeError)):
         time_series_decompose(input=None, value_column="value", period=4)
@@ -681,7 +681,7 @@ def test_time_series_decompose_raises_without_input() -> None:
 
 def test_time_series_decompose_raises_too_short() -> None:
     pytest.importorskip("statsmodels")
-    from noodle_nodes.statistical_analysis import time_series_decompose
+    from nodyra_nodes.statistical_analysis import time_series_decompose
 
     short = [{"value": float(i)} for i in range(5)]
     with pytest.raises(ValueError, match="2 full seasonal"):
@@ -697,7 +697,7 @@ def test_time_series_decompose_raises_missing_statsmodels() -> None:
             "statsmodels.tsa.seasonal": None,
         },
     ):
-        from noodle_nodes.statistical_analysis import time_series_decompose
+        from nodyra_nodes.statistical_analysis import time_series_decompose
 
         with pytest.raises(RuntimeError, match="statsmodels"):
             time_series_decompose(input=ROWS_TS, value_column="value", period=4)
@@ -705,7 +705,7 @@ def test_time_series_decompose_raises_missing_statsmodels() -> None:
 
 def test_time_series_decompose_returns_dataset(store_ctx) -> None:
     pytest.importorskip("statsmodels")
-    from noodle_nodes.statistical_analysis import time_series_decompose
+    from nodyra_nodes.statistical_analysis import time_series_decompose
 
     result = time_series_decompose(input=ROWS_TS, value_column="value", period=4)
     assert is_dataset_ref(result["dataset"])
@@ -715,8 +715,8 @@ def test_time_series_decompose_returns_dataset(store_ctx) -> None:
 
 def test_time_series_decompose_components_in_output(store_ctx) -> None:
     pytest.importorskip("statsmodels")
-    from noodle_nodes.datasets import materialize_dataset
-    from noodle_nodes.statistical_analysis import time_series_decompose
+    from nodyra_nodes.datasets import materialize_dataset
+    from nodyra_nodes.statistical_analysis import time_series_decompose
 
     result = time_series_decompose(input=ROWS_TS, value_column="value", period=4)
     rows = materialize_dataset(result["dataset"])
@@ -730,7 +730,7 @@ def test_time_series_decompose_components_in_output(store_ctx) -> None:
 
 
 def test_dimensionality_reduce_raises_without_input() -> None:
-    from noodle_nodes.statistical_analysis import dimensionality_reduce
+    from nodyra_nodes.statistical_analysis import dimensionality_reduce
 
     with pytest.raises((ValueError, TypeError)):
         dimensionality_reduce(input=None, feature_columns="f1,f2,f3")
@@ -746,7 +746,7 @@ def test_dimensionality_reduce_raises_missing_sklearn() -> None:
             "sklearn.preprocessing": None,
         },
     ):
-        from noodle_nodes.statistical_analysis import dimensionality_reduce
+        from nodyra_nodes.statistical_analysis import dimensionality_reduce
 
         with pytest.raises(RuntimeError, match="scikit-learn"):
             dimensionality_reduce(
@@ -756,7 +756,7 @@ def test_dimensionality_reduce_raises_missing_sklearn() -> None:
 
 def test_dimensionality_reduce_pca_returns_dataset(store_ctx) -> None:
     pytest.importorskip("sklearn")
-    from noodle_nodes.statistical_analysis import dimensionality_reduce
+    from nodyra_nodes.statistical_analysis import dimensionality_reduce
 
     result = dimensionality_reduce(
         input=ROWS_FEATURES,
@@ -771,8 +771,8 @@ def test_dimensionality_reduce_pca_returns_dataset(store_ctx) -> None:
 
 def test_dimensionality_reduce_pca_output_columns(store_ctx) -> None:
     pytest.importorskip("sklearn")
-    from noodle_nodes.datasets import materialize_dataset
-    from noodle_nodes.statistical_analysis import dimensionality_reduce
+    from nodyra_nodes.datasets import materialize_dataset
+    from nodyra_nodes.statistical_analysis import dimensionality_reduce
 
     result = dimensionality_reduce(
         input=ROWS_FEATURES,
@@ -787,7 +787,7 @@ def test_dimensionality_reduce_pca_output_columns(store_ctx) -> None:
 
 def test_dimensionality_reduce_tsne(store_ctx) -> None:
     pytest.importorskip("sklearn")
-    from noodle_nodes.statistical_analysis import dimensionality_reduce
+    from nodyra_nodes.statistical_analysis import dimensionality_reduce
 
     result = dimensionality_reduce(
         input=ROWS_FEATURES,
@@ -802,7 +802,7 @@ def test_dimensionality_reduce_tsne(store_ctx) -> None:
 
 def test_dimensionality_reduce_invalid_method_raises(store_ctx) -> None:
     pytest.importorskip("sklearn")
-    from noodle_nodes.statistical_analysis import dimensionality_reduce
+    from nodyra_nodes.statistical_analysis import dimensionality_reduce
 
     with pytest.raises(ValueError, match="method"):
         dimensionality_reduce(
@@ -818,7 +818,7 @@ def test_dimensionality_reduce_invalid_method_raises(store_ctx) -> None:
 
 
 def test_statistical_analysis_nodes_registered() -> None:
-    from noodle.sdk import registry
+    from nodyra.sdk import registry
 
     manifests = {m.id: m for m in registry.manifests()}
     expected = [
@@ -837,7 +837,7 @@ def test_statistical_analysis_nodes_registered() -> None:
 
 
 def test_statistical_analysis_nodes_have_requirements() -> None:
-    from noodle.sdk import registry
+    from nodyra.sdk import registry
 
     manifests = {m.id: m for m in registry.manifests()}
     for node_id in [

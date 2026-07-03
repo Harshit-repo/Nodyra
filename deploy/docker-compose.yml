@@ -1,18 +1,18 @@
-name: noodle
+name: nodyra
 
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: noodle
-      POSTGRES_PASSWORD: noodle
-      POSTGRES_DB: noodle
+      POSTGRES_USER: nodyra
+      POSTGRES_PASSWORD: nodyra
+      POSTGRES_DB: nodyra
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U noodle"]
+      test: ["CMD-SHELL", "pg_isready -U nodyra"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -31,7 +31,7 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-noodle}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nodyra}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}
     ports:
       - "127.0.0.1:9000:9000"
@@ -53,7 +53,7 @@ services:
       # Production posture so runtime_warnings() actually surface via
       # /ops/runtime-mode (default SECRET_KEY, local artifacts, etc.).
       RUNTIME_MODE: production
-      DATABASE_URL: postgresql+asyncpg://noodle:noodle@postgres:5432/noodle
+      DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@postgres:5432/nodyra
       REDIS_URL: redis://redis:6379/0
       QUEUE_BACKEND: redis
       # Control plane: runs are enqueued here and executed by the worker
@@ -74,7 +74,7 @@ services:
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
       AUTH_ALLOW_REGISTRATION: ${AUTH_ALLOW_REGISTRATION:-false}
       AUTH_REGISTRATION_ROLE: ${AUTH_REGISTRATION_ROLE:-viewer}
-      SECRET_KEY: ${NOODLE_SECRET_KEY:?SECRET_KEY is required for production}
+      SECRET_KEY: ${NODYRA_SECRET_KEY:?SECRET_KEY is required for production}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-}
       MCP_AUTHORIZATION_SERVER_URL: ${MCP_AUTHORIZATION_SERVER_URL:-}
       MCP_OAUTH_INTROSPECTION_URL: ${MCP_OAUTH_INTROSPECTION_URL:-}
@@ -110,7 +110,7 @@ services:
     command: ["python", "-m", "app.worker_main"]
     environment:
       RUNTIME_MODE: production
-      DATABASE_URL: postgresql+asyncpg://noodle:noodle@postgres:5432/noodle
+      DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@postgres:5432/nodyra
       REDIS_URL: redis://redis:6379/0
       QUEUE_BACKEND: redis
       DISPATCH_ROLE: worker
@@ -119,7 +119,7 @@ services:
       ARTIFACTS_DIR: /app/artifacts
       # DATA_DIR: /app/data
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
-      SECRET_KEY: ${NOODLE_SECRET_KEY:?SECRET_KEY is required for production}
+      SECRET_KEY: ${NODYRA_SECRET_KEY:?SECRET_KEY is required for production}
       # --- Sandboxed execution (container-per-run isolation) ---
       # Uncomment to run each workflow in a disposable hardened container
       # instead of a worker subprocess. Requires the docker.sock volume below.

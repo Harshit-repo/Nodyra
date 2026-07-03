@@ -7,9 +7,9 @@ and used to keep re-inventing it locally.
 
 from typing import Any
 
-import noodle_nodes  # noqa: F401 - ensure provider trigger nodes register
-from noodle.models import WorkflowGraph
-from noodle_nodes.integrations_v2.registry import is_registered_provider_trigger
+import nodyra_nodes  # noqa: F401 - ensure provider trigger nodes register
+from nodyra.models import WorkflowGraph
+from nodyra_nodes.integrations_v2.registry import is_registered_provider_trigger
 
 TRIGGER_TYPES: tuple[str, ...] = (
     "manual_trigger",

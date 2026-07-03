@@ -1,4 +1,4 @@
-"""MCP resource catalogue — exposes Noodle data as readable context."""
+"""MCP resource catalogue — exposes Nodyra data as readable context."""
 
 import json
 from typing import Any
@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Workflow
-from noodle.sdk import registry as node_registry
+from nodyra.sdk import registry as node_registry
 
 RESOURCE_PAGE_SIZE = 50
 
@@ -20,7 +20,7 @@ async def list_resources(
     if offset == 0:
         resources.append(
             {
-                "uri": "noodle://node-types",
+                "uri": "nodyra://node-types",
                 "name": "Node Type Catalogue",
                 "description": "All available node types with ids, categories, and descriptions.",
                 "mimeType": "application/json",
@@ -38,7 +38,7 @@ async def list_resources(
     for wf in workflows[:RESOURCE_PAGE_SIZE]:
         resources.append(
             {
-                "uri": f"noodle://workflow/{wf.id}",
+                "uri": f"nodyra://workflow/{wf.id}",
                 "name": wf.name,
                 "description": f"Workflow graph and metadata for '{wf.name}'.",
                 "mimeType": "application/json",
@@ -50,7 +50,7 @@ async def list_resources(
 def list_resource_templates() -> list[dict[str, Any]]:
     return [
         {
-            "uriTemplate": "noodle://workflow/{workflow_id}",
+            "uriTemplate": "nodyra://workflow/{workflow_id}",
             "name": "Workflow",
             "description": "A workflow's current graph and metadata by id.",
             "mimeType": "application/json",
@@ -60,7 +60,7 @@ def list_resource_templates() -> list[dict[str, Any]]:
 
 async def read_resource(session: AsyncSession, uri: str) -> dict[str, Any]:
     """Return {uri, mimeType, text}. Raises ValueError for unknown URIs."""
-    if uri == "noodle://node-types":
+    if uri == "nodyra://node-types":
         types = [
             {
                 "id": m.id,
@@ -77,8 +77,8 @@ async def read_resource(session: AsyncSession, uri: str) -> dict[str, Any]:
             "text": json.dumps({"node_types": types}, ensure_ascii=False),
         }
 
-    if uri.startswith("noodle://workflow/"):
-        workflow_id = uri[len("noodle://workflow/"):]
+    if uri.startswith("nodyra://workflow/"):
+        workflow_id = uri[len("nodyra://workflow/"):]
         workflow = await session.get(
             Workflow,
             workflow_id,

@@ -2,10 +2,10 @@ import json
 
 import requests
 
-import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
-from noodle.engine import execute
-from noodle.models import Edge, GraphNode, NodeStatus, WorkflowGraph
-from noodle.sdk import registry
+import nodyra_nodes  # noqa: F401 - importing registers the built-in nodes
+from nodyra.engine import execute
+from nodyra.models import Edge, GraphNode, NodeStatus, WorkflowGraph
+from nodyra.sdk import registry
 
 
 def test_expected_builtins_are_registered() -> None:
@@ -318,7 +318,7 @@ def test_chat_trigger_is_registered_as_trigger() -> None:
 
 
 def test_chat_trigger_returns_chat_payload_shape() -> None:
-    from noodle_nodes.builtin import chat_trigger
+    from nodyra_nodes.builtin import chat_trigger
 
     assert chat_trigger() == {"chatInput": "", "sessionId": ""}
 

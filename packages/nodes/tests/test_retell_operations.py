@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle_nodes.integrations_v2.providers.retell.operations import (
+from nodyra_nodes.integrations_v2.providers.retell.operations import (
     create_agent,
     create_call,
     create_phone_number,
@@ -17,7 +17,7 @@ from noodle_nodes.integrations_v2.providers.retell.operations import (
 )
 
 _CREDS = {"api_key": "retell_test_key"}
-_TRANSPORT_PATH = "noodle_nodes.integrations_v2.providers.retell.operations._transport"
+_TRANSPORT_PATH = "nodyra_nodes.integrations_v2.providers.retell.operations._transport"
 
 
 def _mock_transport(return_value: object = None) -> tuple[MagicMock, MagicMock]:
@@ -180,7 +180,7 @@ def test_create_phone_number():
 
 
 def test_retell_operations_registered():
-    from noodle_nodes.integrations_v2.registry import get_registered_operation
+    from nodyra_nodes.integrations_v2.registry import get_registered_operation
     for node_id in [
         "retell_create_call",
         "retell_get_call",

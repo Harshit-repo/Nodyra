@@ -8,10 +8,10 @@ reconciled at startup).
 
 Keys::
 
-    noodle:queue:queued           Sorted Set  (score=priority, member=run_id)
-    noodle:queue:lease:<run_id>   String      (worker_id, TTL=LEASE_TTL)
-    noodle:queue:status:<run_id>  String      (queued|leased|running|...)
-    noodle:queue:stats            Hash        (counters by status)
+    nodyra:queue:queued           Sorted Set  (score=priority, member=run_id)
+    nodyra:queue:lease:<run_id>   String      (worker_id, TTL=LEASE_TTL)
+    nodyra:queue:status:<run_id>  String      (queued|leased|running|...)
+    nodyra:queue:stats            Hash        (counters by status)
 """
 
 from __future__ import annotations
@@ -44,9 +44,9 @@ async def enqueue(run_id: str, *, priority: int = 0) -> None:
     """Add a run to the Redis queue."""
     try:
         async with redis_client.pipeline() as pipe:
-            pipe.zadd("noodle:queue:queued", {run_id: priority})
-            pipe.set(f"noodle:queue:status:{run_id}", "queued")
-            pipe.hincrby("noodle:queue:stats", "queued", 1)
+            pipe.zadd("nodyra:queue:queued", {run_id: priority})
+            pipe.set(f"nodyra:queue:status:{run_id}", "queued")
+            pipe.hincrby("nodyra:queue:stats", "queued", 1)
             await pipe.execute()
     except Exception:  # noqa: BLE001 — DB is the fallback
         logger.debug("redis enqueue failed run_id=%s", run_id)
@@ -57,10 +57,10 @@ async def lease(worker_id: str) -> str | None:
     try:
         result = await redis_client.eval(
             _LEASE_LUA, 4,
-            "noodle:queue:queued",
-            "noodle:queue:lease:",
-            "noodle:queue:status:",
-            "noodle:queue:stats",
+            "nodyra:queue:queued",
+            "nodyra:queue:lease:",
+            "nodyra:queue:status:",
+            "nodyra:queue:stats",
             worker_id,
             str(LEASE_TTL),
         )
@@ -73,7 +73,7 @@ async def lease(worker_id: str) -> str | None:
 async def heartbeat(run_id: str, worker_id: str) -> bool:
     """Extend the lease TTL.  Returns True if the lease is still held."""
     try:
-        key = f"noodle:queue:lease:{run_id}"
+        key = f"nodyra:queue:lease:{run_id}"
         current = await redis_client.get(key)
         if current and current.decode() == worker_id:
             await redis_client.expire(key, LEASE_TTL)
@@ -87,10 +87,10 @@ async def complete(run_id: str) -> None:
     """Mark a run as completed."""
     try:
         async with redis_client.pipeline() as pipe:
-            pipe.delete(f"noodle:queue:lease:{run_id}")
-            pipe.set(f"noodle:queue:status:{run_id}", "completed")
-            pipe.hincrby("noodle:queue:stats", "leased", -1)
-            pipe.hincrby("noodle:queue:stats", "completed", 1)
+            pipe.delete(f"nodyra:queue:lease:{run_id}")
+            pipe.set(f"nodyra:queue:status:{run_id}", "completed")
+            pipe.hincrby("nodyra:queue:stats", "leased", -1)
+            pipe.hincrby("nodyra:queue:stats", "completed", 1)
             await pipe.execute()
     except Exception:  # noqa: BLE001
         logger.debug("redis complete failed run_id=%s", run_id)
@@ -101,10 +101,10 @@ async def fail(run_id: str, *, dead_letter: bool = False) -> None:
     status = "dead_lettered" if dead_letter else "failed"
     try:
         async with redis_client.pipeline() as pipe:
-            pipe.delete(f"noodle:queue:lease:{run_id}")
-            pipe.set(f"noodle:queue:status:{run_id}", status)
-            pipe.hincrby("noodle:queue:stats", "leased", -1)
-            pipe.hincrby("noodle:queue:stats", status, 1)
+            pipe.delete(f"nodyra:queue:lease:{run_id}")
+            pipe.set(f"nodyra:queue:status:{run_id}", status)
+            pipe.hincrby("nodyra:queue:stats", "leased", -1)
+            pipe.hincrby("nodyra:queue:stats", status, 1)
             await pipe.execute()
     except Exception:  # noqa: BLE001
         logger.debug("redis fail failed run_id=%s", run_id)
@@ -114,9 +114,9 @@ async def cancel(run_id: str) -> None:
     """Remove a run from the queue entirely."""
     try:
         async with redis_client.pipeline() as pipe:
-            pipe.zrem("noodle:queue:queued", run_id)
-            pipe.delete(f"noodle:queue:lease:{run_id}")
-            pipe.delete(f"noodle:queue:status:{run_id}")
+            pipe.zrem("nodyra:queue:queued", run_id)
+            pipe.delete(f"nodyra:queue:lease:{run_id}")
+            pipe.delete(f"nodyra:queue:status:{run_id}")
             await pipe.execute()
     except Exception:  # noqa: BLE001
         logger.debug("redis cancel failed run_id=%s", run_id)
@@ -131,10 +131,10 @@ async def requeue_expired_leases() -> list[str]:
         cursor = 0
         while True:
             cursor, keys = await redis_client.scan(
-                cursor, match="noodle:queue:lease:*", count=100
+                cursor, match="nodyra:queue:lease:*", count=100
             )
             for key in keys:
-                rid = key.decode().removeprefix("noodle:queue:lease:")
+                rid = key.decode().removeprefix("nodyra:queue:lease:")
                 ttl = await redis_client.ttl(key)
                 if ttl <= 0:
                     # Atomically delete the key — only requeue if the delete
@@ -156,7 +156,7 @@ async def requeue_expired_leases() -> list[str]:
 async def stats() -> dict[str, int]:
     """Return queue stats from Redis."""
     try:
-        raw = await redis_client.hgetall("noodle:queue:stats")
+        raw = await redis_client.hgetall("nodyra:queue:stats")
         result: dict[str, int] = {
             "queued": 0, "leased": 0, "running": 0, "waiting": 0,
             "completed": 0, "failed": 0, "dead_lettered": 0, "cancelled": 0,
@@ -167,7 +167,7 @@ async def stats() -> dict[str, int]:
             if key in result:
                 result[key] = val
         result["queued"] = int(
-            await redis_client.zcard("noodle:queue:queued") or 0
+            await redis_client.zcard("nodyra:queue:queued") or 0
         )
         return result
     except Exception:  # noqa: BLE001

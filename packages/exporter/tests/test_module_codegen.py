@@ -1,7 +1,7 @@
-import noodle_nodes  # noqa: F401 - registers the built-in nodes
-from noodle.models import WorkflowGraph
-from noodle.sdk import registry
-from noodle_exporter.module_codegen import workflow_to_module
+import nodyra_nodes  # noqa: F401 - registers the built-in nodes
+from nodyra.models import WorkflowGraph
+from nodyra.sdk import registry
+from nodyra_exporter.module_codegen import workflow_to_module
 
 GRAPH = WorkflowGraph.model_validate(
     {
@@ -117,7 +117,7 @@ def test_two_node_pipeline_executes() -> None:
     built = module["_build_graph"]()
     parsed = WorkflowGraph.model_validate(built)
 
-    from noodle.engine import run
+    from nodyra.engine import run
 
     result = run(parsed, module["_runtime_registry"]())
     assert result.status == "success"

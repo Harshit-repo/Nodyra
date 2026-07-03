@@ -79,7 +79,7 @@ def setup_tracing(service_name: str, *, exporter: Any | None = None) -> None:
             kwargs["endpoint"] = settings.otel_exporter_otlp_endpoint
         provider.add_span_processor(BatchSpanProcessor(HttpExporter(**kwargs)))
     _provider = provider
-    _tracer = provider.get_tracer("noodle")
+    _tracer = provider.get_tracer("nodyra")
     _enabled = True
     logger.info("tracing enabled service=%s", service_name)
 
@@ -176,15 +176,15 @@ def record_node_span(
         return
     node_id = str(event.get("node_id") or "")
     attrs: dict[str, Any] = {
-        "noodle.node_id": node_id,
-        "noodle.node_type": node_types.get(node_id, ""),
-        "noodle.status": str(event.get("status") or ""),
+        "nodyra.node_id": node_id,
+        "nodyra.node_type": node_types.get(node_id, ""),
+        "nodyra.status": str(event.get("status") or ""),
     }
     if org_id:
-        attrs["noodle.org_id"] = org_id
+        attrs["nodyra.org_id"] = org_id
     path = event.get("iteration_path")
     if isinstance(path, list) and path:
-        attrs["noodle.iteration_path"] = "/".join(str(p) for p in path)
+        attrs["nodyra.iteration_path"] = "/".join(str(p) for p in path)
     sp = _tracer.start_span(
         "node.execute", start_time=int(started * 1e9), attributes=attrs
     )

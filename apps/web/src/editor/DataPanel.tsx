@@ -226,7 +226,7 @@ function startExpressionDrag(
   expr: string,
 ): void {
   e.dataTransfer.setData("text/plain", expr);
-  e.dataTransfer.setData("application/x-noodle-expression", expr);
+  e.dataTransfer.setData("application/x-nodyra-expression", expr);
   e.dataTransfer.effectAllowed = "copy";
   // Render a small chip as the drag ghost so the user sees what they're
   // about to drop.

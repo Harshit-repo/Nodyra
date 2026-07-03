@@ -110,7 +110,7 @@ async def discover_tools(
     conn: MCPConnection, *, decrypted_secret: str | None
 ) -> list[dict]:
     """Call tools/list on the remote MCP server. Returns raw tool manifests."""
-    from noodle_nodes.httpx_security import pinned_request_kwargs, resolve_pinned
+    from nodyra_nodes.httpx_security import pinned_request_kwargs, resolve_pinned
 
     pinned = resolve_pinned(conn.url, context="MCP connection")
     extra = pinned_request_kwargs(pinned)
@@ -143,7 +143,7 @@ async def call_tool(
     timeout_seconds: float | None = None,
 ) -> Any:
     """Execute a single MCP tool call and return its result."""
-    from noodle_nodes.httpx_security import pinned_request_kwargs, resolve_pinned
+    from nodyra_nodes.httpx_security import pinned_request_kwargs, resolve_pinned
 
     timeout_seconds = timeout_seconds or settings.mcp_tool_timeout_seconds
     pinned = resolve_pinned(conn.url, context="MCP connection")
@@ -175,7 +175,7 @@ async def call_tool(
 
 
 def mcp_tool_to_node_manifest(tool: dict, conn_id: str) -> dict:
-    """Convert an MCP tool definition to a Noodle NodeManifest dict."""
+    """Convert an MCP tool definition to a Nodyra NodeManifest dict."""
     schema = tool.get("inputSchema", {})
     props = schema.get("properties", {})
     required = set(schema.get("required", []))

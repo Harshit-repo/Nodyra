@@ -43,7 +43,7 @@ def test_mt_with_required_passes(monkeypatch):
     monkeypatch.setattr(settings, "execution_sandbox", "required")
     monkeypatch.setattr(settings, "sandbox_policy_strict", True)
     monkeypatch.setattr(settings, "use_subprocess_runner", True)
-    monkeypatch.setattr(settings, "sandbox_network", "noodle-sandbox")
+    monkeypatch.setattr(settings, "sandbox_network", "nodyra-sandbox")
     enforce_sandbox_policy()  # must not raise
 
 

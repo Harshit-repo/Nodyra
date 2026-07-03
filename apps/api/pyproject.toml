@@ -1,7 +1,7 @@
 [project]
-name = "noodle-api"
+name = "nodyra-api"
 version = "0.0.1"
-description = "Noodle API server"
+description = "Nodyra API server"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.110",
@@ -15,10 +15,10 @@ dependencies = [
     "pydantic-settings>=2.2",
     "croniter>=2.0",
     "tzlocal>=5.0",
-    "noodle-core",
-    "noodle-nodes",
-    "noodle-exporter",
-    "noodle-importer",
+    "nodyra-core",
+    "nodyra-nodes",
+    "nodyra-exporter",
+    "nodyra-importer",
     "cryptography>=42.0",
     "signxml>=5.0",
     "psutil>=5.9",
@@ -45,4 +45,4 @@ packages = ["app"]
 [project.optional-dependencies]
 kms-aws = ["boto3>=1.34"]
 kms-gcp = ["google-cloud-kms>=2.21"]
-kms-all = ["noodle-api[kms-aws,kms-gcp]"]
+kms-all = ["nodyra-api[kms-aws,kms-gcp]"]

@@ -1,5 +1,5 @@
-"""Tests for noodle.models — Pydantic data envelopes and schema classes."""
-from noodle.models import (
+"""Tests for nodyra.models — Pydantic data envelopes and schema classes."""
+from nodyra.models import (
     CredentialSpec,
     Edge,
     GraphNode,

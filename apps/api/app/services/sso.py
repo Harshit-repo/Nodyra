@@ -48,7 +48,7 @@ async def oidc_authorization_url(sso_config: SSOConfig) -> str:
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
     await redis_client.set(
-        f"noodle:sso:state:{state}",
+        f"nodyra:sso:state:{state}",
         json.dumps({"nonce": nonce, "org_id": sso_config.org_id}),
         ex=600,
     )
@@ -197,7 +197,7 @@ async def _fetch_oidc_discovery(discovery_url: str) -> dict:
         cached_at, doc = _discovery_cache[discovery_url]
         if now - cached_at < 3600:
             return doc
-    from noodle_nodes.http_security import assert_public_http_url
+    from nodyra_nodes.http_security import assert_public_http_url
 
     assert_public_http_url(discovery_url, context="OIDC discovery")
     async with _discovery_lock:

@@ -1,6 +1,6 @@
 # Production Readiness Audit
 
-A living, resumable audit of the Noodle codebase ahead of release. Every finding
+A living, resumable audit of the Nodyra codebase ahead of release. Every finding
 is tracked here with a stable ID, severity, evidence (`file:line`), and status.
 
 **Goal:** ship with no known correctness, security, or resource-safety bugs.
@@ -14,14 +14,14 @@ operating manual so a fresh agent can continue without re-deriving context.
 
 ### Environment & how to run tests
 - **OS:** Windows 11. Shell: PowerShell (but a Bash tool is available).
-- **Python venv:** repo-root `D:\noodle\.venv`. Run tests with the venv python:
+- **Python venv:** repo-root `D:\nodyra\.venv`. Run tests with the venv python:
   - `.venv/Scripts/python.exe -m pytest <paths> -q`
   - System `python` does **not** have pytest — always use the venv.
 - **Test layout:**
   - API: `apps/api/tests/` — `conftest.py` provides an async `client` fixture
     (ASGITransport), forces the **in-process** engine
     (`run_synchronously=True`, `use_subprocess_runner=False`), and gives each
-    test a fresh SQLite DB. Set `NOODLE_TEST_DATABASE_URL` to a Postgres async
+    test a fresh SQLite DB. Set `NODYRA_TEST_DATABASE_URL` to a Postgres async
     URL to exercise the `SKIP LOCKED` lease path.
   - Core engine/SDK/expr: `packages/core/tests/`
   - Nodes: `packages/nodes/tests/`
@@ -79,7 +79,7 @@ and fixes in `test_statistical_analysis.py` / `test_map_nodes.py`.
 ### Wave 2/early additions
 - **NodeVisitor grep (EXPR-1 follow-up TODO): DONE.** Grepped `packages/**` and
   `apps/**` for `NodeVisitor`/`NodeTransformer`. Only two subclasses exist, both
-  in `packages/core/noodle/expr.py` (`_ExprValidator`, `_CodeValidator`) and both
+  in `packages/core/nodyra/expr.py` (`_ExprValidator`, `_CodeValidator`) and both
   now correctly put the type check in `generic_visit` with name checks in
   `visit_Name`/`visit_Attribute`. No other validators override `visit`. The
   exporter/sdk do not subclass NodeVisitor. **This TODO is closed.**
@@ -95,10 +95,10 @@ and fixes in `test_statistical_analysis.py` / `test_map_nodes.py`.
 - `apps/api/app/routers/artifacts.py` (ART-1)
 - `apps/api/app/services/datasets_query.py` (DSQ-1)
 - `apps/api/app/services/remote_dispatch.py` (RD-1)
-- `packages/nodes/noodle_nodes/builtin.py` (SEC-1 doc/comment)
-- `packages/nodes/noodle_nodes/statistical_analysis.py` (SA-1)
-- `packages/core/noodle/expr.py` (**EXPR-1**)
-- `packages/core/noodle/engine.py` (**ENG-1**, MINOR get_event_loop)
+- `packages/nodes/nodyra_nodes/builtin.py` (SEC-1 doc/comment)
+- `packages/nodes/nodyra_nodes/statistical_analysis.py` (SA-1)
+- `packages/core/nodyra/expr.py` (**EXPR-1**)
+- `packages/core/nodyra/engine.py` (**ENG-1**, MINOR get_event_loop)
 - Tests: `apps/api/tests/test_audit_wave1.py`, `test_audit_wave2.py`,
   additions to `apps/api/tests/test_artifacts.py`,
   `packages/core/tests/test_expr.py`,
@@ -112,7 +112,7 @@ and fixes in `test_statistical_analysis.py` / `test_map_nodes.py`.
   boundaries are: (1) **process isolation** (subprocess/ProcessPoolExecutor per
   env), (2) the deployment-time **`unsafe_node_policy`** gate
   (`app/services/unsafe_nodes.py` flags code/command/ssh/sql-with-expr), and
-  (3) the **AST validators** in `packages/core/noodle/expr.py`
+  (3) the **AST validators** in `packages/core/nodyra/expr.py`
   (`_ExprValidator` for `{{ }}`, `_CodeValidator` for code nodes). EXPR-1 was a
   hole in (3). NOTE: expressions are **not** covered by `unsafe_node_policy`, so
   the expr validator is the only gate on that path — treat it as security-
@@ -142,7 +142,7 @@ and fixes in `test_statistical_analysis.py` / `test_map_nodes.py`.
   and `run_events` cap are ALREADY fixed — don't redo them.
 
 ### Prioritized next steps (recommended order)
-1. ~~**`packages/core/noodle/engine.py`**~~ — DONE this session. Reviewed the
+1. ~~**`packages/core/nodyra/engine.py`**~~ — DONE this session. Reviewed the
    full execution core; fixed ENG-1 (orphaned loop iterations on
    `on_error=fail`) + the engine-local `get_event_loop()` MINOR; closed the
    NodeVisitor grep TODO. Remaining engine notes (not bugs): process-pool
@@ -151,7 +151,7 @@ and fixes in `test_statistical_analysis.py` / `test_map_nodes.py`.
    overwritten across iterations (by design — events carry `iteration_path`).
 2. **`apps/api/app/routers/runs.py` + `workflows.py`** — authz/IDOR, input
    validation, pagination, draft-vs-published handling.
-3. **DSQ-2** — `packages/nodes/noodle_nodes/datasets.py`: `polars_transform`
+3. **DSQ-2** — `packages/nodes/nodyra_nodes/datasets.py`: `polars_transform`
    `exec` at ~:717 (is it AST-validated like the code node? if not, apply the
    same `_CodeValidator` path) and the DuckDB f-string paths at ~:251/:665
    (apply the `enable_external_access=false` latch from DSQ-1).
@@ -242,21 +242,21 @@ next `⏳ pending` row.
 | apps/api/app/services/remote_dispatch.py | ✅ | RD-1, RD-2; MINOR get_event_loop fixed |
 | apps/api/app/services/triggers.py (webhook auth) | ✅ | clean (HMAC + HS256 JWT correct) |
 | apps/api/app/services/oauth.py | ✅ | clean (signed state via TOK-1 path) |
-| packages/nodes/noodle_nodes/http_security.py | ✅ | SEC-4 (accepted) |
-| packages/nodes/noodle_nodes/builtin.py (code/http nodes) | ⚠️ partial | SEC-1 |
-| packages/nodes/noodle_nodes/statistical_analysis.py | ✅ | SA-1; TEST-1 (validate-before-optional-import, t-SNE perplexity clamp) |
-| packages/core/noodle/expr.py | ✅ | **EXPR-1** |
+| packages/nodes/nodyra_nodes/http_security.py | ✅ | SEC-4 (accepted) |
+| packages/nodes/nodyra_nodes/builtin.py (code/http nodes) | ⚠️ partial | SEC-1 |
+| packages/nodes/nodyra_nodes/statistical_analysis.py | ✅ | SA-1; TEST-1 (validate-before-optional-import, t-SNE perplexity clamp) |
+| packages/core/nodyra/expr.py | ✅ | **EXPR-1** |
 | apps/web (security basics: XSS/postMessage/token) | ✅ partial | FE-1; sinks clean |
 | apps/api/app/services/triggers.py (scheduler/cron) | ✅ | clean (single-replica by design; MINOR get_event_loop fixed) |
 | apps/api/app/routers/runs.py | ✅ | RUN-1 (approval-decision authz); reads gated by global auth |
 | apps/api/app/routers/workflows.py | ✅ | clean (perms consistent, batched queries) |
 | apps/api/app/routers/deployments.py | ✅ | DEP-1 (re-gate on active version repoint) |
 | apps/api/app/routers/** (authz sweep) | ✅ | all mutating routes guarded or intentionally public/token-authed |
-| packages/core/noodle/engine.py | ✅ | ENG-1 + MINOR get_event_loop; NodeVisitor grep closed |
-| **packages/core/noodle/sdk.py** | ⏳ partial | exec of user modules (by-design); NodeVisitor OK |
-| packages/core/noodle/serialization.py | ✅ | clean (no pickle; safe typed envelopes only) |
-| packages/nodes/noodle_nodes/datasets.py | ✅ | DSQ-2 (duckdb_sql latch; polars_transform already AST-validated) |
-| **packages/nodes/noodle_nodes/** (other node modules ~40) | ⏳ pending | sampled only |
+| packages/core/nodyra/engine.py | ✅ | ENG-1 + MINOR get_event_loop; NodeVisitor grep closed |
+| **packages/core/nodyra/sdk.py** | ⏳ partial | exec of user modules (by-design); NodeVisitor OK |
+| packages/core/nodyra/serialization.py | ✅ | clean (no pickle; safe typed envelopes only) |
+| packages/nodes/nodyra_nodes/datasets.py | ✅ | DSQ-2 (duckdb_sql latch; polars_transform already AST-validated) |
+| **packages/nodes/nodyra_nodes/** (other node modules ~40) | ⏳ pending | sampled only |
 | **apps/web/src/** (deep correctness/UX/a11y) | ⏳ pending | see docs/frontend-audit.md (handoff) |
 | apps/api/alembic/ (env + 39 migrations) | ✅ | ALM-1, ALM-2; chain linear, up/down/up on PG+SQLite; `alembic check` clean on Postgres + CI gate |
 
@@ -268,7 +268,7 @@ next `⏳ pending` row.
 
 #### SEC-1 — Code-node sandbox is not a containment boundary
 - **Severity:** Low (after analysis; consistent with documented threat model)
-- **Evidence:** `packages/nodes/noodle_nodes/builtin.py` (~:958 blocklist) blocks
+- **Evidence:** `packages/nodes/nodyra_nodes/builtin.py` (~:958 blocklist) blocks
   only `subprocess/pty/ctypes/cffi/multiprocessing`; `_SAFE_BUILTINS` is *all*
   builtins. `import os; os.system(...)`, `os.popen`, `open`, and `getattr`-based
   attribute reach all work.
@@ -350,7 +350,7 @@ next `⏳ pending` row.
 
 ### EXPR-1 — Expression `{{ }}` sandbox escape → RCE (CRITICAL)
 - **Severity:** Critical (authoring/remote code execution on the runner host)
-- **Evidence:** `packages/core/noodle/expr.py` — `_ExprValidator` overrode
+- **Evidence:** `packages/core/nodyra/expr.py` — `_ExprValidator` overrode
   `NodeVisitor.visit()` to do the node-type allowlist check + `generic_visit`,
   which **bypasses NodeVisitor's name-based dispatch**, so `visit_Name` /
   `visit_Attribute` (the `_BLOCKED_NAMES` enforcement) never ran. Only the
@@ -383,7 +383,7 @@ next `⏳ pending` row.
 
 ### SA-1 — Monte Carlo node `eval()` with no AST validation → RCE (High)
 - **Severity:** High (code execution; ungated like EXPR-1)
-- **Evidence:** `packages/nodes/noodle_nodes/statistical_analysis.py`
+- **Evidence:** `packages/nodes/nodyra_nodes/statistical_analysis.py`
   `monte_carlo_simulate` ran `eval(expression, {"__builtins__": {}}, locals)`
   per iteration. Empty builtins doesn't sandbox; also recompiled every iteration.
 - **Fix:** Validate via the (fixed) `_ExprValidator` + `_SAFE_BUILTINS`, and
@@ -460,7 +460,7 @@ next `⏳ pending` row.
 - **Status:** `todo`
 
 ### DSQ-2 — Other custom `eval`/`exec` sites (review)
-- `packages/nodes/noodle_nodes/datasets.py:~717` (`polars_transform` exec) — is
+- `packages/nodes/nodyra_nodes/datasets.py:~717` (`polars_transform` exec) — is
   it AST-validated like the code node? If not, route through `_CodeValidator`.
 - `datasets.py:~251/~665` (DuckDB f-string with internal artifact path) — apply
   the DSQ-1 external-access latch if user SQL can reach these connections.
@@ -492,7 +492,7 @@ next `⏳ pending` row.
 ### ENG-1 — Orphaned loop iterations on `on_error="fail"` with concurrency>1 (Low/Med)
 - **Severity:** Low/Medium (resource leak + late events for a failed run; the
   REL-2 class of bug, but in the loop driver)
-- **Evidence:** `packages/core/noodle/engine.py` `_run_loop` — the concurrency>1
+- **Evidence:** `packages/core/nodyra/engine.py` `_run_loop` — the concurrency>1
   branch ran `await asyncio.gather(*[_one_iteration(...) for ...])`. When one
   iteration raises `_LoopRowError` (a row failed and `on_error="fail"`), bare
   `gather` propagates that exception to the caller **but leaves the other
@@ -650,7 +650,7 @@ next `⏳ pending` row.
   0039, **`alembic check` on Postgres reports no drift**; verified up/down/up on
   both dialects.
 - **CI:** added a **required** "Alembic migration drift check (Postgres)" step to
-  `.github/workflows/ci.yml` (dedicated `noodle_alembic` DB) so future
+  `.github/workflows/ci.yml` (dedicated `nodyra_alembic` DB) so future
   model/migration divergence fails the build. SQLite `alembic check` still shows
   the FKs as missing **by design** — Postgres is the authoritative signal.
 - **Status:** `fixed` — migration `0039` + CI gate. (The pinned index name is now

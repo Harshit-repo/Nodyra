@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from noodle.ai_runtime import (
+from nodyra.ai_runtime import (
     AgentActionRequest,
     AgentActionResponse,
     AgentResumeInput,
@@ -15,9 +15,9 @@ from noodle.ai_runtime import (
     ToolParameterSchema,
     ToolSchema,
 )
-from noodle.engine import execute
-from noodle.models import Edge, GraphNode, NodeStatus, RunStatus, WorkflowGraph
-from noodle.sdk import NodeRegistry, node
+from nodyra.engine import execute
+from nodyra.models import Edge, GraphNode, NodeStatus, RunStatus, WorkflowGraph
+from nodyra.sdk import NodeRegistry, node
 
 
 class EchoTool(ToolAdapter):

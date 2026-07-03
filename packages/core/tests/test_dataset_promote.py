@@ -1,8 +1,8 @@
-"""Tests for noodle.dataset_promote — auto-promotion of large values."""
+"""Tests for nodyra.dataset_promote — auto-promotion of large values."""
 
-from noodle.artifacts import ARTIFACT_MARKER, LocalArtifactStore
-from noodle.context import artifact_store, current_node_id
-from noodle.dataset_promote import (
+from nodyra.artifacts import ARTIFACT_MARKER, LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id
+from nodyra.dataset_promote import (
     _estimate_bytes,
     _is_dataframe,
     _row_shaped,

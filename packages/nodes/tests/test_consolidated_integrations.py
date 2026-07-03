@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - importing registers provider nodes
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.registry import (
+import nodyra_nodes  # noqa: F401 - importing registers provider nodes
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.registry import (
     execute_integration_operation,
     resolve_operation_node_id,
 )
@@ -43,7 +43,7 @@ def test_resolve_operation_node_id_rejects_unknown_selection() -> None:
 
 
 def test_execute_integration_operation_filters_unknown_kwargs(monkeypatch) -> None:
-    from noodle_nodes.integrations_v2.providers.slack import operations
+    from nodyra_nodes.integrations_v2.providers.slack import operations
 
     captured: dict = {}
 
@@ -76,7 +76,7 @@ def test_execute_integration_operation_filters_unknown_kwargs(monkeypatch) -> No
 
 
 def test_consolidated_node_dispatch_runs_executor(monkeypatch) -> None:
-    from noodle_nodes.integrations_v2.providers.slack import operations
+    from nodyra_nodes.integrations_v2.providers.slack import operations
 
     class _T:
         def request(self, *args, **kwargs):

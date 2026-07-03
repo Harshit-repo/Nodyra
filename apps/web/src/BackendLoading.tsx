@@ -7,7 +7,7 @@ export function BackendLoading({ retrying }: { retrying: boolean }) {
   return (
     <div className="backend-loading">
       <div className="backend-loading-card">
-        <div className="backend-loading-mark">Noodle</div>
+        <div className="backend-loading-mark">Nodyra</div>
         <div className="backend-loading-spinner" aria-hidden />
         <div className="backend-loading-text">
           {retrying ? "Connecting to the server…" : "Loading…"}

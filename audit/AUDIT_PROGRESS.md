@@ -6,8 +6,8 @@ re-derived from direct code inspection.
 
 | Area | Status | Notes |
 |---|---|---|
-| Repository map | Done | `NOODLE_REPOSITORY_MAP.md` |
-| Audit scope | Done | `NOODLE_TECHNICAL_AUDIT_SCOPE.md` |
+| Repository map | Done | `NODYRA_REPOSITORY_MAP.md` |
+| Audit scope | Done | `NODYRA_TECHNICAL_AUDIT_SCOPE.md` |
 | Backend entrypoint | Not started | `main.py` lifespan, role flags, CORS, error handlers |
 | API routes | Reviewed (pass 1) | `audit/backend/02_…` — auth posture VERIFIED CLEAN; API-1..3 minor |
 | Services | Not started | ~50 service modules |
@@ -30,7 +30,7 @@ re-derived from direct code inspection.
 | Performance review | Done | `audit/performance/PERFORMANCE_REVIEW.md` — keep queue; wire ENGINE-1; add metrics |
 | Product/UX review | Done | `audit/product/PRODUCT_UX_REVIEW.md` — mature builder; NODE-2 policy key |
 | Architecture review | Done | `audit/architecture/ARCHITECTURE_REVIEW.md` — sound; "make safe path the only path" |
-| Final report | Done | `NOODLE_AUDIT_FINAL_REPORT.md` |
+| Final report | Done | `NODYRA_AUDIT_FINAL_REPORT.md` |
 
 ## Running findings ledger (independent pass)
 
@@ -80,7 +80,7 @@ re-derived from direct code inspection.
 | TEST-4 | Testing | Low | Critical behaviors tested but in broadly-named files — add test-map/rename | Reviewed |
 | TEST-5 | Testing | Low | No coverage gate/report in CI — establish baseline floor on core pkgs | Verify |
 | TEST-6 | Testing | Medium | Add explicit "code never execs in parent process under MT" invariant test (SAFE-3/NODE-1) | **Done** — `test_sandbox_policy` asserts MT/sandbox refuses in-process boot |
-| DOC-1 | Docs | Low | Local-dev secret var is `SECRET_KEY` not `NOODLE_SECRET_KEY` (compose-only rename) | Reviewed |
+| DOC-1 | Docs | Low | Local-dev secret var is `SECRET_KEY` not `NODYRA_SECRET_KEY` (compose-only rename) | Reviewed |
 | DOC-2 | Docs | Low | `docs/` mixes living refs with historical audit snapshots — add index/`history/` | Reviewed |
 | DOC-3 | Docs | Low | No CHANGELOG before public launch (ties to NODE-2 schema migrations) | Reviewed |
 | DOC-4 | Docs | Info | Internal/licensing docs correctly gitignored — verified clean | Verified |

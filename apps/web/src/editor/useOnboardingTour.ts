@@ -46,7 +46,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
   },
 ] as const;
 
-const STORAGE_KEY = "noodle-editor-tour-v1";
+const STORAGE_KEY = "nodyra-editor-tour-v1";
 
 export function useOnboardingTour() {
   const [currentStep, setCurrentStep] = useState(0);

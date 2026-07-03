@@ -1,6 +1,6 @@
 # Building V2 Integrations
 
-V2 integrations keep Noodle's core promise: every node is Python-native. The
+V2 integrations keep Nodyra's core promise: every node is Python-native. The
 node shown in the editor is generated from a spec, but the generated source is
 still a normal Python function and the source viewer works.
 
@@ -10,7 +10,7 @@ contract, then implement the operation in Python using the shared transport.
 ## Operation Node Checklist
 
 1. Create or extend a provider package under
-   `packages/nodes/noodle_nodes/integrations_v2/providers/<provider>/`.
+   `packages/nodes/nodyra_nodes/integrations_v2/providers/<provider>/`.
 2. Define credentials with `CredentialSpec` inside an `OperationParamSpec`.
 3. Define an `OperationSpec` with stable `node_id`, provider, resource,
    operation, params, icon, and documentation URL when available.
@@ -25,17 +25,17 @@ contract, then implement the operation in Python using the shared transport.
 5. Implement an executor function with explicit Python parameters. The executor
    should call `ProviderTransport` or a provider-specific transport subclass.
 6. Register the operation with `register_operation(SPEC, executor)`.
-7. Import the provider package from `packages/nodes/noodle_nodes/__init__.py`
+7. Import the provider package from `packages/nodes/nodyra_nodes/__init__.py`
    so default startup registers the nodes.
 8. Add mocked provider tests. Do not require real network calls.
 
 Minimal shape:
 
 ```python
-from noodle.models import CredentialSpec
-from noodle_nodes.integrations_v2.registry import register_operation
-from noodle_nodes.integrations_v2.specs import OperationParamSpec, OperationSpec
-from noodle_nodes.integrations_v2.transport import ProviderTransport
+from nodyra.models import CredentialSpec
+from nodyra_nodes.integrations_v2.registry import register_operation
+from nodyra_nodes.integrations_v2.specs import OperationParamSpec, OperationSpec
+from nodyra_nodes.integrations_v2.transport import ProviderTransport
 
 
 MY_READ_SPEC = OperationSpec(
@@ -233,5 +233,5 @@ Useful focused commands:
 uv run pytest packages/nodes/tests/test_integrations_v2_registry.py
 uv run pytest packages/nodes/tests/test_integrations_v2_transport.py
 uv run pytest apps/api/tests/test_triggers.py
-uv run ruff check packages/nodes/noodle_nodes/integrations_v2 apps/api/app/services/provider_triggers.py
+uv run ruff check packages/nodes/nodyra_nodes/integrations_v2 apps/api/app/services/provider_triggers.py
 ```

@@ -406,7 +406,7 @@ async def test_starter_graph_from_declared_wires(client: AsyncClient) -> None:
         await client.post("/workflows", json={"name": "Wired"})
     ).json()["id"]
     source = (
-        "from noodle import node\n"
+        "from nodyra import node\n"
         "\n"
         "@node(name='Ingest', id='ingest', outputs=['rows'])\n"
         "def ingest(source: str = 'db'):\n"
@@ -449,7 +449,7 @@ async def test_preview_explicit_mode_and_undecorated_toggle(
         await client.post("/workflows", json={"name": "Explicit"})
     ).json()["id"]
     source = (
-        "from noodle import node\n"
+        "from nodyra import node\n"
         "\n"
         "def helper(x):\n"
         "    return x\n"

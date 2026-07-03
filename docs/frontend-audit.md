@@ -1,6 +1,6 @@
 # Frontend Production Audit (apps/web) — Handoff
 
-A resumable audit of the Noodle web app (`apps/web`) ahead of release, mirroring
+A resumable audit of the Nodyra web app (`apps/web`) ahead of release, mirroring
 the format of `docs/production-readiness-audit.md`. This file is the operating
 manual: a fresh agent should be able to pick up the next `⏳ pending` area and
 work without re-deriving context.

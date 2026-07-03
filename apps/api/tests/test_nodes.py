@@ -114,7 +114,7 @@ async def test_generated_node_source_endpoint_uses_stored_source(
 
 
 async def test_dynamic_options_decrypts_credential_by_id(client: AsyncClient, monkeypatch) -> None:
-    import noodle_nodes.ai_v2.model_options as mo
+    import nodyra_nodes.ai_v2.model_options as mo
 
     captured: dict = {}
 

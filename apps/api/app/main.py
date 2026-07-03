@@ -89,7 +89,7 @@ async def _ensure_global_environment() -> None:
     doesn't limit the SELECT to the default org, which would cause every
     other org to appear to have no global environment.
     """
-    logger = logging.getLogger("noodle")
+    logger = logging.getLogger("nodyra")
     try:
         from app.tenancy import run_as_system
 
@@ -131,7 +131,7 @@ async def _mark_interrupted_runs() -> None:
     Covers both ``running`` (actively executing) and ``waiting`` (paused for
     operator approval) — neither can be resumed after a process restart.
     """
-    logger = logging.getLogger("noodle")
+    logger = logging.getLogger("nodyra")
     try:
         from app.tenancy import run_as_system
 
@@ -198,7 +198,7 @@ async def _mark_interrupted_runs() -> None:
                         len(orphaned),
                     )
     except Exception:  # noqa: BLE001 - DB may not be migrated yet; not fatal
-        logging.getLogger("noodle").exception(
+        logging.getLogger("nodyra").exception(
             "startup: _mark_interrupted_runs failed — stale 'running' rows may persist"
         )
 
@@ -264,7 +264,7 @@ async def lifespan(app: FastAPI):
     # doesn't set its own ``tz``.
     if not settings.app_timezone:
         settings.app_timezone = _detect_local_timezone()
-    logging.getLogger("noodle").info("noodle app timezone: %s", settings.app_timezone)
+    logging.getLogger("nodyra").info("nodyra app timezone: %s", settings.app_timezone)
 
     await _ensure_global_environment()
 
@@ -275,7 +275,7 @@ async def lifespan(app: FastAPI):
     from app.services.licensing import reconcile_capabilities
 
     for _warning in await reconcile_capabilities():
-        logging.getLogger("noodle").warning("licensing: %s", _warning)
+        logging.getLogger("nodyra").warning("licensing: %s", _warning)
 
     from app.tenancy import assert_safe_postgres_role
 
@@ -304,7 +304,7 @@ async def lifespan(app: FastAPI):
         try:
             register_s3_backend()
         except Exception:  # noqa: BLE001
-            logging.getLogger("noodle").exception(
+            logging.getLogger("nodyra").exception(
                 "Failed to register S3 artifact backend; falling back to local."
             )
     # Scheduler / retention loops respect both ``enable_inprocess_scheduler``
@@ -338,10 +338,10 @@ async def lifespan(app: FastAPI):
             )
         return asyncio.create_task(_as_system(loop_fn)())
 
-    scheduler = _make_loop_task(scheduler_loop, "noodle.scheduler")
+    scheduler = _make_loop_task(scheduler_loop, "nodyra.scheduler")
     # Retention prune is gated on the same flag — it's another in-process
     # loop and we want at most one owner across replicas.
-    retention = _make_loop_task(retention_loop, "noodle.retention")
+    retention = _make_loop_task(retention_loop, "nodyra.retention")
     # Idle reaper closes warm runner subprocesses that have been sitting
     # unused past ``runner_idle_seconds``. Independent of the scheduler flag
     # because every replica should reap its own pool.
@@ -411,7 +411,7 @@ async def lifespan(app: FastAPI):
     if drain_timeout > 0:
         leftover = await drain_active_runs(drain_timeout)
         if leftover:
-            logging.getLogger("noodle").warning(
+            logging.getLogger("nodyra").warning(
                 "shutdown drain expired with %d active run(s); forcing cancel",
                 leftover,
             )
@@ -455,7 +455,7 @@ async def _gate_token_valid(token: str, *, client_ip: str = "") -> bool:
 
 
 app = FastAPI(
-    title="Noodle API",
+    title="Nodyra API",
     version="0.0.1",
     lifespan=lifespan,
     dependencies=[Depends(resolve_org)],
@@ -464,7 +464,7 @@ app = FastAPI(
 # A5: tracing is initialised at import so FastAPI/SQLAlchemy instrumentation
 # wraps everything from the first request. All three calls no-op when
 # settings.otel_enabled is false.
-tracing.setup_tracing("noodle-api")
+tracing.setup_tracing("nodyra-api")
 tracing.instrument_app(app)
 tracing.instrument_sqlalchemy(engine)
 
@@ -495,7 +495,7 @@ async def _service_error_handler(request: Request, exc: ServiceError) -> JSONRes
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Return a structured JSON error for any unhandled exception instead of a
     plain-text 500, so clients can always parse the response body."""
-    logger = logging.getLogger("noodle")
+    logger = logging.getLogger("nodyra")
     req_id = request.headers.get("x-request-id", "")
     logger.exception(
         "Unhandled exception on %s %s (req=%s)", request.method, request.url.path, req_id
@@ -708,12 +708,12 @@ async def _csrf_gate(request: Request, call_next):
       2. Auth-exempt prefixes handle their own security — skip.
       3. If the request carries ``Authorization: Bearer`` → Bearer is not
          forgeable via cookie injection → skip CSRF check.
-      4. If the ``noodle_session`` httpOnly cookie is absent → anonymous or
+      4. If the ``nodyra_session`` httpOnly cookie is absent → anonymous or
          Bearer-only client → skip (the route's own auth will 401 if needed).
       5. Otherwise: verify that the ``X-CSRF-Token`` header matches the
-         ``noodle_csrf`` non-httpOnly cookie set by the login endpoint.
+         ``nodyra_csrf`` non-httpOnly cookie set by the login endpoint.
          Mismatch → 403. This pattern prevents CSRF without a server-side
-         token store; the attacker can't read the ``noodle_csrf`` cookie
+         token store; the attacker can't read the ``nodyra_csrf`` cookie
          (same-site + domain restrictions) so they can't forge the header.
     """
     if request.method in _CSRF_SAFE_METHODS:
@@ -854,4 +854,4 @@ app.include_router(node_registry.router)
 
 @app.get("/")
 async def root() -> dict:
-    return {"name": "Noodle API", "version": "0.0.1"}
+    return {"name": "Nodyra API", "version": "0.0.1"}

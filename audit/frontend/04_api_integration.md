@@ -16,14 +16,14 @@ Independent review, 2026-06-16. Files: `apps/web/src/api.ts`,
 - **Error display hygiene**: `ApiError.toString()` strips the class-name prefix;
   `formatErrorDetail` turns FastAPI's `[{loc,msg,type}]` validation arrays into a
   sentence instead of dumping raw JSON at users.
-- **CSRF double-submit** echoed from the `noodle_csrf` cookie in cookie-auth mode;
+- **CSRF double-submit** echoed from the `nodyra_csrf` cookie in cookie-auth mode;
   **CSP** meta tag present in `index.html`; markdown is rendered via DOMPurify
   (checked elsewhere). Org context (`X-Org-Id`) sent on every request.
 
 ## Findings
 
 ### FE-1 — Session token stored in `localStorage` (Bearer), not the httpOnly cookie (MEDIUM)
-`LoginPage.tsx:48` calls `setToken(result.token)` → `localStorage["noodle_token"]`,
+`LoginPage.tsx:48` calls `setToken(result.token)` → `localStorage["nodyra_token"]`,
 and `authHeaders()` (`api.ts:195-206`) prefers `Authorization: Bearer <token>`
 whenever a token is stored. So the SPA's primary auth credential lives in
 JavaScript-readable storage.
@@ -43,7 +43,7 @@ JavaScript-readable storage.
   topology (config defaults `session_cookie_secure=True`, `samesite=lax`), and
   that WebSocket/artifact `?token=` flows still work (they have a separate
   ws-ticket mechanism, so they should).
-- **Test:** after login, `localStorage.getItem("noodle_token")` is null and
+- **Test:** after login, `localStorage.getItem("nodyra_token")` is null and
   authenticated requests still succeed via the cookie; logout clears the cookie.
 - **Status:** Recommend fix (security hardening, low effort — infra exists).
 

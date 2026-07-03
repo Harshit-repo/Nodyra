@@ -35,10 +35,27 @@ describe("LoginPage — FE-1 cookie session (no localStorage token)", () => {
     await waitFor(() => expect(onSignedIn).toHaveBeenCalledWith(USER));
 
     // The session token must NEVER land in localStorage — an XSS could read it
-    // there. Authentication rides the httpOnly noodle_session cookie instead.
-    expect(localStorage.getItem("noodle_token")).toBeNull();
+    // there. Authentication rides the httpOnly nodyra_session cookie instead.
+    expect(localStorage.getItem("nodyra_token")).toBeNull();
     expect(getToken()).toBeNull();
     // The non-secret user profile is kept for UI state.
     expect(getUser()).toEqual(USER);
+  });
+});
+
+describe("token key migration", () => {
+  it("adopts a legacy noodle_token and removes it", () => {
+    localStorage.setItem("noodle_token", "tok-123");
+
+    expect(getToken()).toBe("tok-123");
+    expect(localStorage.getItem("nodyra_token")).toBe("tok-123");
+    expect(localStorage.getItem("noodle_token")).toBeNull();
+  });
+
+  it("prefers the new key when both exist", () => {
+    localStorage.setItem("nodyra_token", "new");
+    localStorage.setItem("noodle_token", "old");
+
+    expect(getToken()).toBe("new");
   });
 });

@@ -216,7 +216,7 @@ export function SSOSettingsPage() {
   if (loading) {
     return (
       <div className="screen-center">
-        <div className="noodle-settings-skeleton" aria-label="Loading SSO settings">
+        <div className="nodyra-settings-skeleton" aria-label="Loading SSO settings">
           <span />
           <span />
           <span />
@@ -226,10 +226,10 @@ export function SSOSettingsPage() {
   }
 
   return (
-    <div className="noodle-sso-settings">
-      <section className="noodle-settings-card">
-        <div className="noodle-settings-card-head">
-          <span className="noodle-settings-card-icon" aria-hidden="true">
+    <div className="nodyra-sso-settings">
+      <section className="nodyra-settings-card">
+        <div className="nodyra-settings-card-head">
+          <span className="nodyra-settings-card-icon" aria-hidden="true">
             <ShieldCheck size={18} />
           </span>
           <div>
@@ -241,13 +241,13 @@ export function SSOSettingsPage() {
           </div>
         </div>
 
-        <div className="noodle-settings-card-body">
+        <div className="nodyra-settings-card-body">
           {/* Protocol selector */}
-          <div className="noodle-sso-protocol-selector">
+          <div className="nodyra-sso-protocol-selector">
             {(Object.keys(PROTOCOL_LABELS) as Protocol[]).map((p) => (
               <label
                 key={p}
-                className={`noodle-sso-protocol-option${
+                className={`nodyra-sso-protocol-option${
                   protocol === p ? " is-selected" : ""
                 }`}
               >
@@ -264,7 +264,7 @@ export function SSOSettingsPage() {
             ))}
           </div>
 
-          <div className="noodle-sso-form">
+          <div className="nodyra-sso-form">
             {/* OIDC fields */}
             {protocol === "oidc" && (
               <>
@@ -296,7 +296,7 @@ export function SSOSettingsPage() {
                 </label>
                 <label className="login-field-label">
                   Client Secret
-                  <div className="noodle-sso-secret-wrap">
+                  <div className="nodyra-sso-secret-wrap">
                     <input
                       className="field-input"
                       type={showSecret ? "text" : "password"}
@@ -313,7 +313,7 @@ export function SSOSettingsPage() {
                     />
                     <button
                       type="button"
-                      className="btn btn-icon noodle-sso-toggle-vis"
+                      className="btn btn-icon nodyra-sso-toggle-vis"
                       onClick={() => setShowSecret(!showSecret)}
                       aria-label={showSecret ? "Hide secret" : "Show secret"}
                     >
@@ -355,9 +355,9 @@ export function SSOSettingsPage() {
                 </label>
                 <label className="login-field-label">
                   IdP Certificate (PEM)
-                  <div className="noodle-sso-secret-wrap">
+                  <div className="nodyra-sso-secret-wrap">
                     <textarea
-                      className="field-input noodle-sso-cert-input"
+                      className="field-input nodyra-sso-cert-input"
                       placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
                       rows={4}
                       value={idpCertificate}
@@ -368,7 +368,7 @@ export function SSOSettingsPage() {
                     />
                     <button
                       type="button"
-                      className="btn btn-icon noodle-sso-toggle-vis"
+                      className="btn btn-icon nodyra-sso-toggle-vis"
                       onClick={() => setShowCert(!showCert)}
                       aria-label={showCert ? "Hide certificate" : "Show certificate"}
                     >
@@ -419,7 +419,7 @@ export function SSOSettingsPage() {
           </div>
 
           {error && (
-            <div className="noodle-settings-inline-error" role="alert">
+            <div className="nodyra-settings-inline-error" role="alert">
               <WarningCircle size={18} aria-hidden="true" />
               <span>{error}</span>
             </div>
@@ -428,10 +428,10 @@ export function SSOSettingsPage() {
           {/* Test result */}
           {testResult && (
             <div
-              className={`noodle-sso-test-result ${
+              className={`nodyra-sso-test-result ${
                 testResult.status === "ok"
-                  ? "noodle-sso-test-ok"
-                  : "noodle-sso-test-error"
+                  ? "nodyra-sso-test-ok"
+                  : "nodyra-sso-test-error"
               }`}
               role="status"
             >
@@ -445,8 +445,8 @@ export function SSOSettingsPage() {
           )}
         </div>
 
-        <div className="noodle-settings-card-footer">
-          <div className="noodle-sso-actions">
+        <div className="nodyra-settings-card-footer">
+          <div className="nodyra-sso-actions">
             <button
               className="btn"
               type="button"
@@ -475,7 +475,7 @@ export function SSOSettingsPage() {
               </a>
             )}
 
-            <div className="noodle-sso-save-actions">
+            <div className="nodyra-sso-save-actions">
               {config && (
                 <button
                   className="btn btn-danger-outline"

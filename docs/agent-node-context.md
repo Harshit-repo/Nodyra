@@ -1,14 +1,14 @@
-# Noodle Agent Node Context
+# Nodyra Agent Node Context
 
 Last updated: 2026-06-11
 
-This document describes how the Noodle Agent node works, how tools and approvals
+This document describes how the Nodyra Agent node works, how tools and approvals
 flow through the engine, and what changed in the recent agent/tool approval
 update.
 
 ## Purpose
 
-The Agent node is the main agentic orchestration node in Noodle. It takes a user
+The Agent node is the main agentic orchestration node in Nodyra. It takes a user
 task, a chat model, optional tools, optional memory, optional parser, and
 optional guardrail. It runs a model call, lets the model request tool calls, asks
 the engine to dispatch those tool calls, then resumes the model with tool
@@ -17,9 +17,9 @@ results until it can produce a final answer or reaches `max_steps`.
 The current Agent node implementation is:
 
 - Node id: `ai_agent_v2`
-- File: `packages/nodes/noodle_nodes/ai_v2/agents.py`
-- Runtime types: `packages/core/noodle/ai_runtime.py`
-- Engine dispatch: `packages/core/noodle/engine/agent.py`
+- File: `packages/nodes/nodyra_nodes/ai_v2/agents.py`
+- Runtime types: `packages/core/nodyra/ai_runtime.py`
+- Engine dispatch: `packages/core/nodyra/engine/agent.py`
 
 ## Agent Node Interface
 
@@ -98,7 +98,7 @@ Agent tool execution is represented by these core runtime models:
 
 Relevant file:
 
-`packages/core/noodle/ai_runtime.py`
+`packages/core/nodyra/ai_runtime.py`
 
 ## Execution Flow
 
@@ -158,7 +158,7 @@ The model can then either request more tools or produce a final answer.
 
 ## Tool Mode
 
-Tool mode lets a normal Noodle node become an AI tool for the Agent.
+Tool mode lets a normal Nodyra node become an AI tool for the Agent.
 
 When a graph node has `tool_mode=true`:
 
@@ -170,8 +170,8 @@ When a graph node has `tool_mode=true`:
 
 Relevant files:
 
-- `packages/core/noodle/node_tool.py`
-- `packages/core/noodle/engine/node_exec.py`
+- `packages/core/nodyra/node_tool.py`
+- `packages/core/nodyra/engine/node_exec.py`
 - `apps/web/src/editor/NodeCard.tsx`
 - `apps/web/src/editor/NodeDetails.tsx`
 
@@ -221,7 +221,7 @@ When a side-effecting tool is requested and `allow_side_effects=false`:
 
 Relevant files:
 
-- `packages/core/noodle/engine/agent.py`
+- `packages/core/nodyra/engine/agent.py`
 - `apps/api/app/services/run_resume.py`
 - `apps/api/app/routers/runs.py`
 - `apps/web/src/editor/ChatPanel.tsx`
@@ -267,9 +267,9 @@ waiting run with `approve_all=true`.
 
 Files changed:
 
-- `packages/core/noodle/ai_runtime.py`
-- `packages/core/noodle/engine/agent.py`
-- `packages/nodes/noodle_nodes/ai_v2/agents.py`
+- `packages/core/nodyra/ai_runtime.py`
+- `packages/core/nodyra/engine/agent.py`
+- `packages/nodes/nodyra_nodes/ai_v2/agents.py`
 
 `AgentResumeInput` and `AgentActionResponse` now include:
 
@@ -287,7 +287,7 @@ The Agent node now uses this resumed flag when producing later
 
 File changed:
 
-- `packages/nodes/noodle_nodes/ai_v2/agents.py`
+- `packages/nodes/nodyra_nodes/ai_v2/agents.py`
 
 The tool instruction system message now includes:
 
@@ -307,7 +307,7 @@ could call the tool with `{}` even though `command` was required.
 
 File changed:
 
-- `packages/nodes/noodle_nodes/ai_v2/agents.py`
+- `packages/nodes/nodyra_nodes/ai_v2/agents.py`
 
 If the final model response is empty, `{}`, or `[]`, and no parser is connected,
 the agent now falls back to the last tool result.
@@ -360,10 +360,10 @@ appears on the clicked button.
 
 Files changed:
 
-- `packages/core/noodle/ai_runtime.py`
-- `packages/core/noodle/engine/agent.py`
-- `packages/nodes/noodle_nodes/ai_v2/agents.py`
-- `packages/nodes/noodle_nodes/ai_v2/providers/openai.py`
+- `packages/core/nodyra/ai_runtime.py`
+- `packages/core/nodyra/engine/agent.py`
+- `packages/nodes/nodyra_nodes/ai_v2/agents.py`
+- `packages/nodes/nodyra_nodes/ai_v2/providers/openai.py`
 
 Fixes applied after reviewing the approval/resume flow:
 
@@ -513,11 +513,11 @@ and Plotly chunks. That warning is not introduced by these changes.
 
 | Area | File |
 | --- | --- |
-| Agent node | `packages/nodes/noodle_nodes/ai_v2/agents.py` |
-| Runtime types | `packages/core/noodle/ai_runtime.py` |
-| Engine tool dispatch | `packages/core/noodle/engine/agent.py` |
-| Tool-mode adapter | `packages/core/noodle/node_tool.py` |
-| Tool-mode execution hook | `packages/core/noodle/engine/node_exec.py` |
+| Agent node | `packages/nodes/nodyra_nodes/ai_v2/agents.py` |
+| Runtime types | `packages/core/nodyra/ai_runtime.py` |
+| Engine tool dispatch | `packages/core/nodyra/engine/agent.py` |
+| Tool-mode adapter | `packages/core/nodyra/node_tool.py` |
+| Tool-mode execution hook | `packages/core/nodyra/engine/node_exec.py` |
 | Approval API schema | `apps/api/app/schemas.py` |
 | Approval decision route | `apps/api/app/routers/runs.py` |
 | Approval resume | `apps/api/app/services/run_resume.py` |

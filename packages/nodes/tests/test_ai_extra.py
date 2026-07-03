@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from noodle_nodes.ai_extra import pinecone_query, pinecone_upsert
-from noodle_nodes.http_security import UnsafeHttpTargetError
+from nodyra_nodes.ai_extra import pinecone_query, pinecone_upsert
+from nodyra_nodes.http_security import UnsafeHttpTargetError
 
 
 def test_pinecone_query_rejects_private_index_host() -> None:

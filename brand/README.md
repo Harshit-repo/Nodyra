@@ -1,18 +1,18 @@
-# Noodle — brand assets
+# Nodyra — brand assets
 
-Generated brand kit for the Noodle workflow-automation platform.
+Generated brand kit for the Nodyra workflow-automation platform.
 
 ## Aesthetic direction
 
 The **`homepage/`** matches the live product theme (`apps/web/src/index.css`) verbatim:
 **black & blue, dark dashboard.** Near-black background with subtle blue radial glows,
-a blue accent (`#4c9eff` → `#79b6ff` gradient), and the app's own noodle-strand logo.
+a blue accent (`#4c9eff` → `#79b6ff` gradient), and the app's own nodyra-strand logo.
 Amber (`#ffd479`) appears only on expression (ƒx) fields, exactly as in the editor.
 Fonts: **Bricolage Grotesque** (display) · **Hanken Grotesk** (body) · **IBM Plex Mono** (code).
 
 The standalone **`icons/`** kit explores a warmer alternate "paper & ink" direction
 (amber/coral on wheat) — kept for reference. The unifying motif across both is **the
-noodle-strand that doubles as a workflow edge**.
+nodyra-strand that doubles as a workflow edge**.
 
 ## Palette — homepage (matches the app)
 
@@ -41,9 +41,9 @@ noodle-strand that doubles as a workflow edge**.
 brand/
   icons/
     connector-curl.svg   ★ primary mark — two ports joined by a curling strand
-    noodle-n.svg           monoline lowercase "n" as one strand, port-capped
+    nodyra-n.svg           monoline lowercase "n" as one strand, port-capped
     knotted-strand.svg     strand threading through three step-nodes
-    squiggle-node.svg      a node with a wavy noodle tail (minimal)
+    squiggle-node.svg      a node with a wavy nodyra tail (minimal)
     bowl-flow.svg          ramen bowl whose steam branches into a flow (avatar)
     favicon.svg            bolded strand on an ink tile, legible to 16px
     index.html             icon showcase — marks, dark variants, scale test, palette
@@ -69,7 +69,7 @@ start brand\homepage\index.html
   `currentColor`.
 - The homepage hero has an interactive **Inspector ⇄ Python** toggle — the core
   differentiator demo. It auto-plays once on load to hint interactivity.
-- All copy positions Noodle on its own merits (Python-native execution), not as a
+- All copy positions Nodyra on its own merits (Python-native execution), not as a
   clone of any other tool.
 - If you adopt a distinct product brand (see the name/trademark notes), the
   wordmark in nav/footer is the only text to swap.

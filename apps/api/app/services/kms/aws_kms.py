@@ -3,7 +3,7 @@
 Uses boto3 which picks up credentials from the standard chain:
 environment variables (``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``),
 instance IAM role, or credential file.  No explicit AWS auth config is needed
-in Noodle settings — document as "requires AWS credentials in environment or
+in Nodyra settings — document as "requires AWS credentials in environment or
 IAM role attached to the instance."
 
 The provider base64-encodes the raw binary ``CiphertextBlob`` so that the

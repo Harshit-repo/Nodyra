@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from noodle_nodes.integrations_v2.providers.filesystem_triggers.triggers import (
+from nodyra_nodes.integrations_v2.providers.filesystem_triggers.triggers import (
     _matches_patterns,
     poll_file_watcher,
 )
-from noodle_nodes.integrations_v2.registry import is_registered_provider_trigger
-from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext
+from nodyra_nodes.integrations_v2.registry import is_registered_provider_trigger
+from nodyra_nodes.integrations_v2.specs import ProviderTriggerPollContext
 
 
 def _ctx(params: dict, cursor: dict | None = None) -> ProviderTriggerPollContext:

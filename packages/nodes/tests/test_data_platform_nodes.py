@@ -11,10 +11,10 @@ from unittest.mock import MagicMock, patch
 import pyarrow.dataset  # ensure loaded before any sys.modules patching  # noqa: F401
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, current_node_id
-from noodle_nodes.data_platform_nodes import (
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id
+from nodyra_nodes.data_platform_nodes import (
     bigquery_query,
     dbt_cloud_trigger_job,
     mlflow_log_artifact,
@@ -67,7 +67,7 @@ def test_snowflake_query_returns_dataset(store_ctx) -> None:
             query="SELECT id, name FROM users",
         )
 
-    assert result.get("__noodle_dataset__") is True
+    assert result.get("__nodyra_dataset__") is True
     assert result["row_count"] == 2
 
 
@@ -140,7 +140,7 @@ def test_bigquery_query_returns_dataset(store_ctx) -> None:
             query="SELECT project, cost FROM billing",
         )
 
-    assert result.get("__noodle_dataset__") is True
+    assert result.get("__nodyra_dataset__") is True
     assert result["row_count"] == 2
 
 
@@ -294,7 +294,7 @@ def test_mlflow_log_artifact_with_dataset_ref(tmp_path: Path, store_ctx) -> None
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from noodle_nodes.file_nodes import read_parquet_file
+    from nodyra_nodes.file_nodes import read_parquet_file
 
     p = tmp_path / "data.parquet"
     pq.write_table(pa.table({"x": [1, 2]}), str(p))

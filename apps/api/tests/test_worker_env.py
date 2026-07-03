@@ -44,40 +44,40 @@ def test_required_os_vars_pass_through(monkeypatch):
     assert env["PATH"] == "/usr/bin"
     # Always set explicitly so the runtime applies the same per-node default
     # as the in-process engine.
-    assert "NOODLE_CODE_NODE_TIMEOUT_SECONDS" in env
+    assert "NODYRA_CODE_NODE_TIMEOUT_SECONDS" in env
 
 
-def test_noodle_prefixed_vars_pass_through(monkeypatch):
-    monkeypatch.setenv("NOODLE_CUSTOM_FLAG", "1")
+def test_nodyra_prefixed_vars_pass_through(monkeypatch):
+    monkeypatch.setenv("NODYRA_CUSTOM_FLAG", "1")
     env = _worker_env()
-    assert env["NOODLE_CUSTOM_FLAG"] == "1"
+    assert env["NODYRA_CUSTOM_FLAG"] == "1"
 
 
 def test_egress_default_blocks_private_in_multi_tenant(monkeypatch):
     """SEC-3: hosted multi-tenant blocks private egress by default so a tenant
     cannot reach internal services or cloud metadata."""
-    monkeypatch.delenv("NOODLE_ALLOW_PRIVATE_EGRESS", raising=False)
+    monkeypatch.delenv("NODYRA_ALLOW_PRIVATE_EGRESS", raising=False)
     monkeypatch.setattr(_rp.settings, "multi_tenancy_enabled", True)
     env = _worker_env()
-    assert env["NOODLE_ALLOW_PRIVATE_EGRESS"] == "0"
+    assert env["NODYRA_ALLOW_PRIVATE_EGRESS"] == "0"
 
 
 def test_egress_default_allows_private_in_single_tenant(monkeypatch):
     """SEC-3: single-tenant self-hosted trusts its own network, so internal
     targets (Ollama on localhost, a VPC database, self-hosted GitLab) work
     out of the box."""
-    monkeypatch.delenv("NOODLE_ALLOW_PRIVATE_EGRESS", raising=False)
+    monkeypatch.delenv("NODYRA_ALLOW_PRIVATE_EGRESS", raising=False)
     monkeypatch.setattr(_rp.settings, "multi_tenancy_enabled", False)
     env = _worker_env()
-    assert env["NOODLE_ALLOW_PRIVATE_EGRESS"] == "1"
+    assert env["NODYRA_ALLOW_PRIVATE_EGRESS"] == "1"
 
 
 def test_explicit_egress_env_overrides_deployment_default(monkeypatch):
     """SEC-3: an operator can pin the policy regardless of deployment model."""
     monkeypatch.setattr(_rp.settings, "multi_tenancy_enabled", True)
-    monkeypatch.setenv("NOODLE_ALLOW_PRIVATE_EGRESS", "1")
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "1")
     env = _worker_env()
-    assert env["NOODLE_ALLOW_PRIVATE_EGRESS"] == "1"
+    assert env["NODYRA_ALLOW_PRIVATE_EGRESS"] == "1"
 
 
 def test_allowlist_is_case_insensitive_for_windows_names(monkeypatch):

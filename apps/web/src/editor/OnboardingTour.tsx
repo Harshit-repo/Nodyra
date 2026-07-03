@@ -106,7 +106,7 @@ export function OnboardingTour() {
         setTargetNotFound(false);
         return;
       }
-      el.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "center" });
+      el.scrollIntoView?.({ behavior: "instant" as ScrollBehavior, block: "center" });
     }
     pollCountRef.current += 1;
     if (pollCountRef.current < 120) {

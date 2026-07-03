@@ -78,11 +78,12 @@ import type {
 } from "./types";
 
 const BASE = "/api";
-const TOKEN_KEY = "noodle_token";
-const USER_KEY = "noodle_user";
-const ORG_KEY = "noodle_org";
+const TOKEN_KEY = "nodyra_token";
+const LEGACY_TOKEN_KEY = "noodle_token";
+const USER_KEY = "nodyra_user";
+const ORG_KEY = "nodyra_org";
 // Must match settings.csrf_cookie_name and settings.csrf_header_name defaults.
-const CSRF_COOKIE_NAME = "noodle_csrf";
+const CSRF_COOKIE_NAME = "nodyra_csrf";
 const CSRF_HEADER_NAME = "X-CSRF-Token";
 
 function _getCookie(name: string): string | null {
@@ -101,11 +102,23 @@ export function setOrgId(orgId: string | null): void {
 }
 
 export function getToken(): string | null {
-  return safeGetItem(TOKEN_KEY);
+  const current = safeGetItem(TOKEN_KEY);
+  if (current) return current;
+  const legacy = safeGetItem(LEGACY_TOKEN_KEY);
+  if (legacy) {
+    safeSetItem(TOKEN_KEY, legacy);
+    safeRemoveItem(LEGACY_TOKEN_KEY);
+  }
+  return legacy;
 }
 export function setToken(token: string | null): void {
-  if (token) safeSetItem(TOKEN_KEY, token);
-  else safeRemoveItem(TOKEN_KEY);
+  if (token) {
+    safeSetItem(TOKEN_KEY, token);
+    safeRemoveItem(LEGACY_TOKEN_KEY);
+  } else {
+    safeRemoveItem(TOKEN_KEY);
+    safeRemoveItem(LEGACY_TOKEN_KEY);
+  }
 }
 export function getUser(): UserInfo | null {
   const raw = safeGetItem(USER_KEY);
@@ -949,7 +962,7 @@ export const api = {
       { method: "POST", body: JSON.stringify({}) },
     ),
 
-  resolveGithubConflict: (workflowId: string, side: "noodle" | "github"): Promise<void> =>
+  resolveGithubConflict: (workflowId: string, side: "nodyra" | "github"): Promise<void> =>
     request<void>(`/workflows/${workflowId}/github-conflict/resolve`, {
       method: "POST",
       body: JSON.stringify({ side }),

@@ -12,9 +12,9 @@ import sys
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - importing registers the node
-from noodle.sdk import registry
-from noodle_nodes.system import _coerce_env_vars, _resolve_shell_argv, execute_command
+import nodyra_nodes  # noqa: F401 - importing registers the node
+from nodyra.sdk import registry
+from nodyra_nodes.system import _coerce_env_vars, _resolve_shell_argv, execute_command
 
 ON_WINDOWS = sys.platform == "win32"
 

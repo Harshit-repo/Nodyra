@@ -6,10 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle.artifacts import LocalArtifactStore, is_artifact_ref
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
-from noodle.sdk import registry
+from nodyra.artifacts import LocalArtifactStore, is_artifact_ref
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
+from nodyra.sdk import registry
 
 
 @pytest.fixture()
@@ -35,7 +35,7 @@ def _make_fake_openai(content: str = "{}"):
 # ---------------------------------------------------------------------------
 
 def test_registry_loads_without_heavy_packages() -> None:
-    import noodle_nodes.rag_lifecycle  # noqa: F401
+    import nodyra_nodes.rag_lifecycle  # noqa: F401
     node_ids = {m.id for m in registry.manifests()}
     assert "document_chunk" in node_ids
     assert "rag_answer_eval" in node_ids
@@ -73,7 +73,7 @@ _LONG_DOC = (
 
 
 def test_document_chunk_fixed_size(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import document_chunk
+    from nodyra_nodes.rag_lifecycle import document_chunk
     rows = [{"id": 1, "text": _LONG_DOC}]
     result = document_chunk(
         input=rows,
@@ -89,7 +89,7 @@ def test_document_chunk_fixed_size(store_ctx) -> None:
 
 
 def test_document_chunk_sentence(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import document_chunk
+    from nodyra_nodes.rag_lifecycle import document_chunk
     rows = [{"text": "First sentence. Second sentence! Third sentence?"}]
     result = document_chunk(
         input=rows,
@@ -103,7 +103,7 @@ def test_document_chunk_sentence(store_ctx) -> None:
 
 
 def test_document_chunk_paragraph(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import document_chunk
+    from nodyra_nodes.rag_lifecycle import document_chunk
     rows = [{"text": "Paragraph one.\n\nParagraph two.\n\nParagraph three."}]
     result = document_chunk(
         input=rows,
@@ -117,7 +117,7 @@ def test_document_chunk_paragraph(store_ctx) -> None:
 
 
 def test_document_chunk_recursive(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import document_chunk
+    from nodyra_nodes.rag_lifecycle import document_chunk
     rows = [{"text": _LONG_DOC}]
     result = document_chunk(
         input=rows,
@@ -131,7 +131,7 @@ def test_document_chunk_recursive(store_ctx) -> None:
 
 
 def test_document_chunk_semantic_boundary(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import document_chunk
+    from nodyra_nodes.rag_lifecycle import document_chunk
     rows = [
         {
             "text": (
@@ -152,7 +152,7 @@ def test_document_chunk_semantic_boundary(store_ctx) -> None:
 
 
 def test_document_chunk_preserves_metadata(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import document_chunk
+    from nodyra_nodes.rag_lifecycle import document_chunk
     rows = [
         {
             "text": "Some text here that is long enough for a chunk.",
@@ -170,7 +170,7 @@ def test_document_chunk_preserves_metadata(store_ctx) -> None:
 
 
 def test_document_chunk_multiple_docs(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import document_chunk
+    from nodyra_nodes.rag_lifecycle import document_chunk
     rows = [
         {"text": _LONG_DOC, "id": 1},
         {"text": "Short doc.", "id": 2},
@@ -187,7 +187,7 @@ def test_document_chunk_multiple_docs(store_ctx) -> None:
 
 
 def test_document_chunk_min_size_drops_short(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import document_chunk
+    from nodyra_nodes.rag_lifecycle import document_chunk
     rows = [{"text": "Hello. This is a much longer sentence with lots of words in it. Short."}]
     result_no_min = document_chunk(
         input=rows, text_column="text", strategy="sentence", min_chunk_size=0
@@ -204,14 +204,14 @@ def test_document_chunk_min_size_drops_short(store_ctx) -> None:
 
 
 def test_document_chunk_missing_column_raises(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import document_chunk
+    from nodyra_nodes.rag_lifecycle import document_chunk
     rows = [{"content": "text here"}]
     with pytest.raises(ValueError, match="not found"):
         document_chunk(input=rows, text_column="text")
 
 
 def test_document_chunk_empty_input_raises(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import document_chunk
+    from nodyra_nodes.rag_lifecycle import document_chunk
     with pytest.raises(ValueError):
         document_chunk(input=[], text_column="text")
 
@@ -238,7 +238,7 @@ def _rag_rows():
 
 
 def test_rag_answer_eval_exact_match(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_answer_eval
+    from nodyra_nodes.rag_lifecycle import rag_answer_eval
     rows = [
         {"answer": "Paris", "expected": "paris"},
         {"answer": "London", "expected": "berlin"},
@@ -250,13 +250,13 @@ def test_rag_answer_eval_exact_match(store_ctx) -> None:
         expected_column="expected",
         case_sensitive=False,
     )
-    assert result["__noodle_eval_result__"] is True
+    assert result["__nodyra_eval_result__"] is True
     assert result["summary"]["n_passed"] == 1
     assert result["summary"]["accuracy"] == 0.5
 
 
 def test_rag_answer_eval_contains_answer(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_answer_eval
+    from nodyra_nodes.rag_lifecycle import rag_answer_eval
     rows = _rag_rows()
     result = rag_answer_eval(
         input=rows,
@@ -269,7 +269,7 @@ def test_rag_answer_eval_contains_answer(store_ctx) -> None:
 
 
 def test_rag_answer_eval_factual_overlap(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_answer_eval
+    from nodyra_nodes.rag_lifecycle import rag_answer_eval
     rows = _rag_rows()
     result = rag_answer_eval(
         input=rows,
@@ -283,7 +283,7 @@ def test_rag_answer_eval_factual_overlap(store_ctx) -> None:
 
 
 def test_rag_answer_eval_missing_answer_column(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_answer_eval
+    from nodyra_nodes.rag_lifecycle import rag_answer_eval
     with pytest.raises(ValueError, match="not found"):
         rag_answer_eval(input=[{"text": "test"}], mode="exact_match")
 
@@ -293,7 +293,7 @@ def test_rag_answer_eval_missing_answer_column(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_rag_answer_eval_llm_judge(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_answer_eval
+    from nodyra_nodes.rag_lifecycle import rag_answer_eval
     fake = _make_fake_openai('{"score": 4, "reason": "Mostly correct."}')
     rows = _rag_rows()
     with patch.dict(sys.modules, {"openai": fake}):
@@ -313,7 +313,7 @@ def test_rag_answer_eval_llm_judge(store_ctx) -> None:
 
 
 def test_rag_answer_eval_llm_judge_missing_key(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_answer_eval
+    from nodyra_nodes.rag_lifecycle import rag_answer_eval
     fake = _make_fake_openai()
     with patch.dict(sys.modules, {"openai": fake}):
         with pytest.raises(ValueError, match="openai_api_key is required"):
@@ -325,7 +325,7 @@ def test_rag_answer_eval_llm_judge_missing_key(store_ctx) -> None:
 
 
 def test_rag_answer_eval_llm_judge_rejects_large_dataset(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_answer_eval
+    from nodyra_nodes.rag_lifecycle import rag_answer_eval
 
     with pytest.raises(ValueError, match="row count"):
         rag_answer_eval(
@@ -343,7 +343,7 @@ def test_rag_answer_eval_llm_judge_rejects_large_dataset(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_rag_chunking_experiment_basic(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_chunking_experiment
+    from nodyra_nodes.rag_lifecycle import rag_chunking_experiment
     rows = [
         {"text": _LONG_DOC},
         {"text": "Short document."},
@@ -362,7 +362,7 @@ def test_rag_chunking_experiment_basic(store_ctx) -> None:
 
 
 def test_rag_chunking_experiment_max_documents(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_chunking_experiment
+    from nodyra_nodes.rag_lifecycle import rag_chunking_experiment
     rows = [{"text": f"Document {i}. " * 10} for i in range(20)]
     result = rag_chunking_experiment(
         input=rows,
@@ -375,7 +375,7 @@ def test_rag_chunking_experiment_max_documents(store_ctx) -> None:
 
 
 def test_rag_chunking_experiment_missing_column(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_chunking_experiment
+    from nodyra_nodes.rag_lifecycle import rag_chunking_experiment
     with pytest.raises(ValueError, match="not found"):
         rag_chunking_experiment(input=[{"content": "text"}], text_column="text")
 
@@ -385,7 +385,7 @@ def test_rag_chunking_experiment_missing_column(store_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 def test_rag_context_relevance_keyword_overlap_relevant(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_context_relevance
+    from nodyra_nodes.rag_lifecycle import rag_context_relevance
     rows = [
         {
             "question": "What is gradient descent?",
@@ -404,14 +404,14 @@ def test_rag_context_relevance_keyword_overlap_relevant(store_ctx) -> None:
         output_column="is_relevant",
         overlap_threshold=0.3,
     )
-    assert result["__noodle_eval_result__"] is True
+    assert result["__nodyra_eval_result__"] is True
     assert is_dataset_ref(result["rows"])
     assert result["summary"]["n_relevant"] >= 1
     assert result["summary"]["n_relevant"] < 2  # second row should be irrelevant
 
 
 def test_rag_context_relevance_all_relevant(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_context_relevance
+    from nodyra_nodes.rag_lifecycle import rag_context_relevance
     rows = [
         {
             "question": "What is a transformer?",
@@ -429,7 +429,7 @@ def test_rag_context_relevance_all_relevant(store_ctx) -> None:
 
 
 def test_rag_context_relevance_llm_mode(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_context_relevance
+    from nodyra_nodes.rag_lifecycle import rag_context_relevance
     fake = _make_fake_openai('{"relevant": true, "reason": "Directly addresses the question."}')
     rows = [{"question": "What is ML?", "context": "ML trains models from data."}]
     with patch.dict(sys.modules, {"openai": fake}):
@@ -444,7 +444,7 @@ def test_rag_context_relevance_llm_mode(store_ctx) -> None:
 
 
 def test_rag_context_relevance_llm_rejects_large_dataset(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_context_relevance
+    from nodyra_nodes.rag_lifecycle import rag_context_relevance
 
     with pytest.raises(ValueError, match="row count"):
         rag_context_relevance(
@@ -458,7 +458,7 @@ def test_rag_context_relevance_llm_rejects_large_dataset(store_ctx) -> None:
 
 
 def test_rag_context_relevance_missing_column(store_ctx) -> None:
-    from noodle_nodes.rag_lifecycle import rag_context_relevance
+    from nodyra_nodes.rag_lifecycle import rag_context_relevance
     with pytest.raises(ValueError, match="not found"):
         rag_context_relevance(
             input=[{"question": "test"}],

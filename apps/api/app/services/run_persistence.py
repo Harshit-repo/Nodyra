@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models import NodeRun, Run, RunApproval, RunEvent
 from app.services import queue as run_queue
-from noodle.serialization import truncate_serialized_value
+from nodyra.serialization import truncate_serialized_value
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +229,7 @@ def _cap_logs(logs: Any, cap: int | None = None) -> Any:
 def _contains_unrestorable_object(value: Any) -> bool:
     if isinstance(value, dict):
         if (
-            value.get("__noodle_typed__") is True
+            value.get("__nodyra_typed__") is True
             and value.get("type") == "object"
             and value.get("restorable") is False
         ):

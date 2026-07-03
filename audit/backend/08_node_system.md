@@ -1,10 +1,10 @@
 # 08 — Node System & Custom-Node Contract
 
-Independent review, 2026-06-16. Files: `packages/core/noodle/sdk.py`,
-`packages/core/noodle/models.py` (manifest/port/param specs),
+Independent review, 2026-06-16. Files: `packages/core/nodyra/sdk.py`,
+`packages/core/nodyra/models.py` (manifest/port/param specs),
 `apps/api/app/routers/code_modules.py`, `apps/api/app/services/runner.py`
-(in-process registration path), `packages/runtime/noodle_runtime/server.py`,
-`packages/nodes/noodle_nodes/` (86 files, ~34k LOC).
+(in-process registration path), `packages/runtime/nodyra_runtime/server.py`,
+`packages/nodes/nodyra_nodes/` (86 files, ~34k LOC).
 
 ## What is solid (verified)
 - **Node = decorated Python function**: `@node` derives the manifest from the
@@ -18,7 +18,7 @@ Independent review, 2026-06-16. Files: `packages/core/noodle/sdk.py`,
     palette/preview. Verified: no exec-path caller in the API for manifests.
   - **Runtime registration** (`register_module_functions`) execs the module and
     is called only in the execution plane: the isolated runtime
-    (`noodle_runtime/server.py`) and the runner's **in-process branch**
+    (`nodyra_runtime/server.py`) and the runner's **in-process branch**
     (`runner.py:1028`, the `else` of the subprocess/sandbox path).
 - **Namespacing & isolation**: user node ids are `user:<module_id>:<name>`;
   `_suppress_registration` ContextVar stops a bare `@node` in uploaded code from

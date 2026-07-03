@@ -78,7 +78,7 @@ async def create_mcp_connection(
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
-    from noodle_nodes.http_security import assert_public_http_url
+    from nodyra_nodes.http_security import assert_public_http_url
 
     url = str(body.get("url", "")).rstrip("/")
     assert_public_http_url(url, context="MCP connection")
@@ -151,7 +151,7 @@ async def update_mcp_connection(
     if "name" in body:
         conn.name = str(body["name"])
     if "url" in body:
-        from noodle_nodes.http_security import assert_public_http_url
+        from nodyra_nodes.http_security import assert_public_http_url
 
         new_url = str(body["url"]).rstrip("/")
         assert_public_http_url(new_url, context="MCP connection")

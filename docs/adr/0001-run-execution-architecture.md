@@ -6,7 +6,7 @@ Date: 2026-07-03
 
 ## Context
 
-Noodle has one visual editor and API control plane, while workflow runs must
+Nodyra has one visual editor and API control plane, while workflow runs must
 survive process death. Execution must support three isolation postures:
 trusted subprocesses, hardened containers, and remote runner pools.
 

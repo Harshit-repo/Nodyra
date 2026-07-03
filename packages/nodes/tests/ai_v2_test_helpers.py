@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from noodle.ai_runtime import (
+from nodyra.ai_runtime import (
     ChatModelAdapter,
     ChatRequest,
     ChatResponse,

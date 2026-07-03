@@ -7,13 +7,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle.ai_runtime import (
+from nodyra.ai_runtime import (
     AIMessage,
     ChatRequest,
     EmbeddingRequest,
     MessageRole,
 )
-from noodle_nodes.ollama_nodes import (
+from nodyra_nodes.ollama_nodes import (
     OllamaChatAdapter,
     OllamaEmbeddingAdapter,
     ollama_chat_model,

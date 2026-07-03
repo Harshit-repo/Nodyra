@@ -27,7 +27,7 @@ const env = {
   AUTH_REQUIRED: "true",
   // Use a non-default key so the API's production security checks remain
   // enabled while this isolated, throwaway stack starts successfully.
-  SECRET_KEY: "noodle-e2e-only-secret-key-2026-do-not-use-in-production",
+  SECRET_KEY: "nodyra-e2e-only-secret-key-2026-do-not-use-in-production",
   // Closed port: the broker's startup ping fails and it falls back to the
   // in-process transport, so e2e needs no Redis. ("" would crash the eager
   // redis.from_url parse in app/redis_client.py.)

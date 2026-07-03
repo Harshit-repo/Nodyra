@@ -18,11 +18,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-NODES_ROOT = Path(__file__).resolve().parents[1] / "noodle_nodes"
+NODES_ROOT = Path(__file__).resolve().parents[1] / "nodyra_nodes"
 
 # Raw outbound HTTP call pattern (requests.get/post/put/delete/patch/request/head).
 _RAW_REQUEST_RE = re.compile(r"\brequests\.(get|post|put|delete|patch|request|head)\(")
-_GUARD_IMPORT_RE = re.compile(r"from noodle_nodes\.http_security import|import http_security")
+_GUARD_IMPORT_RE = re.compile(r"from nodyra_nodes\.http_security import|import http_security")
 
 # Modules permitted to call requests directly: their request host is a fixed
 # first-party endpoint (no user-controlled host), or a model endpoint the user

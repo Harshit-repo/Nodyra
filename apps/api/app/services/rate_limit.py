@@ -95,7 +95,7 @@ async def _allow_redis(key: str, limit: int, window_seconds: int) -> bool | None
     global _redis_degraded
     import app.redis_client as _rc
 
-    rl_key = f"noodle:rl:{key}"
+    rl_key = f"nodyra:rl:{key}"
     try:
         count = await _rc.redis_client.eval(_RL_LUA, 1, rl_key, window_seconds)
         if _redis_degraded:

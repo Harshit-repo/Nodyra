@@ -1,6 +1,6 @@
-# Build Noodle workflows with Claude (or any MCP agent)
+# Build Nodyra workflows with Claude (or any MCP agent)
 
-Noodle ships a full MCP server: 61 tools covering incremental graph editing
+Nodyra ships a full MCP server: 61 tools covering incremental graph editing
 (add/patch/remove nodes and edges with optimistic concurrency), validation,
 publishing, runs, schedules, environments, and run approvals. Point an
 MCP-capable agent at your instance and it can build, test, and deploy
@@ -17,7 +17,7 @@ Settings -> API tokens -> New token. Scopes: `workflow:read`, `workflow:write`,
 **Claude Code:**
 
 ```bash
-claude mcp add noodle --transport http http://localhost:8000/mcp \
+claude mcp add nodyra --transport http http://localhost:8000/mcp \
   --header "Authorization: Bearer ndpat_YOUR_TOKEN"
 ```
 
@@ -26,7 +26,7 @@ claude mcp add noodle --transport http http://localhost:8000/mcp \
 ```json
 {
   "mcpServers": {
-    "noodle": {
+    "nodyra": {
       "type": "http",
       "url": "http://localhost:8000/mcp",
       "headers": { "Authorization": "Bearer ndpat_YOUR_TOKEN" }
@@ -37,7 +37,7 @@ claude mcp add noodle --transport http http://localhost:8000/mcp \
 
 ## 3. Try it
 
-Ask the agent: "List my Noodle workflows", then "Create a workflow that fetches
+Ask the agent: "List my Nodyra workflows", then "Create a workflow that fetches
 https://api.github.com/repos/astral-sh/uv, extracts the star count with a Code
 node, and runs it". Useful tool names: `list_workflows`, `create_workflow`,
 `add_node`, `add_edge`, `validate_workflow_graph`, `run_workflow`, `get_run`.

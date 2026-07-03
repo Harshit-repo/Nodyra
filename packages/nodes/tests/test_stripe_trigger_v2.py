@@ -6,10 +6,10 @@ import hmac
 import json
 import time
 
-import noodle_nodes  # noqa: F401
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.providers.stripe import triggers as stripe_triggers
-from noodle_nodes.integrations_v2.specs import ProviderTriggerRequest
+import nodyra_nodes  # noqa: F401
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.providers.stripe import triggers as stripe_triggers
+from nodyra_nodes.integrations_v2.specs import ProviderTriggerRequest
 
 
 def _stripe_signature_header(

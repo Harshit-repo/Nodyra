@@ -1,4 +1,4 @@
-# Noodle UI Agent Coordination Log
+# Nodyra UI Agent Coordination Log
 
 ## Session: UI-Agent-B (claude-sonnet-4.6)
 Started: 2026-05-30T09:34:56.267241

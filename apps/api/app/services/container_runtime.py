@@ -2,7 +2,7 @@
 
 Per-env image builds with RD-2 package validation, schema-versioned image
 tags, the isolation-runtime probe, and the hardened ``containers.run``
-keyword set live here so a hardening fix lands on every container Noodle
+keyword set live here so a hardening fix lands on every container Nodyra
 ever spawns. No DB access; safe to import from worker_main.
 """
 
@@ -65,7 +65,7 @@ def _validate_python_version(version: str) -> str:
     return v
 
 
-# Spawn kwargs every Noodle-launched container gets. Resource ceilings are
+# Spawn kwargs every Nodyra-launched container gets. Resource ceilings are
 # overridable (per runner-pool provider_config, later per org_limits); the
 # security floor — cap_drop / no-new-privileges / read-only rootfs — is not.
 _OVERRIDABLE = ("mem_limit", "nano_cpus", "pids_limit", "tmpfs", "network", "ulimits")
@@ -158,7 +158,7 @@ def attach_raw_socket(sock: Any) -> Any:
 
 def image_tag_for(env_payload: dict) -> str:
     return (
-        f"noodle-env:{env_payload.get('id', 'default')}"
+        f"nodyra-env:{env_payload.get('id', 'default')}"
         f"-{env_payload.get('packages_hash', 'latest')}"
         f"-{IMAGE_SCHEMA_VERSION}"
     )
@@ -194,7 +194,7 @@ def detect_runtime(client: Any, configured: str) -> str:
     return "runc"
 
 
-# The noodle packages are not published to PyPI: the base image installs them
+# The nodyra packages are not published to PyPI: the base image installs them
 # from the workspace source, shipped to the daemon in the build context. Env
 # images are thin layers (extra pip packages only) on top of this base.
 _BASE_PACKAGES = ("core", "nodes", "runtime")
@@ -202,7 +202,7 @@ _TAR_EXCLUDE = ("__pycache__", ".pytest_cache", ".venv", ".git", "node_modules")
 
 
 def base_image_tag(python_version: str) -> str:
-    return f"noodle-runtime-base:{python_version}-{IMAGE_SCHEMA_VERSION}"
+    return f"nodyra-runtime-base:{python_version}-{IMAGE_SCHEMA_VERSION}"
 
 
 def _workspace_root() -> Path:
@@ -212,7 +212,7 @@ def _workspace_root() -> Path:
     root = Path(__file__).resolve().parents[4]
     if not (root / "packages" / "runtime" / "pyproject.toml").is_file():
         raise RuntimeError(
-            f"cannot locate the noodle workspace source under {root} — the "
+            f"cannot locate the nodyra workspace source under {root} — the "
             "sandbox base image is built from packages/{core,nodes,runtime}, "
             "which must ship alongside the worker"
         )
@@ -254,16 +254,16 @@ def ensure_base_image(client: Any, python_version: str) -> str:
 
     # Non-root: installs run as root, the runtime does not. HOME is /tmp at
     # runtime (tmpfs) because the rootfs — including /home — is read-only.
-    src = "/opt/noodle-src/packages"
+    src = "/opt/nodyra-src/packages"
     dockerfile = (
         f"FROM python:{python_version}-slim\n"
         "RUN pip install uv --quiet\n"
         f"COPY packages {src}\n"
         f"RUN uv pip install --system "
         + " ".join(f"{src}/{pkg}" for pkg in _BASE_PACKAGES) + "\n"
-        "RUN useradd --uid 65532 --create-home --shell /usr/sbin/nologin noodle\n"
-        "USER noodle\n"
-        'ENTRYPOINT ["python", "-u", "-m", "noodle_runtime"]\n'
+        "RUN useradd --uid 65532 --create-home --shell /usr/sbin/nologin nodyra\n"
+        "USER nodyra\n"
+        'ENTRYPOINT ["python", "-u", "-m", "nodyra_runtime"]\n'
     )
     context = _base_build_context(dockerfile, _workspace_root())
     client.images.build(fileobj=context, custom_context=True, tag=tag, rm=True)
@@ -288,7 +288,7 @@ def ensure_docker_image(client: Any, image_tag: str, env_payload: dict) -> None:
         dockerfile += (
             "USER root\n"
             f"RUN uv pip install --system {' '.join(packages)}\n"
-            "USER noodle\n"
+            "USER nodyra\n"
         )
 
     client.images.build(fileobj=io.BytesIO(dockerfile.encode()), tag=image_tag, rm=True)

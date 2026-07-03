@@ -6,7 +6,7 @@ import httpx
 
 API = "http://localhost:8000"
 
-TOKEN = os.environ.get("NOODLE_TOKEN", "REPLACE_WITH_YOUR_TOKEN")
+TOKEN = os.environ.get("NODYRA_TOKEN", "REPLACE_WITH_YOUR_TOKEN")
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 client = httpx.Client(timeout=10)

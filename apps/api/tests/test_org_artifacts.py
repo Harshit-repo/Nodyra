@@ -16,8 +16,8 @@ from app import models
 from app.config import settings
 from app.db import Base
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, install_org_filter
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import current_node_id
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import current_node_id
 
 
 def test_store_key_prefix_namespaces_writes(tmp_path):
@@ -195,7 +195,7 @@ async def test_persist_artifact_refs_stamps_non_default_run_org(client, monkeypa
             run_id,
             [
                 {
-                    "__noodle_artifact__": True,
+                    "__nodyra_artifact__": True,
                     "artifact_id": "art-orgx",
                     "run_id": run_id,
                     "node_id": "n1",

@@ -3,9 +3,9 @@ import logging
 
 import pytest
 
-from noodle.engine import GraphError, execute
-from noodle.models import Edge, GraphNode, NodeStatus, RunStatus, WorkflowGraph
-from noodle.sdk import NodeRegistry, node
+from nodyra.engine import GraphError, execute
+from nodyra.models import Edge, GraphNode, NodeStatus, RunStatus, WorkflowGraph
+from nodyra.sdk import NodeRegistry, node
 
 
 def _slow_code_for_default_timeout() -> int:
@@ -466,7 +466,7 @@ async def test_timeout_fails_a_slow_node() -> None:
 
 
 async def test_default_timeout_applies_to_code_nodes(monkeypatch) -> None:
-    import noodle.engine as engine_module
+    import nodyra.engine as engine_module
 
     reg = NodeRegistry()
     monkeypatch.setitem(engine_module.DEFAULT_NODE_TIMEOUTS, "code", 0.01)
@@ -512,8 +512,8 @@ async def test_branch_order_depends_on_insertion_not_position() -> None:
     appears first in ``graph.nodes`` must run first regardless of canvas
     coordinates or lexical id order.
     """
-    from noodle.engine import _topo_order
-    from noodle.models import Position
+    from nodyra.engine import _topo_order
+    from nodyra.models import Position
 
     def build(positions: dict[str, tuple[float, float]]) -> WorkflowGraph:
         return WorkflowGraph(
@@ -555,7 +555,7 @@ async def test_branch_order_depends_on_insertion_not_position() -> None:
 
 def test_worse_status_ranking() -> None:
     """error outranks waiting outranks success, regardless of argument order."""
-    from noodle.engine import _worse_status
+    from nodyra.engine import _worse_status
 
     assert _worse_status(RunStatus.success, RunStatus.waiting) is RunStatus.waiting
     assert _worse_status(RunStatus.waiting, RunStatus.success) is RunStatus.waiting
@@ -771,7 +771,7 @@ async def test_hooks_fire_on_lifecycle_triggers() -> None:
             if trigger:
                 hook_log.append((str(trigger), str(node_id)))
 
-    _HOOK_LOGGER = logging.getLogger("noodle.hooks")
+    _HOOK_LOGGER = logging.getLogger("nodyra.hooks")
     _HOOK_LOGGER.addHandler(_CaptureHookLogs())
     _HOOK_LOGGER.setLevel(logging.DEBUG)
     _HOOK_LOGGER.propagate = False

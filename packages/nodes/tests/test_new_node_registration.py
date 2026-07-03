@@ -12,9 +12,9 @@ from typing import Any
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.sdk import registry
-from noodle_nodes import ai_extra, cloud_devops, communication, llm, saas, storage
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.sdk import registry
+from nodyra_nodes import ai_extra, cloud_devops, communication, llm, saas, storage
 
 BRAND_NODE_IDS = {
     # Communication (Integrations)

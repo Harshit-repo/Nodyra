@@ -4,12 +4,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle_nodes.ai_extra import speech_to_text_file, text_to_speech_file
+from nodyra_nodes.ai_extra import speech_to_text_file, text_to_speech_file
 
 _FAKE_MP3 = b"ID3\x03\x00" + b"\x00" * 100  # fake MP3 bytes
 
 _AUDIO_REF = {
-    "__noodle_artifact__": True,
+    "__nodyra_artifact__": True,
     "version": 1,
     "artifact_id": "abc123",
     "run_id": "run1",
@@ -35,10 +35,10 @@ def test_tts_file_returns_artifact():
     mock_response.content = _FAKE_MP3
     mock_response.headers = {"content-type": "audio/mpeg"}
 
-    expected_ref = {"__noodle_artifact__": True, "artifact_id": "abc"}
+    expected_ref = {"__nodyra_artifact__": True, "artifact_id": "abc"}
 
-    with patch("noodle_nodes.ai_extra.requests.post", return_value=mock_response) as _mock_post, \
-         patch("noodle_nodes.ai_extra.write_bytes", return_value=expected_ref) as mock_write:
+    with patch("nodyra_nodes.ai_extra.requests.post", return_value=mock_response) as _mock_post, \
+         patch("nodyra_nodes.ai_extra.write_bytes", return_value=expected_ref) as mock_write:
         result = text_to_speech_file(credentials="sk-test", text="Hello world")
 
     mock_write.assert_called_once()
@@ -54,8 +54,8 @@ def test_tts_file_speed_param():
     mock_response.content = _FAKE_MP3
     mock_response.headers = {"content-type": "audio/mpeg"}
 
-    with patch("noodle_nodes.ai_extra.requests.post", return_value=mock_response) as mock_post, \
-         patch("noodle_nodes.ai_extra.write_bytes", return_value={}):
+    with patch("nodyra_nodes.ai_extra.requests.post", return_value=mock_response) as mock_post, \
+         patch("nodyra_nodes.ai_extra.write_bytes", return_value={}):
         text_to_speech_file(credentials="sk-test", text="Hello", speed=2.0)
 
     mock_post.assert_called_once()
@@ -70,8 +70,8 @@ def test_tts_file_cache_key_in_metadata():
     mock_response.content = _FAKE_MP3
     mock_response.headers = {"content-type": "audio/mpeg"}
 
-    with patch("noodle_nodes.ai_extra.requests.post", return_value=mock_response), \
-         patch("noodle_nodes.ai_extra.write_bytes", return_value={}) as mock_write:
+    with patch("nodyra_nodes.ai_extra.requests.post", return_value=mock_response), \
+         patch("nodyra_nodes.ai_extra.write_bytes", return_value={}) as mock_write:
         text_to_speech_file(credentials="sk-test", text="Hello", cache_key="greeting_v1")
 
     mock_write.assert_called_once()
@@ -85,8 +85,8 @@ def test_tts_file_raises_on_http_error():
     mock_response.status_code = 429
     mock_response.text = "rate limited"
 
-    with patch("noodle_nodes.ai_extra.requests.post", return_value=mock_response), \
-         patch("noodle_nodes.ai_extra.write_bytes"):
+    with patch("nodyra_nodes.ai_extra.requests.post", return_value=mock_response), \
+         patch("nodyra_nodes.ai_extra.write_bytes"):
         with pytest.raises(RuntimeError, match="HTTP 429"):
             text_to_speech_file(credentials="sk-test", text="Hello")
 
@@ -98,8 +98,8 @@ def test_tts_file_falls_back_to_wired_input():
     mock_response.content = _FAKE_MP3
     mock_response.headers = {"content-type": "audio/mpeg"}
 
-    with patch("noodle_nodes.ai_extra.requests.post", return_value=mock_response) as mock_post, \
-         patch("noodle_nodes.ai_extra.write_bytes", return_value={}):
+    with patch("nodyra_nodes.ai_extra.requests.post", return_value=mock_response) as mock_post, \
+         patch("nodyra_nodes.ai_extra.write_bytes", return_value={}):
         text_to_speech_file(input="Wired text", credentials="sk-test", text="")
 
     mock_post.assert_called_once()
@@ -118,8 +118,8 @@ def test_stt_file_transcribes_artifact():
     mock_response.status_code = 200
     mock_response.json.return_value = {"text": "Hello"}
 
-    with patch("noodle_nodes.ai_extra.read_artifact_bytes", return_value=b"audio") as _mock_read, \
-         patch("noodle_nodes.ai_extra.requests.post", return_value=mock_response):
+    with patch("nodyra_nodes.ai_extra.read_artifact_bytes", return_value=b"audio") as _mock_read, \
+         patch("nodyra_nodes.ai_extra.requests.post", return_value=mock_response):
         result = speech_to_text_file(input=_AUDIO_REF, credentials="sk-test")
 
     assert result == {"text": "Hello"}
@@ -129,7 +129,7 @@ def test_stt_file_rejects_non_audio_artifact():
     """Artifact ref with kind != 'audio' raises ValueError."""
     bad_ref = {**_AUDIO_REF, "kind": "binary"}
 
-    with patch("noodle_nodes.ai_extra.read_artifact_bytes", return_value=b"audio"):
+    with patch("nodyra_nodes.ai_extra.read_artifact_bytes", return_value=b"audio"):
         with pytest.raises(ValueError, match="audio artifact"):
             speech_to_text_file(input=bad_ref, credentials="sk-test")
 
@@ -138,7 +138,7 @@ def test_stt_file_size_guard():
     """Artifact exceeding 25 MB raises ValueError mentioning '25 MB'."""
     big_ref = {**_AUDIO_REF, "size_bytes": 30 * 1024 * 1024}
 
-    with patch("noodle_nodes.ai_extra.read_artifact_bytes", return_value=b"audio"):
+    with patch("nodyra_nodes.ai_extra.read_artifact_bytes", return_value=b"audio"):
         with pytest.raises(ValueError, match="25 MB"):
             speech_to_text_file(input=big_ref, credentials="sk-test")
 
@@ -155,8 +155,8 @@ def test_stt_file_sends_language_and_prompt():
     mock_response.status_code = 200
     mock_response.json.return_value = {"text": "Hola"}
 
-    with patch("noodle_nodes.ai_extra.read_artifact_bytes", return_value=b"audio"), \
-         patch("noodle_nodes.ai_extra.requests.post", return_value=mock_response) as mock_post:
+    with patch("nodyra_nodes.ai_extra.read_artifact_bytes", return_value=b"audio"), \
+         patch("nodyra_nodes.ai_extra.requests.post", return_value=mock_response) as mock_post:
         speech_to_text_file(
             input=_AUDIO_REF,
             credentials="sk-test",

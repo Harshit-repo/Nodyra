@@ -1,4 +1,4 @@
-# Noodle Production Code-Review Audit — 2026-06-14 (Opus pass)
+# Nodyra Production Code-Review Audit — 2026-06-14 (Opus pass)
 
 > **Purpose:** Pre-mortem + extensive, resumable, file-by-file production code review.
 > Branch: `feat/arch-program-phase5`.
@@ -103,20 +103,20 @@ scenario. (carry-over)
 | R-2 | `app/routers/deployments.py`×2, `workflows.py:369` (error_workflow_id) | 🔴 CRITICAL | MT exfiltration, armed by F-1 fix | ✅ **Fixed this session** (== F-4) |
 | R-3 | `app/services/unsafe_nodes.py` | 🟠 HIGH | New nodes bypass deploy safety gate (LFI/SSRF/port-scan) | ✅ **Fixed this session** |
 | R-9 | `app/routers/credentials.py` (oauth start+callback) | 🔴 CRITICAL | OAuth cred stamped/encrypted under DEFAULT_ORG_ID for all non-default orgs (wrong KEK + cross-tenant) | ✅ **Fixed this session** (new, was PM scenario 2) |
-| R-4 | `noodle_nodes/geospatial.py:550` | 🟡 MEDIUM | `not lat or not lon` rejects valid 0,0 (equator/meridian) | ✅ **Fixed this session** |
-| R-5 | `noodle_nodes/geospatial.py:316` | 🟡 MEDIUM | `shapefile_read` reads arbitrary local `path` | ✅ **Mitigated** (now gated via R-3 classifier) |
-| R-6 | `noodle_nodes/data_quality.py:721` | 🟢 LOW | `currency_normalize` mis-parses US thousands `1,000`→`1.0` | ✅ **Fixed in continuation** |
-| R-7 | `noodle_nodes/browser_automation.py` (sitemap_crawl) | 🟢 LOW | Re-fetches a sitemap before the `seen` check; dup queue entries | ✅ **Fixed in continuation** |
-| R-8 | `noodle_nodes/geospatial.py:446` | 🟢 LOW | `geospatial_distance` is O(n·m) over inputs capped at 100k each | ✅ **Fixed in continuation** |
+| R-4 | `nodyra_nodes/geospatial.py:550` | 🟡 MEDIUM | `not lat or not lon` rejects valid 0,0 (equator/meridian) | ✅ **Fixed this session** |
+| R-5 | `nodyra_nodes/geospatial.py:316` | 🟡 MEDIUM | `shapefile_read` reads arbitrary local `path` | ✅ **Mitigated** (now gated via R-3 classifier) |
+| R-6 | `nodyra_nodes/data_quality.py:721` | 🟢 LOW | `currency_normalize` mis-parses US thousands `1,000`→`1.0` | ✅ **Fixed in continuation** |
+| R-7 | `nodyra_nodes/browser_automation.py` (sitemap_crawl) | 🟢 LOW | Re-fetches a sitemap before the `seen` check; dup queue entries | ✅ **Fixed in continuation** |
+| R-8 | `nodyra_nodes/geospatial.py:446` | 🟢 LOW | `geospatial_distance` is O(n·m) over inputs capped at 100k each | ✅ **Fixed in continuation** |
 | R-10 | `apps/web/src/EditorPage.tsx:689` (`triggerExport`) | 🟡 MEDIUM | Blob-download `fetch` omitted `X-Org-Id` → export 404s for non-default orgs | ✅ **Fixed this session** (new) |
 | R-11 | `app/routers/code_modules.py:101` (`_load`) | 🟡 MEDIUM | Same identity-map IDOR class as R-1; GET/preview lack a permission gate | ✅ **Fixed this session** (populate_existing) |
 | R-12 | ~40 `session.get(Model, id)` call sites across routers | 🟢 NOTE | Org filtering on `session.get` relies on a cache *miss*; identity-map *hits* bypass it. Only reachable where a cross-org row is pre-loaded into the same session (credentials/code_modules — both fixed). **Do NOT blanket-add `populate_existing`** — it overwrites unflushed in-session edits. Centralise instead. | **Open** (systemic, documented) |
 | R-13 | `app/services/provider_triggers.py:486` (`dispatch_provider_webhook`) | 🔴 CRITICAL | Bare `SessionLocal()` on unauthenticated provider callback → subscription/workflow/dedupe lookups filtered to DEFAULT_ORG_ID; **all non-default-org provider triggers 404 (never fire)** + RunEvent rows mis-stamped | ✅ **Fixed this session** (new) |
 | R-14 | `app/routers/environments.py:133` (`create_environment`) | 🟡 MEDIUM | Dedicated-isolation orgs could create an environment bound to an agent runner pool; PATCH rejected it, but POST missed the write-time isolation validator, leaving the failure until dispatch time | ✅ **Fixed in continuation** |
-| R-15 | `packages/core/noodle/datasets.py:117` (`reserve_artifact_path`) | 🟡 MEDIUM | DatasetRef artifacts bypassed `LocalArtifactStore`'s org `key_prefix`, so new Parquet/CSV dataset bytes landed under legacy `runs/...` instead of `{org}/runs/...` in multi-tenant runs | ✅ **Fixed in continuation** |
-| R-16 | `packages/nodes/noodle_nodes/statistical_analysis.py` (`monte_carlo_simulate`, `bootstrap_ci`) | 🟡 MEDIUM | Caller-controlled iteration/resample counts could drive unbounded CPU/memory work before writing artifact-backed results | ✅ **Fixed in continuation** |
+| R-15 | `packages/core/nodyra/datasets.py:117` (`reserve_artifact_path`) | 🟡 MEDIUM | DatasetRef artifacts bypassed `LocalArtifactStore`'s org `key_prefix`, so new Parquet/CSV dataset bytes landed under legacy `runs/...` instead of `{org}/runs/...` in multi-tenant runs | ✅ **Fixed in continuation** |
+| R-16 | `packages/nodes/nodyra_nodes/statistical_analysis.py` (`monte_carlo_simulate`, `bootstrap_ci`) | 🟡 MEDIUM | Caller-controlled iteration/resample counts could drive unbounded CPU/memory work before writing artifact-backed results | ✅ **Fixed in continuation** |
 | R-17 | `app/services/unsafe_nodes.py`, `integrations_v2/providers/rss/triggers.py` | 🟠 HIGH | v2 RSS/local-file triggers missed the deploy-time unsafe-node gate; RSS also parsed untrusted feed XML with stdlib `ElementTree` | ✅ **Fixed in continuation** |
-| R-18 | `packages/nodes/noodle_nodes/model_serving.py`, `app/services/unsafe_nodes.py` | 🟡 MEDIUM | Model endpoint probe/benchmark/shadow nodes made caller-controlled HTTP calls without deploy-time unsafe gating; benchmark/shadow sizes were unbounded | ✅ **Fixed in continuation** |
+| R-18 | `packages/nodes/nodyra_nodes/model_serving.py`, `app/services/unsafe_nodes.py` | 🟡 MEDIUM | Model endpoint probe/benchmark/shadow nodes made caller-controlled HTTP calls without deploy-time unsafe gating; benchmark/shadow sizes were unbounded | ✅ **Fixed in continuation** |
 | R-19 | `cloud_devops.py`, `ai_extra.py`, `communication.py`, `saas.py`, `storage.py`, `app/services/unsafe_nodes.py` | 🟠 HIGH | DB/cache/search/SaaS/webhook/vector/Git nodes opened caller-supplied hosts without activation review; Git clone/pull had no subprocess timeout; Pinecone hosts accepted private/URL-like values | ✅ **Fixed in continuation** |
 | R-20 | `llm.py`, `ai_v2/vectorstores.py`, `ai_v2/mcp.py`, `builtin.py`, `ai_v2/document_loaders.py`, `app/services/unsafe_nodes.py` | 🟠 HIGH | Legacy AI HTTP tools/Pinecone retriever and Qdrant/MCP/GraphQL/URL-loader egress surfaces missed runtime and/or deploy-time coverage | ✅ **Fixed in continuation** |
 | R-21 | `file_nodes.py`, `transform_extra.py`, `app/services/unsafe_nodes.py` | 🟠 HIGH | Local file readers could read caller-supplied paths without deploy-time gating; XML parse paths accepted unsafe XML/entity input | ✅ **Fixed in continuation** |
@@ -298,7 +298,7 @@ blocked or approved under the same deploy-time policy in high-control installs.
 - `data_quality.py` — schema/expectation/reconcile/outlier logic sound; JSON parse guarded; `_to_records` caps at 100k. R-6 currency heuristic fixed.
 - `browser_automation.py` — **good hardening**: XML parsing uses `defusedxml` (`fromstring`/`ParseError`/`DefusedXmlException`) → XXE/billion-laughs safe. `sitemap_crawl` caps `max_urls` and sitemap count (≤25), and R-7 duplicate fetch/queue bug is fixed.
 - Uncommitted backend fixes (`run_alerts`, `runner.cancel_run`, `mcp/tools`, `deployments`) — correct; also added `_validate_deployable` (rejects trigger-less deploys early) and run-level error persistence to `run_events` so MCP `get_run`/UI surface pre-exec failures. Matches the RED tests in `tests/test_review_bugs.py`.
-- New nodes are correctly registered in `noodle_nodes/__init__.py` (`__all__` + imports).
+- New nodes are correctly registered in `nodyra_nodes/__init__.py` (`__all__` + imports).
 - Continuation pass: `environments.py`, `nodes.py`, and `ops.py` re-read.
   `nodes.py` user source and dynamic-option credential paths rely on fresh
   request sessions and ambient org filters; no practical identity-map priming
@@ -420,7 +420,7 @@ Legend: ✅ reviewed this program · ⬜ pending · 🔁 needs re-review on this
 | schemas.py | ✅ | full re-read; request bounds and response redaction reviewed |
 | config.py, db.py | ✅ | prior wave |
 
-### 4.4 packages/core (`noodle/`)
+### 4.4 packages/core (`nodyra/`)
 | File | Status | Notes |
 |------|--------|-------|
 | engine/* | ✅ | Phase 2/4 review; ENG-1 fixed |
@@ -429,7 +429,7 @@ Legend: ✅ reviewed this program · ⬜ pending · 🔁 needs re-review on this
 | process_isolation.py, serialization.py | ✅ | completion-aware pool eviction; pickle-free typed JSON serialization reviewed |
 | artifacts.py, datasets.py | ✅ 🐞R-15 | DatasetRef reservations now honor org key prefixes; artifact path safety/limits reviewed |
 
-### 4.5 packages/nodes (`noodle_nodes/`)
+### 4.5 packages/nodes (`nodyra_nodes/`)
 | File | Status | Notes |
 |------|--------|-------|
 | security_automation.py | ✅ 🐞R-3 | clean code; policy-gate gap only |
@@ -485,40 +485,40 @@ pytest tests/test_org_isolation_enforcement.py -v           # add R-1/R-2 cases 
 cd packages/nodes && pytest tests/test_package_level_nodes.py -v
 
 # Continuation verification run 2026-06-14:
-D:\noodle\.venv\Scripts\python.exe -m pytest apps/api/tests/test_org_isolation_enforcement.py -q
-D:\noodle\.venv\Scripts\python.exe -m pytest apps/api/tests/test_environments.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check apps/api/app/routers/environments.py apps/api/app/services/isolation.py apps/api/tests/test_org_isolation_enforcement.py
-D:\noodle\.venv\Scripts\python.exe -m pytest packages/core/tests/test_datasets.py packages/core/tests/test_artifacts.py packages/core/tests/test_artifacts_extended.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check packages/core/noodle/datasets.py packages/core/tests/test_datasets.py
-D:\noodle\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_statistical_analysis.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check packages/nodes/noodle_nodes/statistical_analysis.py packages/nodes/tests/test_statistical_analysis.py
-D:\noodle\.venv\Scripts\python.exe -m pytest apps/api/tests/test_review_bugs.py packages/nodes/tests/test_rss_trigger.py packages/nodes/tests/test_filesystem_trigger.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/noodle_nodes/integrations_v2/providers/rss/triggers.py packages/nodes/tests/test_rss_trigger.py
-D:\noodle\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_model_serving.py apps/api/tests/test_review_bugs.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check packages/nodes/noodle_nodes/model_serving.py packages/nodes/tests/test_model_serving.py apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py
-D:\noodle\.venv\Scripts\python.exe -m pytest apps/api/tests/test_review_bugs.py packages/nodes/tests/test_ai_extra.py packages/nodes/tests/test_cloud_devops.py packages/nodes/tests/test_llm_nodes.py packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_ai_v2_mcp.py packages/nodes/tests/test_new_node_registration.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/noodle_nodes/ai_extra.py packages/nodes/tests/test_ai_extra.py packages/nodes/noodle_nodes/cloud_devops.py packages/nodes/tests/test_cloud_devops.py packages/nodes/noodle_nodes/llm.py packages/nodes/tests/test_llm_nodes.py packages/nodes/noodle_nodes/ai_v2/vectorstores.py packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_ai_v2_mcp.py
-D:\noodle\.venv\Scripts\python.exe -m pytest apps/api/tests/test_org_isolation_enforcement.py apps/api/tests/test_environments.py apps/api/tests/test_review_bugs.py packages/core/tests/test_datasets.py packages/core/tests/test_artifacts.py packages/core/tests/test_artifacts_extended.py packages/nodes/tests/test_statistical_analysis.py packages/nodes/tests/test_rss_trigger.py packages/nodes/tests/test_filesystem_trigger.py packages/nodes/tests/test_model_serving.py packages/nodes/tests/test_ai_extra.py packages/nodes/tests/test_cloud_devops.py packages/nodes/tests/test_llm_nodes.py packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_ai_v2_mcp.py packages/nodes/tests/test_new_node_registration.py -q
+D:\nodyra\.venv\Scripts\python.exe -m pytest apps/api/tests/test_org_isolation_enforcement.py -q
+D:\nodyra\.venv\Scripts\python.exe -m pytest apps/api/tests/test_environments.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check apps/api/app/routers/environments.py apps/api/app/services/isolation.py apps/api/tests/test_org_isolation_enforcement.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest packages/core/tests/test_datasets.py packages/core/tests/test_artifacts.py packages/core/tests/test_artifacts_extended.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check packages/core/nodyra/datasets.py packages/core/tests/test_datasets.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_statistical_analysis.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check packages/nodes/nodyra_nodes/statistical_analysis.py packages/nodes/tests/test_statistical_analysis.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest apps/api/tests/test_review_bugs.py packages/nodes/tests/test_rss_trigger.py packages/nodes/tests/test_filesystem_trigger.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/nodyra_nodes/integrations_v2/providers/rss/triggers.py packages/nodes/tests/test_rss_trigger.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_model_serving.py apps/api/tests/test_review_bugs.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check packages/nodes/nodyra_nodes/model_serving.py packages/nodes/tests/test_model_serving.py apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest apps/api/tests/test_review_bugs.py packages/nodes/tests/test_ai_extra.py packages/nodes/tests/test_cloud_devops.py packages/nodes/tests/test_llm_nodes.py packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_ai_v2_mcp.py packages/nodes/tests/test_new_node_registration.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/nodyra_nodes/ai_extra.py packages/nodes/tests/test_ai_extra.py packages/nodes/nodyra_nodes/cloud_devops.py packages/nodes/tests/test_cloud_devops.py packages/nodes/nodyra_nodes/llm.py packages/nodes/tests/test_llm_nodes.py packages/nodes/nodyra_nodes/ai_v2/vectorstores.py packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_ai_v2_mcp.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest apps/api/tests/test_org_isolation_enforcement.py apps/api/tests/test_environments.py apps/api/tests/test_review_bugs.py packages/core/tests/test_datasets.py packages/core/tests/test_artifacts.py packages/core/tests/test_artifacts_extended.py packages/nodes/tests/test_statistical_analysis.py packages/nodes/tests/test_rss_trigger.py packages/nodes/tests/test_filesystem_trigger.py packages/nodes/tests/test_model_serving.py packages/nodes/tests/test_ai_extra.py packages/nodes/tests/test_cloud_devops.py packages/nodes/tests/test_llm_nodes.py packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_ai_v2_mcp.py packages/nodes/tests/test_new_node_registration.py -q
 
 # Deep-continuation verification run 2026-06-14:
-D:\noodle\.venv\Scripts\python.exe -m pytest apps/api/tests/test_review_bugs.py packages/nodes/tests/test_file_nodes.py packages/nodes/tests/test_transform_extra.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/noodle_nodes/file_nodes.py packages/nodes/tests/test_file_nodes.py packages/nodes/noodle_nodes/transform_extra.py packages/nodes/tests/test_transform_extra.py
-D:\noodle\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_package_level_nodes.py packages/nodes/tests/test_browser_automation.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check packages/nodes/noodle_nodes/data_quality.py packages/nodes/noodle_nodes/browser_automation.py packages/nodes/noodle_nodes/geospatial.py packages/nodes/tests/test_package_level_nodes.py packages/nodes/tests/test_browser_automation.py
-D:\noodle\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_document_intelligence.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check packages/nodes/noodle_nodes/document_intelligence.py packages/nodes/tests/test_document_intelligence.py
-D:\noodle\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_llm_evals.py packages/nodes/tests/test_synthetic_data.py packages/nodes/tests/test_rag_lifecycle.py packages/nodes/tests/test_model_monitoring.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check packages/nodes/noodle_nodes/llm_evals.py packages/nodes/noodle_nodes/synthetic_data.py packages/nodes/noodle_nodes/rag_lifecycle.py packages/nodes/noodle_nodes/model_monitoring.py packages/nodes/tests/test_llm_evals.py packages/nodes/tests/test_synthetic_data.py packages/nodes/tests/test_rag_lifecycle.py packages/nodes/tests/test_model_monitoring.py
-D:\noodle\.venv\Scripts\python.exe -m pytest apps/api/tests/test_review_bugs.py packages/nodes/tests/test_datasets.py packages/nodes/tests/test_ml.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/noodle_nodes/datasets.py packages/nodes/tests/test_datasets.py packages/nodes/noodle_nodes/ml.py packages/nodes/tests/test_ml.py
-D:\noodle\.venv\Scripts\python.exe -m pytest apps/api/tests/test_review_bugs.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py
-D:\noodle\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_ai_v2_nodes.py apps/api/tests/test_review_bugs.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/noodle_nodes/ai_v2/document_loaders.py packages/nodes/noodle_nodes/ai_v2/text_splitters.py packages/nodes/noodle_nodes/ai_v2/vectorstores.py packages/nodes/noodle_nodes/ai_v2/retrievers.py packages/nodes/tests/test_ai_v2_nodes.py
-D:\noodle\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_ai_v2_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/tests/test_charts.py -q
-D:\noodle\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/noodle_nodes/ai_v2/document_loaders.py packages/nodes/noodle_nodes/ai_v2/text_splitters.py packages/nodes/noodle_nodes/ai_v2/vectorstores.py packages/nodes/noodle_nodes/ai_v2/retrievers.py packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/noodle_nodes/charts.py packages/nodes/tests/test_charts.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest apps/api/tests/test_review_bugs.py packages/nodes/tests/test_file_nodes.py packages/nodes/tests/test_transform_extra.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/nodyra_nodes/file_nodes.py packages/nodes/tests/test_file_nodes.py packages/nodes/nodyra_nodes/transform_extra.py packages/nodes/tests/test_transform_extra.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_package_level_nodes.py packages/nodes/tests/test_browser_automation.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check packages/nodes/nodyra_nodes/data_quality.py packages/nodes/nodyra_nodes/browser_automation.py packages/nodes/nodyra_nodes/geospatial.py packages/nodes/tests/test_package_level_nodes.py packages/nodes/tests/test_browser_automation.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_document_intelligence.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check packages/nodes/nodyra_nodes/document_intelligence.py packages/nodes/tests/test_document_intelligence.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_llm_evals.py packages/nodes/tests/test_synthetic_data.py packages/nodes/tests/test_rag_lifecycle.py packages/nodes/tests/test_model_monitoring.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check packages/nodes/nodyra_nodes/llm_evals.py packages/nodes/nodyra_nodes/synthetic_data.py packages/nodes/nodyra_nodes/rag_lifecycle.py packages/nodes/nodyra_nodes/model_monitoring.py packages/nodes/tests/test_llm_evals.py packages/nodes/tests/test_synthetic_data.py packages/nodes/tests/test_rag_lifecycle.py packages/nodes/tests/test_model_monitoring.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest apps/api/tests/test_review_bugs.py packages/nodes/tests/test_datasets.py packages/nodes/tests/test_ml.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/nodyra_nodes/datasets.py packages/nodes/tests/test_datasets.py packages/nodes/nodyra_nodes/ml.py packages/nodes/tests/test_ml.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest apps/api/tests/test_review_bugs.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_ai_v2_nodes.py apps/api/tests/test_review_bugs.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/nodyra_nodes/ai_v2/document_loaders.py packages/nodes/nodyra_nodes/ai_v2/text_splitters.py packages/nodes/nodyra_nodes/ai_v2/vectorstores.py packages/nodes/nodyra_nodes/ai_v2/retrievers.py packages/nodes/tests/test_ai_v2_nodes.py
+D:\nodyra\.venv\Scripts\python.exe -m pytest packages/nodes/tests/test_ai_v2_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/tests/test_charts.py -q
+D:\nodyra\.venv\Scripts\python.exe -m ruff check apps/api/app/services/unsafe_nodes.py apps/api/tests/test_review_bugs.py packages/nodes/nodyra_nodes/ai_v2/document_loaders.py packages/nodes/nodyra_nodes/ai_v2/text_splitters.py packages/nodes/nodyra_nodes/ai_v2/vectorstores.py packages/nodes/nodyra_nodes/ai_v2/retrievers.py packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/nodyra_nodes/charts.py packages/nodes/tests/test_charts.py
 uv run pytest packages/nodes/tests/test_map_nodes.py packages/core/tests/test_org_caps.py -q
-uv run ruff check packages/nodes/noodle_nodes/builtin.py packages/nodes/tests/test_map_nodes.py
+uv run ruff check packages/nodes/nodyra_nodes/builtin.py packages/nodes/tests/test_map_nodes.py
 ```
 
 Latest targeted continuation verification result: `147 passed, 1 warning`.
@@ -531,7 +531,7 @@ node nits `44 passed, 3 skipped, 1 warning`; document intelligence
 `11 passed, 1 warning`; AI v2 RAG ingestion `76 passed, 1 warning`;
 AI v2 + charts cap regression `86 passed, 1 warning`; built-in map fanout
 `17 passed, 1 warning` plus Ruff clean.
-The warning is the known Pydantic `NoodleItem.json` shadowing warning
+The warning is the known Pydantic `NodyraItem.json` shadowing warning
 intentionally left alone.
 
 *Generated 2026-06-14. Branch `feat/arch-program-phase5`. Reviewer: Claude Opus 4.8; continuation update by Codex.*

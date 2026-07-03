@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-import noodle_nodes  # noqa: F401
-from noodle.ai_runtime import (
+import nodyra_nodes  # noqa: F401
+from nodyra.ai_runtime import (
     AgentResumeInput,
     AIMessage,
     ChatResponse,
@@ -17,8 +17,8 @@ from noodle.ai_runtime import (
     ToolParameterSchema,
     ToolResult,
 )
-from noodle.sdk import registry
-from noodle_nodes.ai_v2.agents import (
+from nodyra.sdk import registry
+from nodyra_nodes.ai_v2.agents import (
     PERSONA_TEMPLATES,
     _apply_persona,
     _strip_control_messages,
@@ -45,8 +45,8 @@ def test_apply_persona_none_is_noop() -> None:
 def test_strip_control_messages_removes_prefixes() -> None:
     msgs = [
         AIMessage.system("real system"),
-        AIMessage.system("__noodle_usage__\n{}"),
-        AIMessage.system("__noodle_plan__\n[]"),
+        AIMessage.system("__nodyra_usage__\n{}"),
+        AIMessage.system("__nodyra_plan__\n[]"),
         AIMessage.user("hi"),
     ]
     stripped = _strip_control_messages(msgs)
@@ -90,7 +90,7 @@ def test_retriever_tool_overridden_by_external() -> None:
 
 
 def test_subagent_port_adds_delegate_tool() -> None:
-    from noodle_nodes.ai_v2.agent_tools import SubAgentAdapter
+    from nodyra_nodes.ai_v2.agent_tools import SubAgentAdapter
 
     sub = SubAgentAdapter(
         name="researcher",
@@ -104,7 +104,7 @@ def test_subagent_port_adds_delegate_tool() -> None:
 
 
 def test_multiple_subagents_all_appear() -> None:
-    from noodle_nodes.ai_v2.agent_tools import SubAgentAdapter
+    from nodyra_nodes.ai_v2.agent_tools import SubAgentAdapter
 
     sub1 = SubAgentAdapter(
         name="writer",
@@ -206,7 +206,7 @@ def test_usage_message_not_sent_to_model() -> None:
     model = ScriptedChatModel([_resp(text="done")])
     ai_agent_v2(model=model, prompt="hi")
     for msg in model.requests[0].messages:
-        assert not str(msg.content or "").startswith("__noodle_usage__")
+        assert not str(msg.content or "").startswith("__nodyra_usage__")
 
 
 def test_usage_accumulates_across_resume() -> None:
@@ -220,7 +220,7 @@ def test_usage_accumulates_across_resume() -> None:
     )
     action = ai_agent_v2(model=model, tool=DummyTool("lookup"), prompt="hi", max_steps=4)
     usage_msgs = [
-        m for m in action.messages_so_far if str(m.content or "").startswith("__noodle_usage__")
+        m for m in action.messages_so_far if str(m.content or "").startswith("__nodyra_usage__")
     ]
     assert usage_msgs, "usage carried in messages_so_far"
     payload = json.loads(usage_msgs[0].content.split("\n", 1)[1])
@@ -233,7 +233,7 @@ def test_total_usage_accumulates_multi_step() -> None:
     fast = ScriptedChatModel([_resp(text="final answer", prompt=20, completion=8)])
     # Build a resume input that already carries step-1 usage (15 prompt + 7 completion).
     prior_usage = ModelUsage(prompt_tokens=15, completion_tokens=7, total_tokens=22)
-    from noodle_nodes.ai_v2.agents import _usage_message
+    from nodyra_nodes.ai_v2.agents import _usage_message
 
     resume = AgentResumeInput(
         tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
@@ -516,7 +516,7 @@ def test_plan_message_not_sent_as_user() -> None:
     model = ScriptedChatModel([ChatResponse(text=plan_json), ChatResponse(text="final")])
     ai_agent_v2(model=model, prompt="x", strategy="plan_and_execute")
     for m in model.requests[1].messages:
-        assert not str(m.content or "").startswith("__noodle_plan__")
+        assert not str(m.content or "").startswith("__nodyra_plan__")
 
 
 # ---------------------------------------------------------------------------
@@ -563,8 +563,8 @@ def test_param_groups_present() -> None:
 
 
 def test_tool_instruction_warns_about_untrusted_results() -> None:
-    from noodle.ai_runtime import ToolSchema
-    from noodle_nodes.ai_v2.agents import _tool_instruction
+    from nodyra.ai_runtime import ToolSchema
+    from nodyra_nodes.ai_v2.agents import _tool_instruction
 
     msg = _tool_instruction(
         [ToolSchema(name="x", description="d", parameters=ToolParameterSchema())]
@@ -587,7 +587,7 @@ def test_backwards_compatible_default_run() -> None:
 
 def test_reflexion_and_parser_consistent() -> None:
     """Parser must see the post-reflection answer, not the pre-reflection draft."""
-    from noodle.sdk import registry as _registry
+    from nodyra.sdk import registry as _registry
 
     # Two model calls: [0] initial draft, [1] improved answer from reflection.
     model = ScriptedChatModel(

@@ -56,7 +56,7 @@ afterEach(() => {
 
 describe("WorkflowsPage permissions", () => {
   it("keeps viewer workflows read-only and does not request credentials", () => {
-    setUser({ id: "viewer", email: "viewer@example.com", name: "Viewer", company: "Noodle", role: "viewer" });
+    setUser({ id: "viewer", email: "viewer@example.com", name: "Viewer", company: "Nodyra", role: "viewer" });
     renderPage();
 
     expect(screen.getByRole("button", { name: "Open workflow: Read-only workflow" })).toBeTruthy();
@@ -67,7 +67,7 @@ describe("WorkflowsPage permissions", () => {
   });
 
   it("shows mutation controls to workspace editors in single-tenant mode", () => {
-    setUser({ id: "editor", email: "editor@example.com", name: "Editor", company: "Noodle", role: "editor" });
+    setUser({ id: "editor", email: "editor@example.com", name: "Editor", company: "Nodyra", role: "editor" });
     renderPage();
 
     expect(screen.getByRole("button", { name: "New workflow" })).toBeTruthy();

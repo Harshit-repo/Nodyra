@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Connection, Edge } from "@xyflow/react";
 
 import type { NodeManifest, PortSpec } from "../types";
-import type { NoodleNode } from "./store";
+import type { NodyraNode } from "./store";
 import {
   checkConnectionKinds,
   datasetConnectionIssues,
@@ -31,10 +31,10 @@ function manifest(
   };
 }
 
-function node(id: string, m: NodeManifest, x = 0): NoodleNode {
+function node(id: string, m: NodeManifest, x = 0): NodyraNode {
   return {
     id,
-    type: "noodle",
+    type: "nodyra",
     position: { x, y: 0 },
     data: {
       manifest: m,
@@ -167,7 +167,7 @@ describe("DatasetRef connection validation", () => {
 describe("tool-mode connection", () => {
   const agent = manifest("ai_agent_v2", "ai_tool", "main");
 
-  function toolNode(id: string, on: boolean): NoodleNode {
+  function toolNode(id: string, on: boolean): NodyraNode {
     const n = node(id, manifest("http_request", "any", "main"));
     n.data.toolMode = on;
     return n;

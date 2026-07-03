@@ -12,7 +12,7 @@ const viewer: UserInfo = {
   id: "viewer-1",
   email: "viewer@example.com",
   name: "Viewer Person",
-  company: "Noodle Labs",
+  company: "Nodyra Labs",
   role: "viewer",
 };
 

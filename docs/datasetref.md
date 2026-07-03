@@ -1,6 +1,6 @@
 # DatasetRef guide
 
-DatasetRef is Noodle's table handle for data that should stay artifact-backed instead of being copied through every node as a giant JSON list.
+DatasetRef is Nodyra's table handle for data that should stay artifact-backed instead of being copied through every node as a giant JSON list.
 
 Think of it like a library card for a table: the workflow passes the card downstream, while the real rows stay in artifact storage as Parquet. Nodes can preview, filter, query, export, or materialize the table when needed.
 
@@ -79,9 +79,9 @@ SQL safety rules:
 
 The editor treats DatasetRef ports as a distinct kind of wire:
 
-- If a node expects a DatasetRef and you connect inline records, Noodle blocks the wire and offers **Add Records To Dataset**.
-- If a node outputs a DatasetRef and you connect it to a normal inline-data input, Noodle blocks the wire and offers **Add Dataset To Records**.
-- If the target is an artifact/file-style step, Noodle suggests a dataset helper such as **DuckDB SQL** before export.
+- If a node expects a DatasetRef and you connect inline records, Nodyra blocks the wire and offers **Add Records To Dataset**.
+- If a node outputs a DatasetRef and you connect it to a normal inline-data input, Nodyra blocks the wire and offers **Add Dataset To Records**.
+- If the target is an artifact/file-style step, Nodyra suggests a dataset helper such as **DuckDB SQL** before export.
 
 This is intentional. An `any` port usually means inline JSON; DatasetRef is a table reference with artifact metadata. Requiring an explicit converter makes workflows easier to read and prevents runtime surprises.
 

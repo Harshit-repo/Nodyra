@@ -51,7 +51,7 @@ function useDismissiblePopover(open: boolean, onClose: () => void) {
     if (!open) return;
     const animationFrame = window.requestAnimationFrame(() => {
       containerRef.current
-        ?.querySelector<HTMLElement>(".noodle-shell-popover a, .noodle-shell-popover button")
+        ?.querySelector<HTMLElement>(".nodyra-shell-popover a, .nodyra-shell-popover button")
         ?.focus();
     });
     function onPointerDown(event: MouseEvent): void {
@@ -128,23 +128,23 @@ export function OrganizationSwitcher() {
 
   if (!user) {
     return (
-      <div className="noodle-shell-workspace-static">
-        <span className="noodle-shell-org-mark">N</span>
-        <span className="noodle-shell-org-copy"><strong>Noodle</strong><small>Local workspace</small></span>
+      <div className="nodyra-shell-workspace-static">
+        <span className="nodyra-shell-org-mark">N</span>
+        <span className="nodyra-shell-org-copy"><strong>Nodyra</strong><small>Local workspace</small></span>
       </div>
     );
   }
 
   if (workspace.loading) {
-    return <div className="noodle-shell-workspace-skeleton" aria-label="Loading workspace" />;
+    return <div className="nodyra-shell-workspace-skeleton" aria-label="Loading workspace" />;
   }
 
   if (workspace.isSuccess && !multiTenancyEnabled) {
-    const workspaceName = user.company || "Noodle";
+    const workspaceName = user.company || "Nodyra";
     return (
-      <div className="noodle-shell-workspace-static">
-        <span className="noodle-shell-org-mark">{initialsFor(workspaceName).slice(0, 1)}</span>
-        <span className="noodle-shell-org-copy"><strong>{workspaceName}</strong><small>Instance workspace</small></span>
+      <div className="nodyra-shell-workspace-static">
+        <span className="nodyra-shell-org-mark">{initialsFor(workspaceName).slice(0, 1)}</span>
+        <span className="nodyra-shell-org-copy"><strong>{workspaceName}</strong><small>Instance workspace</small></span>
       </div>
     );
   }
@@ -160,7 +160,7 @@ export function OrganizationSwitcher() {
     close();
     const { allowed } = await guardDirtyAction({
       title: "Discard unsaved instance changes?",
-      body: "Switching workspace reloads Noodle. Your unsaved runtime and retention changes will be lost.",
+      body: "Switching workspace reloads Nodyra. Your unsaved runtime and retention changes will be lost.",
       confirmLabel: "Discard and switch",
     });
     if (!allowed) return;
@@ -181,7 +181,7 @@ export function OrganizationSwitcher() {
     if (!name?.trim()) return;
     const { allowed } = await guardDirtyAction({
       title: "Discard unsaved instance changes?",
-      body: "Creating a workspace reloads Noodle. Your unsaved runtime and retention changes will be lost.",
+      body: "Creating a workspace reloads Nodyra. Your unsaved runtime and retention changes will be lost.",
       confirmLabel: "Discard and create",
     });
     if (!allowed) return;
@@ -197,33 +197,33 @@ export function OrganizationSwitcher() {
   }
 
   return (
-    <div className="noodle-shell-org" ref={containerRef}>
+    <div className="nodyra-shell-org" ref={containerRef}>
       <button
         ref={triggerRef}
-        className="noodle-shell-org-trigger"
+        className="nodyra-shell-org-trigger"
         type="button"
         aria-expanded={open}
         aria-haspopup="dialog"
         disabled={Boolean(switchingId)}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="noodle-shell-org-mark">{initialsFor(currentName).slice(0, 1)}</span>
-        <span className="noodle-shell-org-copy"><strong>{switchingId ? "Switching…" : currentName}</strong><small>{!workspace.hasActiveWorkspace ? "Action required" : currentRole ? `${currentRole} in workspace` : "Workspace"}</small></span>
+        <span className="nodyra-shell-org-mark">{initialsFor(currentName).slice(0, 1)}</span>
+        <span className="nodyra-shell-org-copy"><strong>{switchingId ? "Switching…" : currentName}</strong><small>{!workspace.hasActiveWorkspace ? "Action required" : currentRole ? `${currentRole} in workspace` : "Workspace"}</small></span>
         <CaretDown size={15} aria-hidden="true" />
       </button>
 
       {open && (
-        <div className="noodle-shell-popover noodle-shell-org-popover" role="dialog" aria-label="Switch workspace">
-          <div className="noodle-shell-popover-title">Workspaces</div>
+        <div className="nodyra-shell-popover nodyra-shell-org-popover" role="dialog" aria-label="Switch workspace">
+          <div className="nodyra-shell-popover-title">Workspaces</div>
           {workspace.loading ? (
-            <div className="noodle-shell-popover-state">Loading workspaces…</div>
+            <div className="nodyra-shell-popover-state">Loading workspaces…</div>
           ) : workspace.isError ? (
-            <div className="noodle-shell-popover-state is-error">
+            <div className="nodyra-shell-popover-state is-error">
               <span>{errorMessage(workspace.error)}</span>
               <button type="button" onClick={() => void workspace.refetch()}>Retry</button>
             </div>
           ) : (
-            <div className="noodle-shell-org-list">
+            <div className="nodyra-shell-org-list">
               {orgs.map((org) => (
                 <button
                   key={org.id}
@@ -232,14 +232,14 @@ export function OrganizationSwitcher() {
                   disabled={Boolean(switchingId) || org.status !== "active"}
                   onClick={() => void switchTo(org)}
                 >
-                  <span className="noodle-shell-org-mark">{initialsFor(org.name).slice(0, 1)}</span>
+                  <span className="nodyra-shell-org-mark">{initialsFor(org.name).slice(0, 1)}</span>
                   <span><strong>{org.name}</strong><small>{org.status !== "active" ? org.status : org.role ? `${org.role} in workspace` : "Workspace member"}</small></span>
-                  {org.id === current?.id && <span className="noodle-shell-current-dot" aria-label="Current workspace" />}
+                  {org.id === current?.id && <span className="nodyra-shell-current-dot" aria-label="Current workspace" />}
                 </button>
               ))}
             </div>
           )}
-          <div className="noodle-shell-popover-divider" />
+          <div className="nodyra-shell-popover-divider" />
           {(currentRole === "admin" || currentRole === "owner") && <Link to="/organization" onClick={close}><Buildings size={17} aria-hidden="true" />Manage workspace</Link>}
           <button type="button" onClick={() => void createOrganization()}>+ New workspace</button>
         </div>
@@ -268,12 +268,12 @@ export function MobileAccountPanel() {
   if (!user) return null;
   const displayName = user.name || user.email;
   return (
-    <div className="noodle-shell-mobile-account">
-      <div className="noodle-shell-account-head">
-        <span className="noodle-shell-avatar">{initialsFor(displayName)}</span>
+    <div className="nodyra-shell-mobile-account">
+      <div className="nodyra-shell-account-head">
+        <span className="nodyra-shell-avatar">{initialsFor(displayName)}</span>
         <span><strong>{displayName}</strong><small>{user.email}</small><em>Instance {user.role}</em></span>
       </div>
-      <div className="noodle-shell-mobile-account-actions">
+      <div className="nodyra-shell-mobile-account-actions">
         <Link to="/settings"><GearSix size={18} aria-hidden="true" />Account settings</Link>
         <button type="button" className="is-danger" onClick={signOut}><SignOut size={18} aria-hidden="true" />Sign out</button>
       </div>
@@ -286,7 +286,7 @@ export function HomeHeader() {
   const workspace = useWorkspaceAccessContext();
   const user = workspace.user;
   const workspaceRole = workspace.role;
-  const title = getRouteTitle(pathname, "Noodle");
+  const title = getRouteTitle(pathname, "Nodyra");
   const scope = getRouteScope(pathname);
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -309,20 +309,20 @@ export function HomeHeader() {
   const themeTitle = themePref === "dark" ? "Dark mode (click for light)" : themePref === "light" ? "Light mode (click for dark)" : "System theme (click for dark)";
 
   useEffect(() => {
-    document.title = `${title} · Noodle`;
+    document.title = `${title} · Nodyra`;
     close();
   }, [close, title]);
 
   const displayName = user?.name || user?.email || "Local workspace";
 
   return (
-    <header className="noodle-shell-topbar">
-      <div className="noodle-shell-page-context">
-        <Link className="noodle-shell-topbar-brand" to="/" aria-label="Noodle home">
+    <header className="nodyra-shell-topbar">
+      <div className="nodyra-shell-page-context">
+        <Link className="nodyra-shell-topbar-brand" to="/" aria-label="Nodyra home">
           <Logo size={22} />
-          <span>noodle</span>
+          <span>nodyra</span>
         </Link>
-        <span className="noodle-shell-page-scope">{scope ? `${scope[0].toUpperCase()}${scope.slice(1)}` : "Noodle"}</span>
+        <span className="nodyra-shell-page-scope">{scope ? `${scope[0].toUpperCase()}${scope.slice(1)}` : "Nodyra"}</span>
         <strong>{title}</strong>
       </div>
       <GlobalCommandMenu
@@ -331,10 +331,10 @@ export function HomeHeader() {
         localMode={!user}
         multiTenancyEnabled={workspace.multiTenancyEnabled}
       />
-      <div className="noodle-shell-top-actions">
+      <div className="nodyra-shell-top-actions">
         <button
           type="button"
-          className="noodle-shell-theme-toggle"
+          className="nodyra-shell-theme-toggle"
           aria-label="Switch theme"
           title={themeTitle}
           onClick={cycleTheme}
@@ -342,35 +342,35 @@ export function HomeHeader() {
           <ThemeIcon size={18} aria-hidden="true" />
         </button>
         {user ? (
-          <div className="noodle-shell-account" ref={containerRef}>
+          <div className="nodyra-shell-account" ref={containerRef}>
             <button
               ref={triggerRef}
-              className="noodle-shell-account-trigger"
+              className="nodyra-shell-account-trigger"
               type="button"
               aria-expanded={open}
               aria-haspopup="dialog"
               onClick={() => setOpen((value) => !value)}
             >
-              <span className="noodle-shell-avatar">{initialsFor(displayName)}</span>
-              <span className="noodle-shell-account-trigger-copy"><strong>{displayName}</strong><small>Instance {user.role}</small></span>
+              <span className="nodyra-shell-avatar">{initialsFor(displayName)}</span>
+              <span className="nodyra-shell-account-trigger-copy"><strong>{displayName}</strong><small>Instance {user.role}</small></span>
               <CaretDown size={15} aria-hidden="true" />
             </button>
             {open && (
-              <div className="noodle-shell-popover noodle-shell-account-popover" role="dialog" aria-label="Account menu">
-                <div className="noodle-shell-account-head">
-                  <span className="noodle-shell-avatar is-large">{initialsFor(displayName)}</span>
+              <div className="nodyra-shell-popover nodyra-shell-account-popover" role="dialog" aria-label="Account menu">
+                <div className="nodyra-shell-account-head">
+                  <span className="nodyra-shell-avatar is-large">{initialsFor(displayName)}</span>
                   <span><strong>{displayName}</strong><small>{user.email}</small>{user.company && <small>{user.company}</small>}<em>Instance {user.role}</em></span>
                 </div>
-                <div className="noodle-shell-popover-divider" />
+                <div className="nodyra-shell-popover-divider" />
                 <Link to="/settings" onClick={close}><UserCircle size={17} aria-hidden="true" />Account settings</Link>
                 {workspace.multiTenancyEnabled && (workspaceRole === "admin" || workspaceRole === "owner") && <Link to="/organization" onClick={close}><Buildings size={17} aria-hidden="true" />Manage workspace</Link>}
-                <div className="noodle-shell-popover-divider" />
+                <div className="nodyra-shell-popover-divider" />
                 <button type="button" className="is-danger" onClick={signOut}><SignOut size={17} aria-hidden="true" />Sign out</button>
               </div>
             )}
           </div>
         ) : (
-          <div className="noodle-shell-local-status">Local workspace</div>
+          <div className="nodyra-shell-local-status">Local workspace</div>
         )}
       </div>
     </header>

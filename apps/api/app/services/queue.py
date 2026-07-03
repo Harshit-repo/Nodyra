@@ -49,7 +49,7 @@ RETRY_BACKOFF_MAX_SECONDS = 300
 # Dispatch wakeup — eliminates the full poll interval on new work
 # ---------------------------------------------------------------------------
 
-_QUEUE_NOTIFY_CHANNEL = "noodle:queue:notify"
+_QUEUE_NOTIFY_CHANNEL = "nodyra:queue:notify"
 _wakeup: asyncio.Event | None = None
 
 

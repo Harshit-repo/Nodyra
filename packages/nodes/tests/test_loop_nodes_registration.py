@@ -1,8 +1,8 @@
 """Loop node registration + deprecation."""
 from __future__ import annotations
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.sdk import registry
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.sdk import registry
 
 
 def test_loop_start_registered_with_ports_and_params():
@@ -43,7 +43,7 @@ def test_loop_over_items_is_deprecated_pointing_to_loop_start():
 
 def test_loop_over_items_still_executes():
     # Deprecated, but must keep working for existing graphs.
-    from noodle_nodes.builtin import loop_over_items
+    from nodyra_nodes.builtin import loop_over_items
     out = loop_over_items(input=[1, 2, 3])
     assert out["item"] == [1, 2, 3]
     assert out["done"]["count"] == 3

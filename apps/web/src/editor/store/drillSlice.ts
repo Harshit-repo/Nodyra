@@ -1,6 +1,6 @@
 import type { Edge } from "@xyflow/react";
 
-import type { NoodleNode } from "./index";
+import type { NodyraNode } from "./index";
 
 export const META_BAR_INPUT_ID = "__meta_input_bar__";
 export const META_BAR_OUTPUT_ID = "__meta_output_bar__";
@@ -32,10 +32,10 @@ export interface GraphNodeShape {
 export interface DrillFrame {
   metaId: string;
   name: string;
-  nodes: NoodleNode[];
+  nodes: NodyraNode[];
   edges: Edge[];
-  _past: Array<{ nodes: NoodleNode[]; edges: Edge[] }>;
-  _future: Array<{ nodes: NoodleNode[]; edges: Edge[] }>;
+  _past: Array<{ nodes: NodyraNode[]; edges: Edge[] }>;
+  _future: Array<{ nodes: NodyraNode[]; edges: Edge[] }>;
   /** origSubNodes of the PARENT level being suspended (for unknown carry-forward). */
   orig: Record<string, GraphNodeShape>;
   /** next-port-seq of the PARENT level. */

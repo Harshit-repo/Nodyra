@@ -1,6 +1,6 @@
 """A5: prove the RLS backstop on Postgres — the only backend that can.
 
-These tests run automatically in the CI postgres lane (NOODLE_TEST_DATABASE_URL
+These tests run automatically in the CI postgres lane (NODYRA_TEST_DATABASE_URL
 set) and against a local compose Postgres; they skip when no server is
 reachable. They use their own scratch database (never the configured one) and
 assert through a dedicated NON-superuser role, because Postgres superusers
@@ -20,12 +20,12 @@ import pytest
 asyncpg = pytest.importorskip("asyncpg")
 
 API_DIR = Path(__file__).resolve().parents[1]
-TEST_DB = "noodle_tenancy_test"
-APP_ROLE, APP_PASSWORD = "noodle_tenancy_app", "tenancy-app-pw"
+TEST_DB = "nodyra_tenancy_test"
+APP_ROLE, APP_PASSWORD = "nodyra_tenancy_app", "tenancy-app-pw"
 
 _BASE_URL = os.environ.get(
-    "NOODLE_TEST_DATABASE_URL",
-    "postgresql+asyncpg://noodle:noodle@localhost:5432/noodle",
+    "NODYRA_TEST_DATABASE_URL",
+    "postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra",
 )
 
 

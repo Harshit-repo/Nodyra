@@ -7,12 +7,12 @@ nodes without schemas continue to work unchanged.
 
 import pytest
 
-from noodle.engine.node_exec import (
+from nodyra.engine.node_exec import (
     _sanitize_schema,
     _validate_node_input_schema,
     _validate_node_output_schema,
 )
-from noodle.engine.types import NodeValidationError
+from nodyra.engine.types import NodeValidationError
 
 # ---------------------------------------------------------------------------
 # Input schema validation

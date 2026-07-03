@@ -1,7 +1,7 @@
 import io
 from contextlib import redirect_stdout
 
-from noodle_exporter import docker_bundle, slugify, workflow_to_script
+from nodyra_exporter import docker_bundle, slugify, workflow_to_script
 
 GRAPH = {
     "nodes": [
@@ -50,7 +50,7 @@ def test_docker_bundle_has_all_files() -> None:
         "README.md",
     }
     assert "pandas" in bundle["requirements.txt"]
-    assert "noodle-core" in bundle["requirements.txt"]
+    assert "nodyra-core" in bundle["requirements.txt"]
     assert "python:3.12-slim" in bundle["Dockerfile"]
 
 

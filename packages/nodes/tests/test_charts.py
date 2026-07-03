@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, current_node_id
-from noodle_nodes.charts import (
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id
+from nodyra_nodes.charts import (
     build_report,
     chart,
     is_chart_ref,
     is_report_ref,
     metrics_chart,
 )
-from noodle_nodes.datasets import records_to_dataset
+from nodyra_nodes.datasets import records_to_dataset
 
 
 @pytest.fixture

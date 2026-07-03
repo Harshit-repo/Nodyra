@@ -1,6 +1,6 @@
 import type { Edge } from "@xyflow/react";
 
-import type { NoodleNode } from "./store";
+import type { NodyraNode } from "./store";
 import { loopBadgeText } from "./NodeCard";
 
 // Fallbacks when a node hasn't been measured yet (first render).
@@ -22,10 +22,10 @@ export interface LoopFrame {
   zIndex: number;
 }
 
-function nodeWidth(n: NoodleNode): number {
+function nodeWidth(n: NodyraNode): number {
   return n.measured?.width ?? n.width ?? DEFAULT_W;
 }
-function nodeHeight(n: NoodleNode): number {
+function nodeHeight(n: NodyraNode): number {
   return n.measured?.height ?? n.height ?? DEFAULT_H;
 }
 
@@ -47,7 +47,7 @@ function reach(start: string, adj: Map<string, string[]>): Set<string> {
  * graph-ancestors of the Loop End (the SESE region). Frames are derived from the
  * graph each render; they are never persisted.
  */
-export function computeLoopFrames(nodes: NoodleNode[], edges: Edge[]): LoopFrame[] {
+export function computeLoopFrames(nodes: NodyraNode[], edges: Edge[]): LoopFrame[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const succ = new Map<string, string[]>();
   const pred = new Map<string, string[]>();

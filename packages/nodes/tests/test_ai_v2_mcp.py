@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from noodle.ai_runtime import ToolAdapter, ToolSchema
-from noodle_nodes.ai_v2 import mcp as mcp_module
-from noodle_nodes.ai_v2.mcp import (
+from nodyra.ai_runtime import ToolAdapter, ToolSchema
+from nodyra_nodes.ai_v2 import mcp as mcp_module
+from nodyra_nodes.ai_v2.mcp import (
     McpServerConfig,
     McpToolAdapter,
     _config_from_credentials,

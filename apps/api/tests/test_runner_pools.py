@@ -158,14 +158,14 @@ async def test_fleet_health_flags_pool_without_dispatcher(
 async def test_wheel_index_serves_built_wheels(
     client: AsyncClient, monkeypatch, tmp_path
 ) -> None:
-    """A2: the wheel index page lists the noodle-* wheels and each is
+    """A2: the wheel index page lists the nodyra-* wheels and each is
     downloadable, with a path-traversal guard. The actual ``uv build`` is
     stubbed — that round-trip is covered by the live clean-machine test."""
     from app.services import wheel_index
 
     fake = tmp_path / "_runner_wheels"
     fake.mkdir()
-    for name in ("noodle_core", "noodle_runtime", "noodle_nodes"):
+    for name in ("nodyra_core", "nodyra_runtime", "nodyra_nodes"):
         (fake / f"{name}-0.0.1-py3-none-any.whl").write_bytes(b"PK\x03\x04 stub")
 
     monkeypatch.setattr(wheel_index, "wheels_dir", lambda: fake)
@@ -177,10 +177,10 @@ async def test_wheel_index_serves_built_wheels(
 
     index = await client.get("/runner-pools/wheels/")
     assert index.status_code == 200
-    assert "noodle_core-0.0.1-py3-none-any.whl" in index.text
-    assert "noodle_runtime-0.0.1-py3-none-any.whl" in index.text
+    assert "nodyra_core-0.0.1-py3-none-any.whl" in index.text
+    assert "nodyra_runtime-0.0.1-py3-none-any.whl" in index.text
 
-    whl = await client.get("/runner-pools/wheels/noodle_core-0.0.1-py3-none-any.whl")
+    whl = await client.get("/runner-pools/wheels/nodyra_core-0.0.1-py3-none-any.whl")
     assert whl.status_code == 200
     assert whl.content.startswith(b"PK")
 
@@ -423,8 +423,8 @@ async def test_ssh_onboard_creates_and_stores_encrypted(client, monkeypatch) -> 
     pool_id = (await client.post("/runner-pools", json={"name": "ssh-pool"})).json()["id"]
 
     async def fake_onboard(req, api_url, token, name):
-        assert api_url == "http://noodle.example:8000"
-        return "[noodle] registered runner ok"
+        assert api_url == "http://nodyra.example:8000"
+        return "[nodyra] registered runner ok"
 
     monkeypatch.setattr("app.routers.runner_pools.onboard_machine", fake_onboard)
 
@@ -433,7 +433,7 @@ async def test_ssh_onboard_creates_and_stores_encrypted(client, monkeypatch) -> 
         json={
             "host": "10.0.0.5", "username": "ubuntu",
             "auth_method": "password", "password": "hunter2",
-            "api_url": "http://noodle.example:8000",
+            "api_url": "http://nodyra.example:8000",
         },
     )
     assert resp.status_code == 200

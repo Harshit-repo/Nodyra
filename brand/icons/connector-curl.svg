@@ -1,5 +1,5 @@
-<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Noodle — connector curl">
-  <!-- the noodle: a single strand curling from one port to another, doubling as a workflow edge -->
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodyra - connector curl">
+  <!-- a single strand curling from one port to another, doubling as a workflow edge -->
   <path d="M13 14 C 30 15, 8 27, 24 27 C 40 27, 18 39, 35 34"
         stroke="#E29A2C" stroke-width="4" stroke-linecap="round"/>
   <!-- ports / nodes -->

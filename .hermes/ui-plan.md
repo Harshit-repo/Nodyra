@@ -1,4 +1,4 @@
-# Noodle UI n8n-parity Plan
+# Nodyra UI n8n-parity Plan
 _Written by UI-Agent-B (claude-sonnet-4.6)_
 
 ## Already Done (by previous agent sessions)

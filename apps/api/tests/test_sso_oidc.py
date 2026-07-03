@@ -142,7 +142,7 @@ async def test_oidc_callback_creates_new_user_jit(
     state = "test-valid-state"
     nonce = "test-nonce"
     await redis_client.set(
-        f"noodle:sso:state:{state}",
+        f"nodyra:sso:state:{state}",
         json.dumps({"nonce": nonce, "org_id": _seed[0].id}),
         ex=600,
     )
@@ -219,7 +219,7 @@ async def test_oidc_callback_reuses_existing_user(
     state = "test-valid-state-2"
     nonce = "test-nonce-2"
     await redis_client.set(
-        f"noodle:sso:state:{state}",
+        f"nodyra:sso:state:{state}",
         json.dumps({"nonce": nonce, "org_id": _seed[0].id}),
         ex=600,
     )

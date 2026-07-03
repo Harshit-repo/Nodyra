@@ -1,7 +1,7 @@
 import type { Connection, Edge } from "@xyflow/react";
 
 import type { NodeManifest, PortSpec } from "../types";
-import type { NoodleNode } from "./store";
+import type { NodyraNode } from "./store";
 import { isMetaBar, META_BAR_INPUT_ID, META_BAR_OUTPUT_ID } from "./store/drillSlice";
 
 export type PortDataKind = NonNullable<PortSpec["data_kind"]>;
@@ -135,7 +135,7 @@ export function checkConnectionKinds(
 }
 
 export function validateConnection(
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   connection: Connection,
 ): ConnectionCheck {
   const sourceNode = nodes.find((node) => node.id === connection.source);
@@ -144,8 +144,8 @@ export function validateConnection(
 }
 
 function validateResolvedConnection(
-  sourceNode: NoodleNode | undefined,
-  targetNode: NoodleNode | undefined,
+  sourceNode: NodyraNode | undefined,
+  targetNode: NodyraNode | undefined,
   connection: Connection,
 ): ConnectionCheck {
   if (!sourceNode || !targetNode) {
@@ -193,7 +193,7 @@ function validateResolvedConnection(
   );
 }
 
-export function datasetConnectionIssues(nodes: NoodleNode[], edges: Edge[]): Array<{
+export function datasetConnectionIssues(nodes: NodyraNode[], edges: Edge[]): Array<{
   edge: Edge;
   check: ConnectionCheck;
 }> {

@@ -4,7 +4,7 @@ a long-running code node must never have its pool reaped mid-task."""
 
 import time
 
-from noodle.process_isolation import PooledProcessIsolator
+from nodyra.process_isolation import PooledProcessIsolator
 
 
 def test_same_key_reuses_pool():

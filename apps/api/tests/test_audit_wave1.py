@@ -22,7 +22,7 @@ async def test_internal_token_constant_time_and_enforced(client, monkeypatch):
         # Wrong token → 401, handler never runs.
         r = await client.post(
             "/internal/scheduler/tick",
-            headers={"x-noodle-internal-token": "wrong"},
+            headers={"x-nodyra-internal-token": "wrong"},
         )
         assert r.status_code == 401
         # Missing token → 401.
@@ -32,7 +32,7 @@ async def test_internal_token_constant_time_and_enforced(client, monkeypatch):
         # Correct token → passes the gate.
         r = await client.post(
             "/internal/scheduler/tick",
-            headers={"x-noodle-internal-token": "s3cret-token"},
+            headers={"x-nodyra-internal-token": "s3cret-token"},
         )
         assert r.status_code == 200
         mock_tick.assert_awaited_once()
@@ -210,14 +210,14 @@ async def test_upload_artifact_rejects_path_traversal(client):
     from app.models import Artifact
     from app.services import retention
 
-    malicious = "../../../../../../tmp/noodle_pwned.txt"
+    malicious = "../../../../../../tmp/nodyra_pwned.txt"
     r = await client.post(
         "/artifacts/upload",
         files={"file": (malicious, b"owned", "text/plain")},
     )
     assert r.status_code == 200, r.text
     # Name is reduced to a safe basename — no directory components survive.
-    assert r.json()["name"] == "noodle_pwned.txt"
+    assert r.json()["name"] == "nodyra_pwned.txt"
 
     # The persisted storage_key must stay under the org's uploads/ prefix
     # (Phase F namespacing; "default" org while multi-tenancy is off) with no

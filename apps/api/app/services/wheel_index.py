@@ -1,7 +1,7 @@
 """Self-hosted wheel index for the remote runner agent (program A2).
 
-The agent's ``env_manager`` installs ``noodle-core`` / ``noodle-runtime`` /
-``noodle-nodes`` into each per-env venv, but those packages are not published to
+The agent's ``env_manager`` installs ``nodyra-core`` / ``nodyra-runtime`` /
+``nodyra-nodes`` into each per-env venv, but those packages are not published to
 PyPI — so a runner on a clean machine cannot build any env. This module builds
 those three wheels from the monorepo source (the same ``packages/`` tree the API
 already installs from for local envs) on first request and caches them, so the
@@ -19,7 +19,7 @@ import logging
 from pathlib import Path
 
 from app.config import settings
-from app.services.backends.base import _run, local_noodle_packages
+from app.services.backends.base import _run, local_nodyra_packages
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def _get_lock() -> asyncio.Lock:
 
 
 async def ensure_wheels(*, force: bool = False) -> list[Path]:
-    """Build the noodle wheels into the cache if absent; return their paths.
+    """Build the nodyra wheels into the cache if absent; return their paths.
 
     Single-flight via a module lock so concurrent first-run dispatches don't
     race the build. Raises ``RuntimeError`` (with the uv build log tail) if a
@@ -60,11 +60,11 @@ async def ensure_wheels(*, force: bool = False) -> list[Path]:
         existing = list_wheels()
         if existing and not force and _built:
             return existing
-        sources = local_noodle_packages()
+        sources = local_nodyra_packages()
         if not sources:
             raise RuntimeError(
                 "cannot locate the monorepo packages/ tree to build runner "
-                "wheels; the API image must ship the noodle package sources."
+                "wheels; the API image must ship the nodyra package sources."
             )
         out = wheels_dir()
         if force:

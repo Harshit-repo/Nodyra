@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from noodle_nodes.integrations_v2.providers.twilio.media_streams import (
+from nodyra_nodes.integrations_v2.providers.twilio.media_streams import (
     TwilioMediaStreamAdapter,
     twilio_media_streams_start,
 )
@@ -133,7 +133,7 @@ async def test_close_calls_ws_close():
 
 @pytest.mark.asyncio
 async def test_node_raises_without_ws_runtime():
-    from noodle.context import node_ws_connect
+    from nodyra.context import node_ws_connect
 
     assert node_ws_connect.get() is None
     with pytest.raises(RuntimeError, match="no WebSocket runtime"):
@@ -142,7 +142,7 @@ async def test_node_raises_without_ws_runtime():
 
 @pytest.mark.asyncio
 async def test_node_connects_and_returns_adapter():
-    from noodle.context import node_ws_connect
+    from nodyra.context import node_ws_connect
 
     ws = _ws([_START_MSG])
     connect_fn = AsyncMock(return_value=ws)
@@ -165,7 +165,7 @@ async def test_node_connects_and_returns_adapter():
 
 @pytest.mark.asyncio
 async def test_node_builds_url_from_call_sid():
-    from noodle.context import node_ws_connect
+    from nodyra.context import node_ws_connect
 
     ws = _ws([_START_MSG])
     connect_fn = AsyncMock(return_value=ws)
@@ -181,7 +181,7 @@ async def test_node_builds_url_from_call_sid():
 
 @pytest.mark.asyncio
 async def test_node_raises_with_no_url_or_call_sid():
-    from noodle.context import node_ws_connect
+    from nodyra.context import node_ws_connect
 
     connect_fn = AsyncMock()
     token = node_ws_connect.set(connect_fn)

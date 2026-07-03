@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Edge } from "@xyflow/react";
 
 import type { NodeManifest, PortSpec } from "../types";
-import type { NoodleNode } from "./store";
+import type { NodyraNode } from "./store";
 import { useEditor } from "./store";
 
 // ── test fixtures ─────────────────────────────────────────────────────────────
@@ -45,10 +45,10 @@ function manifest(id: string, opts?: { inputs?: PortSpec[]; outputs?: PortSpec[]
   };
 }
 
-function node(id: string, m: NodeManifest, x = 0, selected = false): NoodleNode {
+function node(id: string, m: NodeManifest, x = 0, selected = false): NodyraNode {
   return {
     id,
-    type: "noodle",
+    type: "nodyra",
     selected,
     position: { x, y: 0 },
     data: {

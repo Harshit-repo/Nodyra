@@ -4,7 +4,7 @@ import type { NodeProps } from "@xyflow/react";
 import { memo, useMemo } from "react";
 
 import { portColor } from "../NodeCard";
-import type { NoodleNodeData } from "../store";
+import type { NodyraNodeData } from "../store";
 
 /**
  * Custom node component for `mcp_tool` nodes.
@@ -14,7 +14,7 @@ import type { NoodleNodeData } from "../store";
  * nodes on the canvas and makes the connection source visible at a glance.
  */
 function McpToolNodeComponent({ data, selected }: NodeProps) {
-  const nodeData = data as unknown as NoodleNodeData;
+  const nodeData = data as unknown as NodyraNodeData;
   const manifest = nodeData.manifest;
   const params = nodeData.params;
   const disabled = nodeData.disabled;

@@ -1,4 +1,4 @@
-from noodle.packages import canonical_package_name, missing_packages
+from nodyra.packages import canonical_package_name, missing_packages
 
 
 def test_canonical_strips_specifier_extras_and_normalizes():

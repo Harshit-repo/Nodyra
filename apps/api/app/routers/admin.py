@@ -443,7 +443,7 @@ async def upsert_sso_config(
         )
 
     # Validate SSO URLs before storing them
-    from noodle_nodes.http_security import assert_public_http_url
+    from nodyra_nodes.http_security import assert_public_http_url
 
     discovery_url = body.get("discovery_url")
     if discovery_url:
@@ -558,7 +558,7 @@ async def test_sso_connection(
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "discovery_url is required for OIDC"
             )
-        from noodle_nodes.http_security import assert_public_http_url
+        from nodyra_nodes.http_security import assert_public_http_url
 
         assert_public_http_url(discovery_url, context="SSO test")
         import httpx
@@ -594,7 +594,7 @@ async def test_sso_connection(
                 status.HTTP_400_BAD_REQUEST,
                 "idp_sso_url is required for SAML",
             )
-        from noodle_nodes.http_security import assert_public_http_url
+        from nodyra_nodes.http_security import assert_public_http_url
 
         assert_public_http_url(idp_sso_url, context="SSO test")
         import httpx

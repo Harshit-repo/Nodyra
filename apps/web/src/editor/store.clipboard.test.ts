@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Edge } from "@xyflow/react";
 
 import type { NodeManifest, PortSpec } from "../types";
-import type { NoodleNode } from "./store";
+import type { NodyraNode } from "./store";
 import { useEditor } from "./store";
 
 function port(name: string, data_kind: PortSpec["data_kind"] = "any"): PortSpec {
@@ -41,10 +41,10 @@ function node(
   m: NodeManifest,
   x: number,
   selected = false,
-): NoodleNode {
+): NodyraNode {
   return {
     id,
-    type: "noodle",
+    type: "nodyra",
     selected,
     position: { x, y: 40 },
     data: {

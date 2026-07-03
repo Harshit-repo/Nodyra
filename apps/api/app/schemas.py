@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
-from noodle.models import WorkflowGraph
+from nodyra.models import WorkflowGraph
 
 SUPPORTED_PYTHON_VERSIONS = ("3.12", "3.13", "3.14")
 
@@ -1429,7 +1429,7 @@ class GithubSyncConfigInfo(BaseModel):
 
 
 class GithubConflictResolveRequest(BaseModel):
-    side: Literal["noodle", "github"]
+    side: Literal["nodyra", "github"]
 
 
 class GithubRepoValidation(BaseModel):

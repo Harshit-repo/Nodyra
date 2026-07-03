@@ -15,7 +15,7 @@ def exporter(monkeypatch):
     monkeypatch.setattr(settings, "otel_enabled", True)
     exp = InMemorySpanExporter()
     tracing.shutdown_tracing()
-    tracing.setup_tracing("noodle-test", exporter=exp)
+    tracing.setup_tracing("nodyra-test", exporter=exp)
     yield exp
     tracing.shutdown_tracing()
 
@@ -32,12 +32,12 @@ def test_disabled_by_default_everything_no_ops():
 
 def test_setup_is_idempotent(exporter):
     assert tracing.enabled() is True
-    tracing.setup_tracing("noodle-test-again")  # second call: no-op, no raise
+    tracing.setup_tracing("nodyra-test-again")  # second call: no-op, no raise
     assert tracing.enabled() is True
 
 
 def test_node_span_synthesis_under_run_execute(exporter):
-    with tracing.span("run.execute", attributes={"noodle.run_id": "r1"}):
+    with tracing.span("run.execute", attributes={"nodyra.run_id": "r1"}):
         tracing.record_node_span(
             {
                 "node_id": "n1",
@@ -54,11 +54,11 @@ def test_node_span_synthesis_under_run_execute(exporter):
     assert node.parent is not None
     assert node.parent.span_id == run.context.span_id
     assert node.context.trace_id == run.context.trace_id
-    assert node.attributes["noodle.node_id"] == "n1"
-    assert node.attributes["noodle.node_type"] == "code"
-    assert node.attributes["noodle.status"] == "success"
-    assert node.attributes["noodle.org_id"] == "org-1"
-    assert node.attributes["noodle.iteration_path"] == "0/2"
+    assert node.attributes["nodyra.node_id"] == "n1"
+    assert node.attributes["nodyra.node_type"] == "code"
+    assert node.attributes["nodyra.status"] == "success"
+    assert node.attributes["nodyra.org_id"] == "org-1"
+    assert node.attributes["nodyra.iteration_path"] == "0/2"
     assert node.start_time == 1_000_000_000_000  # 1000.0 s → ns
     assert node.end_time == 1_002_500_000_000
 
@@ -122,12 +122,12 @@ async def test_run_produces_connected_trace(client: AsyncClient, exporter) -> No
     assert len(by_name.get("run.enqueue", [])) == 1
     assert len(by_name.get("run.execute", [])) == 1
     node_spans = by_name.get("node.execute", [])
-    assert {s.attributes["noodle.node_id"] for s in node_spans} == {"t", "c"}
+    assert {s.attributes["nodyra.node_id"] for s in node_spans} == {"t", "c"}
 
     run_span = by_name["run.execute"][0]
-    assert run_span.attributes["noodle.run_id"] == run_id
-    assert run_span.attributes["noodle.workflow_id"] == workflow_id
-    assert run_span.attributes["noodle.status"] == "success"
+    assert run_span.attributes["nodyra.run_id"] == run_id
+    assert run_span.attributes["nodyra.workflow_id"] == workflow_id
+    assert run_span.attributes["nodyra.status"] == "success"
 
     # single connected trace: every span shares the enqueue span's trace id
     trace_id = by_name["run.enqueue"][0].context.trace_id
@@ -138,7 +138,7 @@ async def test_run_produces_connected_trace(client: AsyncClient, exporter) -> No
         for s in node_spans
     )
     # node types resolved from the graph
-    types = {s.attributes["noodle.node_id"]: s.attributes["noodle.node_type"]
+    types = {s.attributes["nodyra.node_id"]: s.attributes["nodyra.node_type"]
              for s in node_spans}
     assert types == {"t": "manual_trigger", "c": "code"}
 

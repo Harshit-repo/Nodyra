@@ -13,7 +13,7 @@ from app.security import get_client_ip
 from app.services.provider_triggers import (
     dispatch_provider_webhook,
 )
-from noodle_nodes.integrations_v2.specs import ProviderTriggerRequest
+from nodyra_nodes.integrations_v2.specs import ProviderTriggerRequest
 
 router = APIRouter(tags=["provider-webhooks"])
 
@@ -59,7 +59,7 @@ async def _enforce_provider_webhook_rate_limit(
 ) -> None:
     """Rate-limit provider webhook ingress per (subscription, caller IP).
 
-    Provider callbacks are unauthenticated at the Noodle layer (auth is the
+    Provider callbacks are unauthenticated at the Nodyra layer (auth is the
     provider's webhook signature).  Without a rate limit a flood of validly
     signed deliveries could overwhelm the run queue.
     """
@@ -92,7 +92,7 @@ async def provider_webhook(subscription_id: str, request: Request) -> Response:
     await _enforce_provider_webhook_rate_limit(subscription_id, request)
 
     # Cross-org by design: the subscription decides which org's workflow
-    # fires; the external provider has no Noodle identity. start_run pins
+    # fires; the external provider has no Nodyra identity. start_run pins
     # the resulting run to its workflow's org.
     try:
         with run_as_system():

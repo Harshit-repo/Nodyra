@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers loop_start/loop_end/code
-from noodle.context import org_run_limits
-from noodle.engine import execute
-from noodle.models import WorkflowGraph
-from noodle.sdk import registry
+import nodyra_nodes  # noqa: F401 - registers loop_start/loop_end/code
+from nodyra.context import org_run_limits
+from nodyra.engine import execute
+from nodyra.models import WorkflowGraph
+from nodyra.sdk import registry
 
 
 def _g(nodes, edges) -> WorkflowGraph:
@@ -82,8 +82,8 @@ async def test_while_loop_clamped_to_org_cap(org_caps):
 
 
 async def test_map_items_above_org_cap_rejected(org_caps):
-    from noodle.context import workflow_caller
-    from noodle_nodes.builtin import map_items
+    from nodyra.context import workflow_caller
+    from nodyra_nodes.builtin import map_items
 
     async def _fake_caller(workflow_id, payload):  # pragma: no cover - never reached
         return {"ok": True}

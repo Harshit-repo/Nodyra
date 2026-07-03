@@ -1,10 +1,10 @@
-# Noodle Architecture Improvement Plan
+# Nodyra Architecture Improvement Plan
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** harden Noodle from a promising Python-native workflow builder into a production-ready workflow automation platform with clear local/distributed modes, durable execution, observable queueing, safe credentials, and best-in-class authoring ergonomics.
+**Goal:** harden Nodyra from a promising Python-native workflow builder into a production-ready workflow automation platform with clear local/distributed modes, durable execution, observable queueing, safe credentials, and best-in-class authoring ergonomics.
 
-**Production target (v1):** single-tenant self-hosting with **trusted workflow authors**. Noodle's warm per-environment subprocess pools and arbitrary-Python Code/uploaded-module nodes run inside the operator's trust boundary by design; this is the right model for teams running their own instance. Untrusted/multi-tenant execution would require per-run disposable isolation (containers/gVisor/Firecracker), discarding the warm-pool performance model — that is explicitly **out of scope for v1** and tracked separately against the remote-runner seam. Every task below should be read against the single-tenant target.
+**Production target (v1):** single-tenant self-hosting with **trusted workflow authors**. Nodyra's warm per-environment subprocess pools and arbitrary-Python Code/uploaded-module nodes run inside the operator's trust boundary by design; this is the right model for teams running their own instance. Untrusted/multi-tenant execution would require per-run disposable isolation (containers/gVisor/Firecracker), discarding the warm-pool performance model — that is explicitly **out of scope for v1** and tracked separately against the remote-runner seam. Every task below should be read against the single-tenant target.
 
 **Architecture:** keep the current FastAPI + React + Python runtime foundation, but make process boundaries explicit: API/editor, scheduler leader, webhook ingress, durable queue, local/remote workers, runner pools, metadata DB, and artifact storage. Local mode remains simple; production mode becomes durable and horizontally scalable.
 
@@ -14,13 +14,13 @@
 
 ## Current baseline
 
-Noodle already has:
+Nodyra already has:
 
 - FastAPI control plane in `apps/api`.
 - React Flow editor in `apps/web`.
-- Core DAG engine in `packages/core/noodle/engine.py`.
-- Node SDK and manifests in `packages/core/noodle/sdk.py` and `packages/core/noodle/models.py`.
-- Built-in nodes in `packages/nodes/noodle_nodes`.
+- Core DAG engine in `packages/core/nodyra/engine.py`.
+- Node SDK and manifests in `packages/core/nodyra/sdk.py` and `packages/core/nodyra/models.py`.
+- Built-in nodes in `packages/nodes/nodyra_nodes`.
 - Runtime subprocess pool in `apps/api/app/services/runtime_pool.py`.
 - Remote dispatch/runner-pool model in `apps/api/app/services/remote_dispatch.py` and `packages/runner`.
 - Runs, node runs, credentials, audit events, artifacts, runner pools, deployments, pinned data.
@@ -132,7 +132,7 @@ Validation:
 Run:
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/tmp/noodle-uv-venv UV_LINK_MODE=copy uv run --package noodle-api pytest apps/api/tests/test_config_runtime_mode.py -q
+UV_PROJECT_ENVIRONMENT=/tmp/nodyra-uv-venv UV_LINK_MODE=copy uv run --package nodyra-api pytest apps/api/tests/test_config_runtime_mode.py -q
 ```
 
 ### Task 2: Add `/ops/runtime-mode` endpoint
@@ -289,7 +289,7 @@ Behavior:
 **Files:**
 - Modify: `apps/api/app/models.py`
 - Modify: `apps/api/app/services/remote_dispatch.py`
-- Modify: `packages/runner/noodle_runner_agent/ws_client.py`
+- Modify: `packages/runner/nodyra_runner_agent/ws_client.py`
 - Test: `apps/api/tests/test_runner_pools.py`
 
 Behavior:
@@ -428,7 +428,7 @@ Show:
 **Objective:** every serious integration can implement test-on-save.
 
 **Files:**
-- Modify: `packages/core/noodle/models.py`
+- Modify: `packages/core/nodyra/models.py`
 - Modify: `apps/api/app/services/credentials.py`
 - Test: `apps/api/tests/test_credentials_v2.py`
 
@@ -476,7 +476,7 @@ canvas layout, and make that contract visible.
 > x/y positions does not change execution order.
 
 **Files:**
-- Modify: `packages/core/noodle/engine.py`
+- Modify: `packages/core/nodyra/engine.py`
 - Modify: `docs/architecture.md`
 - Test: `packages/core/tests/test_engine.py`
 
@@ -550,8 +550,8 @@ Behavior:
 Backend/core/nodes:
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/tmp/noodle-uv-venv UV_LINK_MODE=copy uv run --package noodle-nodes pytest packages/nodes/tests/test_builtin_nodes.py -q
-UV_PROJECT_ENVIRONMENT=/tmp/noodle-uv-venv UV_LINK_MODE=copy uv run pytest packages/core/tests apps/api/tests -q
+UV_PROJECT_ENVIRONMENT=/tmp/nodyra-uv-venv UV_LINK_MODE=copy uv run --package nodyra-nodes pytest packages/nodes/tests/test_builtin_nodes.py -q
+UV_PROJECT_ENVIRONMENT=/tmp/nodyra-uv-venv UV_LINK_MODE=copy uv run pytest packages/core/tests apps/api/tests -q
 ```
 
 On Windows (this dev machine), `uv run` fails to (re)create the project venv
@@ -559,7 +559,7 @@ because it tries to make a `lib64` symlink without Developer Mode. Use the
 already-built `.venv` interpreter directly instead:
 
 ```powershell
-# Backend / core / nodes — run from each package dir so `app`/`noodle` import
+# Backend / core / nodes — run from each package dir so `app`/`nodyra` import
 cd apps/api;        ..\..\.venv\Scripts\python.exe -m pytest tests -q
 cd packages\core;   ..\..\.venv\Scripts\python.exe -m pytest tests -q
 cd packages\nodes;  ..\..\.venv\Scripts\python.exe -m pytest tests -q
@@ -593,7 +593,7 @@ cd apps/web
 9. Credential test/OAuth foundations.
 10. Unsafe-node policy.
 
-This order gives Noodle production clarity before increasing distributed complexity.
+This order gives Nodyra production clarity before increasing distributed complexity.
 
 ---
 

@@ -93,7 +93,7 @@ function poolConfigSummary(pool: RunnerPoolInfo): string | null {
     return `host ${(cfg.docker_host as string) || "local socket"}`;
   }
   if (pool.provider === "kubernetes") {
-    return `ns ${(cfg.namespace as string) || "noodle"}`;
+    return `ns ${(cfg.namespace as string) || "nodyra"}`;
   }
   if (cfg.cloud_provider === "aws") {
     return `auto-scale AWS ≤ ${(cfg.max_instances as number) ?? "?"}`;
@@ -188,16 +188,16 @@ function ProviderConfigFields({
       <>
         <TextField
           label="Namespace"
-          value={str("namespace") || "noodle"}
+          value={str("namespace") || "nodyra"}
           onChange={(v) => set("namespace", v)}
-          placeholder="noodle"
+          placeholder="nodyra"
         />
         <TextField
           label="Image registry"
           desc="Blank uses in-cluster images."
           value={str("image_registry")}
           onChange={(v) => set("image_registry", v)}
-          placeholder="registry.example.com/noodle"
+          placeholder="registry.example.com/nodyra"
         />
         <Field
           label="Kubeconfig YAML"
@@ -741,12 +741,12 @@ function AddMachineDialog({
   };
 
   const installCmd = token
-    ? `pip install --find-links ${token.api_url}/runner-pools/wheels/ noodle-runner
-noodle-runner register \
+    ? `pip install --find-links ${token.api_url}/runner-pools/wheels/ nodyra-runner
+nodyra-runner register \
   --api-url ${token.api_url} \
   --token ${token.token} \
   --name ${name.trim() || "my-runner"}
-noodle-runner start`
+nodyra-runner start`
     : "";
 
   const copy = async () => {

@@ -129,7 +129,7 @@ async def _check_webhook_body_size(request: Request) -> None:
 # land on different replicas; the in-process dict is the single-process
 # fallback (same degradation mode as the capture buffer above).
 WEBHOOK_LISTEN_TTL_SECONDS = 10 * 60  # 10 min — generous for Postman setup time
-_LISTEN_KEY_PREFIX = "noodle:webhook_listen:"
+_LISTEN_KEY_PREFIX = "nodyra:webhook_listen:"
 _listening: dict[str, tuple[float, str]] = {}  # path → (expire_at, org_id)
 
 
@@ -211,7 +211,7 @@ _REJECT_DETAIL = {
     403: "Caller IP is not allowed.",
 }
 _REJECT_HEADERS: dict[int, dict[str, str]] = {
-    401: {"WWW-Authenticate": 'Basic realm="Noodle webhook"'},
+    401: {"WWW-Authenticate": 'Basic realm="Nodyra webhook"'},
 }
 
 
@@ -381,7 +381,7 @@ async def capture_webhook(path: str, request: Request) -> dict:
         )
         raise _reject_response(result.reject_status)
     return {
-        "message": "Noodle test webhook received",
+        "message": "Nodyra test webhook received",
         "path": path,
         "matched": result.any_match,
         "runs": result.run_ids,
@@ -484,7 +484,7 @@ async def github_sync_webhook(
 
     No bearer auth — authenticated by HMAC-SHA256 signature in
     ``X-Hub-Signature-256``. Bypasses org filter via run_as_system so the
-    config lookup is unscoped (the request carries no Noodle auth context).
+    config lookup is unscoped (the request carries no Nodyra auth context).
     """
     import json as _json
 
@@ -588,7 +588,7 @@ async def trigger_webhook(path: str, request: Request) -> dict:
     )
     # Webhook ingress is inherently cross-org: the path decides which org's
     # workflow fires, not the caller's X-Org-Id (callers are external systems
-    # with no Noodle identity). Matching runs unscoped; start_run then pins
+    # with no Nodyra identity). Matching runs unscoped; start_run then pins
     # each run to its workflow's org.
     from app.tenancy import run_as_system
 

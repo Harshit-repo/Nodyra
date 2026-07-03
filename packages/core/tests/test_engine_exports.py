@@ -1,10 +1,10 @@
 """B2 refactor contract: every name historically importable from
-``noodle.engine`` (public API + host/test-consumed internals) must remain
+``nodyra.engine`` (public API + host/test-consumed internals) must remain
 importable from the package facade after the monolith split."""
 
 
 def test_engine_facade_exports():
-    from noodle import engine
+    from nodyra import engine
 
     for name in (
         # public API
@@ -24,12 +24,12 @@ def test_engine_facade_exports():
         "_MAX_AGENT_LOOP_ITERATIONS", "_dispatch_agent_action_request",
         "_approx_encoded_length",
     ):
-        assert hasattr(engine, name), f"noodle.engine.{name} missing"
+        assert hasattr(engine, name), f"nodyra.engine.{name} missing"
 
 
 def test_package_init_reexports_engine_api():
-    import noodle
+    import nodyra
 
-    assert noodle.execute is not None
-    assert noodle.run is not None
-    assert noodle.GraphError is not None
+    assert nodyra.execute is not None
+    assert nodyra.run is not None
+    assert nodyra.GraphError is not None

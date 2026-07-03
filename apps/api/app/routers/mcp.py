@@ -68,7 +68,7 @@ TOOL_PAGE_SIZE = 100
 
 
 def _cursor(offset: int) -> str:
-    return base64.urlsafe_b64encode(f"noodle:{offset}".encode()).decode().rstrip("=")
+    return base64.urlsafe_b64encode(f"nodyra:{offset}".encode()).decode().rstrip("=")
 
 
 def _cursor_offset(value: object) -> int:
@@ -81,7 +81,7 @@ def _cursor_offset(value: object) -> int:
         decoded = base64.urlsafe_b64decode(padded).decode()
         prefix, raw = decoded.split(":", 1)
         offset = int(raw)
-        if prefix != "noodle" or offset < 0:
+        if prefix != "nodyra" or offset < 0:
             raise ValueError
         return offset
     except (ValueError, UnicodeError) as exc:
@@ -139,7 +139,7 @@ async def mcp_protected_resource_metadata(request: Request) -> dict:
         "resource": _request_resource_url(request),
         "bearer_methods_supported": ["header"],
         "scopes_supported": sorted(_PERMISSION_MIN_ROLE),
-        "resource_name": "Noodle MCP",
+        "resource_name": "Nodyra MCP",
     }
     if settings.mcp_authorization_server_url:
         payload["authorization_servers"] = [

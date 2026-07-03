@@ -33,7 +33,7 @@ docs/licensing-internal.md
 .DS_Store
 Thumbs.db
 
-# Noodle runtime data
+# Nodyra runtime data
 /envs/
 envs/
 apps/api/envs/

@@ -1,6 +1,6 @@
 # 09 — Python Code Execution Safety (CRITICAL area)
 
-Independent review, 2026-06-16. Files read: `packages/core/noodle/expr.py`,
+Independent review, 2026-06-16. Files read: `packages/core/nodyra/expr.py`,
 `apps/api/app/services/unsafe_nodes.py`, `apps/api/app/services/isolation.py`,
 `apps/api/app/services/sandbox_policy.py`,
 `apps/api/app/services/executors/sandbox.py`,
@@ -9,7 +9,7 @@ Independent review, 2026-06-16. Files read: `packages/core/noodle/expr.py`,
 
 ## Threat model (as built)
 
-Noodle runs **arbitrary user Python** in three places:
+Nodyra runs **arbitrary user Python** in three places:
 1. **Code nodes / DuckDB / Polars** — explicitly arbitrary Python/SQL.
 2. **Expressions** (`{{ … }}`) — restricted mini-language.
 3. **Per-env package installs** — admin-controlled image/venv builds.

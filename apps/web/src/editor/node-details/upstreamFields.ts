@@ -1,5 +1,5 @@
 import type { Edge } from "@xyflow/react";
-import type { NoodleNode } from "../store";
+import type { NodyraNode } from "../store";
 
 export interface UpstreamField {
   path: string;
@@ -105,7 +105,7 @@ export function getUpstreamNodeIds(nodeId: string, edges: Edge[]): string[] {
 
 export function getUpstreamNodes(
   nodeId: string,
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   edges: Edge[],
   runOutputs: Record<string, unknown>,
 ): UpstreamNode[] {

@@ -1,7 +1,7 @@
-from noodle.models import CredentialSpec, PortDataKind
-from noodle.sdk import NodeRegistry
-from noodle_nodes.integrations_v2.node_factory import operation_source, trigger_source
-from noodle_nodes.integrations_v2.registry import (
+from nodyra.models import CredentialSpec, PortDataKind
+from nodyra.sdk import NodeRegistry
+from nodyra_nodes.integrations_v2.node_factory import operation_source, trigger_source
+from nodyra_nodes.integrations_v2.registry import (
     execute_registered_operation,
     get_registered_provider_trigger,
     register_operation,
@@ -11,7 +11,7 @@ from noodle_nodes.integrations_v2.registry import (
     unregister_operation,
     unregister_provider_trigger,
 )
-from noodle_nodes.integrations_v2.specs import (
+from nodyra_nodes.integrations_v2.specs import (
     OperationParamSpec,
     OperationSpec,
     ProviderTriggerPollContext,
@@ -222,8 +222,8 @@ def test_provider_trigger_source_is_explicit_python() -> None:
 
 
 def test_operation_manifest_defaults_to_empty_requirements():
-    from noodle_nodes.integrations_v2.node_factory import operation_manifest
-    from noodle_nodes.integrations_v2.specs import OperationSpec
+    from nodyra_nodes.integrations_v2.node_factory import operation_manifest
+    from nodyra_nodes.integrations_v2.specs import OperationSpec
 
     spec = OperationSpec(
         node_id="acme.thing.do",
@@ -236,8 +236,8 @@ def test_operation_manifest_defaults_to_empty_requirements():
 
 
 def test_operation_manifest_passes_requirements_through():
-    from noodle_nodes.integrations_v2.node_factory import operation_manifest
-    from noodle_nodes.integrations_v2.specs import OperationSpec
+    from nodyra_nodes.integrations_v2.node_factory import operation_manifest
+    from nodyra_nodes.integrations_v2.specs import OperationSpec
 
     spec = OperationSpec(
         node_id="acme.thing.do",

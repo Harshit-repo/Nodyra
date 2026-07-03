@@ -1,5 +1,5 @@
 // Parsers + types for the chart/report envelopes produced by the
-// `chart`, `metrics_chart` and `build_report` nodes (noodle_nodes/charts.py).
+// `chart`, `metrics_chart` and `build_report` nodes (nodyra_nodes/charts.py).
 
 export interface ChartPoint {
   x?: number | string;
@@ -15,7 +15,7 @@ export interface ChartSeries {
 export type ChartType = "bar" | "line" | "area" | "scatter" | "pie";
 
 export interface ChartRef {
-  __noodle_chart__: true;
+  __nodyra_chart__: true;
   version: number;
   chart_type: ChartType;
   title: string;
@@ -43,7 +43,7 @@ export interface ReportTile {
 }
 
 export interface ReportRef {
-  __noodle_report__: true;
+  __nodyra_report__: true;
   version: number;
   title: string;
   columns: number;
@@ -56,14 +56,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function asChartRef(value: unknown): ChartRef | null {
   if (!isRecord(value)) return null;
-  if (value.__noodle_chart__ !== true || value.version !== 1) return null;
+  if (value.__nodyra_chart__ !== true || value.version !== 1) return null;
   if (!Array.isArray(value.series)) return null;
   return value as unknown as ChartRef;
 }
 
 export function asReportRef(value: unknown): ReportRef | null {
   if (!isRecord(value)) return null;
-  if (value.__noodle_report__ !== true || value.version !== 1) return null;
+  if (value.__nodyra_report__ !== true || value.version !== 1) return null;
   if (!Array.isArray(value.tiles)) return null;
   return value as unknown as ReportRef;
 }

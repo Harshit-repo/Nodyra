@@ -51,7 +51,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       label: "Run workflow",
       description: "Trigger a workflow run",
       action: () => {
-        window.dispatchEvent(new Event("noodle:run-workflow"));
+        window.dispatchEvent(new Event("nodyra:run-workflow"));
         onClose();
       },
     },
@@ -60,7 +60,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       label: "Fit view",
       description: "Fit all nodes in viewport",
       action: () => {
-        window.dispatchEvent(new Event("noodle:fit-view"));
+        window.dispatchEvent(new Event("nodyra:fit-view"));
         onClose();
       },
     },
@@ -69,7 +69,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       label: "Auto layout",
       description: "Arrange nodes automatically",
       action: () => {
-        window.dispatchEvent(new Event("noodle:auto-layout"));
+        window.dispatchEvent(new Event("nodyra:auto-layout"));
         onClose();
       },
     },
@@ -78,7 +78,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       label: "Open shortcuts",
       description: "View keyboard shortcuts",
       action: () => {
-        window.dispatchEvent(new Event("noodle:open-shortcuts"));
+        window.dispatchEvent(new Event("nodyra:open-shortcuts"));
         onClose();
       },
     },

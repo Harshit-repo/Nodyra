@@ -9,13 +9,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.artifacts import LocalArtifactStore, is_artifact_ref
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
-from noodle.sdk import registry
-from noodle_nodes.datasets import dataset_to_records, records_to_dataset
-from noodle_nodes.llm_evals import (
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.artifacts import LocalArtifactStore, is_artifact_ref
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
+from nodyra.sdk import registry
+from nodyra_nodes.datasets import dataset_to_records, records_to_dataset
+from nodyra_nodes.llm_evals import (
     _EVAL_RESULT_MARKER,
     eval_gate,
     eval_report,
@@ -392,7 +392,7 @@ def test_eval_report_produces_markdown_artifact(store_ctx) -> None:
     assert is_artifact_ref(result["report"])
     assert result["title"] == "My Test Report"
 
-    from noodle.artifacts import read_text
+    from nodyra.artifacts import read_text
     md = read_text(result["report"])
     assert "# My Test Report" in md
     assert "accuracy" in md
@@ -414,7 +414,7 @@ def test_eval_report_includes_sample_rows(store_ctx) -> None:
         sample_rows=5,
     )
 
-    from noodle.artifacts import read_text
+    from nodyra.artifacts import read_text
     md = read_text(result["report"])
     assert "Sample Rows" in md
 

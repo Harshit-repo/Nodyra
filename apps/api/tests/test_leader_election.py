@@ -37,11 +37,11 @@ async def test_stable_key_is_signed_64bit() -> None:
     from app.services.leader_election import _stable_key
 
     # Same input -> same key (the whole point is determinism across replicas).
-    assert _stable_key("noodle.scheduler") == _stable_key("noodle.scheduler")
+    assert _stable_key("nodyra.scheduler") == _stable_key("nodyra.scheduler")
     # Keys differ between locks so scheduler/retention don't collide.
-    assert _stable_key("noodle.scheduler") != _stable_key("noodle.retention")
+    assert _stable_key("nodyra.scheduler") != _stable_key("nodyra.retention")
     # Must fit in a Postgres bigint (signed 64-bit).
-    key = _stable_key("noodle.scheduler")
+    key = _stable_key("nodyra.scheduler")
     assert -(2**63) <= key < 2**63
 
 
@@ -62,7 +62,7 @@ async def test_run_with_leader_election_invokes_loop_when_acquired() -> None:
 
     task = asyncio.create_task(
         leader_election.run_with_leader_election(
-            loop_once, name="noodle.test", retry_seconds=0.01
+            loop_once, name="nodyra.test", retry_seconds=0.01
         )
     )
     # Let it re-acquire a few times.
@@ -101,7 +101,7 @@ async def test_run_with_leader_election_retries_on_failed_acquire(monkeypatch) -
 
     task = asyncio.create_task(
         leader_election.run_with_leader_election(
-            loop, name="noodle.test2", retry_seconds=0.01
+            loop, name="nodyra.test2", retry_seconds=0.01
         )
     )
     await asyncio.sleep(0.05)

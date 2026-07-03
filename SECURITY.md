@@ -2,7 +2,7 @@
 
 ## Trust model (read this first)
 
-Noodle supports three execution postures. In the default trusted single-tenant
+Nodyra supports three execution postures. In the default trusted single-tenant
 posture, workflow authors are trusted and Code nodes run in warm worker
 subprocesses on the host at native speed. In the sandboxed posture
 (`EXECUTION_SANDBOX=auto|required`), each run executes in a disposable hardened
@@ -25,7 +25,7 @@ quotas/fairness, and per-org sandbox pools.
   API is reachable by anything other than your own machine.
 - Keep credentials in the encrypted vault; never paste secrets into Code nodes.
 
-## What Noodle already does
+## What Nodyra already does
 
 - Credentials are encrypted at rest (per-credential DEK wrapped by a key derived
   from `SECRET_KEY`); the API returns only field names, never plaintext.

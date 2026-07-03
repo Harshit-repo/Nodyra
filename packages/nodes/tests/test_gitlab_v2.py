@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers provider nodes
-from noodle_nodes.integrations_v2.providers.gitlab import operations
-from noodle_nodes.integrations_v2.registry import get_registered_operation
+import nodyra_nodes  # noqa: F401 - registers provider nodes
+from nodyra_nodes.integrations_v2.providers.gitlab import operations
+from nodyra_nodes.integrations_v2.registry import get_registered_operation
 
 
 def _mock_transport(return_value: Any) -> MagicMock:

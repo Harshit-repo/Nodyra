@@ -3,7 +3,7 @@
 # stage 2 copies only the venv + application source into a clean base image.
 #
 # Build context must be the repo root:
-#   docker build -f deploy/Dockerfile.python -t noodle-api:latest .
+#   docker build -f deploy/Dockerfile.python -t nodyra-api:latest .
 
 # ── Stage 1: dependency installer ─────────────────────────────────────────────
 FROM python:3.12-slim AS builder
@@ -44,14 +44,14 @@ FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.30 /uv /bin/uv
 
-ARG NOODLE_UID=10001
-ARG NOODLE_GID=10001
+ARG NODYRA_UID=10001
+ARG NODYRA_GID=10001
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gosu \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid "${NOODLE_GID}" noodle \
-    && useradd --create-home --uid "${NOODLE_UID}" --gid "${NOODLE_GID}" noodle
+    && groupadd --gid "${NODYRA_GID}" nodyra \
+    && useradd --create-home --uid "${NODYRA_UID}" --gid "${NODYRA_GID}" nodyra
 
 ENV UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
@@ -71,14 +71,14 @@ COPY deploy/python-entrypoint.sh deploy/python-entrypoint.sh
 
 RUN mkdir -p /app/envs /app/artifacts \
     && chmod +x /app/deploy/python-entrypoint.sh \
-    && chown -R noodle:noodle /app
+    && chown -R nodyra:nodyra /app
 
 ENTRYPOINT ["/app/deploy/python-entrypoint.sh"]
 
 # Liveness probe for the API role. The worker exposes no HTTP port, so it
 # disables this in docker-compose (healthcheck.disable: true).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD gosu noodle python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3).status == 200 else 1)"
+    CMD gosu nodyra python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3).status == 200 else 1)"
 
 # Default command is overridden per service in docker-compose.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

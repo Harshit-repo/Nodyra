@@ -1,4 +1,4 @@
-# Noodle Tenant and Enterprise Test Plan
+# Nodyra Tenant and Enterprise Test Plan
 
 Date: 2026-06-30
 Status: ✅ All tests passing — 76 files, 439 passed, 1 skipped. TypeScript clean.
@@ -6,7 +6,7 @@ Branch: `feat/ms4-enterprise-scale`
 
 ## Scope
 
-This plan covers Noodle across three operating modes:
+This plan covers Nodyra across three operating modes:
 
 - Single-tenant/self-hosted: one trusted deployment, local or self-managed, with SQLite or Postgres and reduced enterprise requirements.
 - Multi-tenant SaaS: multiple organizations on one control plane, tenant isolation enforced by application scoping and Postgres RLS.
@@ -21,7 +21,7 @@ This plan covers Noodle across three operating modes:
 - Worker entrypoint: `apps/api/app/worker_main.py`
 - Frontend app: `apps/web/src`
 - Node/runtime packages: `packages/core`, `packages/nodes`, `packages/runner`, `packages/runtime`
-- Deployment: `deploy/docker-compose.yml`, `deploy/Dockerfile.python`, `apps/web/Dockerfile`, `deploy/helm/noodle`
+- Deployment: `deploy/docker-compose.yml`, `deploy/Dockerfile.python`, `apps/web/Dockerfile`, `deploy/helm/nodyra`
 
 ### Tenant, Org, User, and Data Models
 

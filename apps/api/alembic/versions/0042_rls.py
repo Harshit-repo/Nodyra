@@ -17,7 +17,7 @@ Policy semantics — fail-open when the GUC is unset, fail-closed when set:
   separate maintenance role — is deliberately deferred to the funded Phase D
   build (it doubles the ops surface for self-hosted installs).
 
-``FORCE`` is required: self-hosted Noodle connects as the table owner, and
+``FORCE`` is required: self-hosted Nodyra connects as the table owner, and
 without FORCE the owner bypasses policies entirely.
 
 Child tables (node_runs, run_events, run_approvals, artifacts via ``runs``;

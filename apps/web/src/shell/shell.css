@@ -1,32 +1,32 @@
-.noodle-shell-layout {
-  --noodle-shell-sidebar-width: 220px;
-  --noodle-shell-topbar-height: 52px;
-  --noodle-shell-mobile-nav-height: 60px;
-  --noodle-shell-z-sidebar: 20;
-  --noodle-shell-z-mobile-nav: 40;
-  --noodle-shell-z-drawer: 60;
+.nodyra-shell-layout {
+  --nodyra-shell-sidebar-width: 220px;
+  --nodyra-shell-topbar-height: 52px;
+  --nodyra-shell-mobile-nav-height: 60px;
+  --nodyra-shell-z-sidebar: 20;
+  --nodyra-shell-z-mobile-nav: 40;
+  --nodyra-shell-z-drawer: 60;
   display: block;
   width: 100%;
   min-height: 100dvh;
   flex: 1;
 }
 
-.noodle-shell-layout.noodle-shell-is-collapsed {
-  --noodle-shell-sidebar-width: 62px;
+.nodyra-shell-layout.nodyra-shell-is-collapsed {
+  --nodyra-shell-sidebar-width: 62px;
 }
 
-.noodle-shell-content {
+.nodyra-shell-content {
   min-width: 0;
-  padding-left: var(--noodle-shell-sidebar-width, 248px);
+  padding-left: var(--nodyra-shell-sidebar-width, 248px);
   transition: padding-left 180ms ease;
 }
 
-.noodle-shell-main {
+.nodyra-shell-main {
   min-width: 0;
   outline: none;
 }
 
-.noodle-shell-skip-link {
+.nodyra-shell-skip-link {
   position: fixed;
   top: 8px;
   left: 50%;
@@ -42,15 +42,15 @@
   transition: transform 140ms ease;
 }
 
-.noodle-shell-skip-link:focus {
+.nodyra-shell-skip-link:focus {
   transform: translate(-50%, 0);
 }
 
-.noodle-shell-topbar {
+.nodyra-shell-topbar {
   position: sticky;
   top: 0;
   z-index: 18;
-  min-height: var(--noodle-shell-topbar-height, 52px);
+  min-height: var(--nodyra-shell-topbar-height, 52px);
   display: grid;
   grid-template-columns: minmax(150px, 1fr) minmax(240px, 420px) minmax(150px, 1fr);
   align-items: center;
@@ -61,14 +61,14 @@
   backdrop-filter: blur(16px);
 }
 
-.noodle-shell-page-context {
+.nodyra-shell-page-context {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.noodle-shell-topbar-brand {
+.nodyra-shell-topbar-brand {
   display: none;
   align-items: center;
   gap: 8px;
@@ -81,18 +81,18 @@
   text-decoration: none;
 }
 
-.noodle-shell-page-scope {
+.nodyra-shell-page-scope {
   color: var(--ink-3, #8a93a6);
   font-size: 11px;
 }
 
-.noodle-shell-page-scope::after {
+.nodyra-shell-page-scope::after {
   content: "/";
   margin-left: 8px;
   color: var(--line, #242c3a);
 }
 
-.noodle-shell-page-context strong {
+.nodyra-shell-page-context strong {
   overflow: hidden;
   color: var(--ink-2, #98a4ba);
   font-size: 12px;
@@ -101,7 +101,7 @@
   white-space: nowrap;
 }
 
-.noodle-shell-command-trigger {
+.nodyra-shell-command-trigger {
   width: 100%;
   min-height: 36px;
   display: flex;
@@ -116,13 +116,13 @@
   transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
 }
 
-.noodle-shell-command-trigger:hover {
+.nodyra-shell-command-trigger:hover {
   border-color: var(--accent-deep, #1f4f8f);
   background: var(--surface-2, #161b25);
   color: var(--ink-2, #98a4ba);
 }
 
-.noodle-shell-command-trigger > span {
+.nodyra-shell-command-trigger > span {
   flex: 1;
   overflow: hidden;
   font-size: 12px;
@@ -130,8 +130,8 @@
   white-space: nowrap;
 }
 
-.noodle-shell-command-trigger kbd,
-.noodle-shell-command-dialog kbd {
+.nodyra-shell-command-trigger kbd,
+.nodyra-shell-command-dialog kbd {
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -144,7 +144,7 @@
   font-size: 9px;
 }
 
-.noodle-shell-top-actions {
+.nodyra-shell-top-actions {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -152,7 +152,7 @@
   gap: 6px;
 }
 
-.noodle-shell-theme-toggle {
+.nodyra-shell-theme-toggle {
   width: 36px;
   height: 36px;
   display: flex;
@@ -166,20 +166,20 @@
   transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
 }
 
-.noodle-shell-theme-toggle:hover {
+.nodyra-shell-theme-toggle:hover {
   border-color: var(--accent-deep, #1f4f8f);
   background: var(--surface-2, #161b25);
   color: var(--ink, #e9eef6);
 }
 
-.noodle-shell-account,
-.noodle-shell-org {
+.nodyra-shell-account,
+.nodyra-shell-org {
   position: relative;
   min-width: 0;
 }
 
-.noodle-shell-account-trigger,
-.noodle-shell-org-trigger {
+.nodyra-shell-account-trigger,
+.nodyra-shell-org-trigger {
   min-height: 36px;
   display: flex;
   align-items: center;
@@ -194,37 +194,37 @@
   transition: border-color 140ms ease, background 140ms ease;
 }
 
-.noodle-shell-account-trigger:hover,
-.noodle-shell-account-trigger[aria-expanded="true"],
-.noodle-shell-org-trigger:hover,
-.noodle-shell-org-trigger[aria-expanded="true"] {
+.nodyra-shell-account-trigger:hover,
+.nodyra-shell-account-trigger[aria-expanded="true"],
+.nodyra-shell-org-trigger:hover,
+.nodyra-shell-org-trigger[aria-expanded="true"] {
   border-color: var(--accent-deep, #1f4f8f);
   background: var(--surface-2, #161b25);
 }
 
-.noodle-shell-account-trigger-copy,
-.noodle-shell-org-copy {
+.nodyra-shell-account-trigger-copy,
+.nodyra-shell-org-copy {
   min-width: 0;
   max-width: 145px;
   display: grid;
 }
 
-.noodle-shell-account-trigger-copy strong,
-.noodle-shell-account-trigger-copy small,
-.noodle-shell-org-copy strong,
-.noodle-shell-org-copy small {
+.nodyra-shell-account-trigger-copy strong,
+.nodyra-shell-account-trigger-copy small,
+.nodyra-shell-org-copy strong,
+.nodyra-shell-org-copy small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.noodle-shell-account-trigger-copy strong,
-.noodle-shell-org-copy strong { font-size: 11.5px; }
-.noodle-shell-account-trigger-copy small,
-.noodle-shell-org-copy small { color: var(--ink-3, #8a93a6); font-size: 9.5px; }
+.nodyra-shell-account-trigger-copy strong,
+.nodyra-shell-org-copy strong { font-size: 11.5px; }
+.nodyra-shell-account-trigger-copy small,
+.nodyra-shell-org-copy small { color: var(--ink-3, #8a93a6); font-size: 9.5px; }
 
-.noodle-shell-avatar,
-.noodle-shell-org-mark {
+.nodyra-shell-avatar,
+.nodyra-shell-org-mark {
   width: 26px;
   height: 26px;
   display: grid;
@@ -238,21 +238,21 @@
   font-weight: 800;
 }
 
-.noodle-shell-avatar.is-large {
+.nodyra-shell-avatar.is-large {
   width: 36px;
   height: 36px;
   border-radius: 9px;
   font-size: 11px;
 }
 
-.noodle-shell-org-trigger {
+.nodyra-shell-org-trigger {
   width: 100%;
   padding: 5px;
 }
 
-.noodle-shell-org-trigger .noodle-shell-org-copy { flex: 1; max-width: none; }
+.nodyra-shell-org-trigger .nodyra-shell-org-copy { flex: 1; max-width: none; }
 
-.noodle-shell-workspace-static {
+.nodyra-shell-workspace-static {
   min-height: 44px;
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
@@ -264,11 +264,11 @@
   background: color-mix(in srgb, var(--surface-2, #161b25) 62%, transparent);
 }
 
-.noodle-shell-workspace-static .noodle-shell-org-copy {
+.nodyra-shell-workspace-static .nodyra-shell-org-copy {
   max-width: none;
 }
 
-.noodle-shell-workspace-skeleton {
+.nodyra-shell-workspace-skeleton {
   min-height: 44px;
   border: 1px solid var(--line-2, #1a2029);
   border-radius: 11px;
@@ -276,15 +276,15 @@
     linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.045), transparent),
     var(--surface, #10141c);
   background-size: 220% 100%;
-  animation: noodle-shell-skeleton 1.4s ease-in-out infinite;
+  animation: nodyra-shell-skeleton 1.4s ease-in-out infinite;
 }
 
-@keyframes noodle-shell-skeleton {
+@keyframes nodyra-shell-skeleton {
   from { background-position: 160% 0; }
   to { background-position: -80% 0; }
 }
 
-.noodle-shell-popover {
+.nodyra-shell-popover {
   position: absolute;
   z-index: 80;
   display: grid;
@@ -295,16 +295,16 @@
   border-radius: 13px;
   background: var(--surface, #10141c);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
-  animation: noodle-shell-popover-in 150ms ease-out;
+  animation: nodyra-shell-popover-in 150ms ease-out;
 }
 
-.noodle-shell-account-popover { top: calc(100% + 9px); right: 0; }
-.noodle-shell-org-popover { top: calc(100% + 9px); left: 0; }
+.nodyra-shell-account-popover { top: calc(100% + 9px); right: 0; }
+.nodyra-shell-org-popover { top: calc(100% + 9px); left: 0; }
 
-.noodle-shell-popover > a,
-.noodle-shell-popover > button,
-.noodle-shell-mobile-account-actions > a,
-.noodle-shell-mobile-account-actions > button {
+.nodyra-shell-popover > a,
+.nodyra-shell-popover > button,
+.nodyra-shell-mobile-account-actions > a,
+.nodyra-shell-mobile-account-actions > button {
   min-height: 36px;
   display: flex;
   align-items: center;
@@ -320,20 +320,20 @@
   text-align: left;
 }
 
-.noodle-shell-popover > a:hover,
-.noodle-shell-popover > button:hover,
-.noodle-shell-mobile-account-actions > a:hover,
-.noodle-shell-mobile-account-actions > button:hover {
+.nodyra-shell-popover > a:hover,
+.nodyra-shell-popover > button:hover,
+.nodyra-shell-mobile-account-actions > a:hover,
+.nodyra-shell-mobile-account-actions > button:hover {
   background: var(--surface-2, #161b25);
   color: var(--ink, #e9eef6);
 }
 
-.noodle-shell-popover .is-danger,
-.noodle-shell-mobile-account-actions .is-danger { color: var(--color-error, #f0747a); }
-.noodle-shell-popover-divider { height: 1px; margin: 5px 3px; background: var(--line-2, #1a2029); }
-.noodle-shell-popover-title { padding: 6px 9px; color: var(--ink-3, #8a93a6); font-family: var(--font-mono, monospace); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.nodyra-shell-popover .is-danger,
+.nodyra-shell-mobile-account-actions .is-danger { color: var(--color-error, #f0747a); }
+.nodyra-shell-popover-divider { height: 1px; margin: 5px 3px; background: var(--line-2, #1a2029); }
+.nodyra-shell-popover-title { padding: 6px 9px; color: var(--ink-3, #8a93a6); font-family: var(--font-mono, monospace); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 
-.noodle-shell-account-head {
+.nodyra-shell-account-head {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -341,16 +341,16 @@
   padding: 8px;
 }
 
-.noodle-shell-account-head > span:last-child { min-width: 0; }
-.noodle-shell-account-head strong,
-.noodle-shell-account-head small,
-.noodle-shell-account-head em { display: block; overflow-wrap: anywhere; }
-.noodle-shell-account-head strong { font-size: 12.5px; }
-.noodle-shell-account-head small { margin-top: 2px; color: var(--ink-3, #8a93a6); font-size: 10px; }
-.noodle-shell-account-head em { width: fit-content; margin-top: 6px; padding: 2px 6px; border: 1px solid var(--line, #242c3a); border-radius: 5px; color: var(--ink-2, #98a4ba); font: 600 9px var(--font-mono, monospace); text-transform: capitalize; }
+.nodyra-shell-account-head > span:last-child { min-width: 0; }
+.nodyra-shell-account-head strong,
+.nodyra-shell-account-head small,
+.nodyra-shell-account-head em { display: block; overflow-wrap: anywhere; }
+.nodyra-shell-account-head strong { font-size: 12.5px; }
+.nodyra-shell-account-head small { margin-top: 2px; color: var(--ink-3, #8a93a6); font-size: 10px; }
+.nodyra-shell-account-head em { width: fit-content; margin-top: 6px; padding: 2px 6px; border: 1px solid var(--line, #242c3a); border-radius: 5px; color: var(--ink-2, #98a4ba); font: 600 9px var(--font-mono, monospace); text-transform: capitalize; }
 
-.noodle-shell-org-list { display: grid; gap: 3px; max-height: 270px; overflow-y: auto; }
-.noodle-shell-org-list > button {
+.nodyra-shell-org-list { display: grid; gap: 3px; max-height: 270px; overflow-y: auto; }
+.nodyra-shell-org-list > button {
   min-height: 42px;
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr) 12px;
@@ -364,18 +364,18 @@
   color: var(--ink-2, #98a4ba);
   text-align: left;
 }
-.noodle-shell-org-list > button:hover,
-.noodle-shell-org-list > button.is-current { background: var(--surface-2, #161b25); color: var(--ink, #e9eef6); }
-.noodle-shell-org-list strong,
-.noodle-shell-org-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.noodle-shell-org-list strong { font-size: 11.5px; }
-.noodle-shell-org-list small { color: var(--ink-3, #8a93a6); font-size: 9.5px; }
-.noodle-shell-current-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent, #4c9eff); }
-.noodle-shell-popover-state { padding: 16px 9px; color: var(--ink-3, #8a93a6); font-size: 11px; }
-.noodle-shell-popover-state.is-error { display: grid; gap: 8px; color: var(--color-error, #f0747a); }
-.noodle-shell-popover-state button { min-height: 44px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); color: var(--ink); }
+.nodyra-shell-org-list > button:hover,
+.nodyra-shell-org-list > button.is-current { background: var(--surface-2, #161b25); color: var(--ink, #e9eef6); }
+.nodyra-shell-org-list strong,
+.nodyra-shell-org-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nodyra-shell-org-list strong { font-size: 11.5px; }
+.nodyra-shell-org-list small { color: var(--ink-3, #8a93a6); font-size: 9.5px; }
+.nodyra-shell-current-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent, #4c9eff); }
+.nodyra-shell-popover-state { padding: 16px 9px; color: var(--ink-3, #8a93a6); font-size: 11px; }
+.nodyra-shell-popover-state.is-error { display: grid; gap: 8px; color: var(--color-error, #f0747a); }
+.nodyra-shell-popover-state button { min-height: 44px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); color: var(--ink); }
 
-.noodle-shell-workspace-blocked {
+.nodyra-shell-workspace-blocked {
   width: min(560px, calc(100% - 36px));
   display: grid;
   justify-items: center;
@@ -388,7 +388,7 @@
   text-align: center;
 }
 
-.noodle-shell-workspace-blocked > span {
+.nodyra-shell-workspace-blocked > span {
   width: 46px;
   height: 46px;
   display: grid;
@@ -399,12 +399,12 @@
   font-weight: 800;
 }
 
-.noodle-shell-workspace-blocked h1,
-.noodle-shell-workspace-blocked p { margin: 0; }
-.noodle-shell-workspace-blocked h1 { font-size: 22px; }
-.noodle-shell-workspace-blocked p { max-width: 460px; color: var(--ink-3, #8a93a6); font-size: 13px; line-height: 1.6; }
+.nodyra-shell-workspace-blocked h1,
+.nodyra-shell-workspace-blocked p { margin: 0; }
+.nodyra-shell-workspace-blocked h1 { font-size: 22px; }
+.nodyra-shell-workspace-blocked p { max-width: 460px; color: var(--ink-3, #8a93a6); font-size: 13px; line-height: 1.6; }
 
-.noodle-shell-local-status {
+.nodyra-shell-local-status {
   min-height: 34px;
   display: inline-flex;
   align-items: center;
@@ -415,7 +415,7 @@
   font-size: 11px;
 }
 
-.noodle-shell-command-layer {
+.nodyra-shell-command-layer {
   position: fixed;
   inset: 0;
   z-index: 200;
@@ -424,20 +424,20 @@
   padding: min(16vh, 150px) 18px 18px;
   background: rgba(2, 5, 10, 0.64);
   backdrop-filter: blur(5px);
-  animation: noodle-shell-fade-in 140ms ease-out;
+  animation: nodyra-shell-fade-in 140ms ease-out;
 }
 
-.noodle-shell-command-dialog {
+.nodyra-shell-command-dialog {
   width: min(620px, 100%);
   overflow: hidden;
   border: 1px solid var(--line, #242c3a);
   border-radius: 14px;
   background: var(--surface, #10141c);
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.58);
-  animation: noodle-shell-popover-in 160ms ease-out;
+  animation: nodyra-shell-popover-in 160ms ease-out;
 }
 
-.noodle-shell-command-head {
+.nodyra-shell-command-head {
   min-height: 58px;
   display: flex;
   align-items: center;
@@ -446,34 +446,34 @@
   border-bottom: 1px solid var(--line-2, #1a2029);
   color: var(--ink-3, #8a93a6);
 }
-.noodle-shell-command-head input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink, #e9eef6); font-size: 14px; }
-.noodle-shell-command-head button { width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--ink-3); }
-.noodle-shell-command-head button:hover { background: var(--surface-2); color: var(--ink); }
-.noodle-shell-command-label { padding: 12px 14px 6px; color: var(--ink-3); font: 700 9px var(--font-mono, monospace); letter-spacing: .08em; text-transform: uppercase; }
-.noodle-shell-command-results { display: grid; gap: 3px; max-height: min(48vh, 420px); padding: 0 8px 8px; overflow-y: auto; }
-.noodle-shell-command-results > button { min-height: 50px; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 6px 9px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--ink-2); text-align: left; }
-.noodle-shell-command-results > button.is-active { border-color: color-mix(in srgb, var(--accent) 22%, transparent); background: var(--accent-glow); color: var(--ink); }
-.noodle-shell-command-results > button > span { min-width: 0; }
-.noodle-shell-command-results strong,
-.noodle-shell-command-results small { display: block; }
-.noodle-shell-command-results strong { font-size: 12px; }
-.noodle-shell-command-results small { margin-top: 2px; color: var(--ink-3); font-size: 9.5px; text-transform: capitalize; }
-.noodle-shell-command-empty { padding: 26px 14px; color: var(--ink-3); text-align: center; font-size: 12px; }
-.noodle-shell-command-footer { display: flex; gap: 14px; padding: 9px 14px; border-top: 1px solid var(--line-2); color: var(--ink-3); font: 9px var(--font-mono, monospace); }
+.nodyra-shell-command-head input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink, #e9eef6); font-size: 14px; }
+.nodyra-shell-command-head button { width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--ink-3); }
+.nodyra-shell-command-head button:hover { background: var(--surface-2); color: var(--ink); }
+.nodyra-shell-command-label { padding: 12px 14px 6px; color: var(--ink-3); font: 700 9px var(--font-mono, monospace); letter-spacing: .08em; text-transform: uppercase; }
+.nodyra-shell-command-results { display: grid; gap: 3px; max-height: min(48vh, 420px); padding: 0 8px 8px; overflow-y: auto; }
+.nodyra-shell-command-results > button { min-height: 50px; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 6px 9px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--ink-2); text-align: left; }
+.nodyra-shell-command-results > button.is-active { border-color: color-mix(in srgb, var(--accent) 22%, transparent); background: var(--accent-glow); color: var(--ink); }
+.nodyra-shell-command-results > button > span { min-width: 0; }
+.nodyra-shell-command-results strong,
+.nodyra-shell-command-results small { display: block; }
+.nodyra-shell-command-results strong { font-size: 12px; }
+.nodyra-shell-command-results small { margin-top: 2px; color: var(--ink-3); font-size: 9.5px; text-transform: capitalize; }
+.nodyra-shell-command-empty { padding: 26px 14px; color: var(--ink-3); text-align: center; font-size: 12px; }
+.nodyra-shell-command-footer { display: flex; gap: 14px; padding: 9px 14px; border-top: 1px solid var(--line-2); color: var(--ink-3); font: 9px var(--font-mono, monospace); }
 
-@keyframes noodle-shell-popover-in {
+@keyframes nodyra-shell-popover-in {
   from { opacity: 0; transform: translateY(-5px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-.noodle-shell-sidebar {
+.nodyra-shell-sidebar {
   position: fixed;
   top: 0;
   left: 0;
-  z-index: var(--noodle-shell-z-sidebar, 20);
+  z-index: var(--nodyra-shell-z-sidebar, 20);
   display: flex;
   flex-direction: column;
-  width: var(--noodle-shell-sidebar-width, 220px);
+  width: var(--nodyra-shell-sidebar-width, 220px);
   height: 100dvh;
   padding: 14px 12px 12px;
   overflow: visible;
@@ -482,13 +482,13 @@
   transition: width 180ms ease, padding 180ms ease;
 }
 
-.noodle-shell-sidebar-head {
+.nodyra-shell-sidebar-head {
   display: grid;
   gap: 12px;
   padding: 0 4px 14px;
 }
 
-.noodle-shell-brand {
+.nodyra-shell-brand {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -500,13 +500,13 @@
   letter-spacing: -0.04em;
 }
 
-.noodle-shell-organization-slot,
-.noodle-shell-profile-slot,
-.noodle-shell-drawer-slot {
+.nodyra-shell-organization-slot,
+.nodyra-shell-profile-slot,
+.nodyra-shell-drawer-slot {
   min-width: 0;
 }
 
-.noodle-shell-sidebar-nav {
+.nodyra-shell-sidebar-nav {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -516,12 +516,12 @@
   overflow-y: auto;
 }
 
-.noodle-shell-nav-group {
+.nodyra-shell-nav-group {
   display: grid;
   gap: 4px;
 }
 
-.noodle-shell-nav-heading {
+.nodyra-shell-nav-heading {
   margin: 0;
   padding: 0 12px 6px;
   color: var(--ink-3, #8a93a6);
@@ -532,7 +532,7 @@
   text-transform: uppercase;
 }
 
-.noodle-shell-nav-link {
+.nodyra-shell-nav-link {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -548,43 +548,43 @@
   transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
-.noodle-shell-nav-link svg {
+.nodyra-shell-nav-link svg {
   flex: 0 0 auto;
 }
 
-.noodle-shell-nav-link span {
+.nodyra-shell-nav-link span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.noodle-shell-nav-link:hover {
+.nodyra-shell-nav-link:hover {
   color: var(--ink, #e9eef6);
   background: var(--surface-2, #161b25);
 }
 
-.noodle-shell-nav-link.noodle-shell-is-active {
+.nodyra-shell-nav-link.nodyra-shell-is-active {
   color: var(--accent, #4c9eff);
   background: var(--accent-glow, rgba(76, 158, 255, 0.18));
   border-color: color-mix(in srgb, var(--accent, #4c9eff) 30%, transparent);
 }
 
-.noodle-shell-nav-link:focus-visible,
-.noodle-shell-brand:focus-visible,
-.noodle-shell-mobile-link:focus-visible,
-.noodle-shell-icon-button:focus-visible {
+.nodyra-shell-nav-link:focus-visible,
+.nodyra-shell-brand:focus-visible,
+.nodyra-shell-mobile-link:focus-visible,
+.nodyra-shell-icon-button:focus-visible {
   outline: 2px solid var(--accent, #4c9eff);
   outline-offset: 2px;
 }
 
-.noodle-shell-sidebar-foot {
+.nodyra-shell-sidebar-foot {
   display: grid;
   gap: 6px;
   padding-top: 16px;
   border-top: 1px solid var(--line-2, #1a2029);
 }
 
-.noodle-shell-collapse-button {
+.nodyra-shell-collapse-button {
   min-height: 34px;
   display: flex;
   align-items: center;
@@ -602,44 +602,44 @@
   text-align: left;
 }
 
-.noodle-shell-collapse-button:hover {
+.nodyra-shell-collapse-button:hover {
   border-color: var(--line-2, #1a2029);
   background: var(--surface-2, #161b25);
   color: var(--ink, #e9eef6);
 }
 
-.noodle-shell-collapse-button:focus-visible {
+.nodyra-shell-collapse-button:focus-visible {
   outline: 2px solid var(--accent, #4c9eff);
   outline-offset: 2px;
 }
 
-.noodle-shell-sidebar.noodle-shell-is-collapsed {
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed {
   width: 62px;
   padding-inline: 8px;
 }
 
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-sidebar-head {
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-sidebar-head {
   gap: 12px;
   padding-inline: 0;
 }
 
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-brand {
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-brand {
   justify-content: center;
 }
 
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-brand > span,
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-nav-heading,
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-nav-link > span,
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-org-copy,
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-org-trigger > svg,
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-workspace-static .noodle-shell-org-copy,
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-collapse-button > span {
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-brand > span,
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-nav-heading,
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-nav-link > span,
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-org-copy,
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-org-trigger > svg,
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-workspace-static .nodyra-shell-org-copy,
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-collapse-button > span {
   display: none;
 }
 
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-organization-slot,
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-org-trigger,
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-workspace-static {
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-organization-slot,
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-org-trigger,
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-workspace-static {
   display: flex;
   justify-content: center;
   padding-inline: 0;
@@ -647,19 +647,19 @@
   background: transparent;
 }
 
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-nav-link,
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-collapse-button {
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-nav-link,
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-collapse-button {
   justify-content: center;
   padding-inline: 0;
 }
 
-.noodle-shell-sidebar.noodle-shell-is-collapsed .noodle-shell-local-mode {
+.nodyra-shell-sidebar.nodyra-shell-is-collapsed .nodyra-shell-local-mode {
   justify-content: center;
   padding-inline: 0;
   font-size: 0;
 }
 
-.noodle-shell-local-mode {
+.nodyra-shell-local-mode {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -670,7 +670,7 @@
   font-weight: 600;
 }
 
-.noodle-shell-local-mode-dot {
+.nodyra-shell-local-mode-dot {
   width: 7px;
   height: 7px;
   border-radius: 999px;
@@ -678,51 +678,51 @@
   box-shadow: 0 0 0 3px var(--color-success-bg, rgba(87, 201, 138, 0.12));
 }
 
-.noodle-shell-mobile-nav,
-.noodle-shell-drawer-layer {
+.nodyra-shell-mobile-nav,
+.nodyra-shell-drawer-layer {
   display: none;
 }
 
 @media (max-width: 1023px) {
-  .noodle-shell-layout {
+  .nodyra-shell-layout {
     display: block;
     padding-bottom: calc(
-      var(--noodle-shell-mobile-nav-height) + env(safe-area-inset-bottom, 0px)
+      var(--nodyra-shell-mobile-nav-height) + env(safe-area-inset-bottom, 0px)
     );
   }
 
-  .noodle-shell-sidebar {
+  .nodyra-shell-sidebar {
     display: none;
   }
 
-  .noodle-shell-content {
+  .nodyra-shell-content {
     padding-left: 0;
   }
 
-  .noodle-shell-topbar {
+  .nodyra-shell-topbar {
     min-height: 58px;
     grid-template-columns: minmax(100px, 1fr) minmax(170px, 280px) auto;
     gap: 10px;
     padding: 0 14px;
   }
 
-  .noodle-shell-topbar-brand { display: flex; }
-  .noodle-shell-page-scope { display: none; }
-  .noodle-shell-page-context strong { display: none; }
-  .noodle-shell-account-trigger-copy,
-  .noodle-shell-account-trigger > svg { display: none; }
-  .noodle-shell-account-trigger { padding-right: 4px; }
+  .nodyra-shell-topbar-brand { display: flex; }
+  .nodyra-shell-page-scope { display: none; }
+  .nodyra-shell-page-context strong { display: none; }
+  .nodyra-shell-account-trigger-copy,
+  .nodyra-shell-account-trigger > svg { display: none; }
+  .nodyra-shell-account-trigger { padding-right: 4px; }
 
-  .noodle-shell-mobile-nav {
+  .nodyra-shell-mobile-nav {
     position: fixed;
     right: 0;
     bottom: 0;
     left: 0;
-    z-index: var(--noodle-shell-z-mobile-nav, 40);
+    z-index: var(--nodyra-shell-z-mobile-nav, 40);
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     min-height: calc(
-      var(--noodle-shell-mobile-nav-height, 64px) + env(safe-area-inset-bottom, 0px)
+      var(--nodyra-shell-mobile-nav-height, 64px) + env(safe-area-inset-bottom, 0px)
     );
     padding: 4px max(6px, env(safe-area-inset-right, 0px))
       env(safe-area-inset-bottom, 0px) max(6px, env(safe-area-inset-left, 0px));
@@ -732,7 +732,7 @@
     backdrop-filter: blur(14px);
   }
 
-  .noodle-shell-mobile-link {
+  .nodyra-shell-mobile-link {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -749,7 +749,7 @@
     touch-action: manipulation;
   }
 
-  .noodle-shell-mobile-link span {
+  .nodyra-shell-mobile-link span {
     max-width: 100%;
     overflow: hidden;
     font-size: 10px;
@@ -759,26 +759,26 @@
     white-space: nowrap;
   }
 
-  .noodle-shell-mobile-link.noodle-shell-is-active {
+  .nodyra-shell-mobile-link.nodyra-shell-is-active {
     color: var(--accent, #4c9eff);
     background: var(--accent-glow, rgba(76, 158, 255, 0.18));
   }
 
-  .noodle-shell-drawer-layer {
+  .nodyra-shell-drawer-layer {
     position: fixed;
     inset: 0;
-    z-index: var(--noodle-shell-z-drawer, 60);
+    z-index: var(--nodyra-shell-z-drawer, 60);
     display: block;
   }
 
-  .noodle-shell-drawer-backdrop {
+  .nodyra-shell-drawer-backdrop {
     position: absolute;
     inset: 0;
     background: rgba(2, 5, 10, 0.64);
-    animation: noodle-shell-fade-in 150ms ease-out;
+    animation: nodyra-shell-fade-in 150ms ease-out;
   }
 
-  .noodle-shell-drawer {
+  .nodyra-shell-drawer {
     position: absolute;
     right: 0;
     bottom: 0;
@@ -793,10 +793,10 @@
     border-bottom: 0;
     border-radius: 18px 18px 0 0;
     box-shadow: 0 -24px 60px rgba(0, 0, 0, 0.52);
-    animation: noodle-shell-drawer-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    animation: nodyra-shell-drawer-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
-  .noodle-shell-drawer::before {
+  .nodyra-shell-drawer::before {
     content: "";
     display: block;
     width: 38px;
@@ -806,7 +806,7 @@
     background: var(--line, #242c3a);
   }
 
-  .noodle-shell-drawer-head {
+  .nodyra-shell-drawer-head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
@@ -814,22 +814,22 @@
     margin-bottom: 14px;
   }
 
-  .noodle-shell-drawer-head h2,
-  .noodle-shell-drawer-head p {
+  .nodyra-shell-drawer-head h2,
+  .nodyra-shell-drawer-head p {
     margin: 0;
   }
 
-  .noodle-shell-drawer-head h2 {
+  .nodyra-shell-drawer-head h2 {
     font-size: 20px;
   }
 
-  .noodle-shell-drawer-head p {
+  .nodyra-shell-drawer-head p {
     margin-top: 3px;
     color: var(--ink-3, #8a93a6);
     font-size: 12px;
   }
 
-  .noodle-shell-icon-button {
+  .nodyra-shell-icon-button {
     display: inline-grid;
     flex: 0 0 auto;
     width: 44px;
@@ -842,45 +842,45 @@
     color: var(--ink, #e9eef6);
   }
 
-  .noodle-shell-drawer-nav {
+  .nodyra-shell-drawer-nav {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
 
-  .noodle-shell-drawer-nav .noodle-shell-nav-link {
+  .nodyra-shell-drawer-nav .nodyra-shell-nav-link {
     min-height: 48px;
   }
 
-  .noodle-shell-drawer-slot {
+  .nodyra-shell-drawer-slot {
     margin-bottom: 14px;
   }
 
-  .noodle-shell-drawer-profile,
-  .noodle-shell-drawer .noodle-shell-local-mode {
+  .nodyra-shell-drawer-profile,
+  .nodyra-shell-drawer .nodyra-shell-local-mode {
     margin-top: 16px;
     padding-top: 16px;
     border-top: 1px solid var(--line-2, #1a2029);
   }
 
-  .noodle-shell-mobile-account-actions { display: grid; gap: 3px; }
+  .nodyra-shell-mobile-account-actions { display: grid; gap: 3px; }
 }
 
 @media (max-width: 620px) {
-  .noodle-shell-topbar { grid-template-columns: minmax(90px, 1fr) 44px auto; }
-  .noodle-shell-command-trigger { width: 44px; min-height: 44px; justify-content: center; padding: 0; }
-  .noodle-shell-command-trigger > span,
-  .noodle-shell-command-trigger > kbd { display: none; }
-  .noodle-shell-command-layer { padding-top: 10vh; }
-  .noodle-shell-command-footer { display: none; }
+  .nodyra-shell-topbar { grid-template-columns: minmax(90px, 1fr) 44px auto; }
+  .nodyra-shell-command-trigger { width: 44px; min-height: 44px; justify-content: center; padding: 0; }
+  .nodyra-shell-command-trigger > span,
+  .nodyra-shell-command-trigger > kbd { display: none; }
+  .nodyra-shell-command-layer { padding-top: 10vh; }
+  .nodyra-shell-command-footer { display: none; }
 }
 
 @media (max-width: 380px) {
-  .noodle-shell-mobile-link span {
+  .nodyra-shell-mobile-link span {
     font-size: 9px;
   }
 
-  .noodle-shell-drawer-nav {
+  .nodyra-shell-drawer-nav {
     grid-template-columns: 1fr;
   }
 }
@@ -888,83 +888,83 @@
 /* Tablet: collapsed sidebar rail (761px–1023px) — overrides the mobile hide
    so the sidebar becomes a narrow icon rail instead of disappearing entirely. */
 @media (min-width: 761px) and (max-width: 1023px) {
-  .noodle-shell-sidebar {
+  .nodyra-shell-sidebar {
     display: flex;
     width: 62px;
     padding-inline: 8px;
   }
-  .noodle-shell-sidebar .noodle-shell-sidebar-head {
+  .nodyra-shell-sidebar .nodyra-shell-sidebar-head {
     gap: 12px;
     padding-inline: 0;
   }
-  .noodle-shell-sidebar .noodle-shell-brand {
+  .nodyra-shell-sidebar .nodyra-shell-brand {
     justify-content: center;
   }
-  .noodle-shell-sidebar .noodle-shell-brand > span,
-  .noodle-shell-sidebar .noodle-shell-nav-heading,
-  .noodle-shell-sidebar .noodle-shell-nav-link > span,
-  .noodle-shell-sidebar .noodle-shell-org-copy,
-  .noodle-shell-sidebar .noodle-shell-org-trigger > svg,
-  .noodle-shell-sidebar .noodle-shell-workspace-static .noodle-shell-org-copy,
-  .noodle-shell-sidebar .noodle-shell-collapse-button > span {
+  .nodyra-shell-sidebar .nodyra-shell-brand > span,
+  .nodyra-shell-sidebar .nodyra-shell-nav-heading,
+  .nodyra-shell-sidebar .nodyra-shell-nav-link > span,
+  .nodyra-shell-sidebar .nodyra-shell-org-copy,
+  .nodyra-shell-sidebar .nodyra-shell-org-trigger > svg,
+  .nodyra-shell-sidebar .nodyra-shell-workspace-static .nodyra-shell-org-copy,
+  .nodyra-shell-sidebar .nodyra-shell-collapse-button > span {
     display: none;
   }
-  .noodle-shell-sidebar .noodle-shell-organization-slot,
-  .noodle-shell-sidebar .noodle-shell-org-trigger,
-  .noodle-shell-sidebar .noodle-shell-workspace-static {
+  .nodyra-shell-sidebar .nodyra-shell-organization-slot,
+  .nodyra-shell-sidebar .nodyra-shell-org-trigger,
+  .nodyra-shell-sidebar .nodyra-shell-workspace-static {
     display: flex;
     justify-content: center;
     padding-inline: 0;
     border-color: transparent;
     background: transparent;
   }
-  .noodle-shell-sidebar .noodle-shell-nav-link,
-  .noodle-shell-sidebar .noodle-shell-collapse-button {
+  .nodyra-shell-sidebar .nodyra-shell-nav-link,
+  .nodyra-shell-sidebar .nodyra-shell-collapse-button {
     justify-content: center;
     padding-inline: 0;
   }
-  .noodle-shell-sidebar .noodle-shell-local-mode {
+  .nodyra-shell-sidebar .nodyra-shell-local-mode {
     justify-content: center;
     padding-inline: 0;
     font-size: 0;
   }
-  .noodle-shell-content {
+  .nodyra-shell-content {
     padding-left: 62px;
   }
-  .noodle-shell-mobile-nav {
+  .nodyra-shell-mobile-nav {
     display: none;
   }
 }
 
-@keyframes noodle-shell-fade-in {
+@keyframes nodyra-shell-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-@keyframes noodle-shell-drawer-in {
+@keyframes nodyra-shell-drawer-in {
   from { transform: translateY(18px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .noodle-shell-drawer,
-  .noodle-shell-drawer-backdrop,
-  .noodle-shell-nav-link {
+  .nodyra-shell-drawer,
+  .nodyra-shell-drawer-backdrop,
+  .nodyra-shell-nav-link {
     animation: none;
     transition: none;
   }
 
-  .noodle-shell-popover,
-  .noodle-shell-command-layer,
-  .noodle-shell-command-dialog,
-  .noodle-shell-skip-link {
+  .nodyra-shell-popover,
+  .nodyra-shell-command-layer,
+  .nodyra-shell-command-dialog,
+  .nodyra-shell-skip-link {
     animation: none;
     transition: none;
   }
 
-  .noodle-shell-layout,
-  .noodle-shell-sidebar,
-  .noodle-shell-workspace-skeleton {
+  .nodyra-shell-layout,
+  .nodyra-shell-sidebar,
+  .nodyra-shell-workspace-skeleton {
     animation: none;
     transition: none;
   }

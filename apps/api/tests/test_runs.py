@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.services.events import broker
-from noodle.models import RunResult, RunStatus
+from nodyra.models import RunResult, RunStatus
 
 GRAPH = {
     "nodes": [
@@ -222,7 +222,7 @@ async def test_typed_outputs_persist_and_stream_as_envelopes(
     typed_run = next(nr for nr in run["node_runs"] if nr["node_id"] == "typed")
     output = typed_run["output"]["main"]
 
-    assert output["price"]["__noodle_typed__"] is True
+    assert output["price"]["__nodyra_typed__"] is True
     assert output["price"]["type"] == "decimal"
     assert output["price"]["value"] == "19.99"
     assert output["created"]["type"] == "datetime"
@@ -843,7 +843,7 @@ async def test_approval_decision_requeues_waiting_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import app.services.runner as runner_module
-    from noodle.ai_runtime import AgentActionRequest, AIMessage, ToolCall
+    from nodyra.ai_runtime import AgentActionRequest, AIMessage, ToolCall
 
     workflow_id = await _workflow_with_graph(client)
     approval_key = "agent|0|call_pending|send_email"
@@ -961,7 +961,7 @@ async def test_approval_reject_resumes_waiting_run(
     """Rejecting an approval also resumes the run (denied tool flows back to the
     agent) instead of leaving it stuck in ``waiting``."""
     import app.services.runner as runner_module
-    from noodle.ai_runtime import AgentActionRequest, AIMessage, ToolCall
+    from nodyra.ai_runtime import AgentActionRequest, AIMessage, ToolCall
 
     workflow_id = await _workflow_with_graph(client)
     approval_key = "agent|0|call_pending|send_email"
@@ -1066,7 +1066,7 @@ async def test_waiting_run_emits_non_terminal_run_waiting(
     terminator, so emitting it here would close the client's run WebSocket and
     strand the run as "waiting" with no way to resume on the same socket."""
     import app.services.runner as runner_module
-    from noodle.ai_runtime import AgentActionRequest, AIMessage, ToolCall
+    from nodyra.ai_runtime import AgentActionRequest, AIMessage, ToolCall
 
     workflow_id = await _workflow_with_graph(client)
     approval_key = "agent|0|call_pending|send_email"

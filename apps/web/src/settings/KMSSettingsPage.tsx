@@ -27,7 +27,7 @@ export function KMSSettingsPage() {
   const [vaultUrl, setVaultUrl] = useState("");
   const [vaultToken, setVaultToken] = useState("");
   const [vaultMount, setVaultMount] = useState("transit");
-  const [vaultKey, setVaultKey] = useState("noodle-master");
+  const [vaultKey, setVaultKey] = useState("nodyra-master");
   const [awsKeyId, setAwsKeyId] = useState("");
   const [awsRegion, setAwsRegion] = useState("us-east-1");
   const [gcpKeyName, setGcpKeyName] = useState("");
@@ -57,11 +57,11 @@ export function KMSSettingsPage() {
   }
 
   return (
-    <div className="home noodle-settings-page">
+    <div className="home nodyra-settings-page">
       <main className="home-main">
-        <div className="home-bar noodle-settings-heading">
+        <div className="home-bar nodyra-settings-heading">
           <div>
-            <p className="noodle-settings-eyebrow">Enterprise</p>
+            <p className="nodyra-settings-eyebrow">Enterprise</p>
             <h1>External KMS</h1>
             <p className="muted">
               Configure an external key management service for master KEK
@@ -73,9 +73,9 @@ export function KMSSettingsPage() {
           </div>
         </div>
 
-        <div className="noodle-settings-card">
-          <div className="noodle-settings-card-head">
-            <div className="noodle-settings-card-icon">
+        <div className="nodyra-settings-card">
+          <div className="nodyra-settings-card-head">
+            <div className="nodyra-settings-card-icon">
               <Key size={18} weight="bold" />
             </div>
             <div>
@@ -88,14 +88,14 @@ export function KMSSettingsPage() {
             </div>
           </div>
 
-          <div className="noodle-settings-card-body">
-            <fieldset className="noodle-settings-fieldset">
+          <div className="nodyra-settings-card-body">
+            <fieldset className="nodyra-settings-fieldset">
               <legend>Select provider</legend>
-              <div className="noodle-theme-grid">
+              <div className="nodyra-theme-grid">
                 {(Object.keys(PROVIDER_LABELS) as KmsProvider[]).map((p) => (
                   <label
                     key={p}
-                    className={`noodle-theme-option ${provider === p ? "is-selected" : ""}`}
+                    className={`nodyra-theme-option ${provider === p ? "is-selected" : ""}`}
                   >
                     <input
                       type="radio"
@@ -113,11 +113,11 @@ export function KMSSettingsPage() {
 
             {/* Vault config */}
             {provider === "vault" && (
-              <fieldset className="noodle-settings-fieldset">
+              <fieldset className="nodyra-settings-fieldset">
                 <legend>HashiCorp Vault configuration</legend>
-                <div className="noodle-settings-form-grid">
-                  <div className="noodle-settings-field noodle-settings-field-wide">
-                    <label className="noodle-settings-label">Vault URL</label>
+                <div className="nodyra-settings-form-grid">
+                  <div className="nodyra-settings-field nodyra-settings-field-wide">
+                    <label className="nodyra-settings-label">Vault URL</label>
                     <input
                       className="field-input"
                       type="text"
@@ -130,11 +130,11 @@ export function KMSSettingsPage() {
                       http://vault:8200)
                     </small>
                   </div>
-                  <div className="noodle-settings-field noodle-settings-field-wide">
-                    <label className="noodle-settings-label">
+                  <div className="nodyra-settings-field nodyra-settings-field-wide">
+                    <label className="nodyra-settings-label">
                       Vault Token
                     </label>
-                    <div className="noodle-settings-input-wrap">
+                    <div className="nodyra-settings-input-wrap">
                       <input
                         className="field-input"
                         type="password"
@@ -148,8 +148,8 @@ export function KMSSettingsPage() {
                       mount. For production, use AppRole or Kubernetes auth.
                     </small>
                   </div>
-                  <div className="noodle-settings-field">
-                    <label className="noodle-settings-label">
+                  <div className="nodyra-settings-field">
+                    <label className="nodyra-settings-label">
                       Transit Mount
                     </label>
                     <input
@@ -159,8 +159,8 @@ export function KMSSettingsPage() {
                       onChange={(e) => setVaultMount(e.target.value)}
                     />
                   </div>
-                  <div className="noodle-settings-field">
-                    <label className="noodle-settings-label">Key Name</label>
+                  <div className="nodyra-settings-field">
+                    <label className="nodyra-settings-label">Key Name</label>
                     <input
                       className="field-input"
                       type="text"
@@ -174,11 +174,11 @@ export function KMSSettingsPage() {
 
             {/* AWS KMS config */}
             {provider === "aws" && (
-              <fieldset className="noodle-settings-fieldset">
+              <fieldset className="nodyra-settings-fieldset">
                 <legend>AWS KMS configuration</legend>
-                <div className="noodle-settings-form-grid">
-                  <div className="noodle-settings-field noodle-settings-field-wide">
-                    <label className="noodle-settings-label">Key ID / ARN</label>
+                <div className="nodyra-settings-form-grid">
+                  <div className="nodyra-settings-field nodyra-settings-field-wide">
+                    <label className="nodyra-settings-label">Key ID / ARN</label>
                     <input
                       className="field-input"
                       type="text"
@@ -191,8 +191,8 @@ export function KMSSettingsPage() {
                       ARN.
                     </small>
                   </div>
-                  <div className="noodle-settings-field">
-                    <label className="noodle-settings-label">Region</label>
+                  <div className="nodyra-settings-field">
+                    <label className="nodyra-settings-label">Region</label>
                     <input
                       className="field-input"
                       type="text"
@@ -202,12 +202,12 @@ export function KMSSettingsPage() {
                     <small>AWS region (default us-east-1).</small>
                   </div>
                 </div>
-                <div className="noodle-settings-restart-note">
+                <div className="nodyra-settings-restart-note">
                   <Wrench size={16} />
                   <span>
                     AWS credentials are picked up from the environment (env
                     vars, IAM role, or credential file). No secrets need to be
-                    stored in Noodle settings.
+                    stored in Nodyra settings.
                   </span>
                 </div>
               </fieldset>
@@ -215,11 +215,11 @@ export function KMSSettingsPage() {
 
             {/* GCP KMS config */}
             {provider === "gcp" && (
-              <fieldset className="noodle-settings-fieldset">
+              <fieldset className="nodyra-settings-fieldset">
                 <legend>Google Cloud KMS configuration</legend>
-                <div className="noodle-settings-form-grid">
-                  <div className="noodle-settings-field noodle-settings-field-wide">
-                    <label className="noodle-settings-label">
+                <div className="nodyra-settings-form-grid">
+                  <div className="nodyra-settings-field nodyra-settings-field-wide">
+                    <label className="nodyra-settings-label">
                       Key Resource Name
                     </label>
                     <input
@@ -236,11 +236,11 @@ export function KMSSettingsPage() {
                     </small>
                   </div>
                 </div>
-                <div className="noodle-settings-restart-note">
+                <div className="nodyra-settings-restart-note">
                   <Wrench size={16} />
                   <span>
                     GCP credentials are picked up from Application Default
-                    Credentials (ADC). No secrets need to be stored in Noodle
+                    Credentials (ADC). No secrets need to be stored in Nodyra
                     settings.
                   </span>
                 </div>
@@ -249,7 +249,7 @@ export function KMSSettingsPage() {
 
             {/* Env — no extra config */}
             {provider === "env" && (
-              <div className="noodle-settings-restart-note" style={{ marginTop: 12 }}>
+              <div className="nodyra-settings-restart-note" style={{ marginTop: 12 }}>
                 <ShieldCheck size={16} />
                 <span>
                   The local environment provider uses SECRET_KEY as the root of
@@ -261,15 +261,15 @@ export function KMSSettingsPage() {
           </div>
 
           {/* Footer */}
-          <div className="noodle-settings-card-footer">
-            <div className="noodle-settings-footer-status">
+          <div className="nodyra-settings-card-footer">
+            <div className="nodyra-settings-footer-status">
               {healthStatus === "ok" && (
-                <span className="noodle-settings-saved">
+                <span className="nodyra-settings-saved">
                   <ShieldCheck size={14} /> Connection successful
                 </span>
               )}
               {healthStatus === "error" && (
-                <span className="noodle-settings-inline-error">
+                <span className="nodyra-settings-inline-error">
                   <span>Health check failed</span>
                 </span>
               )}

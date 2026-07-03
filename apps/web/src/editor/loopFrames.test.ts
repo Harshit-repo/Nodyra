@@ -2,7 +2,7 @@ import type { Edge } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 
 import { computeLoopFrames } from "./loopFrames";
-import type { NoodleNode } from "./store";
+import type { NodyraNode } from "./store";
 
 function node(
   id: string,
@@ -10,15 +10,15 @@ function node(
   x: number,
   y: number,
   params: Record<string, unknown> = {},
-): NoodleNode {
+): NodyraNode {
   return {
     id,
-    type: "noodle",
+    type: "nodyra",
     position: { x, y },
     width: 80,
     height: 100,
     data: { manifest: { id: manifestId } as never, params },
-  } as unknown as NoodleNode;
+  } as unknown as NodyraNode;
 }
 
 function edge(source: string, target: string): Edge {

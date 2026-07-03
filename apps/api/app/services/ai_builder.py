@@ -1,7 +1,7 @@
 """Validated LLM-backed workflow draft builder.
 
 The AI builder never executes agent plans. It asks an LLM for a strict JSON graph
-proposal, validates that proposal against Noodle's graph model and an allow-list
+proposal, validates that proposal against Nodyra's graph model and an allow-list
 of built-in node ids, strips unsafe credential refs/secrets, and returns a
 normal editable draft graph. If no model is configured or the model returns an
 invalid graph, a deterministic fallback produces a conservative editable graph.
@@ -28,7 +28,7 @@ from app.models import Credential, Workflow
 from app.schemas import AiWorkflowDraftRequest, AiWorkflowDraftResponse
 from app.services.credentials import CREDENTIAL_REF_MARKER, credential_ref
 from app.services.org_keys import decrypt_credential_for
-from noodle.models import Edge, GraphNode, Position, WorkflowGraph
+from nodyra.models import Edge, GraphNode, Position, WorkflowGraph
 
 _ALLOWED_NODE_TYPES = {
     "manual_trigger",
@@ -530,8 +530,15 @@ def _llm_configured() -> bool:
     return bool(
         os.getenv("OPENAI_API_KEY")
         or os.getenv("ANTHROPIC_API_KEY")
-        or os.getenv("NOODLE_AI_PROVIDER")
+        or _env_with_legacy("NODYRA_AI_PROVIDER", "NOODLE_AI_PROVIDER")
     )
+
+
+def _env_with_legacy(new: str, old: str, default: str = "") -> str:
+    val = os.getenv(new)
+    if val is not None:
+        return val
+    return os.getenv(old, default)
 
 
 async def _resolve_llm_provider(
@@ -551,8 +558,8 @@ async def _resolve_llm_provider(
     hint = (provider_hint or "").strip().lower()
     if hint not in default_models:
         hint = ""
-    provider = hint or (os.getenv("NOODLE_AI_PROVIDER") or "").strip().lower()
-    model = (model_hint or "").strip() or os.getenv("NOODLE_AI_MODEL") or ""
+    provider = hint or _env_with_legacy("NODYRA_AI_PROVIDER", "NOODLE_AI_PROVIDER").strip().lower()
+    model = (model_hint or "").strip() or _env_with_legacy("NODYRA_AI_MODEL", "NOODLE_AI_MODEL")
     api_key = ""
 
     if provider == "anthropic" or (not provider and os.getenv("ANTHROPIC_API_KEY")):
@@ -599,8 +606,8 @@ def _llm_messages(
     body: AiWorkflowDraftRequest, current_graph: WorkflowGraph | None
 ) -> list[dict[str, str]]:
     system = (
-        "You are Noodle's workflow graph planner. Return JSON only. "
-        "You must create editable Noodle workflow graphs, never hidden execution. "
+        "You are Nodyra's workflow graph planner. Return JSON only. "
+        "You must create editable Nodyra workflow graphs, never hidden execution. "
         "Use only allowed node types from the registry. Never output raw secrets "
         "or credential refs. "
         "Credential fields should be empty strings; the server attaches credentials safely."
@@ -719,8 +726,8 @@ async def _call_llm_simple(
     """
     if not _llm_configured():
         return None
-    provider = (os.getenv("NOODLE_AI_PROVIDER") or "").strip().lower()
-    model = os.getenv("NOODLE_AI_MODEL") or ""
+    provider = _env_with_legacy("NODYRA_AI_PROVIDER", "NOODLE_AI_PROVIDER").strip().lower()
+    model = _env_with_legacy("NODYRA_AI_MODEL", "NOODLE_AI_MODEL")
     api_key = ""
 
     if provider == "anthropic" or (not provider and os.getenv("ANTHROPIC_API_KEY")):
@@ -762,7 +769,9 @@ async def _call_llm_simple(
                 payload,
             )
             chunks = raw.get("content") or []
-            text = "".join(str(chunk.get("text") or "") for chunk in chunks if isinstance(chunk, dict))
+            text = "".join(
+                str(chunk.get("text") or "") for chunk in chunks if isinstance(chunk, dict)
+            )
             return _extract_json_object(text)
 
         payload = {
@@ -822,7 +831,7 @@ async def _result_from_llm_payload(
         missing_credentials=missing,
         required_packages=[str(item) for item in payload.get("required_packages") or []],
         explanation=str(
-            payload.get("explanation") or "Generated an editable Noodle workflow draft."
+            payload.get("explanation") or "Generated an editable Nodyra workflow draft."
         ),
         mode=body.mode,
         change_summary=[str(item) for item in payload.get("change_summary") or []],
@@ -1058,7 +1067,7 @@ def _fallback_draft(prompt: str) -> _DraftResult:
             "use_tls": True,
             "from_email": "",
             "to_email": "",
-            "subject": "Noodle workflow alert",
+            "subject": "Nodyra workflow alert",
             "body": "{{ $json }}",
         }
         node_id = "send_email"
@@ -1126,7 +1135,7 @@ def _fallback_draft(prompt: str) -> _DraftResult:
         missing_credentials=sorted(set(missing_credentials)),
         required_packages=required_packages,
         explanation=(
-            "Generated a normal editable draft graph from existing Noodle nodes. "
+            "Generated a normal editable draft graph from existing Nodyra nodes. "
             "Review credentials and parameters before publishing."
         ),
         change_summary=[f"Created {len(nodes)} nodes and {len(edges)} connections."],
@@ -1327,9 +1336,7 @@ def _build_explain_prompt(nodes: list, edges: list, node_map: dict) -> str:
     for e in edges:
         if not isinstance(e, dict):
             continue
-        edge_descriptions.append(
-            f"  {e.get('source','')} → {e.get('target','')}"
-        )
+        edge_descriptions.append(f"  {e.get('source', '')} → {e.get('target', '')}")
     return (
         "Explain this workflow graph in clear English. "
         "Describe what triggers it, what each node does, "
@@ -1363,15 +1370,15 @@ def _fallback_explain(
 
     explanations_parts = []
     if trigger_nodes:
-        explanations_parts.append(
-            f"This workflow is triggered by: {', '.join(trigger_nodes)}."
-        )
+        explanations_parts.append(f"This workflow is triggered by: {', '.join(trigger_nodes)}.")
     if action_nodes:
-        explanations_parts.append(
-            f"It processes data through: {', '.join(action_nodes)}."
-        )
+        explanations_parts.append(f"It processes data through: {', '.join(action_nodes)}.")
 
-    explanation = " ".join(explanations_parts) if explanations_parts else "This workflow has no recognizable trigger or action nodes."
+    explanation = (
+        " ".join(explanations_parts)
+        if explanations_parts
+        else "This workflow has no recognizable trigger or action nodes."
+    )
 
     data_flow_parts = []
     for tgt_id, src_ids in sources.items():
@@ -1390,7 +1397,8 @@ def _fallback_explain(
                 "type": n.get("type", ""),
                 "purpose": _NODE_REGISTRY.get(n.get("type", ""), {}).get("description", "Unknown"),
             }
-            for n in nodes if isinstance(n, dict)
+            for n in nodes
+            if isinstance(n, dict)
         ],
         "data_flow": ". ".join(data_flow_parts) if data_flow_parts else "No edges defined.",
         "assumptions": [],
@@ -1441,7 +1449,11 @@ async def _refine_workflow(
                 mode="refine",
                 planner="llm",
                 explanation=llm_result.get("explanation", "Workflow refined."),
-                change_summary=llm_result.get("change_summary", []) if isinstance(llm_result.get("change_summary"), list) else [str(llm_result.get("change_summary", ""))] if llm_result.get("change_summary") else [],
+                change_summary=llm_result.get("change_summary", [])
+                if isinstance(llm_result.get("change_summary"), list)
+                else [str(llm_result.get("change_summary", ""))]
+                if llm_result.get("change_summary")
+                else [],
                 confidence=llm_result.get("confidence", "medium"),
                 missing_credentials=llm_result.get("missing_credentials", []),
                 required_packages=llm_result.get("required_packages", []),
@@ -1453,9 +1465,7 @@ async def _refine_workflow(
     return _fallback_refine(prompt, current_graph, target_node_ids)
 
 
-def _build_refine_prompt(
-    prompt: str, context: dict, history: list[dict]
-) -> tuple[str, str]:
+def _build_refine_prompt(prompt: str, context: dict, history: list[dict]) -> tuple[str, str]:
     """Return (system_message, user_message) for the refine LLM call.
 
     Trusted context (graph structure, node types, target IDs) goes in the
@@ -1466,8 +1476,10 @@ def _build_refine_prompt(
     # Bound history by count AND strip any credential refs that may have been
     # echoed back from a previous assistant turn.
     safe_history = [
-        {k: (_strip_credential_refs(v) if isinstance(v, dict) else str(v)[:2000])
-         for k, v in turn.items()}
+        {
+            k: (_strip_credential_refs(v) if isinstance(v, dict) else str(v)[:2000])
+            for k, v in turn.items()
+        }
         for turn in history[-5:]
     ]
     system_msg = (
@@ -1500,12 +1512,12 @@ def _fallback_refine(
         params = dict(node.get("params", {}))
         # Simple keyword-based param changes
         if "channel" in prompt_lower and "slack" in str(node.get("type", "")).lower():
-            match = re.search(r'#[\w-]+', prompt)
+            match = re.search(r"#[\w-]+", prompt)
             if match:
                 params["channel"] = match.group(0)
                 changes.append(f"Updated Slack channel to {match.group(0)}")
         if "email" in prompt_lower and "to" in prompt_lower:
-            match = re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', prompt)
+            match = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", prompt)
             if match:
                 params["to"] = match.group(0)
                 changes.append(f"Updated email recipient to {match.group(0)}")
@@ -1577,7 +1589,7 @@ async def generate_tests(graph: dict) -> list[dict]:
 def _strip_credential_refs(obj: Any) -> Any:
     """Recursively strip credential references from a value before sending to LLM."""
     if isinstance(obj, dict):
-        if obj.get("__noodle_credential__") or obj.get("credential_id"):
+        if obj.get("__nodyra_credential__") or obj.get("credential_id"):
             return {"__credential_placeholder__": True}
         return {k: _strip_credential_refs(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -1590,11 +1602,13 @@ def _build_test_gen_prompt(graph: dict, trigger: dict | None) -> str:
     for n in graph.get("nodes", []):
         if isinstance(n, dict):
             sanitized_params = _strip_credential_refs(n.get("params", {}))
-            node_info.append(
-                f"  {n.get('id')} ({n.get('type')}): params={sanitized_params}"
-            )
+            node_info.append(f"  {n.get('id')} ({n.get('type')}): params={sanitized_params}")
     trigger_params = _strip_credential_refs(trigger.get("params", {})) if trigger else {}
-    trigger_info = f"Trigger: {trigger.get('type')} with params {trigger_params}" if trigger else "No trigger node found"
+    trigger_info = (
+        f"Trigger: {trigger.get('type')} with params {trigger_params}"
+        if trigger
+        else "No trigger node found"
+    )
     return (
         f"Generate 3 test cases for this workflow graph.\n\n"
         f"{trigger_info}\n\n"
@@ -1609,33 +1623,44 @@ def _fallback_generate_tests(graph: dict, trigger: dict | None) -> list[dict]:
     if trigger:
         trigger_type = trigger.get("type", "")
         if "webhook" in trigger_type:
-            tests.append({
-                "name": "Valid webhook payload",
-                "input_data": {"body": {"test": True}, "headers": {"Content-Type": "application/json"}},
-                "expected_outputs": {},
-                "assertions": ["run status should be success"],
-            })
+            tests.append(
+                {
+                    "name": "Valid webhook payload",
+                    "input_data": {
+                        "body": {"test": True},
+                        "headers": {"Content-Type": "application/json"},
+                    },
+                    "expected_outputs": {},
+                    "assertions": ["run status should be success"],
+                }
+            )
         elif "schedule" in trigger_type:
-            tests.append({
-                "name": "Scheduled trigger execution",
-                "input_data": {"timestamp": "2026-01-01T00:00:00Z"},
-                "expected_outputs": {},
-                "assertions": ["run status should be success"],
-            })
+            tests.append(
+                {
+                    "name": "Scheduled trigger execution",
+                    "input_data": {"timestamp": "2026-01-01T00:00:00Z"},
+                    "expected_outputs": {},
+                    "assertions": ["run status should be success"],
+                }
+            )
         else:
-            tests.append({
-                "name": "Manual trigger with default input",
-                "input_data": {"data": "test"},
+            tests.append(
+                {
+                    "name": "Manual trigger with default input",
+                    "input_data": {"data": "test"},
+                    "expected_outputs": {},
+                    "assertions": ["run.status == 'success'"],
+                }
+            )
+    else:
+        tests.append(
+            {
+                "name": "Default execution",
+                "input_data": {},
                 "expected_outputs": {},
                 "assertions": ["run.status == 'success'"],
-            })
-    else:
-        tests.append({
-            "name": "Default execution",
-            "input_data": {},
-            "expected_outputs": {},
-            "assertions": ["run.status == 'success'"],
-        })
+            }
+        )
     return tests
 
 
@@ -1643,10 +1668,20 @@ def _fallback_generate_tests(graph: dict, trigger: dict | None) -> list[dict]:
 # Slice 3E: AI-Generated Custom Typed Nodes
 # ---------------------------------------------------------------------------
 
-_BLOCKED_IMPORTS = frozenset({
-    "os", "socket", "subprocess", "sys", "shutil", "ctypes",
-    "importlib", "pickle", "shelve", "tempfile",
-})
+_BLOCKED_IMPORTS = frozenset(
+    {
+        "os",
+        "socket",
+        "subprocess",
+        "sys",
+        "shutil",
+        "ctypes",
+        "importlib",
+        "pickle",
+        "shelve",
+        "tempfile",
+    }
+)
 _BLOCKED_BUILTINS = frozenset({"eval", "exec", "compile", "open", "__import__", "input"})
 
 
@@ -1658,12 +1693,12 @@ def _build_node_gen_system_prompt() -> str:
     inside a JSON ``{"code": "..."}`` envelope.
     """
     return (
-        "You generate Noodle workflow node functions. "
+        "You generate Nodyra workflow node functions. "
         "A node function is a Python function decorated with ``@node(...)``.\n\n"
         "## ``@node`` decorator API\n"
         "```python\n"
         "from typing import Any\n"
-        "from noodle import node\n\n"
+        "from nodyra import node\n\n"
         "@node(\n"
         '    id="my_action",          # unique snake_case id\n'
         '    name="My Action",        # human-readable name\n'
@@ -1676,7 +1711,7 @@ def _build_node_gen_system_prompt() -> str:
         "    input: Any = None,  # wired input from upstream\n"
         "    *,                  # everything after * is a param (inspector field)\n"
         "    # add your own params here with defaults\n"
-        "    api_key: str = \"\",\n"
+        '    api_key: str = "",\n'
         ") -> Any:\n"
         '    """Implement the logic."""\n'
         "    result = do_something(input, api_key)\n"
@@ -1689,7 +1724,7 @@ def _build_node_gen_system_prompt() -> str:
         "### HTTP call node\n"
         "```python\n"
         "from typing import Any\n"
-        "from noodle import node\n\n"
+        "from nodyra import node\n\n"
         "@node(\n"
         '    id="http_get",\n'
         '    name="HTTP GET",\n'
@@ -1701,7 +1736,7 @@ def _build_node_gen_system_prompt() -> str:
         "def http_get(\n"
         "    input: Any = None,\n"
         "    *,\n"
-        "    url: str = \"https://api.example.com/data\",\n"
+        '    url: str = "https://api.example.com/data",\n'
         ") -> Any:\n"
         '    """Fetch data from a URL."""\n'
         "    import httpx\n"
@@ -1712,7 +1747,7 @@ def _build_node_gen_system_prompt() -> str:
         "### Data transform node\n"
         "```python\n"
         "from typing import Any\n"
-        "from noodle import node\n\n"
+        "from nodyra import node\n\n"
         "@node(\n"
         '    id="filter_items",\n'
         '    name="Filter Items",\n'
@@ -1724,7 +1759,7 @@ def _build_node_gen_system_prompt() -> str:
         "def filter_items(\n"
         "    items: list = None,\n"
         "    *,\n"
-        "    field: str = \"\",\n"
+        '    field: str = "",\n'
         "    min_value: float = 0,\n"
         ") -> list:\n"
         '    """Filter items by field >= min_value."""\n'
@@ -1736,11 +1771,11 @@ def _build_node_gen_system_prompt() -> str:
         "    ]\n"
         "```\n\n"
         "## Constraints\n"
-        "- Always import: ``from typing import Any`` and ``from noodle import node`` at the top of the code.\n"
+        "- Always import: ``from typing import Any`` and ``from nodyra import node`` at the top of the code.\n"
         "- Only import safe libraries: ``httpx``, ``json``, ``re``, ``math``, ``datetime``, ``typing``, ``collections``, ``itertools``, ``random``, ``statistics``\n"
         "- **NEVER** import: ``os``, ``socket``, ``subprocess``, ``sys``, ``shutil``, ``ctypes``, ``importlib``, ``pickle``\n"
         "- **NEVER** use: ``eval()``, ``exec()``, ``compile()``, ``open()``, ``__import__()``, ``input()``\n"
-        "- Return a JSON object with a single key ``\"code\"`` containing the raw Python code.\n"
+        '- Return a JSON object with a single key ``"code"`` containing the raw Python code.\n'
         "- Output raw Python code only — no markdown fences around it inside the JSON value.\n"
         "- The function name must be a valid Python identifier in snake_case.\n"
         "- Always include the ``@node`` decorator.\n"
@@ -1768,8 +1803,8 @@ def _generate_fallback_template(description: str) -> dict:
     node_name = slug.replace("_", " ").title()
     code = (
         f"from typing import Any\n"
-        f"from noodle import node\n\n\n"
-        f"# Generated by Noodle (no AI — fill in the TODO sections)\n"
+        f"from nodyra import node\n\n\n"
+        f"# Generated by Nodyra (no AI — fill in the TODO sections)\n"
         f"@node(\n"
         f'    id="{node_id}",\n'
         f'    name="{node_name}",\n'
@@ -1780,7 +1815,7 @@ def _generate_fallback_template(description: str) -> dict:
         f")\n"
         f"def {slug}(input: Any = None) -> Any:\n"
         f'    """{description}"""\n'
-        f"    # TODO: implement \"{description}\"\n"
+        f'    # TODO: implement "{description}"\n'
         f"    output = input\n"
         f"    return output\n"
     )
@@ -1940,7 +1975,7 @@ async def generate_custom_node(
         is_template, warnings
     """
     system_msg = _build_node_gen_system_prompt()
-    user_msg = f"Generate a Noodle @node function that: {description}"
+    user_msg = f"Generate a Nodyra @node function that: {description}"
 
     try:
         result = await _call_llm_simple(user_msg, system=system_msg)
@@ -1961,7 +1996,7 @@ async def generate_custom_node(
     if parsed.get("warnings") and not parsed.get("is_template"):
         feedback = "; ".join(parsed["warnings"])
         retry_msg = (
-            f"Generate a Noodle @node function that: {description}\n\n"
+            f"Generate a Nodyra @node function that: {description}\n\n"
             f"The previous attempt had these issues that MUST be fixed:\n{feedback}\n"
             "Fix all issues and return only safe Python code."
         )
@@ -1982,9 +2017,7 @@ async def generate_custom_node(
 
         # Retry still failed — return fallback
         fallback = _generate_fallback_template(description)
-        fallback["warnings"] = list(
-            set(fallback.get("warnings", []) + parsed.get("warnings", []))
-        )
+        fallback["warnings"] = list(set(fallback.get("warnings", []) + parsed.get("warnings", [])))
         return fallback
 
     return parsed

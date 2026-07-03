@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Known KMS provider names used in settings validation.
@@ -8,11 +8,11 @@ KMS_PROVIDERS = frozenset({"env", "vault", "aws", "gcp"})
 
 # The shipped placeholder secret. Centralised so the field default, the
 # advisory warning, and the hard startup guard all reference one value.
-DEFAULT_SECRET_KEY = "noodle-dev-secret-change-me-in-production"
+DEFAULT_SECRET_KEY = "nodyra-dev-secret-change-me-in-production"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     # Explicit runtime topology. `local` is the easy single-process default for
     # development and single-user self-hosting; `production` is the durable,
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     # single-node production deployment that knowingly uses local artifacts).
     runtime_allow_insecure: bool = False
 
-    database_url: str = "postgresql+asyncpg://noodle:noodle@localhost:5432/noodle"
+    database_url: str = "postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra"
     # SQLAlchemy async connection pool tuning. Ignored for SQLite (NullPool).
     # pool_size: steady-state connections kept open; max_overflow adds burst
     # headroom; pool_recycle prevents stale connections after long idle periods;
@@ -245,7 +245,7 @@ class Settings(BaseSettings):
     sandbox_docker_host: str = ""
     # Dedicated bridge network for run containers — keeps tenant code off
     # the compose project network (no postgres/redis/minio reachability).
-    sandbox_network: str = "noodle-sandbox"
+    sandbox_network: str = "nodyra-sandbox"
     # Per-container resource ceilings.
     sandbox_mem_limit: str = "1g"
     sandbox_cpu_limit: float = 1.0
@@ -293,18 +293,28 @@ class Settings(BaseSettings):
     # MCP server: exposes POST /mcp (workflow run + builder tools) when on.
     mcp_server_enabled: bool = True
     # Licensing (see app/services/licensing.py). A signed Ed25519 license key
-    # set here (env NOODLE_LICENSE_KEY) takes precedence over the DB-stored key.
+    # set here (env NODYRA_LICENSE_KEY) takes precedence over the DB-stored key.
     # Blank → resolve from system_settings.license_key, else Community edition.
-    license_key: str = ""
+    license_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("NODYRA_LICENSE_KEY", "NOODLE_LICENSE_KEY", "LICENSE_KEY"),
+    )
     # PEM-encoded Ed25519 public key used to verify license keys. Blank → use
     # the key baked into app/services/licensing.py. Tests override this.
     license_public_key: str = ""
     # Community Node Registry (MS4 Slice 4E). When False, the registry feature
     # is disabled (air-gapped / maximum-security deployments). Default True.
-    allow_registry: bool = True
+    allow_registry: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "NODYRA_ALLOW_REGISTRY", "NOODLE_ALLOW_REGISTRY", "ALLOW_REGISTRY"
+        ),
+    )
     # URL of the community registry index JSON. The MVPC uses a GitHub-backed
     # JSON file — a PR-based registry index hosted in a public repo.
-    registry_index_url: str = "https://raw.githubusercontent.com/noodle-registry/packages/main/index.json"
+    registry_index_url: str = (
+        "https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json"
+    )
     auth_required: bool = False
     auth_allow_registration: bool = False
     auth_registration_role: str = "viewer"
@@ -343,7 +353,10 @@ class Settings(BaseSettings):
     # last N entries which belong to the proxies).  Leave at 0 for direct
     # exposure or when the proxy is not trusted to set that header correctly.
     trusted_proxy_count: int = 0
-    secret_key: str = DEFAULT_SECRET_KEY
+    secret_key: str = Field(
+        default=DEFAULT_SECRET_KEY,
+        validation_alias=AliasChoices("NODYRA_SECRET_KEY", "NOODLE_SECRET_KEY", "SECRET_KEY"),
+    )
     # KMS provider for master KEK encryption. "env" (default) uses the legacy
     # Fernet key derived from SECRET_KEY. "vault", "aws", and "gcp" delegate
     # to external key-management services (requires EXTERNAL_KMS feature).
@@ -352,14 +365,16 @@ class Settings(BaseSettings):
     vault_url: str | None = None
     vault_token: str | None = None
     vault_transit_mount: str = "transit"
-    vault_transit_key: str = "noodle-master"
+    vault_transit_key: str = "nodyra-master"
     # AWS KMS settings (used when kms_provider="aws").
     # AWS credentials come from the standard boto3 chain (env vars, IAM role, profile).
     aws_kms_key_id: str | None = None
     aws_kms_region: str = "us-east-1"
     # GCP Cloud KMS settings (used when kms_provider="gcp").
     # GCP credentials come from Application Default Credentials (ADC).
-    gcp_kms_key_name: str | None = None  # projects/*/locations/*/keyRings/*/cryptoKeys/* (NOT cryptoKeyVersions)
+    gcp_kms_key_name: str | None = (
+        None  # projects/*/locations/*/keyRings/*/cryptoKeys/* (NOT cryptoKeyVersions)
+    )
     # Shared secret the worker presents to call /internal/* endpoints.
     # Blank = no check (fine for local dev where only your machine reaches
     # the API). Set this when exposing the API to anything else.
@@ -372,7 +387,7 @@ class Settings(BaseSettings):
     # URLs. Blank falls back to localhost in non-request lifecycle paths.
     public_api_url: str = ""
     # Optional external OAuth 2.1 authorization-server issuer used by remote
-    # MCP clients. Noodle remains the protected resource and also supports
+    # MCP clients. Nodyra remains the protected resource and also supports
     # org-scoped personal access tokens for preconfigured clients.
     mcp_authorization_server_url: str = ""
     mcp_oauth_introspection_url: str = ""
@@ -388,10 +403,10 @@ class Settings(BaseSettings):
     #   2. httpOnly session cookie set by POST /auth/login or /auth/register
     # Cookie-based sessions require a CSRF double-submit token on state-changing
     # requests; Bearer auth is CSRF-safe and exempt.
-    session_cookie_name: str = "noodle_session"
+    session_cookie_name: str = "nodyra_session"
     session_cookie_secure: bool = True
     session_cookie_samesite: Literal["strict", "lax", "none"] = "lax"
-    csrf_cookie_name: str = "noodle_csrf"
+    csrf_cookie_name: str = "nodyra_csrf"
     csrf_header_name: str = "X-CSRF-Token"
     # One-time WS ticket TTL (seconds). Browser fetches a short-lived ticket
     # via POST /auth/ws-ticket, then passes ?ticket=<token> on the WS URL.
@@ -515,9 +530,7 @@ class Settings(BaseSettings):
                 "Also set VAULT_TOKEN, VAULT_TRANSIT_MOUNT, and VAULT_TRANSIT_KEY."
             )
         if self.kms_provider == "vault" and not self.vault_token:
-            errors.append(
-                "kms_provider=vault requires VAULT_TOKEN to be set."
-            )
+            errors.append("kms_provider=vault requires VAULT_TOKEN to be set.")
         if self.kms_provider == "aws" and not self.aws_kms_key_id:
             errors.append(
                 "kms_provider=aws requires AWS_KMS_KEY_ID to be set (key ID, ARN, or alias)."

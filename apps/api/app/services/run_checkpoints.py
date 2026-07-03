@@ -10,7 +10,7 @@ from sqlalchemy import update
 
 from app.db import SessionLocal
 from app.models import Run
-from noodle.serialization import (
+from nodyra.serialization import (
     _approx_json_length,
     serialize_value,
     truncate_serialized_value,

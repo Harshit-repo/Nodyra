@@ -5,7 +5,7 @@ auth/secrets (05), execution-safety (09), node-system (08), API (02), database
 (04), and frontend (01/04) area reviews.
 
 ## Threat model (as designed)
-Noodle's stated and correct posture: **single-tenant, trusted authors**. Anyone
+Nodyra's stated and correct posture: **single-tenant, trusted authors**. Anyone
 who can add a Code node runs arbitrary Python in the worker trust boundary. The
 README states this plainly. So the security bar is: protect the *control plane*
 (auth, secrets, tenant isolation, the API) and keep the *execution plane* honest

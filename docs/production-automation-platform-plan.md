@@ -1,11 +1,11 @@
 # Production Python Automation Platform Plan
 
-This plan describes how to evolve Noodle into a production-grade Python automation
+This plan describes how to evolve Nodyra into a production-grade Python automation
 platform with n8n-class integrations and AI workflow capabilities. n8n is used as
-a design and catalog reference only. Noodle should remain Python-native and should
+a design and catalog reference only. Nodyra should remain Python-native and should
 not copy n8n implementation code.
 
-Because Noodle is still in development and has no existing users, this plan
+Because Nodyra is still in development and has no existing users, this plan
 assumes we can replace the current AI nodes instead of preserving every legacy
 behavior. Existing node IDs can be migrated or removed if a cleaner production
 architecture is better.
@@ -20,7 +20,7 @@ architecture is better.
   tools, output parsers, guardrails, RAG, vector stores, and agent tracing.
 - Make integrations declarative, testable, observable, credential-aware, and
   secure by default.
-- Keep Noodle's Python SDK ergonomic for custom nodes and internal provider
+- Keep Nodyra's Python SDK ergonomic for custom nodes and internal provider
   implementations.
 - Preserve the "node as Python" model: every executable built-in, integration,
   AI node, trigger handler, and generated custom node should resolve to Python
@@ -37,19 +37,19 @@ architecture is better.
 
 ## Current State Summary
 
-Noodle already has useful foundations:
+Nodyra already has useful foundations:
 
-- Python node SDK in `packages/core/noodle/sdk.py`.
-- DAG execution engine in `packages/core/noodle/engine.py`.
-- Basic manifest models in `packages/core/noodle/models.py`.
+- Python node SDK in `packages/core/nodyra/sdk.py`.
+- DAG execution engine in `packages/core/nodyra/engine.py`.
+- Basic manifest models in `packages/core/nodyra/models.py`.
 - React editor and inspector in `apps/web/src/editor/`.
 - Encrypted credential storage and reference resolution in
   `apps/api/app/services/credentials.py`.
 - Credential test handlers in `apps/api/app/services/credential_tests.py`.
-- Existing integrations in `packages/nodes/noodle_nodes/integrations.py` and
-  `packages/nodes/noodle_nodes/saas.py`.
-- Prototype AI nodes in `packages/nodes/noodle_nodes/llm.py` and
-  `packages/nodes/noodle_nodes/ai_extra.py`.
+- Existing integrations in `packages/nodes/nodyra_nodes/integrations.py` and
+  `packages/nodes/nodyra_nodes/saas.py`.
+- Prototype AI nodes in `packages/nodes/nodyra_nodes/llm.py` and
+  `packages/nodes/nodyra_nodes/ai_extra.py`.
 
 The current AI nodes are useful prototypes, but they pass dictionaries through
 normal ports and run tool calls inline. For production, the workflow engine needs
@@ -57,17 +57,17 @@ to understand AI-specific connections and agent tool execution.
 
 ## Architecture Invariants
 
-These constraints should stay true while Noodle grows toward n8n-class coverage:
+These constraints should stay true while Nodyra grows toward n8n-class coverage:
 
 - Nodes remain Python-native. Integration specs may generate nodes, but the
   generated runtime target must still be Python functions registered through the
-  Noodle SDK.
+  Nodyra SDK.
 - The editor's Python view remains first-class. Built-in nodes expose their
   Python source through `/nodes/{node_type}/source`; custom nodes expose
   editable source from code modules. The older side-inspector `Show code` button
   should be removed once the NDV `Inspector | Python` toggle is the standard
   path.
-- n8n is a design and catalog reference only. Noodle should not introduce a
+- n8n is a design and catalog reference only. Nodyra should not introduce a
   TypeScript node runtime or require provider operations to be implemented in
   JavaScript.
 - Declarative specs are allowed only as authoring metadata. They should produce
@@ -81,7 +81,7 @@ This document is intended to be sufficient for another LLM or engineer to resume
 the work after context loss. When continuing:
 
 1. Read this file first.
-2. Run `git status --short --branch` in `D:\noodle` before editing.
+2. Run `git status --short --branch` in `D:\nodyra` before editing.
 3. Do not revert uncommitted changes unless the user explicitly asks.
 4. Treat `feat/ndv-param-grouping` as planned baseline work if it has not yet
    been merged to `main`.
@@ -93,15 +93,15 @@ the work after context loss. When continuing:
 
 Important local reference files:
 
-- Core manifest models: `packages/core/noodle/models.py`
-- Python node SDK: `packages/core/noodle/sdk.py`
-- Execution engine: `packages/core/noodle/engine.py`
-- Built-in HTTP and webhook nodes: `packages/nodes/noodle_nodes/builtin.py`
+- Core manifest models: `packages/core/nodyra/models.py`
+- Python node SDK: `packages/core/nodyra/sdk.py`
+- Execution engine: `packages/core/nodyra/engine.py`
+- Built-in HTTP and webhook nodes: `packages/nodes/nodyra_nodes/builtin.py`
 - Current simple integration wrappers:
-  `packages/nodes/noodle_nodes/integrations.py`
-- Current SaaS nodes: `packages/nodes/noodle_nodes/saas.py`
-- Current AI nodes: `packages/nodes/noodle_nodes/llm.py`
-- Current extra AI/provider nodes: `packages/nodes/noodle_nodes/ai_extra.py`
+  `packages/nodes/nodyra_nodes/integrations.py`
+- Current SaaS nodes: `packages/nodes/nodyra_nodes/saas.py`
+- Current AI nodes: `packages/nodes/nodyra_nodes/llm.py`
+- Current extra AI/provider nodes: `packages/nodes/nodyra_nodes/ai_extra.py`
 - Credential service: `apps/api/app/services/credentials.py`
 - Credential tests: `apps/api/app/services/credential_tests.py`
 - Credential routes: `apps/api/app/routers/credentials.py`
@@ -155,7 +155,7 @@ n8n's catalog is valuable as a design reference because it separates:
   and vector stores
 - engine-mediated agent tool execution
 
-Noodle should adopt these patterns in Python without copying code.
+Nodyra should adopt these patterns in Python without copying code.
 
 ## Target Architecture
 
@@ -167,13 +167,13 @@ The production architecture has four major layers:
 4. Editor, credentials, observability, and deployment tooling
 
 ```text
-packages/core/noodle/
+packages/core/nodyra/
   models.py              # manifests, ports, params, execution models
   sdk.py                 # @node and new @integration_node helpers
   engine.py              # DAG execution plus agent action resume loop
   ai_runtime.py          # model/tool/memory/output-parser protocols
 
-packages/nodes/noodle_nodes/
+packages/nodes/nodyra_nodes/
   integrations_v2/
     specs.py
     registry.py
@@ -291,7 +291,7 @@ Store this in the run/event tables instead of process memory.
 
 ## Integration SDK
 
-Create `packages/nodes/noodle_nodes/integrations_v2/`.
+Create `packages/nodes/nodyra_nodes/integrations_v2/`.
 
 Core objects:
 
@@ -568,7 +568,7 @@ wrappers after v2 is stable:
 New AI v2 modules:
 
 ```text
-packages/nodes/noodle_nodes/ai_v2/
+packages/nodes/nodyra_nodes/ai_v2/
   providers/
     openai.py
     anthropic.py
@@ -961,7 +961,7 @@ This is necessary to scale toward hundreds of integrations.
 
 ## Migration Strategy
 
-Since Noodle has no users yet:
+Since Nodyra has no users yet:
 
 - replace current AI nodes with AI v2
 - keep old IDs only if it saves development time
@@ -981,7 +981,7 @@ For integrations:
 
 - Create catalog coverage matrix from n8n providers.
 - Mark provider priority and credential type.
-- Identify existing Noodle nodes to replace.
+- Identify existing Nodyra nodes to replace.
 
 ### Phase 1 - Core Schema and Editor Support
 
@@ -1093,8 +1093,8 @@ side-inspector source button.
 
 Primary files:
 
-- `packages/core/noodle/models.py`
-- `packages/core/noodle/sdk.py`
+- `packages/core/nodyra/models.py`
+- `packages/core/nodyra/sdk.py`
 - `packages/core/tests/test_sdk.py`
 - `apps/web/src/types.ts`
 - `apps/web/src/editor/NDVPanels.tsx`
@@ -1142,8 +1142,8 @@ and runtime behavior without ad hoc frontend rules.
 
 Primary files:
 
-- `packages/core/noodle/models.py`
-- `packages/core/noodle/sdk.py`
+- `packages/core/nodyra/models.py`
+- `packages/core/nodyra/sdk.py`
 - `packages/core/tests/test_sdk.py`
 - `apps/web/src/types.ts`
 - `apps/api/app/routers/nodes.py`
@@ -1204,8 +1204,8 @@ Goal: prevent invalid main/data/AI wiring in the editor and on the backend.
 
 Primary files:
 
-- `packages/core/noodle/models.py`
-- `packages/core/noodle/engine.py`
+- `packages/core/nodyra/models.py`
+- `packages/core/nodyra/engine.py`
 - `apps/web/src/editor/connectionValidation.ts`
 - `apps/web/src/editor/store.ts`
 - `apps/web/src/editor/NodeCard.tsx`
@@ -1420,12 +1420,12 @@ pagination, retries, and error parsing.
 
 New files:
 
-- `packages/nodes/noodle_nodes/integrations_v2/transport.py`
-- `packages/nodes/noodle_nodes/integrations_v2/errors.py`
-- `packages/nodes/noodle_nodes/integrations_v2/oauth.py`
-- `packages/nodes/noodle_nodes/integrations_v2/pagination.py`
-- `packages/nodes/noodle_nodes/integrations_v2/providers/google/transport.py`
-- `packages/nodes/noodle_nodes/integrations_v2/providers/microsoft/transport.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/transport.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/errors.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/oauth.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/pagination.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/providers/google/transport.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/providers/microsoft/transport.py`
 
 Transport contract:
 
@@ -1466,7 +1466,7 @@ Done when:
 Status in current implementation:
 
 - In progress after the first v2 transport slice.
-- Added `packages/nodes/noodle_nodes/integrations_v2/`.
+- Added `packages/nodes/nodyra_nodes/integrations_v2/`.
 - Added structured `ProviderError` with provider, operation, status code, code,
   message, retryable flag, request id, and response summary.
 - Added sync `ProviderTransport` and `RetryPolicy` using `requests`, matching
@@ -1478,7 +1478,7 @@ Status in current implementation:
   `packages/nodes/tests/test_integrations_v2_transport.py`.
 - Verification run:
   `uv run pytest packages/nodes/tests/test_integrations_v2_transport.py`,
-  `uv run ruff check packages/nodes/noodle_nodes/integrations_v2 packages/nodes/tests/test_integrations_v2_transport.py`.
+  `uv run ruff check packages/nodes/nodyra_nodes/integrations_v2 packages/nodes/tests/test_integrations_v2_transport.py`.
 - Remaining WP4 work: pagination helpers, richer provider-specific error
   parsing, rate-limit header handling, request/response debug metadata, OAuth
   refresh hook integration with provider transports, and replacing direct HTTP
@@ -1503,11 +1503,11 @@ functions.
 
 New files:
 
-- `packages/nodes/noodle_nodes/integrations_v2/specs.py`
-- `packages/nodes/noodle_nodes/integrations_v2/registry.py`
-- `packages/nodes/noodle_nodes/integrations_v2/node_factory.py`
-- `packages/nodes/noodle_nodes/integrations_v2/dynamic_options.py`
-- `packages/nodes/noodle_nodes/integrations_v2/__init__.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/specs.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/registry.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/node_factory.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/dynamic_options.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/__init__.py`
 
 Core classes:
 
@@ -1540,19 +1540,19 @@ Tests:
 Done when:
 
 - A simple mock provider can define one operation from specs and run as a real
-  Noodle node.
+  Nodyra node.
 - The Python panel shows useful operation source.
 
 Status in current implementation:
 
 - In progress after the first operation-spec registry slice.
 - Added `OperationParamSpec`, `OperationSpec`, `ResourceSpec`, and
-  `IntegrationSpec` in `packages/nodes/noodle_nodes/integrations_v2/specs.py`.
+  `IntegrationSpec` in `packages/nodes/nodyra_nodes/integrations_v2/specs.py`.
 - Added an operation node factory that builds real Python functions with
-  explicit parameters and stores generated source on `__noodle_source__`.
+  explicit parameters and stores generated source on `__nodyra_source__`.
 - Added an operation registry that stores executors, registers generated
   `NodeDef` objects into a `NodeRegistry`, and executes operations by node id.
-- Updated `GET /nodes/{node_type}/source` to use `__noodle_source__` when a
+- Updated `GET /nodes/{node_type}/source` to use `__nodyra_source__` when a
   generated node provides it, falling back to `inspect.getsource` for ordinary
   built-ins.
 - Added mocked registry/factory tests in
@@ -1561,7 +1561,7 @@ Status in current implementation:
   manifests and source responses.
 - Verification run:
   `uv run pytest packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py`,
-  `uv run ruff check packages/nodes/noodle_nodes/integrations_v2 packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py apps/api/app/routers/nodes.py`,
+  `uv run ruff check packages/nodes/nodyra_nodes/integrations_v2 packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py apps/api/app/routers/nodes.py`,
   `uv run pytest apps/api/tests/test_nodes.py`,
   `uv run ruff check apps/api/tests/test_nodes.py apps/api/app/routers/nodes.py`.
 - Remaining WP5 work: integration-level registration helpers, dynamic option
@@ -1570,7 +1570,7 @@ Status in current implementation:
 
 **Completed additions (this session):**
 
-- Added `packages/nodes/noodle_nodes/integrations_v2/dynamic_options.py`:
+- Added `packages/nodes/nodyra_nodes/integrations_v2/dynamic_options.py`:
   `DynamicOption`, `register_loader()`, `call_loader()`, `list_loader_ids()`.
 - Added `GET /nodes/dynamic-options/{loader_id}` endpoint in
   `apps/api/app/routers/nodes.py` — accepts `credentials`, `spreadsheet_id`,
@@ -1584,10 +1584,10 @@ Goal: build the first production integration provider.
 
 Provider files:
 
-- `packages/nodes/noodle_nodes/integrations_v2/providers/google_sheets/spec.py`
-- `packages/nodes/noodle_nodes/integrations_v2/providers/google_sheets/operations.py`
-- `packages/nodes/noodle_nodes/integrations_v2/providers/google_sheets/options.py`
-- `packages/nodes/noodle_nodes/integrations_v2/providers/google_sheets/tests/`
+- `packages/nodes/nodyra_nodes/integrations_v2/providers/google_sheets/spec.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/providers/google_sheets/operations.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/providers/google_sheets/options.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/providers/google_sheets/tests/`
 
 Operations:
 
@@ -1625,7 +1625,7 @@ Status in current implementation:
 
 - In progress after the first Google Sheets v2 operation slice.
 - Added provider module
-  `packages/nodes/noodle_nodes/integrations_v2/providers/google_sheets/`.
+  `packages/nodes/nodyra_nodes/integrations_v2/providers/google_sheets/`.
 - Added generated Python-native nodes:
   `google_sheets_read_v2` and `google_sheets_append_v2`.
 - Both nodes use `OperationSpec`, `register_operation`, and `GoogleTransport`
@@ -1633,20 +1633,20 @@ Status in current implementation:
 - Both nodes declare `google_sheets_oauth2` multi-field credentials and required
   OAuth scope `https://www.googleapis.com/auth/spreadsheets`, enabling the
   editor missing-scope warning added in WP3.
-- Imported the Google Sheets v2 provider from `noodle_nodes.__init__` so the
+- Imported the Google Sheets v2 provider from `nodyra_nodes.__init__` so the
   generated manifests register with the default node registry.
 - Added mocked provider tests in
   `packages/nodes/tests/test_google_sheets_v2.py`.
 - Verification run:
   `uv run pytest packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_google_sheets_v2.py`,
-  `uv run ruff check packages/nodes/noodle_nodes/integrations_v2 packages/nodes/noodle_nodes/__init__.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_google_sheets_v2.py apps/api/app/routers/nodes.py`.
+  `uv run ruff check packages/nodes/nodyra_nodes/integrations_v2 packages/nodes/nodyra_nodes/__init__.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_google_sheets_v2.py apps/api/app/routers/nodes.py`.
 - Broader verification after WP6 slice:
   `uv run pytest packages/core/tests apps/api/tests/test_credentials_v2.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_google_sheets_v2.py`,
   `npm run test -- connectionValidation.test.ts` from `apps/web`,
   `npm run build` from `apps/web`.
 - Final verification in this implementation session:
   `uv run pytest packages/core/tests apps/api/tests/test_credentials_v2.py apps/api/tests/test_nodes.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_google_sheets_v2.py`,
-  `uv run ruff check apps/api/app/services/oauth.py apps/api/app/routers/credentials.py apps/api/app/services/credentials.py apps/api/app/routers/nodes.py apps/api/tests/test_credentials_v2.py apps/api/tests/test_nodes.py packages/nodes/noodle_nodes/integrations_v2 packages/nodes/noodle_nodes/__init__.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_google_sheets_v2.py`,
+  `uv run ruff check apps/api/app/services/oauth.py apps/api/app/routers/credentials.py apps/api/app/services/credentials.py apps/api/app/routers/nodes.py apps/api/tests/test_credentials_v2.py apps/api/tests/test_nodes.py packages/nodes/nodyra_nodes/integrations_v2 packages/nodes/nodyra_nodes/__init__.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_google_sheets_v2.py`,
   `npm run test -- connectionValidation.test.ts` from `apps/web`.
 - Remaining WP6 work: spreadsheet metadata operations, clear/update operations,
   row lookup/mapping operations, dynamic spreadsheet/sheet/header option
@@ -1657,7 +1657,7 @@ Status in current implementation:
 
 - Added `update_values` (PUT), `clear_values` (POST :clear), and
   `get_spreadsheet_metadata` (GET w/ field mask) executors and specs.
-- Added `packages/nodes/noodle_nodes/integrations_v2/providers/google_sheets/options.py`
+- Added `packages/nodes/nodyra_nodes/integrations_v2/providers/google_sheets/options.py`
   registering two dynamic option loaders:
   `google_sheets.list_sheet_names` and `google_sheets.list_header_columns`.
 - `google_sheets/__init__.py` imports `options` to trigger loader registration.
@@ -1671,10 +1671,10 @@ Goal: build the second production provider and prove Microsoft Graph transport.
 
 Provider files:
 
-- `packages/nodes/noodle_nodes/integrations_v2/providers/microsoft_outlook/spec.py`
-- `packages/nodes/noodle_nodes/integrations_v2/providers/microsoft_outlook/operations.py`
-- `packages/nodes/noodle_nodes/integrations_v2/providers/microsoft_outlook/options.py`
-- `packages/nodes/noodle_nodes/integrations_v2/providers/microsoft_outlook/tests/`
+- `packages/nodes/nodyra_nodes/integrations_v2/providers/microsoft_outlook/spec.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/providers/microsoft_outlook/operations.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/providers/microsoft_outlook/options.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/providers/microsoft_outlook/tests/`
 
 Operations:
 
@@ -1706,7 +1706,7 @@ Done when:
 
 **Completed (this session):**
 
-- Created `packages/nodes/noodle_nodes/integrations_v2/providers/microsoft_outlook/`
+- Created `packages/nodes/nodyra_nodes/integrations_v2/providers/microsoft_outlook/`
   with `operations.py` (4 operations) and `__init__.py`.
 - `send_mail`: POST `/me/sendMail` — to/cc/bcc/reply-to, HTML/Text body, saveToSentItems.
 - `list_messages`: GET `/me/mailFolders/{folder}/messages` — `$top`, `$search`,
@@ -1715,7 +1715,7 @@ Done when:
 - `get_message`: GET `/me/messages/{id}` with `$select`.
 - `list_calendar_events`: GET `/me/events` — date-range `$filter`, `$select`, `$orderby`.
 - All operations use `MicrosoftGraphTransport` with Bearer auth.
-- `noodle_nodes/__init__.py` imports the provider to trigger registration.
+- `nodyra_nodes/__init__.py` imports the provider to trigger registration.
 - Tests in `packages/nodes/tests/test_integrations_v2_providers.py` cover all 4
   Outlook operations (12 tests, all passing alongside 15 Sheets tests).
 - WP7 is **done** (attachment/draft/reply operations remain for a future slice).
@@ -1726,9 +1726,9 @@ Goal: retire provider-specific HTTP wrappers only after v2 equivalents exist.
 
 Primary files:
 
-- `packages/nodes/noodle_nodes/integrations.py`
-- `packages/nodes/noodle_nodes/saas.py`
-- `packages/nodes/noodle_nodes/communication.py`
+- `packages/nodes/nodyra_nodes/integrations.py`
+- `packages/nodes/nodyra_nodes/saas.py`
+- `packages/nodes/nodyra_nodes/communication.py`
 - `apps/web/src/workflowTemplates.ts`
 - `apps/api/app/services/ai_builder.py`
 - affected tests under `packages/nodes/tests/` and `apps/api/tests/`
@@ -1822,37 +1822,37 @@ Verification:
 
 - `uv run pytest packages/nodes/tests/test_builtin_nodes.py::test_expected_integration_nodes_are_registered packages/nodes/tests/test_builtin_nodes.py::test_google_sheets_append_derives_rows_from_input apps/api/tests/test_nodes.py packages/nodes/tests/test_google_sheets_v2.py`
   (8 passed, 1 existing Pydantic warning)
-- `uv run ruff check packages/nodes/noodle_nodes/integrations.py packages/nodes/tests/test_builtin_nodes.py apps/api/tests/test_nodes.py`
+- `uv run ruff check packages/nodes/nodyra_nodes/integrations.py packages/nodes/tests/test_builtin_nodes.py apps/api/tests/test_nodes.py`
 - `npm run build` from `apps/web` passed with existing chunk-size warnings.
 - `uv run pytest packages/nodes/tests/test_github_v2.py packages/nodes/tests/test_builtin_nodes.py::test_expected_integration_nodes_are_registered apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py::test_ai_builder_uses_github_v2_operations_and_credentials`
   (9 passed, 1 existing Pydantic warning)
-- `uv run ruff check packages/nodes/noodle_nodes/integrations_v2/providers/github packages/nodes/noodle_nodes/integrations.py packages/nodes/tests/test_github_v2.py packages/nodes/tests/test_builtin_nodes.py apps/api/app/services/ai_builder.py apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py`
+- `uv run ruff check packages/nodes/nodyra_nodes/integrations_v2/providers/github packages/nodes/nodyra_nodes/integrations.py packages/nodes/tests/test_github_v2.py packages/nodes/tests/test_builtin_nodes.py apps/api/app/services/ai_builder.py apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py`
 - `uv run pytest packages/nodes/tests/test_slack_v2.py packages/nodes/tests/test_builtin_nodes.py::test_expected_integration_nodes_are_registered packages/nodes/tests/test_builtin_nodes.py::test_slack_node_builds_chat_post_message_payload apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py::test_ai_builder_returns_and_applies_editable_graph apps/api/tests/test_releases_errors_ai.py::test_ai_builder_attaches_existing_credentials`
   (11 passed, 1 existing Pydantic warning)
-- `uv run ruff check packages/nodes/noodle_nodes/integrations_v2/providers/slack packages/nodes/noodle_nodes/__init__.py packages/nodes/noodle_nodes/integrations.py packages/nodes/tests/test_slack_v2.py packages/nodes/tests/test_builtin_nodes.py apps/api/app/services/ai_builder.py apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py`
+- `uv run ruff check packages/nodes/nodyra_nodes/integrations_v2/providers/slack packages/nodes/nodyra_nodes/__init__.py packages/nodes/nodyra_nodes/integrations.py packages/nodes/tests/test_slack_v2.py packages/nodes/tests/test_builtin_nodes.py apps/api/app/services/ai_builder.py apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py`
 - `npm run build` from `apps/web` passed with existing chunk-size warnings after
   the Slack template/palette update.
 - `uv run pytest packages/nodes/tests/test_stripe_v2.py packages/nodes/tests/test_builtin_nodes.py::test_expected_integration_nodes_are_registered packages/nodes/tests/test_builtin_nodes.py::test_stripe_create_customer_uses_input_and_metadata apps/api/tests/test_nodes.py`
   (7 passed, 1 existing Pydantic warning)
-- `uv run ruff check packages/nodes/noodle_nodes/integrations_v2/providers/stripe packages/nodes/noodle_nodes/__init__.py packages/nodes/noodle_nodes/integrations.py packages/nodes/tests/test_stripe_v2.py packages/nodes/tests/test_builtin_nodes.py apps/api/tests/test_nodes.py`
+- `uv run ruff check packages/nodes/nodyra_nodes/integrations_v2/providers/stripe packages/nodes/nodyra_nodes/__init__.py packages/nodes/nodyra_nodes/integrations.py packages/nodes/tests/test_stripe_v2.py packages/nodes/tests/test_builtin_nodes.py apps/api/tests/test_nodes.py`
 - `uv run pytest packages/nodes/tests/test_airtable_v2.py packages/nodes/tests/test_builtin_nodes.py::test_expected_integration_nodes_are_registered apps/api/tests/test_nodes.py`
   (8 passed, 1 existing Pydantic warning)
-- `uv run ruff check packages/nodes/noodle_nodes/integrations_v2/providers/airtable packages/nodes/noodle_nodes/__init__.py packages/nodes/noodle_nodes/integrations.py packages/nodes/tests/test_airtable_v2.py packages/nodes/tests/test_builtin_nodes.py apps/api/app/services/ai_builder.py apps/api/tests/test_nodes.py`
+- `uv run ruff check packages/nodes/nodyra_nodes/integrations_v2/providers/airtable packages/nodes/nodyra_nodes/__init__.py packages/nodes/nodyra_nodes/integrations.py packages/nodes/tests/test_airtable_v2.py packages/nodes/tests/test_builtin_nodes.py apps/api/app/services/ai_builder.py apps/api/tests/test_nodes.py`
 - `uv run pytest packages/nodes/tests/test_notion_v2.py packages/nodes/tests/test_builtin_nodes.py::test_expected_integration_nodes_are_registered apps/api/tests/test_nodes.py`
   (8 passed, 1 existing Pydantic warning)
-- `uv run ruff check packages/nodes/noodle_nodes/integrations_v2/providers/notion packages/nodes/noodle_nodes/__init__.py packages/nodes/noodle_nodes/integrations.py packages/nodes/tests/test_notion_v2.py packages/nodes/tests/test_builtin_nodes.py apps/api/app/services/ai_builder.py apps/api/tests/test_nodes.py`
+- `uv run ruff check packages/nodes/nodyra_nodes/integrations_v2/providers/notion packages/nodes/nodyra_nodes/__init__.py packages/nodes/nodyra_nodes/integrations.py packages/nodes/tests/test_notion_v2.py packages/nodes/tests/test_builtin_nodes.py apps/api/app/services/ai_builder.py apps/api/tests/test_nodes.py`
 - `npm run build` from `apps/web` passed with existing chunk-size warnings after
   the Notion palette update.
 - Broader WP8 regression:
   `uv run pytest packages/nodes/tests/test_google_sheets_v2.py packages/nodes/tests/test_github_v2.py packages/nodes/tests/test_slack_v2.py packages/nodes/tests/test_stripe_v2.py packages/nodes/tests/test_airtable_v2.py packages/nodes/tests/test_notion_v2.py packages/nodes/tests/test_integrations_v2_providers.py packages/nodes/tests/test_builtin_nodes.py apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py`
   (98 passed, 1 existing Pydantic warning)
 - Broad WP8 lint sweep passed:
-  `uv run ruff check packages/nodes/noodle_nodes/integrations_v2/providers packages/nodes/noodle_nodes/__init__.py packages/nodes/noodle_nodes/integrations.py packages/nodes/tests/test_google_sheets_v2.py packages/nodes/tests/test_github_v2.py packages/nodes/tests/test_slack_v2.py packages/nodes/tests/test_stripe_v2.py packages/nodes/tests/test_airtable_v2.py packages/nodes/tests/test_notion_v2.py packages/nodes/tests/test_integrations_v2_providers.py packages/nodes/tests/test_builtin_nodes.py apps/api/app/services/ai_builder.py apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py`
+  `uv run ruff check packages/nodes/nodyra_nodes/integrations_v2/providers packages/nodes/nodyra_nodes/__init__.py packages/nodes/nodyra_nodes/integrations.py packages/nodes/tests/test_google_sheets_v2.py packages/nodes/tests/test_github_v2.py packages/nodes/tests/test_slack_v2.py packages/nodes/tests/test_stripe_v2.py packages/nodes/tests/test_airtable_v2.py packages/nodes/tests/test_notion_v2.py packages/nodes/tests/test_integrations_v2_providers.py packages/nodes/tests/test_builtin_nodes.py apps/api/app/services/ai_builder.py apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py`
 - Final combined regression after WP8/WP15 updates:
   `uv run pytest apps/api/tests/test_credentials_v2.py apps/api/tests/test_triggers.py apps/api/tests/test_workflows.py apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py apps/api/tests/test_runs.py::test_run_timeline_includes_persisted_agent_events apps/api/tests/test_runs.py::test_run_timeline_includes_persisted_guardrail_events apps/api/tests/test_enterprise.py::test_audit_log_records_actions packages/core/tests/test_ai_runtime.py packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_github_provider_triggers.py packages/nodes/tests/test_google_sheets_v2.py packages/nodes/tests/test_github_v2.py packages/nodes/tests/test_slack_v2.py packages/nodes/tests/test_stripe_v2.py packages/nodes/tests/test_airtable_v2.py packages/nodes/tests/test_notion_v2.py packages/nodes/tests/test_integrations_v2_providers.py packages/nodes/tests/test_builtin_nodes.py`
   (256 passed, 1 existing Pydantic warning)
 - Final combined lint after WP8/WP15 updates:
-  `uv run ruff check apps/api/app/services/credential_tests.py apps/api/app/routers/credentials.py apps/api/app/services/provider_triggers.py apps/api/app/services/runner.py apps/api/app/routers/runs.py apps/api/app/routers/workflows.py apps/api/app/routers/provider_webhooks.py apps/api/app/schemas.py apps/api/app/services/ai_builder.py apps/api/tests/test_credentials_v2.py apps/api/tests/test_triggers.py apps/api/tests/test_runs.py apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py packages/core/noodle/ai_runtime.py packages/core/tests/test_ai_runtime.py packages/nodes/noodle_nodes/http_security.py packages/nodes/noodle_nodes/builtin.py packages/nodes/noodle_nodes/__init__.py packages/nodes/noodle_nodes/integrations.py packages/nodes/noodle_nodes/ai_v2 packages/nodes/noodle_nodes/integrations_v2 packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_builtin_nodes.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_github_provider_triggers.py packages/nodes/tests/test_google_sheets_v2.py packages/nodes/tests/test_github_v2.py packages/nodes/tests/test_slack_v2.py packages/nodes/tests/test_stripe_v2.py packages/nodes/tests/test_airtable_v2.py packages/nodes/tests/test_notion_v2.py packages/nodes/tests/test_integrations_v2_providers.py`
+  `uv run ruff check apps/api/app/services/credential_tests.py apps/api/app/routers/credentials.py apps/api/app/services/provider_triggers.py apps/api/app/services/runner.py apps/api/app/routers/runs.py apps/api/app/routers/workflows.py apps/api/app/routers/provider_webhooks.py apps/api/app/schemas.py apps/api/app/services/ai_builder.py apps/api/tests/test_credentials_v2.py apps/api/tests/test_triggers.py apps/api/tests/test_runs.py apps/api/tests/test_nodes.py apps/api/tests/test_releases_errors_ai.py packages/core/nodyra/ai_runtime.py packages/core/tests/test_ai_runtime.py packages/nodes/nodyra_nodes/http_security.py packages/nodes/nodyra_nodes/builtin.py packages/nodes/nodyra_nodes/__init__.py packages/nodes/nodyra_nodes/integrations.py packages/nodes/nodyra_nodes/ai_v2 packages/nodes/nodyra_nodes/integrations_v2 packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_builtin_nodes.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_github_provider_triggers.py packages/nodes/tests/test_google_sheets_v2.py packages/nodes/tests/test_github_v2.py packages/nodes/tests/test_slack_v2.py packages/nodes/tests/test_stripe_v2.py packages/nodes/tests/test_airtable_v2.py packages/nodes/tests/test_notion_v2.py packages/nodes/tests/test_integrations_v2_providers.py`
 
 Remaining WP8 work:
 
@@ -1873,9 +1873,9 @@ Goal: create provider-neutral AI protocols before replacing nodes.
 
 New files:
 
-- `packages/core/noodle/ai_runtime.py`
-- `packages/nodes/noodle_nodes/ai_v2/providers/`
-- `packages/nodes/noodle_nodes/ai_v2/types.py`
+- `packages/core/nodyra/ai_runtime.py`
+- `packages/nodes/nodyra_nodes/ai_v2/providers/`
+- `packages/nodes/nodyra_nodes/ai_v2/types.py`
 
 Contracts:
 
@@ -1913,7 +1913,7 @@ Done when:
 
 Implementation notes (done):
 
-- `packages/core/noodle/ai_runtime.py` defines the provider-neutral contracts:
+- `packages/core/nodyra/ai_runtime.py` defines the provider-neutral contracts:
   `MessageRole`, `AIMessage`, `ToolParameterSchema`, `ToolSchema`, `ToolCall`,
   `ToolResult`, `ModelUsage`, `ModelCapabilities`, `ChatRequest`,
   `ChatResponse`, `EmbeddingRequest`, `EmbeddingResponse`,
@@ -1921,13 +1921,13 @@ Implementation notes (done):
   `EmbeddingModelAdapter`, `MemoryAdapter`, `OutputParserAdapter`,
   `ToolAdapter`, `GuardrailAdapter`. Pydantic models throughout; no LangChain.
 - Provider adapters (requests-only, no vendor SDKs):
-  - `packages/nodes/noodle_nodes/ai_v2/providers/openai.py` -
+  - `packages/nodes/nodyra_nodes/ai_v2/providers/openai.py` -
     `OpenAIChatAdapter` (covers `openai`, `openai_compatible`, `ollama`,
     `openrouter`) and `AzureOpenAIChatAdapter`.
-  - `packages/nodes/noodle_nodes/ai_v2/providers/anthropic.py` -
+  - `packages/nodes/nodyra_nodes/ai_v2/providers/anthropic.py` -
     `AnthropicChatAdapter` (system-message extraction, tool_result as a
     user + content block).
-- `packages/nodes/noodle_nodes/ai_v2/factory.py` exposes
+- `packages/nodes/nodyra_nodes/ai_v2/factory.py` exposes
   `adapter_from_credentials(credentials, *, provider, model, temperature,
   max_tokens, response_format, timeout_seconds)` to bridge legacy flat
   credential dicts to the WP9 adapters.
@@ -1942,12 +1942,12 @@ Goal: replace prototype AI nodes with typed supplier/executable nodes.
 
 New files:
 
-- `packages/nodes/noodle_nodes/ai_v2/models.py`
-- `packages/nodes/noodle_nodes/ai_v2/embeddings.py`
-- `packages/nodes/noodle_nodes/ai_v2/memory.py`
-- `packages/nodes/noodle_nodes/ai_v2/tools.py`
-- `packages/nodes/noodle_nodes/ai_v2/output_parsers.py`
-- `packages/nodes/noodle_nodes/ai_v2/guardrails.py`
+- `packages/nodes/nodyra_nodes/ai_v2/models.py`
+- `packages/nodes/nodyra_nodes/ai_v2/embeddings.py`
+- `packages/nodes/nodyra_nodes/ai_v2/memory.py`
+- `packages/nodes/nodyra_nodes/ai_v2/tools.py`
+- `packages/nodes/nodyra_nodes/ai_v2/output_parsers.py`
+- `packages/nodes/nodyra_nodes/ai_v2/guardrails.py`
 
 Initial nodes:
 
@@ -1984,30 +1984,30 @@ Done when:
 Implementation notes (done):
 
 - New supplier/tool nodes registered with typed AI output ports:
-  - `packages/nodes/noodle_nodes/ai_v2/models.py` -
+  - `packages/nodes/nodyra_nodes/ai_v2/models.py` -
     `ai_chat_model_openai`, `ai_chat_model_anthropic`, `ai_chat_model_azure`
     (`role="supplier"`, output port kind `ai_language_model`). Advanced
     options (`temperature`, `max_tokens`, `response_format`, `api_version`,
     `timeout_seconds`) are behind an `Options` param group.
-  - `packages/nodes/noodle_nodes/ai_v2/embeddings.py` - `ai_embedding_model`
+  - `packages/nodes/nodyra_nodes/ai_v2/embeddings.py` - `ai_embedding_model`
     (`ai_embedding_model` port) backed by
     `providers/embeddings.py` (`OpenAIEmbeddingAdapter`,
     `CohereEmbeddingAdapter`, `embedding_adapter_from_credentials`).
-  - `packages/nodes/noodle_nodes/ai_v2/memory.py` - `ai_buffer_memory`
+  - `packages/nodes/nodyra_nodes/ai_v2/memory.py` - `ai_buffer_memory`
     (`ai_memory` port) + concrete `BufferMemoryAdapter` (bounded in-process
     window, optional seeded system prompt).
-  - `packages/nodes/noodle_nodes/ai_v2/tools.py` - `ai_http_tool` and
+  - `packages/nodes/nodyra_nodes/ai_v2/tools.py` - `ai_http_tool` and
     `ai_workflow_tool` (`role="tool"`, `ai_tool` port) + `HttpToolAdapter`
     and `WorkflowToolAdapter`.
-  - `packages/nodes/noodle_nodes/ai_v2/output_parsers.py` -
+  - `packages/nodes/nodyra_nodes/ai_v2/output_parsers.py` -
     `ai_structured_output_parser` (`role="output_parser"`,
     `ai_output_parser` port) + `StructuredOutputParser` (JSON extraction with
     fenced-block tolerance, required-key validation, format instructions).
-  - `packages/nodes/noodle_nodes/ai_v2/guardrails.py` - `ai_guardrail`
+  - `packages/nodes/nodyra_nodes/ai_v2/guardrails.py` - `ai_guardrail`
     (`ai_guardrail` port) + `KeywordGuardrail` (blocked terms, regex
     redaction, max-length enforcement).
-- Registration: `packages/nodes/noodle_nodes/ai_v2/__init__.py` imports all
-  node modules; `packages/nodes/noodle_nodes/__init__.py` imports `ai_v2`.
+- Registration: `packages/nodes/nodyra_nodes/ai_v2/__init__.py` imports all
+  node modules; `packages/nodes/nodyra_nodes/__init__.py` imports `ai_v2`.
 - Deferred from this package: `AI Integration Tool` node, `ai_builder`
   migration to v2 IDs, and removal/deprecation of legacy `llm.py` /
   `ai_extra.py` nodes (kept in place pending the WP11 agent engine work).
@@ -2020,16 +2020,16 @@ Goal: make agent tool execution observable, resumable, and approval-aware.
 
 Primary files:
 
-- `packages/core/noodle/ai_runtime.py`
-- `packages/core/noodle/engine.py`
-- `packages/core/noodle/models.py`
-- `packages/core/noodle/sdk.py`
-- `packages/core/noodle/serialization.py`
-- `packages/nodes/noodle_nodes/llm.py`
-- `packages/nodes/noodle_nodes/ai_v2/agents.py`
-- `packages/nodes/noodle_nodes/ai_v2/tools.py`
-- `packages/nodes/noodle_nodes/ai_v2/providers/openai.py`
-- `packages/nodes/noodle_nodes/ai_v2/providers/anthropic.py`
+- `packages/core/nodyra/ai_runtime.py`
+- `packages/core/nodyra/engine.py`
+- `packages/core/nodyra/models.py`
+- `packages/core/nodyra/sdk.py`
+- `packages/core/nodyra/serialization.py`
+- `packages/nodes/nodyra_nodes/llm.py`
+- `packages/nodes/nodyra_nodes/ai_v2/agents.py`
+- `packages/nodes/nodyra_nodes/ai_v2/tools.py`
+- `packages/nodes/nodyra_nodes/ai_v2/providers/openai.py`
+- `packages/nodes/nodyra_nodes/ai_v2/providers/anthropic.py`
 - `apps/api/app/models.py`
 - `apps/api/app/schemas.py`
 - `apps/api/app/services/queue.py`
@@ -2041,10 +2041,10 @@ Primary files:
 - `apps/api/app/services/retention.py`
 - `apps/api/alembic/versions/0032_run_events.py`
 - `apps/api/alembic/versions/0033_run_approvals.py`
-- `packages/runtime/noodle_runtime/server.py`
-- `packages/runner/noodle_runner_agent/process_pool.py`
-- `packages/runner/noodle_runner_agent/agent.py`
-- `packages/runner/noodle_runner_agent/k8s_entrypoint.py`
+- `packages/runtime/nodyra_runtime/server.py`
+- `packages/runner/nodyra_runner_agent/process_pool.py`
+- `packages/runner/nodyra_runner_agent/agent.py`
+- `packages/runner/nodyra_runner_agent/k8s_entrypoint.py`
 - `apps/web/src/types.ts`
 - `apps/web/src/ExecutionsPage.tsx`
 - `apps/web/src/EditorPage.tsx`
@@ -2102,7 +2102,7 @@ Done when:
 Implementation notes (in progress - current slice):
 
 - Added `AgentActionResponse` and `AgentStepEvent` to
-  `packages/core/noodle/ai_runtime.py`.
+  `packages/core/nodyra/ai_runtime.py`.
 - Extended `AIMessage` with assistant `tool_calls` so resumed model calls can
   preserve provider-native tool-call history.
 - Updated OpenAI-compatible and Anthropic adapters to serialize assistant
@@ -2158,7 +2158,7 @@ Implementation notes (in progress - current slice):
     it on the run event stream.
 - Added a paused approval lifecycle:
   - the same pause/resume options are now passed through the local
-    `noodle_runtime` subprocess protocol used by `runtime_pool.dispatch`;
+    `nodyra_runtime` subprocess protocol used by `runtime_pool.dispatch`;
   - approval-required runs finish the active worker task with `Run.status`
     set to `waiting` and no `finished_at`;
   - `RunQueueEntry.status="waiting"` parks the run outside the lease loop;
@@ -2189,12 +2189,12 @@ Implementation notes (in progress - current slice):
   - `remote_dispatch.assign_run(...)` accepts `pause_on_approval` and
     `agent_action_resume`;
   - agent, Docker, and Kubernetes runner payloads include those fields;
-  - `noodle_runner_agent.process_pool.run_workflow_subprocess(...)` forwards
-    them into `noodle_runtime`.
-- Added `ai_agent_v2` in `packages/nodes/noodle_nodes/ai_v2/agents.py`.
+  - `nodyra_runner_agent.process_pool.run_workflow_subprocess(...)` forwards
+    them into `nodyra_runtime`.
+- Added `ai_agent_v2` in `packages/nodes/nodyra_nodes/ai_v2/agents.py`.
   This is intentionally registered as a new id so saved legacy graphs can still
   execute while new workflows use the typed v2 agent path.
-- Added `ai_tool_bundle` in `packages/nodes/noodle_nodes/ai_v2/tools.py`
+- Added `ai_tool_bundle` in `packages/nodes/nodyra_nodes/ai_v2/tools.py`
   because the current graph model supports one edge per target input name.
   The bundle lets multiple `ai_tool` supplier outputs feed the agent's single
   typed tool port.
@@ -2207,7 +2207,7 @@ Implementation notes (in progress - current slice):
   `ai_memory_buffer -> ai_buffer_memory`, `ai_tool -> ai_http_tool`,
   `ai_tool_box -> ai_tool_bundle`, and `ai_agent -> ai_agent_v2`.
 - `WorkflowToolAdapter.invoke_async(...)` now calls
-  `noodle.context.workflow_caller` when available, so AI workflow tools can run
+  `nodyra.context.workflow_caller` when available, so AI workflow tools can run
   through the same host sub-workflow path as the `Execute Workflow` node.
 - Updated shared serialization so Pydantic runtime models serialize as JSON
   instead of opaque object previews.
@@ -2258,7 +2258,7 @@ Implementation notes (in progress - current slice):
   - `uv run pytest apps/api/tests/test_runs.py`
   - `uv run pytest apps/api/tests/test_retention.py`
   - `npm run build` from `apps/web`
-  - `uv run ruff check apps/api/app/services/runtime_pool.py packages/runtime/noodle_runtime/server.py apps/api/app/services/runner.py`
+  - `uv run ruff check apps/api/app/services/runtime_pool.py packages/runtime/nodyra_runtime/server.py apps/api/app/services/runner.py`
   - `uv run pytest packages/runtime/tests/test_server.py`
     (3 passed)
   - `uv run pytest packages/core/tests packages/nodes/tests/test_ai_v2_nodes.py packages/runtime/tests/test_server.py apps/api/tests/test_runs.py apps/api/tests/test_retention.py`
@@ -2266,7 +2266,7 @@ Implementation notes (in progress - current slice):
   - `uv run ruff check` on the full WP11 Python touched-file set including
     runtime protocol files
   - `npm run build` from `apps/web`
-  - `uv run ruff check apps/api/app/services/remote_dispatch.py apps/api/app/services/runner.py packages/runner/noodle_runner_agent/process_pool.py packages/runner/noodle_runner_agent/agent.py packages/runner/noodle_runner_agent/k8s_entrypoint.py`
+  - `uv run ruff check apps/api/app/services/remote_dispatch.py apps/api/app/services/runner.py packages/runner/nodyra_runner_agent/process_pool.py packages/runner/nodyra_runner_agent/agent.py packages/runner/nodyra_runner_agent/k8s_entrypoint.py`
   - Re-ran full WP11 validation after remote protocol wiring:
     `uv run pytest packages/core/tests packages/nodes/tests/test_ai_v2_nodes.py packages/runtime/tests/test_server.py apps/api/tests/test_runs.py apps/api/tests/test_retention.py`
     (184 passed, 1 skipped), `uv run ruff check` on the full WP11 Python
@@ -2280,11 +2280,11 @@ Implementation notes (in progress - current slice):
   - `uv run ruff check` on all touched Python files
   - `uv run pytest packages/core/tests/test_engine_agent_actions.py packages/nodes/tests/test_ai_v2_nodes.py apps/api/tests/test_runs.py::test_run_timeline_includes_persisted_agent_events`
     (42 passed)
-  - `uv run ruff check packages/core/noodle/ai_runtime.py packages/core/noodle/engine.py packages/core/tests/test_engine_agent_actions.py packages/nodes/noodle_nodes/ai_v2/agents.py packages/nodes/noodle_nodes/ai_v2/tools.py packages/nodes/tests/test_ai_v2_nodes.py apps/api/app/services/remote_dispatch.py apps/api/app/services/runner.py apps/api/app/routers/runs.py apps/api/tests/test_runs.py`
+  - `uv run ruff check packages/core/nodyra/ai_runtime.py packages/core/nodyra/engine.py packages/core/tests/test_engine_agent_actions.py packages/nodes/nodyra_nodes/ai_v2/agents.py packages/nodes/nodyra_nodes/ai_v2/tools.py packages/nodes/tests/test_ai_v2_nodes.py apps/api/app/services/remote_dispatch.py apps/api/app/services/runner.py apps/api/app/routers/runs.py apps/api/tests/test_runs.py`
   - `npm run build` from `apps/web`
   - `uv run pytest packages/core/tests/test_engine_agent_actions.py packages/nodes/tests/test_ai_v2_nodes.py apps/api/tests/test_runs.py::test_run_timeline_includes_persisted_agent_events apps/api/tests/test_runs.py::test_run_approvals_are_recorded_and_decidable`
     (43 passed)
-  - `uv run ruff check packages/core/noodle/engine.py packages/core/tests/test_engine_agent_actions.py packages/nodes/noodle_nodes/ai_v2/agents.py packages/nodes/tests/test_ai_v2_nodes.py apps/api/app/models.py apps/api/app/schemas.py apps/api/app/services/runner.py apps/api/app/services/remote_dispatch.py apps/api/app/services/retention.py apps/api/app/routers/runs.py apps/api/tests/test_runs.py apps/api/alembic/versions/0033_run_approvals.py`
+  - `uv run ruff check packages/core/nodyra/engine.py packages/core/tests/test_engine_agent_actions.py packages/nodes/nodyra_nodes/ai_v2/agents.py packages/nodes/tests/test_ai_v2_nodes.py apps/api/app/models.py apps/api/app/schemas.py apps/api/app/services/runner.py apps/api/app/services/remote_dispatch.py apps/api/app/services/retention.py apps/api/app/routers/runs.py apps/api/tests/test_runs.py apps/api/alembic/versions/0033_run_approvals.py`
   - `uv run pytest apps/api/tests/test_runs.py::test_run_timeline_includes_persisted_agent_events apps/api/tests/test_runs.py::test_run_approvals_are_recorded_and_decidable apps/api/tests/test_retention.py`
     (6 passed)
   - `uv run pytest packages/core/tests/test_engine_agent_actions.py packages/nodes/tests/test_ai_v2_nodes.py`
@@ -2302,7 +2302,7 @@ Implementation notes (in progress - current slice):
   - `npm run build` from `apps/web`
   - `uv run pytest packages/core/tests/test_sdk.py packages/nodes/tests/test_llm_nodes.py apps/api/tests/test_nodes.py`
     (35 passed)
-  - `uv run ruff check packages/core/noodle/models.py packages/core/noodle/sdk.py packages/core/tests/test_sdk.py packages/nodes/noodle_nodes/llm.py packages/nodes/tests/test_llm_nodes.py apps/api/tests/test_nodes.py`
+  - `uv run ruff check packages/core/nodyra/models.py packages/core/nodyra/sdk.py packages/core/tests/test_sdk.py packages/nodes/nodyra_nodes/llm.py packages/nodes/tests/test_llm_nodes.py apps/api/tests/test_nodes.py`
   - `npm run build` from `apps/web`
   - `uv run pytest apps/api/tests/test_runs.py::test_approval_decision_requeues_waiting_run`
     (1 passed)
@@ -2310,7 +2310,7 @@ Implementation notes (in progress - current slice):
   - `npm run build` from `apps/web`
   - Auto-approve visibility follow-up:
     `uv run pytest packages/nodes/tests/test_ai_v2_nodes.py::test_agent_v2_registered_with_typed_ports packages/core/tests/test_ai_runtime.py`
-    (43 passed), `uv run ruff check packages/core/noodle/ai_runtime.py packages/nodes/noodle_nodes/ai_v2/agents.py packages/nodes/tests/test_ai_v2_nodes.py`,
+    (43 passed), `uv run ruff check packages/core/nodyra/ai_runtime.py packages/nodes/nodyra_nodes/ai_v2/agents.py packages/nodes/tests/test_ai_v2_nodes.py`,
     and `npm run build` from `apps/web`.
   - Broader WP11 validation after legacy-node hiding and resume audit:
     `uv run pytest packages/core/tests packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_llm_nodes.py packages/runtime/tests/test_server.py apps/api/tests/test_runs.py apps/api/tests/test_nodes.py apps/api/tests/test_retention.py`
@@ -2328,11 +2328,11 @@ Goal: support production document ingestion and retrieval workflows.
 
 New files:
 
-- `packages/core/noodle/ai_runtime.py`
-- `packages/nodes/noodle_nodes/ai_v2/document_loaders.py`
-- `packages/nodes/noodle_nodes/ai_v2/text_splitters.py`
-- `packages/nodes/noodle_nodes/ai_v2/retrievers.py`
-- `packages/nodes/noodle_nodes/ai_v2/vectorstores.py`
+- `packages/core/nodyra/ai_runtime.py`
+- `packages/nodes/nodyra_nodes/ai_v2/document_loaders.py`
+- `packages/nodes/nodyra_nodes/ai_v2/text_splitters.py`
+- `packages/nodes/nodyra_nodes/ai_v2/retrievers.py`
+- `packages/nodes/nodyra_nodes/ai_v2/vectorstores.py`
 - `packages/nodes/tests/test_ai_v2_nodes.py`
 
 Initial scope:
@@ -2368,7 +2368,7 @@ Implementation notes (current slice):
 - Added `ai_vector_retriever_v2`, `ai_retrieve_documents`, and `ai_rag_chain`.
   The RAG chain retrieves context, calls the connected chat model, and returns
   answer, context documents, usage, provider, and model.
-- `packages/nodes/noodle_nodes/ai_v2/__init__.py` now imports the WP12 modules
+- `packages/nodes/nodyra_nodes/ai_v2/__init__.py` now imports the WP12 modules
   so the nodes register with the default registry.
 
 Tests:
@@ -2382,7 +2382,7 @@ Tests:
 Current verification:
 
 - `uv run pytest packages/nodes/tests/test_ai_v2_nodes.py` (42 passed)
-- `uv run ruff check packages/core/noodle/ai_runtime.py packages/nodes/noodle_nodes/ai_v2/__init__.py packages/nodes/noodle_nodes/ai_v2/document_loaders.py packages/nodes/noodle_nodes/ai_v2/text_splitters.py packages/nodes/noodle_nodes/ai_v2/vectorstores.py packages/nodes/noodle_nodes/ai_v2/retrievers.py packages/nodes/tests/test_ai_v2_nodes.py`
+- `uv run ruff check packages/core/nodyra/ai_runtime.py packages/nodes/nodyra_nodes/ai_v2/__init__.py packages/nodes/nodyra_nodes/ai_v2/document_loaders.py packages/nodes/nodyra_nodes/ai_v2/text_splitters.py packages/nodes/nodyra_nodes/ai_v2/vectorstores.py packages/nodes/nodyra_nodes/ai_v2/retrievers.py packages/nodes/tests/test_ai_v2_nodes.py`
 - Added `test_rag_workflow_executes_through_engine`, covering loader ->
   splitter -> embedding -> in-memory vector store -> retriever -> RAG chain via
   `execute(...)`.
@@ -2417,7 +2417,7 @@ Primary files:
 
 - `apps/api/app/services/triggers.py`
 - `apps/api/app/routers/triggers.py` if needed
-- `packages/nodes/noodle_nodes/integrations_v2/triggers.py`
+- `packages/nodes/nodyra_nodes/integrations_v2/triggers.py`
 - provider trigger specs
 
 Trigger lifecycle:
@@ -2447,7 +2447,7 @@ Done when:
 Implementation notes:
 
 - Added provider-trigger contracts to
-  `packages/nodes/noodle_nodes/integrations_v2/specs.py`:
+  `packages/nodes/nodyra_nodes/integrations_v2/specs.py`:
   `ProviderTriggerSpec`, activation/deactivation/webhook contexts,
   `ProviderTriggerSubscription`, and `ProviderTriggerEvent`.
 - Extended the v2 integration node factory and registry with generated
@@ -2552,7 +2552,7 @@ Done when:
 Implementation notes:
 
 - Added runtime SSRF/private-network protection in
-  `packages/nodes/noodle_nodes/http_security.py`.
+  `packages/nodes/nodyra_nodes/http_security.py`.
   - Blocks non-HTTP(S) schemes.
   - Blocks literal localhost/private/loopback/link-local/unspecified/reserved
     targets.
@@ -2646,7 +2646,7 @@ Verification:
   (4 passed)
 - `uv run pytest packages/nodes/tests/test_builtin_nodes.py packages/nodes/tests/test_ai_v2_nodes.py`
   (76 passed)
-- `uv run ruff check packages/nodes/noodle_nodes/http_security.py packages/nodes/noodle_nodes/builtin.py packages/nodes/noodle_nodes/ai_v2/tools.py packages/nodes/noodle_nodes/ai_v2/document_loaders.py packages/nodes/tests/test_builtin_nodes.py packages/nodes/tests/test_ai_v2_nodes.py`
+- `uv run ruff check packages/nodes/nodyra_nodes/http_security.py packages/nodes/nodyra_nodes/builtin.py packages/nodes/nodyra_nodes/ai_v2/tools.py packages/nodes/nodyra_nodes/ai_v2/document_loaders.py packages/nodes/tests/test_builtin_nodes.py packages/nodes/tests/test_ai_v2_nodes.py`
 - `uv run pytest apps/api/tests/test_triggers.py::test_github_provider_trigger_lifecycle_and_dispatch`
   (1 passed)
 - `uv run ruff check apps/api/app/services/provider_triggers.py apps/api/app/routers/runs.py apps/api/tests/test_triggers.py`
@@ -2663,13 +2663,13 @@ Verification:
 - `npm run build` from `apps/web` passed with existing chunk-size warnings.
 - `uv run pytest packages/nodes/tests/test_integrations_v2_transport.py`
   (5 passed)
-- `uv run ruff check packages/nodes/noodle_nodes/integrations_v2/transport.py packages/nodes/tests/test_integrations_v2_transport.py`
+- `uv run ruff check packages/nodes/nodyra_nodes/integrations_v2/transport.py packages/nodes/tests/test_integrations_v2_transport.py`
 - `uv run pytest packages/core/tests/test_ai_runtime.py packages/nodes/tests/test_ai_v2_nodes.py`
   (88 passed)
-- `uv run ruff check packages/core/noodle/ai_runtime.py packages/core/tests/test_ai_runtime.py packages/nodes/noodle_nodes/ai_v2/factory.py packages/nodes/noodle_nodes/ai_v2/models.py packages/nodes/noodle_nodes/ai_v2/embeddings.py packages/nodes/noodle_nodes/ai_v2/providers/openai.py packages/nodes/noodle_nodes/ai_v2/providers/anthropic.py packages/nodes/noodle_nodes/ai_v2/providers/embeddings.py packages/nodes/tests/test_ai_v2_nodes.py`
+- `uv run ruff check packages/core/nodyra/ai_runtime.py packages/core/tests/test_ai_runtime.py packages/nodes/nodyra_nodes/ai_v2/factory.py packages/nodes/nodyra_nodes/ai_v2/models.py packages/nodes/nodyra_nodes/ai_v2/embeddings.py packages/nodes/nodyra_nodes/ai_v2/providers/openai.py packages/nodes/nodyra_nodes/ai_v2/providers/anthropic.py packages/nodes/nodyra_nodes/ai_v2/providers/embeddings.py packages/nodes/tests/test_ai_v2_nodes.py`
 - `uv run pytest packages/nodes/tests/test_ai_v2_nodes.py::test_guardrail_blocks_terms packages/nodes/tests/test_ai_v2_nodes.py::test_guardrail_redacts_patterns apps/api/tests/test_runs.py::test_run_timeline_includes_persisted_guardrail_events`
   (3 passed)
-- `uv run ruff check packages/nodes/noodle_nodes/ai_v2/guardrails.py packages/nodes/tests/test_ai_v2_nodes.py apps/api/app/services/runner.py apps/api/app/routers/runs.py apps/api/tests/test_runs.py`
+- `uv run ruff check packages/nodes/nodyra_nodes/ai_v2/guardrails.py packages/nodes/tests/test_ai_v2_nodes.py apps/api/app/services/runner.py apps/api/app/routers/runs.py apps/api/tests/test_runs.py`
 - `npm run build` from `apps/web` passed with existing chunk-size warnings.
 - Broader WP13/WP14 regression:
   `uv run pytest packages/core/tests/test_ai_runtime.py packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_github_provider_triggers.py apps/api/tests/test_triggers.py apps/api/tests/test_workflows.py apps/api/tests/test_runs.py::test_run_timeline_includes_persisted_agent_events apps/api/tests/test_runs.py::test_run_timeline_includes_persisted_guardrail_events apps/api/tests/test_enterprise.py::test_audit_log_records_actions`
@@ -2742,7 +2742,7 @@ Verification:
   (191 passed, 1 existing Pydantic warning)
 - `npm run build` from `apps/web` passed with existing chunk-size warnings.
 - Broad Python lint sweep passed:
-  `uv run ruff check apps/api/app/services/credential_tests.py apps/api/app/routers/credentials.py apps/api/app/services/provider_triggers.py apps/api/app/services/runner.py apps/api/app/routers/runs.py apps/api/app/routers/workflows.py apps/api/app/routers/provider_webhooks.py apps/api/app/schemas.py apps/api/tests/test_credentials_v2.py apps/api/tests/test_triggers.py apps/api/tests/test_runs.py packages/core/noodle/ai_runtime.py packages/core/tests/test_ai_runtime.py packages/nodes/noodle_nodes/http_security.py packages/nodes/noodle_nodes/builtin.py packages/nodes/noodle_nodes/ai_v2 packages/nodes/noodle_nodes/integrations_v2 packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_builtin_nodes.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_github_provider_triggers.py packages/nodes/tests/test_google_sheets_v2.py packages/nodes/tests/test_integrations_v2_providers.py`
+  `uv run ruff check apps/api/app/services/credential_tests.py apps/api/app/routers/credentials.py apps/api/app/services/provider_triggers.py apps/api/app/services/runner.py apps/api/app/routers/runs.py apps/api/app/routers/workflows.py apps/api/app/routers/provider_webhooks.py apps/api/app/schemas.py apps/api/tests/test_credentials_v2.py apps/api/tests/test_triggers.py apps/api/tests/test_runs.py packages/core/nodyra/ai_runtime.py packages/core/tests/test_ai_runtime.py packages/nodes/nodyra_nodes/http_security.py packages/nodes/nodyra_nodes/builtin.py packages/nodes/nodyra_nodes/ai_v2 packages/nodes/nodyra_nodes/integrations_v2 packages/nodes/tests/test_ai_v2_nodes.py packages/nodes/tests/test_builtin_nodes.py packages/nodes/tests/test_integrations_v2_transport.py packages/nodes/tests/test_integrations_v2_registry.py packages/nodes/tests/test_github_provider_triggers.py packages/nodes/tests/test_google_sheets_v2.py packages/nodes/tests/test_integrations_v2_providers.py`
 - After mechanical import sorting, reran
   `uv run pytest packages/nodes/tests/test_integrations_v2_providers.py`
   (27 passed, 1 existing Pydantic warning).
@@ -2754,7 +2754,7 @@ Remaining WP15 work: none.
 If another LLM needs to resume work, use this prompt:
 
 ```text
-We are in D:\noodle. Read docs/production-automation-platform-plan.md first.
+We are in D:\nodyra. Read docs/production-automation-platform-plan.md first.
 Continue the next incomplete work package. Keep all nodes Python-native, keep
 the NDV Inspector | Python source path working, and do not copy n8n code from
 D:\n8n-master. Run git status before editing, do not revert user changes, and
@@ -2763,7 +2763,7 @@ update the plan with files changed, tests run, risks, and remaining work.
 
 ## Success Criteria
 
-Noodle is production-ready when:
+Nodyra is production-ready when:
 
 - integrations are generated from specs and tested with mocked provider calls
 - OAuth credentials refresh automatically

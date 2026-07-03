@@ -1,24 +1,24 @@
 # Community Node Registry — Developer Guide
 
 This guide explains how to publish, discover, and install community-contributed
-node packages for the Noodle workflow platform.
+node packages for the Nodyra workflow platform.
 
 ## Overview
 
 The Community Node Registry lets anyone publish node packages to PyPI and have
 them listed in a public registry index. Users can browse and install these
-packages directly from the Noodle UI with one click.
+packages directly from the Nodyra UI with one click.
 
 ### Architecture
 
 Two components:
 
 1. **Registry index** — a curated JSON file
-   (`https://github.com/noodle-registry/packages`) that lists every available
-   package. New entries are added via pull request and reviewed by a Noodle
+   (`https://github.com/nodyra-registry/packages`) that lists every available
+   package. New entries are added via pull request and reviewed by a Nodyra
    maintainer.
 
-2. **Noodle client** — the Noodle API plus the Settings UI that fetches the
+2. **Nodyra client** — the Nodyra API plus the Settings UI that fetches the
    registry index and manages installations.
 
 ## Publishing a Node Package
@@ -28,39 +28,39 @@ Two components:
 Your package must be installable from PyPI. The minimal structure:
 
 ```
-noodle-my-nodes/
+nodyra-my-nodes/
   pyproject.toml
   src/
-    noodle_my_nodes/
+    nodyra_my_nodes/
       __init__.py
       nodes.py       # your @node-decorated functions
 ```
 
-### Step 2: Declare the Noodle entry point
+### Step 2: Declare the Nodyra entry point
 
 In your `pyproject.toml`, add an entry point under
-`[project.entry-points."noodle.nodes"]`:
+`[project.entry-points."nodyra.nodes"]`:
 
 ```toml
-[project.entry-points."noodle.nodes"]
-my_nodes = "noodle_my_nodes:register"
+[project.entry-points."nodyra.nodes"]
+my_nodes = "nodyra_my_nodes:register"
 ```
 
 ### Step 3: Implement the registration function
 
 ```python
-# noodle_my_nodes/__init__.py
+# nodyra_my_nodes/__init__.py
 
 def register():
     # Importing your node module is sufficient — the @node decorators
     # auto-register the nodes during import.
-    import noodle_my_nodes.nodes  # noqa: F401
+    import nodyra_my_nodes.nodes  # noqa: F401
 ```
 
 ```python
-# noodle_my_nodes/nodes.py
+# nodyra_my_nodes/nodes.py
 
-from noodle import node
+from nodyra import node
 
 @node(
     id="my_hello",
@@ -75,10 +75,10 @@ def say_hello(name: str) -> dict:
 
 ### Important
 
-- Do **NOT** import individual node symbols (e.g. `from noodle_my_nodes.nodes
+- Do **NOT** import individual node symbols (e.g. `from nodyra_my_nodes.nodes
   import say_hello`) in your `register()` function — that would create
   duplicate imports and could double-register the same node.
-- Just `import noodle_my_nodes.nodes` at the module level — the `@node`
+- Just `import nodyra_my_nodes.nodes` at the module level — the `@node`
   decorator registers the node automatically on import.
 
 ### Step 4: Publish to PyPI
@@ -91,21 +91,21 @@ python -m twine upload dist/*
 
 ### Step 5: Submit to the registry index
 
-1. Fork `https://github.com/noodle-registry/packages`
+1. Fork `https://github.com/nodyra-registry/packages`
 2. Edit `index.json` to add your package entry:
 
 ```json
 {
   "packages": [
     {
-      "id": "noodle-my-nodes",
+      "id": "nodyra-my-nodes",
       "name": "My Nodes",
       "description": "Useful nodes for my integration",
       "author": "your-npm-username",
       "version": "0.1.0",
       "nodes": ["my_hello", "my_goodbye"],
-      "install_url": "https://github.com/your-username/noodle-my-nodes",
-      "pypi_package": "noodle-my-nodes"
+      "install_url": "https://github.com/your-username/nodyra-my-nodes",
+      "pypi_package": "nodyra-my-nodes"
     }
   ]
 }
@@ -113,19 +113,19 @@ python -m twine upload dist/*
 
 3. Open a pull request
 
-A Noodle maintainer will review the submission before merging.
+A Nodyra maintainer will review the submission before merging.
 
 ## Security Model
 
 **Installed PyPI packages run with full interpreter access.** The AST sandbox
 only applies to code strings created directly by users (code nodes,
-AI-generated node functions). A `noodle-*` package from PyPI runs compiled
+AI-generated node functions). A `nodyra-*` package from PyPI runs compiled
 Python with no sandbox — it can do anything the containing process can do.
 
 Security relies on **registry governance**, not sandbox containment:
 
 - The GitHub-backed registry index is the security perimeter. Every new package
-  is reviewed by a Noodle maintainer before inclusion.
+  is reviewed by a Nodyra maintainer before inclusion.
 - **Review checklist:**
   - No unexpected network calls or hard-coded IPs
   - No file-system writes outside designated paths
@@ -135,12 +135,12 @@ Security relies on **registry governance**, not sandbox containment:
 - The `node_registry:install` permission is **admin-only** and not available
   for custom roles.
 - Set `ALLOW_REGISTRY=false` in your `.env` (or export
-  `NOODLE_ALLOW_REGISTRY=false`) to disable the registry entirely for
+  `NODYRA_ALLOW_REGISTRY=false`) to disable the registry entirely for
   air-gapped or maximum-security deployments.
 
 ### Future (post-MVP)
 
-Longer-term, packages may be signed with a Noodle-managed key and signature
+Longer-term, packages may be signed with a Nodyra-managed key and signature
 verified on install.
 
 ## Configuration
@@ -148,7 +148,7 @@ verified on install.
 | Environment variable | Default | Description |
 |---|---|---|
 | `ALLOW_REGISTRY` | `true` | Set `false` to disable the registry feature |
-| `REGISTRY_INDEX_URL` | `https://raw.githubusercontent.com/noodle-registry/packages/main/index.json` | URL of the registry index JSON |
+| `REGISTRY_INDEX_URL` | `https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json` | URL of the registry index JSON |
 
 ## API Reference
 

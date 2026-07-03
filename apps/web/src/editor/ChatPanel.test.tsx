@@ -127,7 +127,7 @@ describe("ChatPanel", () => {
             tool_call_id: "c1",
             tool_name: "web_search",
             step: 0,
-            arguments: { query: "noodle" },
+            arguments: { query: "nodyra" },
           },
         },
         {

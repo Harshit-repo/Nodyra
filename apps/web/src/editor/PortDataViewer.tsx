@@ -3,7 +3,7 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { DatasetSqlModal } from "./DatasetSqlModal";
 
-import { useEditor, type NoodleNode } from "./store";
+import { useEditor, type NodyraNode } from "./store";
 import {
   artifactDownloadUrl,
   artifactInlineUrl,
@@ -42,7 +42,7 @@ interface PortConnectionPreview {
   hasValue: boolean;
 }
 
-function outputNames(node: NoodleNode): string[] {
+function outputNames(node: NodyraNode): string[] {
   return node.data.outputsOverride ?? node.data.manifest?.outputs.map((o) => o.name) ?? [];
 }
 
@@ -151,7 +151,7 @@ function edgeSummary(
   return `${edges.length} connection${edges.length === 1 ? "" : "s"}`;
 }
 
-function isMemoryNode(node: NoodleNode): boolean {
+function isMemoryNode(node: NodyraNode): boolean {
   const manifest = node.data.manifest;
   if (!manifest) return false;
   const label = `${manifest.id} ${manifest.name}`.toLowerCase();
@@ -165,7 +165,7 @@ function MemorySummary({
   node,
   outputs,
 }: {
-  node: NoodleNode;
+  node: NodyraNode;
   outputs: unknown;
 }) {
   const memoryPort =

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Noodle — workflow automation that speaks Python</title>
+<title>Nodyra — workflow automation that speaks Python</title>
 <meta name="description" content="Self-hostable, Python-native workflow automation. Every node is real Python — pandas, boto3, your internal libraries, all in the same interpreter that runs the workflow.">
 <link rel="icon" href="../icons/favicon-blue.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -255,10 +255,10 @@
         <path d="M5 21 C 9 9, 13.5 9, 16 16 S 23 23, 27 11" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
         <circle cx="5" cy="21" r="3.6" fill="var(--accent)"/><circle cx="27" cy="11" r="3.6" fill="var(--accent-2)"/>
       </svg>
-      <span class="brand-name">Noodle</span>
+      <span class="brand-name">Nodyra</span>
     </a>
     <div class="nav-links">
-      <a href="#why">Why Noodle</a>
+      <a href="#why">Why Nodyra</a>
       <a href="#code">Real Python</a>
       <a href="#platform">Platform</a>
       <a href="#enterprise">Enterprise</a>
@@ -309,7 +309,7 @@
         </div>
         <div class="pane" id="pane-code" hidden>
 <pre><span class="cm"># the exact function behind the node beside this</span>
-<span class="kw">from</span> noodle.sdk <span class="kw">import</span> node
+<span class="kw">from</span> nodyra.sdk <span class="kw">import</span> node
 
 <span class="dec">@node</span>(name=<span class="str">"Normalize Customer"</span>,
       id=<span class="str">"normalize_customer"</span>,
@@ -331,7 +331,7 @@
 <!-- WHY -->
 <section id="why">
   <div class="wrap">
-    <div class="reveal"><div class="eyebrow">Why teams pick Noodle</div>
+    <div class="reveal"><div class="eyebrow">Why teams pick Nodyra</div>
       <h2>Built for people whose stack is already Python.</h2></div>
     <div class="pitch">
       <div class="pcard reveal"><div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M5 12 C 9 12, 9 6, 13 6 C 17 6, 17 12, 21 12" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round"/><circle cx="4" cy="12" r="2.8" fill="var(--accent)"/></svg></div>
@@ -349,7 +349,7 @@
   <div class="wrap reveal">
     <div class="eyebrow">The thing nobody else does</div>
     <h2>Click any node. See the Python. There’s no magic layer.</h2>
-    <p class="section-lede">Other platforms hide execution behind opaque JSON or a JS runtime. In Noodle the node <em>is</em> the function — readable, testable, and yours. Upload a <span class="mono">.py</span> module and every top-level <span class="mono">def</span> becomes a node, its parameters rendered as inspector fields. (Try the toggle in the hero ↑.)</p>
+    <p class="section-lede">Other platforms hide execution behind opaque JSON or a JS runtime. In Nodyra the node <em>is</em> the function — readable, testable, and yours. Upload a <span class="mono">.py</span> module and every top-level <span class="mono">def</span> becomes a node, its parameters rendered as inspector fields. (Try the toggle in the hero ↑.)</p>
   </div>
 </section>
 
@@ -378,7 +378,7 @@
       <div class="cap reveal"><h3>MCP — both directions</h3><p>Expose any workflow as a <span class="mono">Model Context Protocol</span> tool for Claude &amp; other agents, and consume external MCP servers as nodes inside your graphs.</p></div>
       <div class="cap reveal"><h3>Code-first export</h3><p>Export any workflow to a standalone, runnable Python script — sub-workflows, credentials seams and all. Your automation is never trapped in our format.</p></div>
       <div class="cap reveal"><span class="tag pro">Pro</span><h3>Sandboxed execution</h3><p>Run untrusted code in isolated, capability-tiered containers (runc → gVisor → Kata) with a warm pool keyed per environment. Off by default, one setting to require it.</p></div>
-      <div class="cap reveal"><span class="tag pro">Pro</span><h3>Observability</h3><p>OpenTelemetry tracing across the engine, queue, and node runs — wire Noodle into the same dashboards you already use for everything else.</p></div>
+      <div class="cap reveal"><span class="tag pro">Pro</span><h3>Observability</h3><p>OpenTelemetry tracing across the engine, queue, and node runs — wire Nodyra into the same dashboards you already use for everything else.</p></div>
       <div class="cap reveal"><span class="tag pro">Pro</span><h3>Remote runners &amp; deployments</h3><p>Durable run queue, remote runner pools (Docker / Kubernetes / agent), and version-pinned deployments fired by cron, webhook, or event.</p></div>
     </div>
   </div>
@@ -456,7 +456,7 @@
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> 10 environments · 5 runners · 10 seats</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Unlimited deployments · email support</li>
         </ul>
-        <a href="mailto:sharma.har97@gmail.com?subject=Noodle%20Pro%20waitlist" class="btn btn-primary">Join the Pro waitlist</a>
+        <a href="mailto:sharma.har97@gmail.com?subject=Nodyra%20Pro%20waitlist" class="btn btn-primary">Join the Pro waitlist</a>
       </div>
 
       <!-- ENTERPRISE -->
@@ -473,7 +473,7 @@
           <li class="soon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="var(--ink-3)" stroke-width="2"/><path d="M12 8v4l3 2" stroke="var(--ink-3)" stroke-width="2" stroke-linecap="round"/></svg> Multi-tenant organizations <span class="badge">soon</span></li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Priority support &amp; SLA</li>
         </ul>
-        <a href="mailto:sharma.har97@gmail.com?subject=Noodle%20Enterprise" class="btn">Contact sales</a>
+        <a href="mailto:sharma.har97@gmail.com?subject=Nodyra%20Enterprise" class="btn">Contact sales</a>
       </div>
 
     </div>
@@ -488,7 +488,7 @@
     <h2>No signup. No telemetry. No usage meter.</h2>
     <p class="section-lede">Bring up the full stack — API, worker, scheduler, Postgres, Redis, MinIO, and the web app — with Docker Compose.</p>
     <div class="terminal">
-      <div class="bar"><i style="background:#f0747a"></i><i style="background:#ffd479"></i><i style="background:#57c98a"></i><span>~/noodle</span></div>
+      <div class="bar"><i style="background:#f0747a"></i><i style="background:#ffd479"></i><i style="background:#57c98a"></i><span>~/nodyra</span></div>
 <pre><span class="prompt">$</span> docker compose -f deploy/docker-compose.yml up --build -d
 <span style="color:var(--ink-3)">  ✓ api · worker · postgres · redis · minio · web</span>
 <span class="prompt">$</span> open http://localhost:5173
@@ -514,7 +514,7 @@
   <div class="wrap foot-in">
     <div class="brand">
       <svg width="22" height="22" viewBox="0 0 32 32" fill="none"><path d="M5 21 C 9 9, 13.5 9, 16 16 S 23 23, 27 11" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/><circle cx="5" cy="21" r="3.6" fill="var(--accent)"/><circle cx="27" cy="11" r="3.6" fill="var(--accent-2)"/></svg>
-      <span class="brand-name" style="font-size:18px">Noodle</span>
+      <span class="brand-name" style="font-size:18px">Nodyra</span>
     </div>
     <div class="foot-links"><a href="#">GitHub</a><a href="#pricing">Pricing</a><a href="#">Docs</a><a href="#">Community</a></div>
     <div class="mono">Self-hostable · Python-native · © 2026</div>

@@ -1,6 +1,6 @@
-"""Tests for noodle.context module."""
+"""Tests for nodyra.context module."""
 
-from noodle.context import WebSocketConnection, node_ws_connect
+from nodyra.context import WebSocketConnection, node_ws_connect
 
 
 def test_node_ws_connect_default_is_none():

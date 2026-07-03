@@ -1,10 +1,10 @@
-"""Tests for noodle.datasets — DatasetRef envelope helpers and hook registration."""
+"""Tests for nodyra.datasets — DatasetRef envelope helpers and hook registration."""
 import pytest
 
-from noodle import datasets
-from noodle.artifacts import ARTIFACT_MARKER, ARTIFACT_VERSION, LocalArtifactStore
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import (
+from nodyra import datasets
+from nodyra.artifacts import ARTIFACT_MARKER, ARTIFACT_VERSION, LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import (
     DATASET_MARKER,
     DATASET_VERSION,
     dataset_from_records,

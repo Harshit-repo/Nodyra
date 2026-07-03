@@ -1,7 +1,7 @@
 # Architecture Review (Synthesis)
 
 Independent audit, 2026-06-16. Synthesizes all backend/frontend/infra area reviews
-plus `NOODLE_REPOSITORY_MAP.md`.
+plus `NODYRA_REPOSITORY_MAP.md`.
 
 ## System shape
 - **Monorepo, uv workspace**: `packages/core` (engine + SDK + models),

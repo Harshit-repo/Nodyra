@@ -30,7 +30,7 @@ const user = (role: UserInfo["role"]): UserInfo => ({
   email: `${role}@example.com`,
   name: role,
   role,
-  company: "Noodle",
+  company: "Nodyra",
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -38,7 +38,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("workspace-aware permissions", () => {
   it("does not grant workspace writes from an unrelated global role", async () => {
     vi.spyOn(api, "listMyOrgs").mockResolvedValue([
-      { id: "default", name: "Noodle", slug: "noodle", status: "active", role: "viewer" },
+      { id: "default", name: "Nodyra", slug: "nodyra", status: "active", role: "viewer" },
     ]);
     renderProbe({ auth_required: true, signed_in: true, registration_open: false, multi_tenancy: true, user: user("admin") });
     expect(await screen.findByText("denied")).toBeTruthy();
@@ -46,7 +46,7 @@ describe("workspace-aware permissions", () => {
 
   it("uses the selected workspace membership when it grants write access", async () => {
     vi.spyOn(api, "listMyOrgs").mockResolvedValue([
-      { id: "default", name: "Noodle", slug: "noodle", status: "active", role: "editor" },
+      { id: "default", name: "Nodyra", slug: "nodyra", status: "active", role: "editor" },
     ]);
     renderProbe({ auth_required: true, signed_in: true, registration_open: false, multi_tenancy: true, user: user("viewer") });
     expect(await screen.findByText("allowed")).toBeTruthy();

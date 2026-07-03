@@ -2,14 +2,14 @@
 
 Evaluates a ``{{ }}`` value against caller-supplied ``$json`` / ``$input`` /
 ``$node`` context using the *same* evaluator the engine runs at execution time
-(``noodle.expr``), so the preview is faithful — arithmetic, ``len()``, etc. all
+(``nodyra.expr``), so the preview is faithful — arithmetic, ``len()``, etc. all
 behave exactly as they will in a real run. Stateless: the editor sends the
 context it already has from the last run.
 
 SECURITY (C1): evaluation happens in an isolated subprocess
 (``services/expr_preview``) with a secret-free environment — never in this
 process, which holds the master KEK and DB credentials. A sandbox escape in
-``noodle.expr`` must land in a process that knows nothing.
+``nodyra.expr`` must land in a process that knows nothing.
 """
 
 from typing import Any

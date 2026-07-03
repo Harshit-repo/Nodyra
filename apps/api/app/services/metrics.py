@@ -185,43 +185,43 @@ class _Histogram:
 # ---------------------------------------------------------------------------
 
 http_requests_total = _Counter(
-    "noodle_http_requests_total",
+    "nodyra_http_requests_total",
     "Total HTTP requests handled by the API.",
 )
 
 http_request_duration_seconds = _Histogram(
-    "noodle_http_request_duration_seconds",
+    "nodyra_http_request_duration_seconds",
     "HTTP request duration in seconds.",
 )
 
 run_starts_total = _Counter(
-    "noodle_run_starts_total",
+    "nodyra_run_starts_total",
     "Total workflow runs started.",
 )
 
 run_duration_seconds = _Histogram(
-    "noodle_run_duration_seconds",
+    "nodyra_run_duration_seconds",
     "Workflow run duration in seconds.",
     buckets=(1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 3600.0),
 )
 
 active_runs = _Gauge(
-    "noodle_active_runs",
+    "nodyra_active_runs",
     "Workflow runs currently executing in this process.",
 )
 
 queue_depth = _Gauge(
-    "noodle_queue_depth",
+    "nodyra_queue_depth",
     "Runs waiting in the durable queue.",
 )
 
 queue_leased = _Gauge(
-    "noodle_queue_leased",
+    "nodyra_queue_leased",
     "Runs currently leased by this process.",
 )
 
 node_executions_total = _Counter(
-    "noodle_node_executions_total",
+    "nodyra_node_executions_total",
     "Total node executions across all runs.",
 )
 

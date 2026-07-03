@@ -6,34 +6,34 @@ from httpx import AsyncClient
 _SAMPLE_INDEX = {
     "packages": [
         {
-            "id": "noodle-stripe-nodes",
+            "id": "nodyra-stripe-nodes",
             "name": "Stripe Nodes",
             "description": "Nodes for Stripe payment operations",
             "author": "community",
             "version": "1.2.0",
             "nodes": ["stripe_charge", "stripe_refund", "stripe_webhook"],
-            "install_url": "https://github.com/author/noodle-stripe-nodes",
-            "pypi_package": "noodle-stripe-nodes",
+            "install_url": "https://github.com/author/nodyra-stripe-nodes",
+            "pypi_package": "nodyra-stripe-nodes",
         },
         {
-            "id": "noodle-slack-nodes",
+            "id": "nodyra-slack-nodes",
             "name": "Slack Nodes",
             "description": "Send messages and interact with Slack",
             "author": "community",
             "version": "0.4.1",
             "nodes": ["slack_send", "slack_listen"],
-            "install_url": "https://github.com/author/noodle-slack-nodes",
-            "pypi_package": "noodle-slack-nodes",
+            "install_url": "https://github.com/author/nodyra-slack-nodes",
+            "pypi_package": "nodyra-slack-nodes",
         },
         {
-            "id": "noodle-ai-nodes",
+            "id": "nodyra-ai-nodes",
             "name": "AI Nodes",
             "description": "Extra AI/LLM nodes for advanced workflows",
-            "author": "noodle-labs",
+            "author": "nodyra-labs",
             "version": "2.0.0",
             "nodes": ["ai_embed", "ai_rerank"],
-            "install_url": "https://github.com/noodle-labs/noodle-ai-nodes",
-            "pypi_package": "noodle-ai-nodes",
+            "install_url": "https://github.com/nodyra-labs/nodyra-ai-nodes",
+            "pypi_package": "nodyra-ai-nodes",
         },
     ]
 }
@@ -46,7 +46,7 @@ async def test_registry_search_returns_all_when_no_query(
 ) -> None:
     """Search with no query returns all packages from the registry index."""
     httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
         json=_SAMPLE_INDEX,
     )
 
@@ -61,7 +61,7 @@ async def test_registry_search_returns_matching_packages(
 ) -> None:
     """Search with a query filters packages by name/description/nodes."""
     httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
         json=_SAMPLE_INDEX,
     )
 
@@ -69,7 +69,7 @@ async def test_registry_search_returns_matching_packages(
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["packages"]) == 1
-    assert data["packages"][0]["id"] == "noodle-stripe-nodes"
+    assert data["packages"][0]["id"] == "nodyra-stripe-nodes"
 
 
 async def test_registry_search_filters_by_node_name(
@@ -77,7 +77,7 @@ async def test_registry_search_filters_by_node_name(
 ) -> None:
     """Search matches nodes within packages."""
     httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
         json=_SAMPLE_INDEX,
     )
 
@@ -85,7 +85,7 @@ async def test_registry_search_filters_by_node_name(
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["packages"]) == 1
-    assert data["packages"][0]["id"] == "noodle-slack-nodes"
+    assert data["packages"][0]["id"] == "nodyra-slack-nodes"
 
 
 async def test_registry_search_handles_no_matches(
@@ -93,7 +93,7 @@ async def test_registry_search_handles_no_matches(
 ) -> None:
     """Search with no matches returns an empty list."""
     httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
         json=_SAMPLE_INDEX,
     )
 
@@ -108,16 +108,16 @@ async def test_registry_get_package_by_id(
 ) -> None:
     """GET /node-registry/packages/{id} returns the single package."""
     httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
         json=_SAMPLE_INDEX,
     )
 
-    resp = await client.get("/node-registry/packages/noodle-stripe-nodes")
+    resp = await client.get("/node-registry/packages/nodyra-stripe-nodes")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["id"] == "noodle-stripe-nodes"
+    assert data["id"] == "nodyra-stripe-nodes"
     assert data["name"] == "Stripe Nodes"
-    assert data["pypi_package"] == "noodle-stripe-nodes"
+    assert data["pypi_package"] == "nodyra-stripe-nodes"
 
 
 async def test_registry_get_package_not_found(
@@ -125,7 +125,7 @@ async def test_registry_get_package_not_found(
 ) -> None:
     """GET /node-registry/packages/{id} returns 404 for unknown packages."""
     httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
         json=_SAMPLE_INDEX,
     )
 
@@ -138,7 +138,7 @@ async def test_registry_index_unreachable_returns_502(
 ) -> None:
     """When the registry index is unreachable, return 502."""
     httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
         status_code=503,
     )
 
@@ -163,7 +163,7 @@ async def test_registry_install_requires_env_and_package_id(
     # Missing environment_id
     resp = await client.post(
         "/node-registry/install",
-        json={"package_id": "noodle-stripe-nodes"},
+        json={"package_id": "nodyra-stripe-nodes"},
     )
     assert resp.status_code == 422
 
@@ -180,7 +180,7 @@ async def test_registry_install_adds_to_env_packages(
 ) -> None:
     """POST /node-registry/install adds the pypi package to the environment."""
     httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
         json=_SAMPLE_INDEX,
     )
 
@@ -194,7 +194,7 @@ async def test_registry_install_adds_to_env_packages(
     resp = await client.post(
         "/node-registry/install",
         json={
-            "package_id": "noodle-stripe-nodes",
+            "package_id": "nodyra-stripe-nodes",
             "environment_id": env_id,
         },
     )
@@ -207,7 +207,7 @@ async def test_registry_install_adds_to_env_packages(
     env_resp = await client.get(f"/environments/{env_id}")
     assert env_resp.status_code == 200
     env_data = env_resp.json()
-    assert "noodle-stripe-nodes" in env_data["packages"]
+    assert "nodyra-stripe-nodes" in env_data["packages"]
 
 
 async def test_registry_install_rejects_unknown_package(
@@ -215,7 +215,7 @@ async def test_registry_install_rejects_unknown_package(
 ) -> None:
     """POST /node-registry/install returns 404 for unknown packages."""
     httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
         json=_SAMPLE_INDEX,
     )
 
@@ -237,7 +237,7 @@ async def test_registry_install_rejects_unknown_package(
 async def test_registry_install_status(client: AsyncClient, httpx_mock) -> None:
     """GET /node-registry/installs/{id} returns the install status."""
     httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
         json=_SAMPLE_INDEX,
     )
 
@@ -249,7 +249,7 @@ async def test_registry_install_status(client: AsyncClient, httpx_mock) -> None:
     install_resp = await client.post(
         "/node-registry/install",
         json={
-            "package_id": "noodle-stripe-nodes",
+            "package_id": "nodyra-stripe-nodes",
             "environment_id": env_id,
         },
     )
@@ -264,7 +264,7 @@ async def test_registry_install_status(client: AsyncClient, httpx_mock) -> None:
     status_data = status_resp.json()
     assert status_data["install_id"] == install_id
     assert status_data["status"] in ("pending", "installing", "ready", "failed")
-    assert status_data["package_id"] == "noodle-stripe-nodes"
+    assert status_data["package_id"] == "nodyra-stripe-nodes"
 
 
 async def test_registry_install_status_not_found(

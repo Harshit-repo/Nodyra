@@ -1,7 +1,7 @@
 import json
 
-from noodle import artifacts
-from noodle.context import artifact_store, current_node_id, node_debug
+from nodyra import artifacts
+from nodyra.context import artifact_store, current_node_id, node_debug
 
 
 def test_local_artifact_store_writes_and_reads_text(tmp_path) -> None:

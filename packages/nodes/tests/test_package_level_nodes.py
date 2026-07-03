@@ -4,16 +4,16 @@ import json
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
-from noodle.sdk import registry
-from noodle_nodes.browser_automation import sitemap_crawl
-from noodle_nodes.data_quality import currency_normalize, schema_validate, string_normalize
-from noodle_nodes.datasets import dataset_to_records
-from noodle_nodes.geospatial import geospatial_distance
-from noodle_nodes.security_automation import password_strength_check
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
+from nodyra.sdk import registry
+from nodyra_nodes.browser_automation import sitemap_crawl
+from nodyra_nodes.data_quality import currency_normalize, schema_validate, string_normalize
+from nodyra_nodes.datasets import dataset_to_records
+from nodyra_nodes.geospatial import geospatial_distance
+from nodyra_nodes.security_automation import password_strength_check
 
 
 @pytest.fixture

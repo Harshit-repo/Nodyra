@@ -17,7 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import noodle_nodes  # noqa: F401 - ensure built-in provider triggers register
+import nodyra_nodes  # noqa: F401 - ensure built-in provider triggers register
 from app.config import settings
 from app.db import SessionLocal
 from app.models import (
@@ -30,11 +30,11 @@ from app.models import (
 from app.services.audit import log_audit
 from app.services.credentials import is_credential_ref, resolve_credential_refs
 from app.services.runner import start_run
-from noodle_nodes.integrations_v2.registry import (
+from nodyra_nodes.integrations_v2.registry import (
     get_registered_provider_trigger,
     is_registered_provider_trigger,
 )
-from noodle_nodes.integrations_v2.specs import (
+from nodyra_nodes.integrations_v2.specs import (
     ProviderTriggerActivationContext,
     ProviderTriggerDeactivationContext,
     ProviderTriggerRequest,
@@ -82,7 +82,7 @@ def _redacted_value(key: str, value: Any) -> Any:
     lowered = key.lower()
     if is_credential_ref(value):
         return {
-            "__noodle_credential__": True,
+            "__nodyra_credential__": True,
             "id": str(value.get("id") or ""),
             "key": str(value.get("key") or ""),
         }

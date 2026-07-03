@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.models import Run
 from app.services import subworkflows as subworkflows_module
 from app.services.subworkflows import resolve_subworkflow
-from noodle.engine.subworkflows import InlineSubworkflow, SubworkflowCall
+from nodyra.engine.subworkflows import InlineSubworkflow, SubworkflowCall
 
 
 def _doubler_graph(code: str = "output = input * 2") -> dict:

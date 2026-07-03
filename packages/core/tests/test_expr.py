@@ -1,4 +1,4 @@
-from noodle.expr import (
+from nodyra.expr import (
     build_context,
     contains_expression,
     evaluate,
@@ -18,7 +18,7 @@ def test_expression_validator_blocks_sandbox_escape() -> None:
     """
     import ast
 
-    from noodle.expr import _ExprValidator
+    from nodyra.expr import _ExprValidator
 
     escapes = [
         "x.__class__",

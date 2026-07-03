@@ -43,7 +43,7 @@ class _SlowFirstRedis:
 async def test_publish_order_preserved_per_topic() -> None:
     from app.services.events import TopicBroker
 
-    broker = TopicBroker(channel_prefix="noodle:run:", name="run")
+    broker = TopicBroker(channel_prefix="nodyra:run:", name="run")
     broker._mode = "redis"
     broker._redis = _SlowFirstRedis()
 

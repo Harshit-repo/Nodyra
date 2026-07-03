@@ -47,7 +47,7 @@ settings.use_subprocess_runner = False
 # default. Lifespan-running tests (TestClient in test_cookie_auth/test_health)
 # flip auth_required on, so pin a non-default secret for the whole suite — tests
 # should never exercise the placeholder key anyway.
-settings.secret_key = "noodle-test-secret-deterministic-not-the-default"
+settings.secret_key = "nodyra-test-secret-deterministic-not-the-default"
 
 
 @pytest.fixture(autouse=True)
@@ -294,17 +294,17 @@ def _reset_webhook_listen_state():
     webhooks_module._captured.clear()
 
 
-# Set ``NOODLE_TEST_DATABASE_URL`` (e.g. a Postgres async URL) to run the suite
+# Set ``NODYRA_TEST_DATABASE_URL`` (e.g. a Postgres async URL) to run the suite
 # against a real backend instead of per-test SQLite. The CI "postgres" lane uses
 # this so the durable queue's ``SELECT ... FOR UPDATE SKIP LOCKED`` lease path
 # (Postgres-only — SQLite has no row locking) is actually exercised. Unset →
 # fast, isolated, file-per-test SQLite for local runs.
-TEST_DATABASE_URL = os.environ.get("NOODLE_TEST_DATABASE_URL")
+TEST_DATABASE_URL = os.environ.get("NODYRA_TEST_DATABASE_URL")
 
 
 @pytest_asyncio.fixture
 async def client() -> AsyncIterator[AsyncClient]:
-    artifacts_dir = tempfile.mkdtemp(prefix="noodle-artifacts-test-")
+    artifacts_dir = tempfile.mkdtemp(prefix="nodyra-artifacts-test-")
     old_artifacts_dir = settings.artifacts_dir
     settings.artifacts_dir = artifacts_dir
 

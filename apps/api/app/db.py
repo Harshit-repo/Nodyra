@@ -8,7 +8,7 @@ from app.config import settings
 
 
 class Base(DeclarativeBase):
-    """Declarative base for all Noodle ORM models."""
+    """Declarative base for all Nodyra ORM models."""
 
 
 def _create_engine():

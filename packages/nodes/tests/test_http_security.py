@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from noodle_nodes.http_security import (
+from nodyra_nodes.http_security import (
     UnsafeHttpTargetError,
     assert_public_host,
     assert_public_http_url,
@@ -40,7 +40,7 @@ def test_assert_public_host_blocks_private_literal() -> None:
 def test_assert_public_host_opt_out(monkeypatch) -> None:
     """SEC-4: the same env opt-out lets a self-hosted instance reach an internal
     database."""
-    monkeypatch.setenv("NOODLE_ALLOW_PRIVATE_EGRESS", "1")
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "1")
     assert_public_host("10.0.0.5", 5432, context="postgres")  # no raise
 
 
@@ -49,19 +49,19 @@ def test_private_egress_allowed_by_env_opt_out(monkeypatch) -> None:
     legitimate internal targets (self-hosted GitLab, Ollama, internal APIs)
     keep working. The default (env unset) still blocks."""
     # Default: blocked.
-    monkeypatch.delenv("NOODLE_ALLOW_PRIVATE_EGRESS", raising=False)
+    monkeypatch.delenv("NODYRA_ALLOW_PRIVATE_EGRESS", raising=False)
     with pytest.raises(UnsafeHttpTargetError):
         assert_public_http_url("http://10.0.0.5/internal")
 
     # Opt-out: allowed.
-    monkeypatch.setenv("NOODLE_ALLOW_PRIVATE_EGRESS", "1")
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "1")
     assert_public_http_url("http://10.0.0.5/internal")  # no raise
 
 
 def test_private_egress_opt_out_still_rejects_non_http_schemes(monkeypatch) -> None:
     """SEC-3: the opt-out relaxes private-IP blocking only — scheme validation
     (http/https only) always applies, so file://, gopher:// etc. stay blocked."""
-    monkeypatch.setenv("NOODLE_ALLOW_PRIVATE_EGRESS", "1")
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "1")
     with pytest.raises(UnsafeHttpTargetError):
         assert_public_http_url("file:///etc/passwd")
     with pytest.raises(UnsafeHttpTargetError):

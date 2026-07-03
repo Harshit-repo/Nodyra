@@ -4,7 +4,7 @@ Only workflows whose Chat Trigger has ``public_access = true`` are served here.
 Requests that don't match return 404 so private workflows are not discoverable.
 
 Access modes controlled by the ``require_login`` param on the chat_trigger node:
-  - ``require_login=True`` (default): visitor must supply a valid Noodle JWT.
+  - ``require_login=True`` (default): visitor must supply a valid Nodyra JWT.
   - ``require_login=False`` with ``chat_token`` set: visitor must supply the
     matching token as ``?token=<value>`` in the POST URL (secret-link mode).
   - ``require_login=False`` with no ``chat_token``: open access (no auth check).

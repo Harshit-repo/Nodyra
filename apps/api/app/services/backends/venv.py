@@ -7,7 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from app.services.backends.base import _run, local_noodle_packages, venv_dir
+from app.services.backends.base import _run, local_nodyra_packages, venv_dir
 
 
 def venv_python(env_id: str) -> Path:
@@ -43,7 +43,7 @@ async def _do_build(
     # A malicious or misconfigured index URL could exfiltrate internal metadata
     # (e.g. http://169.254.169.254/pypi redirecting to the EC2 metadata service).
     if index_urls:
-        from noodle_nodes.http_security import assert_public_http_url
+        from nodyra_nodes.http_security import assert_public_http_url
         for url in index_urls:
             try:
                 assert_public_http_url(url, context="package index URL")
@@ -51,7 +51,7 @@ async def _do_build(
                 return "error", (
                     f"Package index URL is not allowed: {url!r} — {exc}. "
                     "Private network addresses are blocked to prevent SSRF. "
-                    "Set NOODLE_ALLOW_PRIVATE_EGRESS=1 to allow private registries."
+                    "Set NODYRA_ALLOW_PRIVATE_EGRESS=1 to allow private registries."
                 )
 
     target = venv_dir(env_id)
@@ -64,7 +64,7 @@ async def _do_build(
         if code != 0:
             return "error", log.strip()[-4000:]
 
-        to_install = [*local_noodle_packages(), *packages]
+        to_install = [*local_nodyra_packages(), *packages]
         if to_install:
             extra_index_args: list[str] = []
             for url in (index_urls or []):
@@ -96,7 +96,7 @@ async def _measure_worker_rss(env_id: str) -> int | None:
     process: asyncio.subprocess.Process | None = None
     try:
         process = await asyncio.create_subprocess_exec(
-            str(python), "-u", "-m", "noodle_runtime",
+            str(python), "-u", "-m", "nodyra_runtime",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

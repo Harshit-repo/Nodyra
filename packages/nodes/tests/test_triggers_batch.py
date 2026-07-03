@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle_nodes.integrations_v2.registry import is_registered_provider_trigger
-from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext, ProviderTriggerRequest
+from nodyra_nodes.integrations_v2.registry import is_registered_provider_trigger
+from nodyra_nodes.integrations_v2.specs import ProviderTriggerPollContext, ProviderTriggerRequest
 
 
 def _ctx(params: dict, cursor: dict | None = None) -> ProviderTriggerPollContext:
@@ -26,29 +26,29 @@ class TestWebSocketTrigger:
         assert is_registered_provider_trigger("websocket_trigger")
 
     def test_activate_returns_subscription(self):
-        from noodle_nodes.integrations_v2.providers.websocket_trigger.triggers import (
+        from nodyra_nodes.integrations_v2.providers.websocket_trigger.triggers import (
             activate_websocket,
         )
-        from noodle_nodes.integrations_v2.specs import ProviderTriggerActivationContext
+        from nodyra_nodes.integrations_v2.specs import ProviderTriggerActivationContext
 
         ctx = ProviderTriggerActivationContext(
             workflow_id="wf1",
             workflow_version_id="wfv1",
             node_id="n1",
-            callback_url="https://noodle.test/cb",
+            callback_url="https://nodyra.test/cb",
             params={"path": "my-ws"},
         )
         sub = activate_websocket(ctx)
         assert "my-ws" in sub.external_id
 
     def test_handle_json_message(self):
-        from noodle_nodes.integrations_v2.providers.websocket_trigger.triggers import (
+        from nodyra_nodes.integrations_v2.providers.websocket_trigger.triggers import (
             handle_websocket_event,
         )
 
         payload = json.dumps({"action": "ping"}).encode()
         req = ProviderTriggerRequest(
-            headers={"x-noodle-ws-event": "message", "x-noodle-client-id": "c1"},
+            headers={"x-nodyra-ws-event": "message", "x-nodyra-client-id": "c1"},
             body=payload,
             raw_body=payload,
             query={},
@@ -59,7 +59,7 @@ class TestWebSocketTrigger:
         assert event.payload["client_id"] == "c1"
 
     def test_handle_text_message(self):
-        from noodle_nodes.integrations_v2.providers.websocket_trigger.triggers import (
+        from nodyra_nodes.integrations_v2.providers.websocket_trigger.triggers import (
             handle_websocket_event,
         )
 
@@ -73,7 +73,7 @@ class TestWebSocketTrigger:
         assert event.payload["message"] == "hello world"
 
     def test_oversized_message_raises(self):
-        from noodle_nodes.integrations_v2.providers.websocket_trigger.triggers import (
+        from nodyra_nodes.integrations_v2.providers.websocket_trigger.triggers import (
             handle_websocket_event,
         )
 
@@ -98,7 +98,7 @@ class TestKafkaTrigger:
         assert is_registered_provider_trigger("kafka_trigger")
 
     def test_raises_without_topic(self):
-        from noodle_nodes.integrations_v2.providers.kafka_trigger.triggers import poll_kafka
+        from nodyra_nodes.integrations_v2.providers.kafka_trigger.triggers import poll_kafka
 
         # confluent_kafka not installed — will raise ImportError first
         ctx = _ctx({"credentials": {}, "topic": ""})
@@ -106,7 +106,7 @@ class TestKafkaTrigger:
             poll_kafka(ctx)
 
     def test_poll_with_mock_consumer(self):
-        from noodle_nodes.integrations_v2.providers.kafka_trigger.triggers import poll_kafka
+        from nodyra_nodes.integrations_v2.providers.kafka_trigger.triggers import poll_kafka
 
         mock_msg = MagicMock()
         mock_msg.error.return_value = None
@@ -150,7 +150,7 @@ class TestMqttTrigger:
         assert is_registered_provider_trigger("mqtt_trigger")
 
     def test_raises_without_topic(self):
-        from noodle_nodes.integrations_v2.providers.mqtt_trigger.triggers import poll_mqtt
+        from nodyra_nodes.integrations_v2.providers.mqtt_trigger.triggers import poll_mqtt
 
         mock_mqtt_module = MagicMock()
         with patch.dict(
@@ -166,7 +166,7 @@ class TestMqttTrigger:
                 poll_mqtt(ctx)
 
     def test_poll_collects_messages(self):
-        from noodle_nodes.integrations_v2.providers.mqtt_trigger.triggers import poll_mqtt
+        from nodyra_nodes.integrations_v2.providers.mqtt_trigger.triggers import poll_mqtt
 
         class FakeMqttClient:
             MQTTv5 = 5
@@ -251,7 +251,7 @@ class TestPostgresListenTrigger:
         assert is_registered_provider_trigger("postgres_listen_trigger")
 
     def test_raises_on_import_error(self):
-        from noodle_nodes.integrations_v2.providers.postgres_listen_trigger.triggers import (
+        from nodyra_nodes.integrations_v2.providers.postgres_listen_trigger.triggers import (
             poll_postgres_listen,
         )
 
@@ -261,12 +261,12 @@ class TestPostgresListenTrigger:
                 poll_postgres_listen(ctx)
 
     def test_poll_collects_notifications(self):
-        from noodle_nodes.integrations_v2.providers.postgres_listen_trigger.triggers import (
+        from nodyra_nodes.integrations_v2.providers.postgres_listen_trigger.triggers import (
             poll_postgres_listen,
         )
 
         mock_notification = MagicMock()
-        mock_notification.channel = "noodle_events"
+        mock_notification.channel = "nodyra_events"
         mock_notification.pid = 12345
         mock_notification.payload = json.dumps({"type": "order_created", "id": 1})
 
@@ -285,13 +285,13 @@ class TestPostgresListenTrigger:
 
         with patch.dict(sys.modules, {"psycopg": mock_psycopg}):
             ctx = _ctx(
-                {"credentials": {"dsn": "postgres://localhost/db"}, "channel": "noodle_events"}
+                {"credentials": {"dsn": "postgres://localhost/db"}, "channel": "nodyra_events"}
             )
             result = poll_postgres_listen(ctx)
 
         assert len(result.events) == 1
         assert result.events[0]["type"] == "order_created"
-        assert result.events[0]["channel"] == "noodle_events"
+        assert result.events[0]["channel"] == "nodyra_events"
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +304,7 @@ class TestS3EventTrigger:
         assert is_registered_provider_trigger("s3_event_trigger")
 
     def test_raises_without_queue_url(self):
-        from noodle_nodes.integrations_v2.providers.s3_event_trigger.triggers import poll_s3_events
+        from nodyra_nodes.integrations_v2.providers.s3_event_trigger.triggers import poll_s3_events
 
         mock_boto3 = MagicMock()
         with patch.dict(sys.modules, {"boto3": mock_boto3}):
@@ -313,7 +313,7 @@ class TestS3EventTrigger:
                 poll_s3_events(ctx)
 
     def test_poll_parses_s3_event(self):
-        from noodle_nodes.integrations_v2.providers.s3_event_trigger.triggers import poll_s3_events
+        from nodyra_nodes.integrations_v2.providers.s3_event_trigger.triggers import poll_s3_events
 
         s3_record = {
             "eventName": "ObjectCreated:Put",
@@ -355,7 +355,7 @@ class TestS3EventTrigger:
         mock_sqs.delete_message.assert_called_once()
 
     def test_bucket_filter_excludes_other_buckets(self):
-        from noodle_nodes.integrations_v2.providers.s3_event_trigger.triggers import poll_s3_events
+        from nodyra_nodes.integrations_v2.providers.s3_event_trigger.triggers import poll_s3_events
 
         s3_record = {
             "eventName": "ObjectCreated:Put",

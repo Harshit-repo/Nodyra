@@ -140,7 +140,7 @@ function formatPinnedAt(value: string | null): string {
 }
 
 interface CredentialRef {
-  __noodle_credential__: true;
+  __nodyra_credential__: true;
   id: string;
   key: string;
 }
@@ -150,13 +150,13 @@ function isCredentialRef(value: unknown): value is CredentialRef {
     Boolean(value) &&
     typeof value === "object" &&
     !Array.isArray(value) &&
-    (value as Record<string, unknown>).__noodle_credential__ === true &&
+    (value as Record<string, unknown>).__nodyra_credential__ === true &&
     typeof (value as Record<string, unknown>).id === "string"
   );
 }
 
 function makeCredentialRef(id: string, key: string): CredentialRef {
-  return { __noodle_credential__: true, id, key };
+  return { __nodyra_credential__: true, id, key };
 }
 
 function credentialScopeLabel(cred: Credential): string {
@@ -451,7 +451,7 @@ function KeyValueField({
   );
 }
 
-const KV_DRAG_TYPE = "application/x-noodle-kv-row";
+const KV_DRAG_TYPE = "application/x-nodyra-kv-row";
 
 function KvRowList({
   rows,
@@ -616,7 +616,7 @@ function exprDropHandlers(
       // and lets the drop fire.
       const types = Array.from(e.dataTransfer.types);
       if (
-        types.includes("application/x-noodle-expression") ||
+        types.includes("application/x-nodyra-expression") ||
         types.includes("text/plain")
       ) {
         e.preventDefault();
@@ -625,7 +625,7 @@ function exprDropHandlers(
     },
     onDrop: (e) => {
       const expr =
-        e.dataTransfer.getData("application/x-noodle-expression") ||
+        e.dataTransfer.getData("application/x-nodyra-expression") ||
         e.dataTransfer.getData("text/plain");
       if (!expr) return;
       e.preventDefault();
@@ -916,12 +916,12 @@ function CredentialCreateModal({
         message?: string;
         credentialId?: string;
       };
-      if (type === "noodle_oauth_success") {
+      if (type === "nodyra_oauth_success") {
         setOauthStarted("");
         oauthPopupRef.current = null;
         notify("Credential connected.", "success");
         if (credentialId) onCreated(credentialId, refKey, null);
-      } else if (type === "noodle_oauth_error") {
+      } else if (type === "nodyra_oauth_error") {
         setOauthStarted("");
         oauthPopupRef.current = null;
         setError(msg ?? "OAuth failed.");
@@ -1083,7 +1083,7 @@ function CredentialCreateModal({
       });
       const popup = window.open(
         started.authorization_url,
-        "noodle_oauth",
+        "nodyra_oauth",
         "width=600,height=720,resizable=yes,scrollbars=yes",
       );
       if (!popup) {
@@ -2229,7 +2229,7 @@ function HighlightedTextarea({
   );
 }
 
-const EXPR_HISTORY_KEY = "noodle_expr_history";
+const EXPR_HISTORY_KEY = "nodyra_expr_history";
 
 function readExprHistory(fieldKey: string): string[] {
   try {
@@ -2298,7 +2298,7 @@ function ExpressionEditorModal({
 
   // Sidebar state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    return safeGetItem("noodle_expr_sidebar_collapsed") === "1";
+    return safeGetItem("nodyra_expr_sidebar_collapsed") === "1";
   });
   const allNodes = useEditor((s) => s.nodes);
   const allEdges = useEditor((s) => s.edges);
@@ -2346,14 +2346,14 @@ function ExpressionEditorModal({
   function toggleSidebar() {
     setSidebarCollapsed((c) => {
       const next = !c;
-      safeSetItem("noodle_expr_sidebar_collapsed", next ? "1" : "0");
+      safeSetItem("nodyra_expr_sidebar_collapsed", next ? "1" : "0");
       return next;
     });
   }
 
   const startFieldDrag = useCallback((e: React.DragEvent<HTMLElement>, expression: string) => {
     e.dataTransfer.setData("text/plain", expression);
-    e.dataTransfer.setData("application/x-noodle-expression", expression);
+    e.dataTransfer.setData("application/x-nodyra-expression", expression);
     e.dataTransfer.effectAllowed = "copy";
     const ghost = document.createElement("div");
     ghost.className = "expr-drag-ghost";
@@ -3642,7 +3642,7 @@ export function ChatTriggerPanel({
       {requireLogin ? (
         <>
           <p className="field-desc">
-            <strong>Login required.</strong> Only users signed into this Noodle
+            <strong>Login required.</strong> Only users signed into this Nodyra
             instance can use this chat page.
           </p>
           <UrlRow url={baseUrl} />
@@ -3667,7 +3667,7 @@ export function ChatTriggerPanel({
         <>
           <p className="field-desc">
             <strong>Secret link mode.</strong> Generate a secret URL to share
-            with trusted users — no Noodle account required.
+            with trusted users — no Nodyra account required.
           </p>
           <button
             type="button"
@@ -3693,7 +3693,7 @@ export function WebhookPanel({
   params?: Record<string, unknown>;
   onListeningChange?: (listening: boolean) => void;
 }) {
-  const slug = path.trim() || "noodle";
+  const slug = path.trim() || "nodyra";
   const origin = window.location.origin;
   const authType = String(params?.auth_type ?? "none").toLowerCase();
   const noAuth = authType === "none";
@@ -4661,7 +4661,7 @@ export function NodeDetails({
   // each upstream node's most recent run output (that's what powers the Pick-
   // variable sidebar), so the preview can resolve {{ }} against real data with
   // no extra run — `$json`/`$input` from the wired inputs, `$node[...]` from
-  // every node's output. Mirrors noodle.expr.build_context on the backend.
+  // every node's output. Mirrors nodyra.expr.build_context on the backend.
   const exprContext: ExprContext = {
     json: Object.values(incomingInputs)[0],
     inputs: incomingInputs,
@@ -4981,7 +4981,7 @@ export function NodeDetails({
 
       {manifest.id === "webhook_trigger" && (
         <WebhookPanel
-          path={String(params.path ?? "noodle")}
+          path={String(params.path ?? "nodyra")}
           nodeId={node.id}
           params={params}
         />

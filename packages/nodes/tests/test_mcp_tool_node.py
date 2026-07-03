@@ -1,6 +1,6 @@
 """Regression tests for the ``mcp_tool`` node.
 
-Commit aa575191 dropped the ``noodle.expr`` import while reformatting the
+Commit aa575191 dropped the ``nodyra.expr`` import while reformatting the
 node's params, so every execution raised ``NameError: name 'build_context'
 is not defined``. These tests execute the node function directly (no
 manifest-only coverage) so a missing import can never ship silently again.
@@ -8,9 +8,9 @@ manifest-only coverage) so a missing import can never ship silently again.
 
 import pytest
 
-from noodle.context import node_debug
-from noodle.engine.types import RuntimeContext, set_call_mcp_tool_impl
-from noodle_nodes.mcp_tool import mcp_tool
+from nodyra.context import node_debug
+from nodyra.engine.types import RuntimeContext, set_call_mcp_tool_impl
+from nodyra_nodes.mcp_tool import mcp_tool
 
 
 @pytest.fixture

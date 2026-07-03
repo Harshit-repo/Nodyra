@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from noodle.serialization import (
+from nodyra.serialization import (
     TYPED_MARKER,
     deserialize_value,
     serialize_value,
@@ -141,7 +141,7 @@ def test_truncation_preserves_typed_envelope_shape() -> None:
 
 def test_dataset_ref_serialization_passes_through_unchanged() -> None:
     dataset_ref = {
-        "__noodle_dataset__": True,
+        "__nodyra_dataset__": True,
         "version": 1,
         "dataset_id": "ds_123",
         "format": "parquet",
@@ -151,7 +151,7 @@ def test_dataset_ref_serialization_passes_through_unchanged() -> None:
         "preview": [{"city": "NYC"}, {"city": "LA"}],
         "preview_truncated": False,
         "artifact": {
-            "__noodle_artifact__": True,
+            "__nodyra_artifact__": True,
             "version": 1,
             "artifact_id": "art_123",
             "run_id": "run_123",
@@ -170,7 +170,7 @@ def test_dataset_ref_serialization_passes_through_unchanged() -> None:
 
 def test_dataset_ref_truncation_preserves_ref_identity() -> None:
     dataset_ref = {
-        "__noodle_dataset__": True,
+        "__nodyra_dataset__": True,
         "version": 1,
         "dataset_id": "ds_large",
         "format": "parquet",
@@ -186,7 +186,7 @@ def test_dataset_ref_truncation_preserves_ref_identity() -> None:
         ],
         "preview_truncated": True,
         "artifact": {
-            "__noodle_artifact__": True,
+            "__nodyra_artifact__": True,
             "version": 1,
             "artifact_id": "art_large",
             "run_id": "run_large",
@@ -202,9 +202,9 @@ def test_dataset_ref_truncation_preserves_ref_identity() -> None:
 
     capped = truncate_serialized_value(dataset_ref, 256)
 
-    assert capped["__noodle_dataset__"] is True
+    assert capped["__nodyra_dataset__"] is True
     assert capped["dataset_id"] == "ds_large"
-    assert capped["artifact"]["__noodle_artifact__"] is True
+    assert capped["artifact"]["__nodyra_artifact__"] is True
     assert capped["artifact"]["artifact_id"] == "art_large"
     assert capped["row_count"] == 10_000
     assert capped["preview_truncated"] is True

@@ -265,7 +265,7 @@ function validateDraft(draft: DraftSettings): Partial<Record<SettingsKey, string
 
 function InfoTip({ text }: { text: string }) {
   return (
-    <span className="noodle-settings-info" title={text} aria-hidden="true">
+    <span className="nodyra-settings-info" title={text} aria-hidden="true">
       <Info size={15} aria-hidden="true" />
     </span>
   );
@@ -287,9 +287,9 @@ function SettingsCard({
   footer?: React.ReactNode;
 }) {
   return (
-    <section id={id} className="noodle-settings-card" aria-labelledby={`${id}-title`}>
-      <div className="noodle-settings-card-head">
-        <span className="noodle-settings-card-icon" aria-hidden="true">
+    <section id={id} className="nodyra-settings-card" aria-labelledby={`${id}-title`}>
+      <div className="nodyra-settings-card-head">
+        <span className="nodyra-settings-card-icon" aria-hidden="true">
           <Icon size={18} />
         </span>
         <div>
@@ -297,8 +297,8 @@ function SettingsCard({
           <p>{description}</p>
         </div>
       </div>
-      <div className="noodle-settings-card-body">{children}</div>
-      {footer && <div className="noodle-settings-card-footer">{footer}</div>}
+      <div className="nodyra-settings-card-body">{children}</div>
+      {footer && <div className="nodyra-settings-card-footer">{footer}</div>}
     </section>
   );
 }
@@ -317,18 +317,18 @@ function ProfilePanel({ workspaceRole }: { workspaceRole: string | null }) {
     <SettingsCard
       id="account"
       title="Account profile"
-      description="Your identity in this Noodle installation. Profile editing is not available in this version."
+      description="Your identity in this Nodyra installation. Profile editing is not available in this version."
       icon={IdentificationCard}
     >
-      <div className="noodle-settings-profile">
-        <span className="noodle-settings-avatar" aria-hidden="true">{initials}</span>
-        <div className="noodle-settings-profile-copy">
+      <div className="nodyra-settings-profile">
+        <span className="nodyra-settings-avatar" aria-hidden="true">{initials}</span>
+        <div className="nodyra-settings-profile-copy">
           <strong>{displayName}</strong>
           {user?.email && <span>{user.email}</span>}
           {user?.company && <span>{user.company}</span>}
         </div>
         {(user?.role || workspaceRole) && (
-          <div className="noodle-settings-role">
+          <div className="nodyra-settings-role">
             {user?.role && (
               <><span>Instance role</span><strong className={`role-pill role-${user.role}`}>{user.role}</strong></>
             )}
@@ -354,10 +354,10 @@ const THEME_OPTIONS: {
 ];
 
 const FONT_OPTIONS: { value: FontPreference; label: string; sample: string }[] = [
-  { value: "brand", label: "Brand Grotesk", sample: "Noodle workflows" },
-  { value: "inter", label: "Inter", sample: "Noodle workflows" },
-  { value: "technical", label: "Technical", sample: "Noodle workflows" },
-  { value: "system", label: "System UI", sample: "Noodle workflows" },
+  { value: "brand", label: "Brand Grotesk", sample: "Nodyra workflows" },
+  { value: "inter", label: "Inter", sample: "Nodyra workflows" },
+  { value: "technical", label: "Technical", sample: "Nodyra workflows" },
+  { value: "system", label: "System UI", sample: "Nodyra workflows" },
 ];
 
 function AppearancePanel() {
@@ -387,21 +387,21 @@ function AppearancePanel() {
       description="Personal preferences stored in this browser. Changes apply immediately."
       icon={Palette}
       footer={
-        <span className="noodle-settings-save-status" role="status" aria-live="polite">
+        <span className="nodyra-settings-save-status" role="status" aria-live="polite">
           {saveState === "saved" && <><Check size={14} aria-hidden="true" />Saved to this browser</>}
           {saveState === "session" && <><WarningCircle size={14} aria-hidden="true" />Applied for this session; browser storage is unavailable</>}
         </span>
       }
     >
-      <fieldset className="noodle-settings-fieldset">
+      <fieldset className="nodyra-settings-fieldset">
         <legend>Theme</legend>
-        <div className="noodle-theme-grid">
+        <div className="nodyra-theme-grid">
           {THEME_OPTIONS.map((option) => {
             const Icon = option.icon;
             return (
               <label
                 key={option.value}
-                className={`noodle-theme-option${theme === option.value ? " is-selected" : ""}`}
+                className={`nodyra-theme-option${theme === option.value ? " is-selected" : ""}`}
               >
                 <input
                   type="radio"
@@ -410,28 +410,28 @@ function AppearancePanel() {
                   checked={theme === option.value}
                   onChange={() => updateTheme(option.value)}
                 />
-                <span className={`noodle-theme-preview theme-${option.value}`}>
+                <span className={`nodyra-theme-preview theme-${option.value}`}>
                   <Icon size={21} aria-hidden="true" />
-                  <span className="noodle-theme-preview-layout" aria-hidden="true">
+                  <span className="nodyra-theme-preview-layout" aria-hidden="true">
                     <i /><i /><i />
                   </span>
                 </span>
                 <strong>{option.label}</strong>
                 <small>{option.description}</small>
-                {theme === option.value && <Check className="noodle-theme-check" size={15} aria-hidden="true" />}
+                {theme === option.value && <Check className="nodyra-theme-check" size={15} aria-hidden="true" />}
               </label>
             );
           })}
         </div>
       </fieldset>
 
-      <fieldset className="noodle-settings-fieldset">
+      <fieldset className="nodyra-settings-fieldset">
         <legend>Typeface</legend>
-        <div className="noodle-font-grid">
+        <div className="nodyra-font-grid">
           {FONT_OPTIONS.map((option) => (
             <label
               key={option.value}
-              className={`noodle-font-option font-${option.value}${font === option.value ? " is-selected" : ""}`}
+              className={`nodyra-font-option font-${option.value}${font === option.value ? " is-selected" : ""}`}
             >
               <input
                 type="radio"
@@ -540,17 +540,17 @@ function WorkspaceSettingsPanel() {
       <SettingsCard
         id="instance"
         title="Instance settings"
-        description="Runtime, retention, and storage limits for this Noodle installation."
+        description="Runtime, retention, and storage limits for this Nodyra installation."
         icon={GearSix}
       >
         {error ? (
-          <div className="noodle-settings-inline-error" role="alert">
+          <div className="nodyra-settings-inline-error" role="alert">
             <WarningCircle size={18} aria-hidden="true" />
             <span>{error}</span>
             <button className="btn btn-sm" type="button" onClick={load}>Retry</button>
           </div>
         ) : (
-          <div className="noodle-settings-skeleton" aria-label="Loading instance settings">
+          <div className="nodyra-settings-skeleton" aria-label="Loading instance settings">
             <span /><span /><span />
           </div>
         )}
@@ -562,15 +562,15 @@ function WorkspaceSettingsPanel() {
     <SettingsCard
       id="instance"
       title="Instance settings"
-      description="Runtime, retention, and storage limits for this Noodle installation. Admin changes affect every workspace."
+      description="Runtime, retention, and storage limits for this Nodyra installation. Admin changes affect every workspace."
       icon={GearSix}
       footer={
         <>
-          <div className="noodle-settings-footer-status" aria-live="polite">
+          <div className="nodyra-settings-footer-status" aria-live="polite">
             {error ? (
               <span className="error-text"><WarningCircle size={15} aria-hidden="true" />{error}</span>
             ) : savedAt ? (
-              <span className="noodle-settings-saved"><Check size={15} aria-hidden="true" />Saved successfully</span>
+              <span className="nodyra-settings-saved"><Check size={15} aria-hidden="true" />Saved successfully</span>
             ) : isDirty ? (
               <span>Unsaved changes</span>
             ) : (
@@ -593,23 +593,23 @@ function WorkspaceSettingsPanel() {
         </>
       }
     >
-      <fieldset className="noodle-settings-instance-fields" disabled={busy}>
-      <div className="noodle-settings-restart-note">
+      <fieldset className="nodyra-settings-instance-fields" disabled={busy}>
+      <div className="nodyra-settings-restart-note">
         <Info size={17} aria-hidden="true" />
         <span>Fields marked <strong>Restart required</strong> apply after the next API restart. Other changes apply on the next runtime tick.</span>
       </div>
-      <div className="noodle-settings-form-grid">
+      <div className="nodyra-settings-form-grid">
         {NUMERIC_KEYS.map((key) => {
           const meta = FIELD_DOCS[key];
           const fieldError = validationErrors[key];
           return (
-            <label key={key} className="noodle-settings-field">
-              <span className="noodle-settings-label">
+            <label key={key} className="nodyra-settings-field">
+              <span className="nodyra-settings-label">
                 {meta.label}
                 <InfoTip text={meta.help} />
                 {meta.restartRequired && <span className="settings-tag">Restart required</span>}
               </span>
-              <span className="noodle-settings-input-wrap">
+              <span className="nodyra-settings-input-wrap">
                 <input
                   className={`field-input${fieldError ? " field-invalid" : ""}`}
                   type="number"
@@ -622,18 +622,18 @@ function WorkspaceSettingsPanel() {
                   aria-describedby={fieldError ? `${key}-error` : `${key}-help`}
                   onChange={(event) => update(key, event.target.value)}
                 />
-                {meta.unit && <span className="noodle-settings-unit">{meta.unit}</span>}
+                {meta.unit && <span className="nodyra-settings-unit">{meta.unit}</span>}
               </span>
               {fieldError ? (
-                <small id={`${key}-error`} className="noodle-settings-field-error">{fieldError}</small>
+                <small id={`${key}-error`} className="nodyra-settings-field-error">{fieldError}</small>
               ) : (
                 <small id={`${key}-help`}>{meta.help}</small>
               )}
             </label>
           );
         })}
-        <label className="noodle-settings-field noodle-settings-field-wide">
-          <span className="noodle-settings-label">
+        <label className="nodyra-settings-field nodyra-settings-field-wide">
+          <span className="nodyra-settings-label">
             {FIELD_DOCS.app_timezone.label}
             <InfoTip text={FIELD_DOCS.app_timezone.help} />
             <span className="settings-tag">Restart required</span>
@@ -649,7 +649,7 @@ function WorkspaceSettingsPanel() {
             onChange={(event) => update("app_timezone", event.target.value)}
           />
           {validationErrors.app_timezone ? (
-            <small id="app_timezone-error" className="noodle-settings-field-error">{validationErrors.app_timezone}</small>
+            <small id="app_timezone-error" className="nodyra-settings-field-error">{validationErrors.app_timezone}</small>
           ) : (
             <small id="app_timezone-help">Use an IANA timezone. Leave blank to use the server timezone.</small>
           )}
@@ -738,20 +738,20 @@ function LicensePanel() {
     >
       {!info ? (
         error ? (
-          <div className="noodle-settings-inline-error" role="alert">
+          <div className="nodyra-settings-inline-error" role="alert">
             <WarningCircle size={18} aria-hidden="true" />
             <span>{error}</span>
             <button className="btn btn-sm" type="button" onClick={load}>Retry</button>
           </div>
         ) : (
-          <div className="noodle-settings-skeleton" aria-label="Loading plan and license">
+          <div className="nodyra-settings-skeleton" aria-label="Loading plan and license">
             <span /><span /><span />
           </div>
         )
       ) : (
         <>
-          <div className="noodle-license-summary">
-            <div className="noodle-license-edition">
+          <div className="nodyra-license-summary">
+            <div className="nodyra-license-edition">
               <span>Current edition</span>
               <strong>{info.edition}</strong>
               {info.customer && <small>{info.customer}</small>}
@@ -764,13 +764,13 @@ function LicensePanel() {
             </dl>
           </div>
           {info.expires_at && (
-            <p className="noodle-license-expiry">Expires {new Date(info.expires_at * 1000).toLocaleDateString()}</p>
+            <p className="nodyra-license-expiry">Expires {new Date(info.expires_at * 1000).toLocaleDateString()}</p>
           )}
-          {info.notice && <div className="noodle-settings-inline-warning"><WarningCircle size={17} aria-hidden="true" />{info.notice}</div>}
-          <div className="noodle-license-apply">
-            <label className="noodle-settings-field noodle-settings-field-wide">
-              <span className="noodle-settings-label">Apply a Pro or Enterprise license key</span>
-              <span className="noodle-license-key-control">
+          {info.notice && <div className="nodyra-settings-inline-warning"><WarningCircle size={17} aria-hidden="true" />{info.notice}</div>}
+          <div className="nodyra-license-apply">
+            <label className="nodyra-settings-field nodyra-settings-field-wide">
+              <span className="nodyra-settings-label">Apply a Pro or Enterprise license key</span>
+              <span className="nodyra-license-key-control">
                 <input
                   className="field-input"
                   type={revealKey ? "text" : "password"}
@@ -851,7 +851,7 @@ function McpAccessPanel() {
   const mcpJsonConfig = JSON.stringify(
     {
       mcpServers: {
-        noodle: {
+        nodyra: {
           url: mcpEndpoint,
           headers: {
             Authorization: "Bearer <paste-token-here>",
@@ -1004,10 +1004,10 @@ function McpAccessPanel() {
       <SettingsCard
         id="mcp-access"
         title="MCP access"
-        description="Mint organization-scoped tokens for LLM clients that connect to Noodle's MCP server."
+        description="Mint organization-scoped tokens for LLM clients that connect to Nodyra's MCP server."
         icon={Key}
       >
-        <div className="noodle-settings-inline-warning">
+        <div className="nodyra-settings-inline-warning">
           <Info size={17} aria-hidden="true" />
           Sign in with a user account to create MCP automation tokens.
         </div>
@@ -1020,10 +1020,10 @@ function McpAccessPanel() {
       <SettingsCard
         id="mcp-access"
         title="MCP access"
-        description="Mint organization-scoped tokens for LLM clients that connect to Noodle's MCP server."
+        description="Mint organization-scoped tokens for LLM clients that connect to Nodyra's MCP server."
         icon={Key}
       >
-        <div className="noodle-settings-inline-warning">
+        <div className="nodyra-settings-inline-warning">
           <Info size={17} aria-hidden="true" />
           Select a workspace before creating MCP automation tokens.
         </div>
@@ -1038,11 +1038,11 @@ function McpAccessPanel() {
       description="Create scoped bearer tokens for LLM clients. Tokens are bound to the current workspace and are shown only once."
       icon={Key}
     >
-      <div className="noodle-mcp-access">
-        <div className="noodle-mcp-endpoint">
-          <label className="noodle-settings-field noodle-settings-field-wide">
-            <span className="noodle-settings-label">MCP endpoint</span>
-            <span className="noodle-mcp-copy-row">
+      <div className="nodyra-mcp-access">
+        <div className="nodyra-mcp-endpoint">
+          <label className="nodyra-settings-field nodyra-settings-field-wide">
+            <span className="nodyra-settings-label">MCP endpoint</span>
+            <span className="nodyra-mcp-copy-row">
               <input className="field-input" value={mcpEndpoint} readOnly spellCheck={false} />
               <button
                 className="btn btn-sm"
@@ -1055,16 +1055,16 @@ function McpAccessPanel() {
             </span>
             <small>Use this URL with an Authorization header: Bearer &lt;token&gt;.</small>
           </label>
-          <div className="noodle-mcp-workspace">
+          <div className="nodyra-mcp-workspace">
             <span>Current workspace</span>
             <strong>{workspaceLabel}</strong>
             {workspace.current?.id && <code>{workspace.current.id}</code>}
           </div>
         </div>
 
-        <div className="noodle-mcp-client-snippets">
-          <div className="noodle-mcp-snippet">
-            <div className="noodle-mcp-snippet-head">
+        <div className="nodyra-mcp-client-snippets">
+          <div className="nodyra-mcp-snippet">
+            <div className="nodyra-mcp-snippet-head">
               <strong>Headers</strong>
               <button
                 className="btn btn-sm"
@@ -1077,8 +1077,8 @@ function McpAccessPanel() {
             </div>
             <pre>{mcpHeaderSnippet}</pre>
           </div>
-          <div className="noodle-mcp-snippet">
-            <div className="noodle-mcp-snippet-head">
+          <div className="nodyra-mcp-snippet">
+            <div className="nodyra-mcp-snippet-head">
               <strong>Generic MCP JSON</strong>
               <button
                 className="btn btn-sm"
@@ -1094,7 +1094,7 @@ function McpAccessPanel() {
         </div>
 
         {error && (
-          <div className="noodle-settings-inline-error" role="alert">
+          <div className="nodyra-settings-inline-error" role="alert">
             <WarningCircle size={18} aria-hidden="true" />
             <span>{error}</span>
             <button className="btn btn-sm" type="button" onClick={() => void load()}>
@@ -1104,12 +1104,12 @@ function McpAccessPanel() {
         )}
 
         {createdToken && (
-          <div className="noodle-mcp-created-token" role="status">
+          <div className="nodyra-mcp-created-token" role="status">
             <div>
               <strong>Copy this token now</strong>
-              <span>Noodle stores only a hash, so this secret cannot be shown again.</span>
+              <span>Nodyra stores only a hash, so this secret cannot be shown again.</span>
             </div>
-            <span className="noodle-mcp-secret-row">
+            <span className="nodyra-mcp-secret-row">
               <input
                 className="field-input"
                 type={revealCreatedToken ? "text" : "password"}
@@ -1138,21 +1138,21 @@ function McpAccessPanel() {
         )}
 
         {loading && !scopes.length ? (
-          <div className="noodle-settings-skeleton" aria-label="Loading MCP access settings">
+          <div className="nodyra-settings-skeleton" aria-label="Loading MCP access settings">
             <span /><span /><span />
           </div>
         ) : (
           <>
             <form
-              className="noodle-mcp-token-form"
+              className="nodyra-mcp-token-form"
               onSubmit={(event) => {
                 event.preventDefault();
                 void createToken();
               }}
             >
-              <div className="noodle-settings-form-grid">
-                <label className="noodle-settings-field">
-                  <span className="noodle-settings-label">Token name</span>
+              <div className="nodyra-settings-form-grid">
+                <label className="nodyra-settings-field">
+                  <span className="nodyra-settings-label">Token name</span>
                   <input
                     className="field-input"
                     value={name}
@@ -1161,9 +1161,9 @@ function McpAccessPanel() {
                   />
                   <small>Use a name that identifies the LLM client or automation owner.</small>
                 </label>
-                <label className="noodle-settings-field">
-                  <span className="noodle-settings-label">Expires in</span>
-                  <span className="noodle-settings-input-wrap">
+                <label className="nodyra-settings-field">
+                  <span className="nodyra-settings-label">Expires in</span>
+                  <span className="nodyra-settings-input-wrap">
                     <input
                       className="field-input"
                       type="number"
@@ -1174,22 +1174,22 @@ function McpAccessPanel() {
                       value={expiresInDays}
                       onChange={(event) => setExpiresInDays(event.target.value)}
                     />
-                    <span className="noodle-settings-unit">days</span>
+                    <span className="nodyra-settings-unit">days</span>
                   </span>
                   <small>Shorter expiries reduce exposure if a client is compromised.</small>
                 </label>
               </div>
 
-              <fieldset className="noodle-mcp-scopes" disabled={busy || loading}>
+              <fieldset className="nodyra-mcp-scopes" disabled={busy || loading}>
                 <legend>Scopes</legend>
-                <div className="noodle-mcp-scope-grid">
+                <div className="nodyra-mcp-scope-grid">
                   {orderedScopes.map((scope) => {
                     const copy = scopeCopy(scope.scope);
                     const selected = selectedScopes.includes(scope.scope);
                     return (
                       <label
                         key={scope.scope}
-                        className={`noodle-mcp-scope${selected ? " is-selected" : ""}${!scope.grantable ? " is-disabled" : ""}`}
+                        className={`nodyra-mcp-scope${selected ? " is-selected" : ""}${!scope.grantable ? " is-disabled" : ""}`}
                       >
                         <input
                           type="checkbox"
@@ -1220,16 +1220,16 @@ function McpAccessPanel() {
               </div>
             </form>
 
-            <div className="noodle-mcp-token-list">
-              <div className="noodle-mcp-token-list-head">
+            <div className="nodyra-mcp-token-list">
+              <div className="nodyra-mcp-token-list-head">
                 <strong>Existing tokens</strong>
                 <button className="btn btn-sm" type="button" onClick={() => void load()} disabled={busy || loading}>
                   Refresh
                 </button>
               </div>
               {tokens.length ? (
-                <div className="noodle-mcp-token-table" role="table" aria-label="MCP tokens">
-                  <div className="noodle-mcp-token-row is-head" role="row">
+                <div className="nodyra-mcp-token-table" role="table" aria-label="MCP tokens">
+                  <div className="nodyra-mcp-token-row is-head" role="row">
                     <span>Name</span>
                     <span>Prefix</span>
                     <span>Scopes</span>
@@ -1240,12 +1240,12 @@ function McpAccessPanel() {
                   {tokens.map((token) => {
                     const status = tokenStatus(token);
                     return (
-                      <div className="noodle-mcp-token-row" role="row" key={token.id}>
+                      <div className="nodyra-mcp-token-row" role="row" key={token.id}>
                         <span><strong>{token.name}</strong><small>Expires {formatTokenDate(token.expires_at)}</small></span>
                         <code>{token.token_prefix}</code>
                         <span>{token.scopes.join(", ")}</span>
                         <span>{formatTokenDate(token.last_used_at)}</span>
-                        <span className={`noodle-mcp-token-status ${status.className}`}>{status.label}</span>
+                        <span className={`nodyra-mcp-token-status ${status.className}`}>{status.label}</span>
                         <button
                           className="btn btn-sm"
                           type="button"
@@ -1289,13 +1289,13 @@ function McpServerPanel() {
     <SettingsCard
       id="mcp-server"
       title="MCP server"
-      description="Connect LLM clients to this Noodle installation and manage outbound MCP server connections."
+      description="Connect LLM clients to this Nodyra installation and manage outbound MCP server connections."
       icon={Plug}
     >
-      <div className="noodle-mcp-server-card">
-        <label className="noodle-settings-field noodle-settings-field-wide">
-          <span className="noodle-settings-label">Server URL</span>
-          <span className="noodle-mcp-copy-row">
+      <div className="nodyra-mcp-server-card">
+        <label className="nodyra-settings-field nodyra-settings-field-wide">
+          <span className="nodyra-settings-label">Server URL</span>
+          <span className="nodyra-mcp-copy-row">
             <input className="field-input" value={endpoint} readOnly spellCheck={false} />
             <button className="btn btn-sm" type="button" onClick={() => void copyEndpoint()}>
               <Copy size={15} aria-hidden="true" />
@@ -1303,14 +1303,14 @@ function McpServerPanel() {
             </button>
           </span>
         </label>
-        <div className="noodle-mcp-server-actions">
+        <div className="nodyra-mcp-server-actions">
           <Link className="btn" to="/settings/mcp-connections">
             <Plug size={15} aria-hidden="true" />
             Manage MCP connections
           </Link>
           <a
             className="btn btn-ghost"
-            href="https://github.com/Harshit-repo/noodle/blob/main/docs/mcp-quickstart.md"
+            href="https://github.com/Harshit-repo/nodyra/blob/main/docs/mcp-quickstart.md"
             target="_blank"
             rel="noreferrer"
           >
@@ -1353,11 +1353,11 @@ function SandboxStatusPanel() {
       icon={LockKey}
     >
       {!status ? (
-        <div className="noodle-settings-skeleton" aria-label="Loading sandbox status">
+        <div className="nodyra-settings-skeleton" aria-label="Loading sandbox status">
           <span /><span />
         </div>
       ) : (
-        <div className={`noodle-sandbox-status is-${copy.tone}`}>
+        <div className={`nodyra-sandbox-status is-${copy.tone}`}>
           <div>
             <span>Status</span>
             <strong>{copy.label}</strong>
@@ -1408,14 +1408,14 @@ function ManagementPanel({
       icon={UsersThree}
     >
       {canManageAnything ? (
-        <div className="noodle-management-links">
+        <div className="nodyra-management-links">
           {canWorkspaceManage && <Link to="/organization"><Buildings size={18} aria-hidden="true" /><span><strong>Workspace</strong><small>Members, roles, quotas, and usage</small></span></Link>}
           {canAdmin && <Link to="/security"><ShieldCheck size={18} aria-hidden="true" /><span><strong>Instance access</strong><small>Users and installation-wide roles</small></span></Link>}
           {canAdmin && <Link to="/settings/sso"><IdentificationCard size={18} aria-hidden="true" /><span><strong>SSO</strong><small>Single sign-on via OIDC or SAML</small></span></Link>}
           {canAudit && <Link to="/activity"><GearSix size={18} aria-hidden="true" /><span><strong>Activity log</strong><small>Review workspace administrative changes</small></span></Link>}
         </div>
       ) : (
-        <div className="noodle-settings-inline-warning"><Info size={17} aria-hidden="true" />Ask an instance admin to change access or runtime settings.</div>
+        <div className="nodyra-settings-inline-warning"><Info size={17} aria-hidden="true" />Ask an instance admin to change access or runtime settings.</div>
       )}
     </SettingsCard>
   );
@@ -1495,18 +1495,18 @@ export function SettingsPage() {
   }, [canAdmin]);
 
   return (
-    <div className="home noodle-settings-page">
+    <div className="home nodyra-settings-page">
       <main className="home-main">
-        <div className="home-bar noodle-settings-heading">
+        <div className="home-bar nodyra-settings-heading">
           <div>
-            <p className="noodle-settings-eyebrow">Personal and installation preferences</p>
+            <p className="nodyra-settings-eyebrow">Personal and installation preferences</p>
             <h1>Settings</h1>
             <p className="muted">Account, appearance, instance controls, and plan information.</p>
           </div>
         </div>
 
-        <div className="noodle-settings-layout">
-          <nav className="noodle-settings-nav" aria-label="Settings sections">
+        <div className="nodyra-settings-layout">
+          <nav className="nodyra-settings-nav" aria-label="Settings sections">
             {visibleNavigation.map((item) => {
               const Icon = item.icon;
               return (
@@ -1524,7 +1524,7 @@ export function SettingsPage() {
             })}
           </nav>
 
-          <div className="noodle-settings-content">
+          <div className="nodyra-settings-content">
             <ProfilePanel workspaceRole={workspaceRole} />
             <AppearancePanel />
             <McpAccessPanel />

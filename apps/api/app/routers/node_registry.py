@@ -78,7 +78,7 @@ async def search_registry(
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Community Node Registry is disabled on this server "
-            "(NOODLE_ALLOW_REGISTRY=false).",
+            "(NODYRA_ALLOW_REGISTRY=false).",
         )
 
     try:

@@ -10,12 +10,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle_nodes.integrations_v2.providers.twilio.voice_trigger import (
+from nodyra_nodes.integrations_v2.providers.twilio.voice_trigger import (
     activate_voice_webhook,
     deactivate_voice_webhook,
     handle_voice_event,
 )
-from noodle_nodes.integrations_v2.specs import (
+from nodyra_nodes.integrations_v2.specs import (
     ProviderTriggerActivationContext,
     ProviderTriggerDeactivationContext,
     ProviderTriggerRequest,
@@ -25,7 +25,7 @@ from noodle_nodes.integrations_v2.specs import (
 _CREDS = {"account_sid": "ACtest", "auth_token": "secret"}
 _PHONE = "+15005550006"
 _PN_SID = "PNabc123"
-_CALLBACK = "https://noodle.example.com/api/webhooks/triggers/wh1"
+_CALLBACK = "https://nodyra.example.com/api/webhooks/triggers/wh1"
 
 
 def _make_activation_context(**override) -> ProviderTriggerActivationContext:
@@ -67,7 +67,7 @@ def test_activate_sets_voice_url():
     ctx = _make_activation_context()
     list_response = {"incoming_phone_numbers": [{"sid": _PN_SID, "voice_url": ""}]}
     with patch(
-        "noodle_nodes.integrations_v2.providers.twilio.voice_trigger._transport"
+        "nodyra_nodes.integrations_v2.providers.twilio.voice_trigger._transport"
     ) as mock_transport_fn:
         transport = MagicMock()
         mock_transport_fn.return_value = transport
@@ -93,7 +93,7 @@ def test_activate_sets_voice_url():
 def test_activate_raises_if_phone_not_found():
     ctx = _make_activation_context()
     with patch(
-        "noodle_nodes.integrations_v2.providers.twilio.voice_trigger._transport"
+        "nodyra_nodes.integrations_v2.providers.twilio.voice_trigger._transport"
     ) as mock_transport_fn:
         transport = MagicMock()
         mock_transport_fn.return_value = transport
@@ -117,7 +117,7 @@ def test_deactivate_clears_voice_url():
         params={"credentials": _CREDS},
     )
     with patch(
-        "noodle_nodes.integrations_v2.providers.twilio.voice_trigger._transport"
+        "nodyra_nodes.integrations_v2.providers.twilio.voice_trigger._transport"
     ) as mock_transport_fn:
         transport = MagicMock()
         mock_transport_fn.return_value = transport
@@ -217,6 +217,6 @@ def test_handle_event_fails_closed_when_callback_url_missing():
 
 
 def test_trigger_is_registered():
-    from noodle_nodes.integrations_v2.registry import is_registered_provider_trigger
+    from nodyra_nodes.integrations_v2.registry import is_registered_provider_trigger
 
     assert is_registered_provider_trigger("twilio_voice_call_trigger")

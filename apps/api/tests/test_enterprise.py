@@ -7,25 +7,25 @@ async def test_register_login_and_me(client: AsyncClient) -> None:
             "/auth/register",
             json={
                 "name": "Dev User",
-                "company": "Noodle Labs",
-                "email": "dev@noodle.test",
+                "company": "Nodyra Labs",
+                "email": "dev@nodyra.test",
                 "password": "supersecret",
             },
         )
     ).json()
-    assert registered["user"]["email"] == "dev@noodle.test"
+    assert registered["user"]["email"] == "dev@nodyra.test"
     assert registered["user"]["name"] == "Dev User"
-    assert registered["user"]["company"] == "Noodle Labs"
+    assert registered["user"]["company"] == "Nodyra Labs"
     assert registered["user"]["role"] == "owner"
     token = registered["token"]
 
     me = await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
-    assert me.json()["email"] == "dev@noodle.test"
+    assert me.json()["email"] == "dev@nodyra.test"
 
     login = await client.post(
         "/auth/login",
-        json={"email": "dev@noodle.test", "password": "supersecret"},
+        json={"email": "dev@nodyra.test", "password": "supersecret"},
     )
     assert login.status_code == 200
 
@@ -50,7 +50,7 @@ async def test_users_me_alias(client: AsyncClient) -> None:
     registered = (
         await client.post(
             "/auth/register",
-            json={"email": "alias@noodle.test", "password": "supersecret"},
+            json={"email": "alias@nodyra.test", "password": "supersecret"},
         )
     ).json()
     token = registered["token"]
@@ -58,7 +58,7 @@ async def test_users_me_alias(client: AsyncClient) -> None:
         "/users/me", headers={"Authorization": f"Bearer {token}"}
     )
     assert resp.status_code == 200
-    assert resp.json()["email"] == "alias@noodle.test"
+    assert resp.json()["email"] == "alias@nodyra.test"
 
 
 async def test_login_rate_limited(client: AsyncClient) -> None:
@@ -74,12 +74,12 @@ async def test_login_rate_limited(client: AsyncClient) -> None:
         for _ in range(3):
             resp = await client.post(
                 "/auth/login",
-                json={"email": "nope@noodle.test", "password": "wrong"},
+                json={"email": "nope@nodyra.test", "password": "wrong"},
             )
             assert resp.status_code == 401
         resp = await client.post(
             "/auth/login",
-            json={"email": "nope@noodle.test", "password": "wrong"},
+            json={"email": "nope@nodyra.test", "password": "wrong"},
         )
         assert resp.status_code == 429
         assert "Too many" in resp.json()["detail"]
@@ -124,7 +124,7 @@ async def test_auth_required_endpoint(client: AsyncClient) -> None:
     registered = (
         await client.post(
             "/auth/register",
-            json={"email": "user@noodle.test", "password": "supersecret"},
+            json={"email": "user@nodyra.test", "password": "supersecret"},
         )
     ).json()
     info = (
@@ -134,7 +134,7 @@ async def test_auth_required_endpoint(client: AsyncClient) -> None:
         )
     ).json()
     assert info["signed_in"] is True
-    assert info["user"]["email"] == "user@noodle.test"
+    assert info["user"]["email"] == "user@nodyra.test"
 
 
 async def test_auth_gating_blocks_when_required(client: AsyncClient) -> None:
@@ -152,7 +152,7 @@ async def test_auth_gating_blocks_when_required(client: AsyncClient) -> None:
         registered = (
             await client.post(
                 "/auth/register",
-                json={"email": "gate@noodle.test", "password": "supersecret"},
+                json={"email": "gate@nodyra.test", "password": "supersecret"},
             )
         ).json()
         headers = {"Authorization": f"Bearer {registered['token']}"}
@@ -174,8 +174,8 @@ async def test_registration_closes_after_first_user(client: AsyncClient) -> None
         "/auth/register",
         json={
             "name": "Workspace Admin",
-            "company": "Noodle Labs",
-            "email": "owner@noodle.test",
+            "company": "Nodyra Labs",
+            "email": "owner@nodyra.test",
             "password": "supersecret",
         },
     )
@@ -184,7 +184,7 @@ async def test_registration_closes_after_first_user(client: AsyncClient) -> None
 
     second = await client.post(
         "/auth/register",
-        json={"email": "second@noodle.test", "password": "supersecret"},
+        json={"email": "second@nodyra.test", "password": "supersecret"},
     )
     assert second.status_code == 403
 
@@ -204,8 +204,8 @@ async def test_rbac_blocks_viewer_mutations_and_admin_only_secrets(
                 "/auth/register",
                 json={
                     "name": "Workspace Admin",
-                    "company": "Noodle Labs",
-                    "email": "owner2@noodle.test",
+                    "company": "Nodyra Labs",
+                    "email": "owner2@nodyra.test",
                     "password": "supersecret",
                 },
             )
@@ -219,8 +219,8 @@ async def test_rbac_blocks_viewer_mutations_and_admin_only_secrets(
                 headers=owner_headers,
                 json={
                     "name": "Viewer User",
-                    "company": "Noodle Labs",
-                    "email": "viewer@noodle.test",
+                    "company": "Nodyra Labs",
+                    "email": "viewer@nodyra.test",
                     "password": "supersecret",
                     "role": "viewer",
                 },
@@ -232,7 +232,7 @@ async def test_rbac_blocks_viewer_mutations_and_admin_only_secrets(
                 headers=owner_headers,
                 json={
                     "name": "Editor User",
-                    "email": "editor@noodle.test",
+                    "email": "editor@nodyra.test",
                     "password": "supersecret",
                     "role": "editor",
                 },
@@ -240,19 +240,19 @@ async def test_rbac_blocks_viewer_mutations_and_admin_only_secrets(
         ).json()
         assert viewer["role"] == "viewer"
         assert viewer["name"] == "Viewer User"
-        assert viewer["company"] == "Noodle Labs"
+        assert viewer["company"] == "Nodyra Labs"
         assert editor["role"] == "editor"
 
         viewer_login = (
             await client.post(
                 "/auth/login",
-                json={"email": "viewer@noodle.test", "password": "supersecret"},
+                json={"email": "viewer@nodyra.test", "password": "supersecret"},
             )
         ).json()
         editor_login = (
             await client.post(
                 "/auth/login",
-                json={"email": "editor@noodle.test", "password": "supersecret"},
+                json={"email": "editor@nodyra.test", "password": "supersecret"},
             )
         ).json()
         viewer_headers = {"Authorization": f"Bearer {viewer_login['token']}"}

@@ -52,7 +52,7 @@ def _fernet() -> Fernet:
         algorithm=hashes.SHA256(),
         length=32,
         salt=None,
-        info=b"noodle-credential-kek",
+        info=b"nodyra-credential-kek",
     ).derive(secret.encode())
     key = base64.urlsafe_b64encode(raw)
     fernet = Fernet(key)
@@ -269,8 +269,8 @@ def verify_password(password: str, stored: str) -> bool:
 # ── JWT token functions (P1-2: standard JWT replaces self-rolled HMAC) ──────
 #
 # New tokens are standard HS256 JWTs with these claims:
-#   iss  = "noodle"
-#   aud  = "noodle-api"
+#   iss  = "nodyra"
+#   aud  = "nodyra-api"
 #   sub  = user_id (session) or purpose-specific (payload)
 #   iat  = issued-at (epoch seconds, float for sub-second revocation)
 #   exp  = expiry (epoch seconds)
@@ -285,8 +285,8 @@ def _jwt_encode(payload: dict, ttl_seconds: float) -> str:
     now = time.time()
     claims = {
         **payload,
-        "iss": "noodle",
-        "aud": "noodle-api",
+        "iss": "nodyra",
+        "aud": "nodyra-api",
         "iat": now,
         "exp": now + ttl_seconds,
     }
@@ -310,8 +310,8 @@ def _jwt_decode(token: str, *, require_sub: bool = False) -> dict | None:
             token,
             settings.secret_key,
             algorithms=["HS256"],
-            issuer="noodle",
-            audience="noodle-api",
+            issuer="nodyra",
+            audience="nodyra-api",
             options={"require": required},
         )
     except _jwt.PyJWTError:

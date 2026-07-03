@@ -192,7 +192,7 @@ async def test_subworkflow_routes_through_subprocess_for_sub_env(
     from app.config import settings as live_settings
     from app.services import runtime_pool as pool_module
     from app.services.subworkflows import resolve_subworkflow
-    from noodle.engine.subworkflows import SubworkflowCall
+    from nodyra.engine.subworkflows import SubworkflowCall
 
     # Build a sub workflow assigned to a specific environment.
     env = (
@@ -346,7 +346,7 @@ async def _build_sub_with_env(client: AsyncClient, env_id: str | None, code: str
 
 
 def _sub_call(workflow_id: str, value, **kw):
-    from noodle.engine.subworkflows import SubworkflowCall
+    from nodyra.engine.subworkflows import SubworkflowCall
 
     defaults = dict(
         parameters=value,
@@ -368,7 +368,7 @@ async def test_subworkflow_inline_even_with_nested_workflow_call(
     meta, so nested calls inside inline children stay cycle-checked."""
     from app.config import settings as live_settings
     from app.services.subworkflows import resolve_subworkflow
-    from noodle.engine.subworkflows import InlineSubworkflow
+    from nodyra.engine.subworkflows import InlineSubworkflow
 
     env = (
         await client.post(
@@ -439,7 +439,7 @@ async def test_subworkflow_spawns_when_env_differs(
     from app.config import settings as live_settings
     from app.services import runtime_pool as pool_module
     from app.services.subworkflows import resolve_subworkflow
-    from noodle.engine.subworkflows import InlineSubworkflow
+    from nodyra.engine.subworkflows import InlineSubworkflow
 
     env = (
         await client.post(
@@ -501,7 +501,7 @@ async def test_subworkflow_pool_writes_inline_response_field(
     event and serialize an InlineSubworkflow directive into the
     ``inline_*`` fields on the call_workflow_response message."""
     from app.services import runtime_pool as pool_module
-    from noodle.engine.subworkflows import InlineSubworkflow, SubworkflowCall
+    from nodyra.engine.subworkflows import InlineSubworkflow, SubworkflowCall
 
     inline = InlineSubworkflow(
         graph={"nodes": [], "edges": []},
@@ -658,7 +658,7 @@ def test_cors_wildcard_warning_in_production_mode() -> None:
         runtime_mode="production",
         cors_origins="*",
         secret_key="strong-secret-value-for-test-only",
-        database_url="postgresql+asyncpg://noodle:noodle@localhost/noodle",
+        database_url="postgresql+asyncpg://nodyra:nodyra@localhost/nodyra",
     )
     warnings = s.runtime_warnings()
     assert any("wildcard" in w.lower() or "'*'" in w for w in warnings)
@@ -671,7 +671,7 @@ def test_default_secret_key_warning_in_production_mode() -> None:
     s = Settings(
         runtime_mode="production",
         cors_origins="https://app.example.com",
-        database_url="postgresql+asyncpg://noodle:noodle@localhost/noodle",
+        database_url="postgresql+asyncpg://nodyra:nodyra@localhost/nodyra",
         # default secret_key left unchanged
     )
     warnings = s.runtime_warnings()
@@ -687,7 +687,7 @@ def test_run_id_context_var_injected_into_log_records() -> None:
 
     from app.services.runner import _log_run_id, _RunIdFilter
 
-    logger = logging.getLogger("noodle.test_run_id")
+    logger = logging.getLogger("nodyra.test_run_id")
     handler_records: list[logging.LogRecord] = []
 
     class _Capture(logging.Handler):
@@ -855,7 +855,7 @@ def test_retention_loop_logs_exceptions(monkeypatch) -> None:
 
     import logging as _logging
 
-    rt_logger = _logging.getLogger("noodle.retention")
+    rt_logger = _logging.getLogger("nodyra.retention")
     # The module may use getLogger(__name__) which resolves to app.services.retention
     mod_logger = _logging.getLogger("app.services.retention")
 
@@ -1012,7 +1012,7 @@ async def test_enforce_auth_rate_limit_uses_redis_when_backend_configured(
 
     assert eval_calls, "Redis (atomic eval) should have been used"
     key, window = eval_calls[0]
-    assert "noodle:rl" in key, f"key should be namespaced 'noodle:rl:…'; got: {key}"
+    assert "nodyra:rl" in key, f"key should be namespaced 'nodyra:rl:…'; got: {key}"
     assert window > 0 and ttls.get(key) == window, (
         "TTL must be established atomically with the increment"
     )

@@ -1,6 +1,6 @@
-import noodle_nodes  # noqa: F401 - registers built-in nodes
-from noodle.packages import canonical_package_name
-from noodle.sdk import registry
+import nodyra_nodes  # noqa: F401 - registers built-in nodes
+from nodyra.packages import canonical_package_name
+from nodyra.sdk import registry
 
 
 def test_duckdb_sql_node_requires_duckdb():

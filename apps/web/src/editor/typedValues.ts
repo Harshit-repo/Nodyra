@@ -1,5 +1,5 @@
 export interface TypedEnvelope {
-  __noodle_typed__: true;
+  __nodyra_typed__: true;
   version: number;
   type: string;
   value: unknown;
@@ -16,7 +16,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function asTypedEnvelope(value: unknown): TypedEnvelope | null {
   if (!isRecord(value)) return null;
-  if (value.__noodle_typed__ !== true || value.version !== 1) return null;
+  if (value.__nodyra_typed__ !== true || value.version !== 1) return null;
   if (typeof value.type !== "string") return null;
   return value as unknown as TypedEnvelope;
 }

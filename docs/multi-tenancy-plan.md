@@ -1,8 +1,8 @@
-# Noodle Multi-Tenancy Plan
+# Nodyra Multi-Tenancy Plan
 
 > Status: design + phased migration plan. Not yet implemented.
 >
-> Scope: what it takes to turn Noodle from a single-tenant, trusted-author
+> Scope: what it takes to turn Nodyra from a single-tenant, trusted-author
 > deployment into a multi-tenant system — covering both *soft* multi-tenancy
 > (multiple trusted teams in one instance) and *hard* multi-tenancy (untrusted
 > users on shared infra, i.e. a SaaS). Every recommendation is grounded in the
@@ -67,7 +67,7 @@ Confirmed from the code:
   instance-wide concurrency/retention/caps (`models.py:659`).
 - **One global run queue.** `RunQueueEntry` is leased FIFO-by-priority across the
   whole instance (`models.py:696`, `services/queue.py`) — no per-tenant fairness.
-- **One shared warm pool.** `runtime_pool.py` keys long-lived `noodle_runtime`
+- **One shared warm pool.** `runtime_pool.py` keys long-lived `nodyra_runtime`
   subprocesses by `environment_id` only. Arbitrary tenant Python runs in the host
   trust boundary. Sub-workflows run **in-process on the host with no env
   isolation** (`runtime_pool.py` module docstring) — a cross-tenant hole.
@@ -78,15 +78,15 @@ Confirmed from the code:
   `kubernetes` (`models.py:65-92`) and `remote_dispatch` can route runs to them.
   This is the intended hook for execution isolation — not starting from zero.
 - **Two new amplification vectors since this plan was first drafted: map & loop.**
-  - **Map nodes** (`map_dataset`, `map_items` — `packages/nodes/noodle_nodes/datasets.py`,
+  - **Map nodes** (`map_dataset`, `map_items` — `packages/nodes/nodyra_nodes/datasets.py`,
     `_map.py`) call a **child workflow once per row** via `workflow_caller`
     (the sub-workflow path), up to `concurrency` at a time (default 5) and
     `max_rows` rows (default 10000). A single map node can therefore spawn
     thousands of child executions through the exact in-process sub-workflow
     seam called out above — it is the existing cross-tenant hole, amplified.
   - **Loop nodes** (`loop_start`/`loop_end` — `builtin.py`, driven by the core
-    engine's loop driver in `packages/core/noodle/engine.py`) run the loop body
-    **inside one engine execution, in the same `noodle_runtime` subprocess** —
+    engine's loop driver in `packages/core/nodyra/engine.py`) run the loop body
+    **inside one engine execution, in the same `nodyra_runtime` subprocess** —
     no host callback, no subprocess-per-row. They are *safe-by-construction*
     for execution isolation (they inherit the parent run's boundary) but they
     amplify work **inside a single run**: a 10k-row loop with an N-node body
@@ -276,7 +276,7 @@ the warm-pool benefit (cold start every run).
    seccomp profile. No host mounts, dropped capabilities, read-only rootfs.
 2. **Resource limits** per run: CPU, memory, PIDs, wall-clock, disk.
 3. **Egress control / network policy.** A tenant's code must not reach: other
-   tenants' runners, the Noodle DB/Redis, the host metadata endpoint
+   tenants' runners, the Nodyra DB/Redis, the host metadata endpoint
    (`169.254.169.254`), or internal services. SSRF controls on HTTP nodes too.
 4. **Close the sub-workflow hole — and note map rides directly on it.**
    Sub-workflows currently execute in-process on the host (`runtime_pool.py`

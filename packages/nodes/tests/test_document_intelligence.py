@@ -10,10 +10,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.artifacts import LocalArtifactStore, is_artifact_ref
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.artifacts import LocalArtifactStore, is_artifact_ref
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def store_ctx(tmp_path):
 
 
 def test_pdf_extract_text_raises_without_input(store_ctx) -> None:
-    from noodle_nodes.document_intelligence import pdf_extract_text
+    from nodyra_nodes.document_intelligence import pdf_extract_text
     with pytest.raises(ValueError, match="input is required"):
         pdf_extract_text(input=None)
 
@@ -44,8 +44,8 @@ def test_pdf_extract_text_raises_missing_package(store_ctx, monkeypatch) -> None
 
     monkeypatch.setattr(builtins, "__import__", mock_import)
     # Write a fake artifact so we pass the None check
-    from noodle.artifacts import write_bytes
-    from noodle_nodes.document_intelligence import pdf_extract_text
+    from nodyra.artifacts import write_bytes
+    from nodyra_nodes.document_intelligence import pdf_extract_text
     fake_ref = write_bytes(b"fake", name="test.pdf", content_type="application/pdf")
     with pytest.raises(RuntimeError, match="pdfplumber"):
         pdf_extract_text(input=fake_ref)
@@ -56,8 +56,8 @@ def test_pdf_extract_text_raises_for_scanned_pdf(store_ctx) -> None:
     pytest.importorskip("pdfplumber")
     from unittest.mock import MagicMock, patch
 
-    from noodle.artifacts import write_bytes
-    from noodle_nodes.document_intelligence import pdf_extract_text
+    from nodyra.artifacts import write_bytes
+    from nodyra_nodes.document_intelligence import pdf_extract_text
 
     fake_ref = write_bytes(b"fake", name="test.pdf", content_type="application/pdf")
 
@@ -79,8 +79,8 @@ def test_pdf_extract_text_returns_text_and_artifact(store_ctx) -> None:
     pytest.importorskip("pdfplumber")
     from unittest.mock import MagicMock, patch
 
-    from noodle.artifacts import write_bytes
-    from noodle_nodes.document_intelligence import pdf_extract_text
+    from nodyra.artifacts import write_bytes
+    from nodyra_nodes.document_intelligence import pdf_extract_text
 
     fake_ref = write_bytes(b"fake", name="test.pdf", content_type="application/pdf")
 
@@ -103,7 +103,7 @@ def test_pdf_extract_text_returns_text_and_artifact(store_ctx) -> None:
 
 
 def test_pdf_extract_tables_raises_without_input(store_ctx) -> None:
-    from noodle_nodes.document_intelligence import pdf_extract_tables
+    from nodyra_nodes.document_intelligence import pdf_extract_tables
     with pytest.raises(ValueError, match="input is required"):
         pdf_extract_tables(input=None)
 
@@ -113,8 +113,8 @@ def test_pdf_extract_tables_no_tables_returns_zero(store_ctx) -> None:
     pytest.importorskip("pandas")
     from unittest.mock import MagicMock, patch
 
-    from noodle.artifacts import write_bytes
-    from noodle_nodes.document_intelligence import pdf_extract_tables
+    from nodyra.artifacts import write_bytes
+    from nodyra_nodes.document_intelligence import pdf_extract_tables
 
     fake_ref = write_bytes(b"fake", name="test.pdf", content_type="application/pdf")
 
@@ -139,8 +139,8 @@ def test_pdf_extract_tables_returns_dataset_ref(store_ctx) -> None:
     pytest.importorskip("pandas")
     from unittest.mock import MagicMock, patch
 
-    from noodle.artifacts import write_bytes
-    from noodle_nodes.document_intelligence import pdf_extract_tables
+    from nodyra.artifacts import write_bytes
+    from nodyra_nodes.document_intelligence import pdf_extract_tables
 
     fake_ref = write_bytes(b"fake", name="test.pdf", content_type="application/pdf")
 
@@ -165,22 +165,22 @@ def test_pdf_extract_tables_returns_dataset_ref(store_ctx) -> None:
 
 
 def test_parse_page_selection_blank_returns_all(store_ctx) -> None:
-    from noodle_nodes.document_intelligence import _parse_page_selection
+    from nodyra_nodes.document_intelligence import _parse_page_selection
     assert _parse_page_selection("", 5, 0) == [0, 1, 2, 3, 4]
 
 
 def test_parse_page_selection_range(store_ctx) -> None:
-    from noodle_nodes.document_intelligence import _parse_page_selection
+    from nodyra_nodes.document_intelligence import _parse_page_selection
     assert _parse_page_selection("1-3", 5, 0) == [0, 1, 2]
 
 
 def test_parse_page_selection_list(store_ctx) -> None:
-    from noodle_nodes.document_intelligence import _parse_page_selection
+    from nodyra_nodes.document_intelligence import _parse_page_selection
     assert _parse_page_selection("1,3,5", 5, 0) == [0, 2, 4]
 
 
 def test_pdf_generate_raises_without_template(store_ctx) -> None:
-    from noodle_nodes.document_intelligence import pdf_generate
+    from nodyra_nodes.document_intelligence import pdf_generate
     with pytest.raises(ValueError, match="template is required"):
         pdf_generate(input={}, template="")
 
@@ -195,7 +195,7 @@ def test_pdf_generate_raises_missing_package(store_ctx, monkeypatch) -> None:
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", mock_import)
-    from noodle_nodes.document_intelligence import pdf_generate
+    from nodyra_nodes.document_intelligence import pdf_generate
     with pytest.raises(RuntimeError, match="weasyprint"):
         pdf_generate(input={}, template="<h1>hi</h1>")
 
@@ -203,7 +203,7 @@ def test_pdf_generate_raises_missing_package(store_ctx, monkeypatch) -> None:
 def test_pdf_generate_returns_artifact(store_ctx) -> None:
     pytest.importorskip("weasyprint")
     pytest.importorskip("jinja2")
-    from noodle_nodes.document_intelligence import pdf_generate
+    from nodyra_nodes.document_intelligence import pdf_generate
 
     result = pdf_generate(
         input={"title": "Test Report", "body": "Hello world"},
@@ -218,8 +218,8 @@ def test_pdf_generate_returns_artifact(store_ctx) -> None:
 def test_pdf_generate_renders_template_variables(store_ctx) -> None:
     pytest.importorskip("weasyprint")
     pytest.importorskip("jinja2")
-    from noodle.artifacts import read_bytes
-    from noodle_nodes.document_intelligence import pdf_generate
+    from nodyra.artifacts import read_bytes
+    from nodyra_nodes.document_intelligence import pdf_generate
 
     result = pdf_generate(
         input={"name": "Alice"},
@@ -232,7 +232,7 @@ def test_pdf_generate_renders_template_variables(store_ctx) -> None:
 
 
 def test_pdf_generate_blocks_external_resource_fetches(store_ctx, monkeypatch) -> None:
-    from noodle_nodes.document_intelligence import pdf_generate
+    from nodyra_nodes.document_intelligence import pdf_generate
 
     class FakeHTML:
         def __init__(self, *, string: str, url_fetcher) -> None:
@@ -261,14 +261,14 @@ def test_docx_generate_raises_missing_package(store_ctx, monkeypatch) -> None:
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", mock_import)
-    from noodle_nodes.document_intelligence import docx_generate
+    from nodyra_nodes.document_intelligence import docx_generate
     with pytest.raises(RuntimeError, match="python-docx"):
         docx_generate(input={"name": "Alice"})
 
 
 def test_docx_generate_returns_artifact(store_ctx) -> None:
     pytest.importorskip("docx")
-    from noodle_nodes.document_intelligence import docx_generate
+    from nodyra_nodes.document_intelligence import docx_generate
 
     result = docx_generate(input={"greeting": "Hello"}, filename="test.docx")
     assert is_artifact_ref(result["artifact"])
@@ -279,8 +279,8 @@ def test_docx_generate_fills_template_placeholders(store_ctx) -> None:
     pytest.importorskip("docx")
     from docx import Document
 
-    from noodle.artifacts import read_bytes, write_bytes
-    from noodle_nodes.document_intelligence import docx_generate
+    from nodyra.artifacts import read_bytes, write_bytes
+    from nodyra_nodes.document_intelligence import docx_generate
 
     # Build a real .docx template with {{name}} placeholder
     doc = Document()
@@ -315,8 +315,8 @@ def test_docx_generate_raises_for_unfilled_placeholders(store_ctx) -> None:
     pytest.importorskip("docx")
     from docx import Document
 
-    from noodle.artifacts import write_bytes
-    from noodle_nodes.document_intelligence import docx_generate
+    from nodyra.artifacts import write_bytes
+    from nodyra_nodes.document_intelligence import docx_generate
 
     doc = Document()
     doc.add_paragraph("Hello {{name}}, your code is {{code}}.")
@@ -338,8 +338,8 @@ def test_docx_extract_returns_paragraphs(store_ctx) -> None:
     pytest.importorskip("docx")
     from docx import Document
 
-    from noodle.artifacts import write_bytes
-    from noodle_nodes.document_intelligence import docx_extract
+    from nodyra.artifacts import write_bytes
+    from nodyra_nodes.document_intelligence import docx_extract
 
     doc = Document()
     doc.add_heading("My Title", level=1)
@@ -365,8 +365,8 @@ def test_docx_extract_returns_tables(store_ctx) -> None:
     pytest.importorskip("docx")
     from docx import Document
 
-    from noodle.artifacts import write_bytes
-    from noodle_nodes.document_intelligence import docx_extract
+    from nodyra.artifacts import write_bytes
+    from nodyra_nodes.document_intelligence import docx_extract
 
     doc = Document()
     tbl = doc.add_table(rows=3, cols=2)
@@ -393,7 +393,7 @@ def test_docx_extract_returns_tables(store_ctx) -> None:
 
 
 def test_excel_report_generate_raises_without_input(store_ctx) -> None:
-    from noodle_nodes.document_intelligence import excel_report_generate
+    from nodyra_nodes.document_intelligence import excel_report_generate
     with pytest.raises(ValueError, match="input is required"):
         excel_report_generate(input=None)
 
@@ -401,7 +401,7 @@ def test_excel_report_generate_raises_without_input(store_ctx) -> None:
 def test_excel_report_generate_raises_on_empty_dataset(store_ctx) -> None:
     pytest.importorskip("openpyxl")
     pytest.importorskip("pandas")
-    from noodle_nodes.document_intelligence import excel_report_generate
+    from nodyra_nodes.document_intelligence import excel_report_generate
     with pytest.raises(ValueError, match="empty"):
         excel_report_generate(input=[])
 
@@ -409,8 +409,8 @@ def test_excel_report_generate_raises_on_empty_dataset(store_ctx) -> None:
 def test_excel_report_generate_returns_artifact_from_records(store_ctx) -> None:
     pytest.importorskip("openpyxl")
     pytest.importorskip("pandas")
-    from noodle.artifacts import read_bytes
-    from noodle_nodes.document_intelligence import excel_report_generate
+    from nodyra.artifacts import read_bytes
+    from nodyra_nodes.document_intelligence import excel_report_generate
 
     result = excel_report_generate(
         input=[{"name": "Alice", "score": 95}, {"name": "Bob", "score": 87}],
@@ -430,8 +430,8 @@ def test_excel_report_generate_returns_artifact_from_records(store_ctx) -> None:
 def test_excel_report_generate_returns_artifact_from_dataset(store_ctx) -> None:
     pytest.importorskip("openpyxl")
     pytest.importorskip("pandas")
-    from noodle_nodes.datasets import records_to_dataset
-    from noodle_nodes.document_intelligence import excel_report_generate
+    from nodyra_nodes.datasets import records_to_dataset
+    from nodyra_nodes.document_intelligence import excel_report_generate
 
     ds = records_to_dataset([{"x": 1, "y": 2}, {"x": 3, "y": 4}])
     result = excel_report_generate(input=ds, filename="out.xlsx")
@@ -441,7 +441,7 @@ def test_excel_report_generate_returns_artifact_from_dataset(store_ctx) -> None:
 def test_excel_extract_returns_dataset_ref(store_ctx) -> None:
     pytest.importorskip("openpyxl")
     pytest.importorskip("pandas")
-    from noodle_nodes.document_intelligence import excel_extract, excel_report_generate
+    from nodyra_nodes.document_intelligence import excel_extract, excel_report_generate
 
     # Generate an xlsx first, then extract it
     gen_result = excel_report_generate(
@@ -453,20 +453,20 @@ def test_excel_extract_returns_dataset_ref(store_ctx) -> None:
 
 
 def test_excel_extract_raises_without_input(store_ctx) -> None:
-    from noodle_nodes.document_intelligence import excel_extract
+    from nodyra_nodes.document_intelligence import excel_extract
     with pytest.raises(ValueError, match="input is required"):
         excel_extract(input=None)
 
 
 def test_barcode_qr_generate_raises_without_input(store_ctx) -> None:
-    from noodle_nodes.document_intelligence import barcode_qr_generate
+    from nodyra_nodes.document_intelligence import barcode_qr_generate
     with pytest.raises(ValueError, match="input is required"):
         barcode_qr_generate(input=None)
 
 
 def test_barcode_qr_generate_qr_returns_png_artifact(store_ctx) -> None:
     pytest.importorskip("qrcode")
-    from noodle_nodes.document_intelligence import barcode_qr_generate
+    from nodyra_nodes.document_intelligence import barcode_qr_generate
 
     result = barcode_qr_generate(input="https://example.com", format="qr", filename="qr.png")
     assert is_artifact_ref(result["artifact"])
@@ -476,13 +476,13 @@ def test_barcode_qr_generate_qr_returns_png_artifact(store_ctx) -> None:
 
 
 def test_barcode_qr_decode_raises_without_input(store_ctx) -> None:
-    from noodle_nodes.document_intelligence import barcode_qr_decode
+    from nodyra_nodes.document_intelligence import barcode_qr_decode
     with pytest.raises(ValueError, match="input is required"):
         barcode_qr_decode(input=None)
 
 
 def test_barcode_qr_decode_requirements_are_platform_adaptive() -> None:
-    from noodle.sdk import registry
+    from nodyra.sdk import registry
     manifest = next(m for m in registry.manifests() if m.id == "barcode_qr_decode")
     reqs = manifest.requirements
     assert any("zxing" in r and "win32" in r for r in reqs), "zxing-cpp win32 req missing"
@@ -497,13 +497,13 @@ def test_barcode_qr_roundtrip(store_ctx) -> None:
         pytest.importorskip("zxing_cpp")
     else:
         pytest.importorskip("pyzbar")
-    from noodle_nodes.document_intelligence import barcode_qr_decode, barcode_qr_generate
+    from nodyra_nodes.document_intelligence import barcode_qr_decode, barcode_qr_generate
 
-    gen_result = barcode_qr_generate(input="HELLO-NOODLE-123", format="qr")
+    gen_result = barcode_qr_generate(input="HELLO-NODYRA-123", format="qr")
     decode_result = barcode_qr_decode(input=gen_result["artifact"])
 
     assert decode_result["count"] == 1
-    assert decode_result["codes"][0]["data"] == "HELLO-NOODLE-123"
+    assert decode_result["codes"][0]["data"] == "HELLO-NODYRA-123"
 
 
 def test_barcode_qr_decode_raises_on_blank_image(store_ctx) -> None:
@@ -515,8 +515,8 @@ def test_barcode_qr_decode_raises_on_blank_image(store_ctx) -> None:
     pytest.importorskip("PIL")
     from PIL import Image
 
-    from noodle.artifacts import write_bytes
-    from noodle_nodes.document_intelligence import barcode_qr_decode
+    from nodyra.artifacts import write_bytes
+    from nodyra_nodes.document_intelligence import barcode_qr_decode
 
     # Blank white image — no barcode
     img = Image.new("RGB", (100, 100), color="white")
@@ -529,7 +529,7 @@ def test_barcode_qr_decode_raises_on_blank_image(store_ctx) -> None:
 
 
 def test_document_intelligence_nodes_registered() -> None:
-    from noodle.sdk import registry
+    from nodyra.sdk import registry
     ids = {m.id for m in registry.manifests()}
     expected = {
         "pdf_extract_text",
@@ -547,7 +547,7 @@ def test_document_intelligence_nodes_registered() -> None:
 
 def test_document_intelligence_nodes_have_requirements() -> None:
     """Every node with optional packages must declare requirements."""
-    from noodle.sdk import registry
+    from nodyra.sdk import registry
     nodes_with_reqs = {
         "pdf_extract_text",
         "pdf_extract_tables",
@@ -567,13 +567,13 @@ def test_document_intelligence_nodes_have_requirements() -> None:
 
 
 def test_import_does_not_import_optional_packages() -> None:
-    """Importing noodle_nodes must not pull in any optional document packages."""
+    """Importing nodyra_nodes must not pull in any optional document packages."""
     # Check in a fresh interpreter so earlier tests that intentionally exercise
     # optional Excel/PDF features cannot pollute this assertion via sys.modules.
     code = """
 import json
 import sys
-import noodle_nodes  # noqa: F401
+import nodyra_nodes  # noqa: F401
 
 forbidden = {
     "pdfplumber", "weasyprint", "docx", "openpyxl",
@@ -594,7 +594,7 @@ print(json.dumps(sorted(forbidden & set(sys.modules))))
 def test_document_intelligence_importable_without_optional_packages() -> None:
     """Module must import cleanly even when no doc-processing packages are installed."""
     import importlib
-    mod = importlib.import_module("noodle_nodes.document_intelligence")
+    mod = importlib.import_module("nodyra_nodes.document_intelligence")
     assert hasattr(mod, "pdf_extract_text")
     assert hasattr(mod, "pdf_extract_tables")
     assert hasattr(mod, "pdf_generate")

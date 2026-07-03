@@ -1,4 +1,4 @@
-# Noodle Contributor License Agreement
+# Nodyra Contributor License Agreement
 
 Version 0.1
 
@@ -7,7 +7,7 @@ bracketed placeholders with the correct contact address and governing law. This
 template is not legal advice.
 
 This Contributor License Agreement ("Agreement") governs Contributions submitted
-to the Noodle project ("Project"). By signing this Agreement, or by accepting it
+to the Nodyra project ("Project"). By signing this Agreement, or by accepting it
 through an approved electronic signing process, You agree to the terms below.
 
 ## 1. Definitions

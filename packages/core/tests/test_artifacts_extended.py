@@ -1,7 +1,7 @@
-"""Extended tests for noodle.artifacts — limits, path safety, and read helpers."""
+"""Extended tests for nodyra.artifacts — limits, path safety, and read helpers."""
 import pytest
 
-from noodle.artifacts import (
+from nodyra.artifacts import (
     ARTIFACT_MARKER,
     LocalArtifactStore,
     is_artifact_ref,
@@ -10,7 +10,7 @@ from noodle.artifacts import (
     write_json,
     write_text,
 )
-from noodle.context import artifact_store, current_node_id
+from nodyra.context import artifact_store, current_node_id
 
 
 def _with_store(store, fn):
@@ -192,7 +192,7 @@ def test_write_text_roundtrip(tmp_path) -> None:
     nt = current_node_id.set("node1")
     try:
         ref = write_text("hello ñoño", name="text2.txt")
-        from noodle.artifacts import read_text
+        from nodyra.artifacts import read_text
         assert read_text(ref) == "hello ñoño"
     finally:
         current_node_id.reset(nt)
@@ -206,7 +206,7 @@ def test_write_json_roundtrip(tmp_path) -> None:
     try:
         payload = {"items": [1, 2, 3], "nested": {"key": "val"}}
         ref = write_json(payload, name="data.json")
-        from noodle.artifacts import read_json
+        from nodyra.artifacts import read_json
         assert read_json(ref) == payload
     finally:
         current_node_id.reset(nt)
@@ -220,7 +220,7 @@ def test_write_json_roundtrip(tmp_path) -> None:
 def test_write_bytes_without_store_raises() -> None:
     with pytest.raises(RuntimeError, match="artifacts are not available"):
         # No artifact_store in context
-        from noodle.artifacts import _store
+        from nodyra.artifacts import _store
         _store()
 
 
@@ -246,7 +246,7 @@ def test_write_dataframe_rejects_unsupported_format(tmp_path) -> None:
     nt = current_node_id.set("node1")
     try:
         with pytest.raises(ValueError, match="csv or json"):
-            from noodle.artifacts import write_dataframe
+            from nodyra.artifacts import write_dataframe
             write_dataframe(object(), name="df.parquet", format="parquet")
     finally:
         current_node_id.reset(nt)
@@ -259,7 +259,7 @@ def test_write_dataframe_rejects_non_dataframe_csv(tmp_path) -> None:
     nt = current_node_id.set("node1")
     try:
         with pytest.raises((ValueError, AttributeError)):
-            from noodle.artifacts import write_dataframe
+            from nodyra.artifacts import write_dataframe
             write_dataframe({"not": "a dataframe"}, name="df.csv", format="csv")
     finally:
         current_node_id.reset(nt)

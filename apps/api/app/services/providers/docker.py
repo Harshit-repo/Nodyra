@@ -1,8 +1,8 @@
 """Docker runner-pool provider (split from remote_dispatch.py, A2).
 
 The host drives containers via the Docker SDK: an image is built per-env
-(tagged ``noodle-env:{env_id}-{packages_hash}``) and each run spawns a
-container with stdin/stdout piped to the ``noodle_runtime`` JSON protocol.
+(tagged ``nodyra-env:{env_id}-{packages_hash}``) and each run spawns a
+container with stdin/stdout piped to the ``nodyra_runtime`` JSON protocol.
 Self-contained — needs no WebSocket terminating in this process, so a
 standalone worker (dispatch_role=worker) can execute docker-pool runs.
 """
@@ -68,7 +68,7 @@ async def assign_docker_run(
         None, ensure_docker_image, client, image_tag, env_payload
     )
 
-    container_name = f"noodle-run-{run_id[:12]}"
+    container_name = f"nodyra-run-{run_id[:12]}"
     run_msg = json.dumps({
         "type": "run",
         "request_id": run_id,
@@ -104,7 +104,7 @@ async def assign_docker_run(
             ),
         )
 
-        # Attach to the container and drive the noodle_runtime protocol.
+        # Attach to the container and drive the nodyra_runtime protocol.
         # The run message is sent ONLY on the runtime's "ready" event below —
         # sending it earlier double-queued the run.
         sock = attach_raw_socket(await loop.run_in_executor(

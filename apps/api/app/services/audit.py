@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuditEvent
 
-_audit_logger = logging.getLogger("noodle.audit")
+_audit_logger = logging.getLogger("nodyra.audit")
 
 
 async def log_audit(

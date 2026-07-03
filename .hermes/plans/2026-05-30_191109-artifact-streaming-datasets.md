@@ -2,26 +2,26 @@
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** Make Noodle genuinely handle large datasets by passing durable dataset references through node outputs while processing large table/file data through artifacts, DuckDB scans, and streaming/chunked transforms instead of giant in-memory Python lists.
+**Goal:** Make Nodyra genuinely handle large datasets by passing durable dataset references through node outputs while processing large table/file data through artifacts, DuckDB scans, and streaming/chunked transforms instead of giant in-memory Python lists.
 
 **Architecture:** Keep existing inline JSON/Python values for small values. Add a first-class `DatasetRef` envelope for table-shaped large data that points at an artifact/local/S3 URI plus schema/preview metadata. New dataset nodes read/write CSV, JSONL, and Parquet through artifact-backed files and DuckDB SQL so workflows pass small control-plane refs while the data plane stays outside the DB.
 
-**Tech Stack:** Python 3.12, Noodle core serialization/artifacts, built-in `noodle_nodes`, DuckDB Python package, existing local/S3-compatible artifact backends, FastAPI schemas/UI rendering, pytest/uv.
+**Tech Stack:** Python 3.12, Nodyra core serialization/artifacts, built-in `nodyra_nodes`, DuckDB Python package, existing local/S3-compatible artifact backends, FastAPI schemas/UI rendering, pytest/uv.
 
 ---
 
 ## Current Context / Assumptions
 
-- Repo: `/mnt/d/noodle`
+- Repo: `/mnt/d/nodyra`
 - Current branch observed: `feat/orchestration-upgrades`
 - Current working tree is dirty. Before implementing, preserve unrelated edits and avoid broad formatting churn.
-  - Modified: `apps/api/app/models.py`, `apps/api/app/routers/nodes.py`, `apps/api/app/routers/runs.py`, `apps/api/app/routers/webhooks.py`, `apps/api/app/routers/workflows.py`, `apps/api/app/schemas.py`, `apps/api/app/services/runner.py`, `packages/core/noodle/engine.py`, `packages/core/noodle/models.py`
-  - Untracked: `.hermes/plans/2026-05-30_n8n-vs-noodle-architecture.md`, `apps/api/alembic/versions/0023_workflow_allow_concurrent.py`, `test_out.txt`
+  - Modified: `apps/api/app/models.py`, `apps/api/app/routers/nodes.py`, `apps/api/app/routers/runs.py`, `apps/api/app/routers/webhooks.py`, `apps/api/app/routers/workflows.py`, `apps/api/app/schemas.py`, `apps/api/app/services/runner.py`, `packages/core/nodyra/engine.py`, `packages/core/nodyra/models.py`
+  - Untracked: `.hermes/plans/2026-05-30_n8n-vs-nodyra-architecture.md`, `apps/api/alembic/versions/0023_workflow_allow_concurrent.py`, `test_out.txt`
 - Existing safety mechanisms:
   - Per-output persisted cap defaults to 256 KiB in `apps/api/app/config.py`.
   - Artifact caps default to 50 MiB / 100 artifacts per run.
   - DataFrame serialization previews only 100 rows and marks truncated DataFrames as non-restorable.
-- Existing built-in CSV nodes in `packages/nodes/noodle_nodes/transform_extra.py` materialize entire CSVs as strings/lists. Keep these for small values/backward compatibility; add new dataset nodes instead of silently changing semantics.
+- Existing built-in CSV nodes in `packages/nodes/nodyra_nodes/transform_extra.py` materialize entire CSVs as strings/lists. Keep these for small values/backward compatibility; add new dataset nodes instead of silently changing semantics.
 
 ---
 
@@ -49,7 +49,7 @@ Recommended default behavior:
 - **Inline small scalar/list/dict:** keep current behavior.
 - **Inline small table results:** allow small rows to return normally from existing nodes.
 - **Dataset nodes:** always return `DatasetRef`, even for small datasets, because their contract is table/file semantics.
-- **Auto-promotion:** optional later feature: if a Code node returns a list of dicts or DataFrame above a threshold, Noodle can suggest or convert to artifact/dataset ref.
+- **Auto-promotion:** optional later feature: if a Code node returns a list of dicts or DataFrame above a threshold, Nodyra can suggest or convert to artifact/dataset ref.
 
 Initial thresholds:
 
@@ -82,7 +82,7 @@ Create a JSON-compatible envelope similar to artifact refs:
 
 ```json
 {
-  "__noodle_dataset__": true,
+  "__nodyra_dataset__": true,
   "version": 1,
   "dataset_id": "...",
   "artifact_id": "...",
@@ -118,17 +118,17 @@ Important: a `DatasetRef` is also backed by an artifact row/file so existing ret
 
 Core:
 
-- Create: `packages/core/noodle/datasets.py`
-- Modify: `packages/core/noodle/serialization.py`
-- Modify: `packages/core/noodle/artifacts.py`
-- Modify: `packages/core/noodle/__init__.py`
+- Create: `packages/core/nodyra/datasets.py`
+- Modify: `packages/core/nodyra/serialization.py`
+- Modify: `packages/core/nodyra/artifacts.py`
+- Modify: `packages/core/nodyra/__init__.py`
 - Tests: `packages/core/tests/test_datasets.py`
 - Tests: `packages/core/tests/test_serialization.py`
 
 Built-in nodes:
 
-- Create: `packages/nodes/noodle_nodes/datasets.py`
-- Modify: `packages/nodes/noodle_nodes/__init__.py`
+- Create: `packages/nodes/nodyra_nodes/datasets.py`
+- Modify: `packages/nodes/nodyra_nodes/__init__.py`
 - Modify: `packages/nodes/pyproject.toml`
 - Tests: `packages/nodes/tests/test_datasets.py`
 
@@ -144,7 +144,7 @@ API / persistence / UI support:
 Frontend:
 
 - Modify: `apps/web/src/types.ts`
-- Modify likely output rendering component(s); identify exact files with `search_files("__noodle_typed__|output|artifact", path="/mnt/d/noodle/apps/web/src", file_glob="*.tsx")` before implementation
+- Modify likely output rendering component(s); identify exact files with `search_files("__nodyra_typed__|output|artifact", path="/mnt/d/nodyra/apps/web/src", file_glob="*.tsx")` before implementation
 - Add dataset card UI with preview/schema/download actions
 
 Docs:
@@ -162,7 +162,7 @@ Docs:
 
 **Files:**
 
-- Create: `packages/core/noodle/datasets.py`
+- Create: `packages/core/nodyra/datasets.py`
 - Test: `packages/core/tests/test_datasets.py`
 
 **Implementation sketch:**
@@ -172,7 +172,7 @@ from __future__ import annotations
 
 from typing import Any
 
-DATASET_MARKER = "__noodle_dataset__"
+DATASET_MARKER = "__nodyra_dataset__"
 DATASET_VERSION = 1
 
 
@@ -246,14 +246,14 @@ Expected: new tests pass.
 
 **Files:**
 
-- Modify: `packages/core/noodle/__init__.py`
+- Modify: `packages/core/nodyra/__init__.py`
 - Test: `packages/core/tests/test_datasets.py`
 
 **Steps:**
 
 1. Import `DATASET_MARKER`, `DATASET_VERSION`, `is_dataset_ref`, `make_dataset_ref`.
 2. Add them to `__all__`.
-3. Add test that `from noodle import is_dataset_ref` works.
+3. Add test that `from nodyra import is_dataset_ref` works.
 
 **Run:**
 
@@ -269,7 +269,7 @@ uv run pytest packages/core/tests/test_datasets.py -v
 
 **Files:**
 
-- Modify: `packages/core/noodle/serialization.py`
+- Modify: `packages/core/nodyra/serialization.py`
 - Test: `packages/core/tests/test_serialization.py`
 
 **Steps:**
@@ -300,7 +300,7 @@ uv run pytest packages/core/tests/test_serialization.py packages/core/tests/test
 
 **Files:**
 
-- Modify: `packages/core/noodle/artifacts.py`
+- Modify: `packages/core/nodyra/artifacts.py`
 - Test: `packages/core/tests/test_datasets.py` or create `packages/core/tests/test_artifacts.py` if absent
 
 **Current issue:** `LocalArtifactStore.write_bytes` converts data to bytes and writes it, which is okay for small files but not ideal for a 5 GB dataset.
@@ -355,7 +355,7 @@ uv run pytest packages/core/tests/test_datasets.py apps/api/tests/test_artifacts
 
 **Files:**
 
-- Modify: `packages/core/noodle/artifacts.py`
+- Modify: `packages/core/nodyra/artifacts.py`
 - Test: `packages/core/tests/test_datasets.py`
 
 **Steps:**
@@ -384,7 +384,7 @@ uv run pytest packages/core/tests/test_datasets.py apps/api/tests/test_artifacts
 
 ### Task 6: Add DuckDB dependency to built-in nodes
 
-**Objective:** Make DuckDB available wherever `noodle-nodes` is installed.
+**Objective:** Make DuckDB available wherever `nodyra-nodes` is installed.
 
 **Files:**
 
@@ -415,7 +415,7 @@ Expected: DuckDB imports successfully.
 
 **Files:**
 
-- Create: `packages/nodes/noodle_nodes/datasets.py`
+- Create: `packages/nodes/nodyra_nodes/datasets.py`
 - Test: `packages/nodes/tests/test_datasets.py`
 
 **Utilities to create:**
@@ -447,7 +447,7 @@ uv run pytest packages/nodes/tests/test_datasets.py -v
 
 **Files:**
 
-- Modify: `packages/nodes/noodle_nodes/datasets.py`
+- Modify: `packages/nodes/nodyra_nodes/datasets.py`
 - Test: `packages/nodes/tests/test_datasets.py`
 
 **Node contract:**
@@ -494,7 +494,7 @@ uv run pytest packages/nodes/tests/test_datasets.py -v
 
 **Files:**
 
-- Modify: `packages/nodes/noodle_nodes/datasets.py`
+- Modify: `packages/nodes/nodyra_nodes/datasets.py`
 - Test: `packages/nodes/tests/test_datasets.py`
 
 **Node contract:**
@@ -516,7 +516,7 @@ uv run pytest packages/nodes/tests/test_datasets.py -v
 
 **Files:**
 
-- Modify: `packages/nodes/noodle_nodes/datasets.py`
+- Modify: `packages/nodes/nodyra_nodes/datasets.py`
 - Test: `packages/nodes/tests/test_datasets.py`
 
 **Node contract:**
@@ -538,7 +538,7 @@ uv run pytest packages/nodes/tests/test_datasets.py -v
 
 **Files:**
 
-- Modify: `packages/nodes/noodle_nodes/datasets.py`
+- Modify: `packages/nodes/nodyra_nodes/datasets.py`
 - Test: `packages/nodes/tests/test_datasets.py`
 
 **Node contract:**
@@ -586,7 +586,7 @@ COPY (<user_sql>) TO '<tmp>.parquet' (FORMAT PARQUET)
 
 **Files:**
 
-- Modify: `packages/nodes/noodle_nodes/datasets.py`
+- Modify: `packages/nodes/nodyra_nodes/datasets.py`
 - Test: `packages/nodes/tests/test_datasets.py`
 
 **Nodes:**
@@ -607,7 +607,7 @@ COPY (<user_sql>) TO '<tmp>.parquet' (FORMAT PARQUET)
 
 **Files:**
 
-- Modify: `packages/nodes/noodle_nodes/datasets.py`
+- Modify: `packages/nodes/nodyra_nodes/datasets.py`
 - Test: `packages/nodes/tests/test_datasets.py`
 
 **Nodes:**
@@ -626,16 +626,16 @@ COPY (<user_sql>) TO '<tmp>.parquet' (FORMAT PARQUET)
 
 ### Task 14: Register dataset nodes
 
-**Objective:** Import dataset nodes when `noodle_nodes` is imported.
+**Objective:** Import dataset nodes when `nodyra_nodes` is imported.
 
 **Files:**
 
-- Modify: `packages/nodes/noodle_nodes/__init__.py`
+- Modify: `packages/nodes/nodyra_nodes/__init__.py`
 - Test: `apps/api/tests/test_nodes.py` or `packages/nodes/tests/test_datasets.py`
 
 **Steps:**
 
-1. Add `from noodle_nodes import datasets as datasets`.
+1. Add `from nodyra_nodes import datasets as datasets`.
 2. Add `"datasets"` to `__all__`.
 3. Test that registry includes `read_csv_dataset`, `duckdb_sql_dataset`, etc.
 
@@ -658,7 +658,7 @@ uv run pytest packages/nodes/tests/test_datasets.py apps/api/tests/test_nodes.py
 - Modify: `apps/api/app/services/artifacts.py`
 - Test: `apps/api/tests/test_artifacts.py`
 
-**Current:** `collect_artifact_refs` looks for `__noodle_artifact__` refs recursively.
+**Current:** `collect_artifact_refs` looks for `__nodyra_artifact__` refs recursively.
 
 **Change:** When it sees a `DatasetRef`, also collect the backing `artifact_id`/storage fields as an artifact ref, or make DatasetRef include a nested artifact ref.
 
@@ -725,7 +725,7 @@ uv run pytest packages/nodes/tests/test_datasets.py apps/api/tests/test_nodes.py
 
 ```ts
 export interface DatasetRef {
-  __noodle_dataset__: true;
+  __nodyra_dataset__: true;
   version: number;
   dataset_id: string;
   artifact_id: string;
@@ -747,7 +747,7 @@ export interface DatasetRef {
 
 **Files:**
 
-- Identify with: `search_files("__noodle_typed__|artifact|output", path="apps/web/src", file_glob="*.tsx")`
+- Identify with: `search_files("__nodyra_typed__|artifact|output", path="apps/web/src", file_glob="*.tsx")`
 - Modify likely output/detail panel component.
 
 **UI card contents:**

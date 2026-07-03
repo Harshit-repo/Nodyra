@@ -9,8 +9,8 @@ import type { MCPConnection, NodeManifest } from "../types";
 import { cachedMcpTools, McpToolsSection } from "./McpToolsSection";
 import { isTriggerManifest, useEditor } from "./store";
 
-const FAVORITES_KEY = "noodle_palette_favorites";
-const RECENTS_KEY = "noodle_palette_recent";
+const FAVORITES_KEY = "nodyra_palette_favorites";
+const RECENTS_KEY = "nodyra_palette_recent";
 const MAX_RECENTS = 8;
 
 function readStoredList(key: string): string[] {
@@ -251,7 +251,7 @@ const PaletteItem = memo(function PaletteItem({
       className={`palette-item${active ? " active" : ""}${isAiGenerated ? " palette-item--ai" : ""}`}
       draggable
       onDragStart={(e) => {
-        e.dataTransfer.setData("application/noodle", node.id);
+        e.dataTransfer.setData("application/nodyra", node.id);
         e.dataTransfer.effectAllowed = "move";
         onUsed(node.id);
       }}
@@ -310,9 +310,9 @@ const PaletteItem = memo(function PaletteItem({
   );
 });
 
-const COLLAPSED_KEY = "noodle_palette_collapsed";
-const EXPANDED_GROUPS_KEY = "noodle_palette_expanded_groups";
-const COLLAPSED_QUICK_KEY = "noodle_palette_collapsed_quick";
+const COLLAPSED_KEY = "nodyra_palette_collapsed";
+const EXPANDED_GROUPS_KEY = "nodyra_palette_expanded_groups";
+const COLLAPSED_QUICK_KEY = "nodyra_palette_collapsed_quick";
 const DEFAULT_EXPANDED_GROUPS: string[] = [];
 
 export function NodePalette() {
@@ -414,8 +414,8 @@ export function NodePalette() {
       }
       searchRef.current?.focus();
     }
-    window.addEventListener("noodle:focus-node-search", focusSearch);
-    return () => window.removeEventListener("noodle:focus-node-search", focusSearch);
+    window.addEventListener("nodyra:focus-node-search", focusSearch);
+    return () => window.removeEventListener("nodyra:focus-node-search", focusSearch);
   }, [collapsed]);
 
   useEffect(() => {
@@ -426,9 +426,9 @@ export function NodePalette() {
         return next;
       });
     }
-    window.addEventListener("noodle:toggle-node-palette", toggleNodePalette);
+    window.addEventListener("nodyra:toggle-node-palette", toggleNodePalette);
     return () =>
-      window.removeEventListener("noodle:toggle-node-palette", toggleNodePalette);
+      window.removeEventListener("nodyra:toggle-node-palette", toggleNodePalette);
   }, []);
 
   const installMcpManifests = useCallback(
@@ -870,7 +870,7 @@ export function NodePalette() {
       <button
         type="button"
         className="palette-generate-btn"
-        onClick={() => window.dispatchEvent(new Event("noodle:open-generate-modal"))}
+        onClick={() => window.dispatchEvent(new Event("nodyra:open-generate-modal"))}
       >
         <Sparkle size={14} weight="fill" />
         Generate Node

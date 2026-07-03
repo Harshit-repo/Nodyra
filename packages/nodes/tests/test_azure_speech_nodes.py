@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle_nodes.azure_speech_nodes import (
+from nodyra_nodes.azure_speech_nodes import (
     _get_creds,
     _resolve_audio_bytes,
     _xml_escape,
@@ -216,7 +216,7 @@ class TestAzureTTS:
 
         mock_write_bytes = MagicMock(return_value={"kind": "audio", "name": "azure_speech.mp3"})
         with _patch_sdk(sdk):
-            with patch("noodle_nodes.azure_speech_nodes.write_bytes", mock_write_bytes):
+            with patch("nodyra_nodes.azure_speech_nodes.write_bytes", mock_write_bytes):
                 result = azure_ai_speech(
                     credentials=CREDS,
                     mode="tts",
@@ -233,7 +233,7 @@ class TestAzureTTS:
 
         mock_write_bytes = MagicMock(return_value={"kind": "audio"})
         with _patch_sdk(sdk):
-            with patch("noodle_nodes.azure_speech_nodes.write_bytes", mock_write_bytes):
+            with patch("nodyra_nodes.azure_speech_nodes.write_bytes", mock_write_bytes):
                 azure_ai_speech(
                     credentials=CREDS,
                     mode="tts",
@@ -250,7 +250,7 @@ class TestAzureTTS:
 
         mock_write_bytes = MagicMock(return_value={"kind": "audio"})
         with _patch_sdk(sdk):
-            with patch("noodle_nodes.azure_speech_nodes.write_bytes", mock_write_bytes):
+            with patch("nodyra_nodes.azure_speech_nodes.write_bytes", mock_write_bytes):
                 azure_ai_speech(
                     credentials=CREDS,
                     mode="tts",
@@ -271,7 +271,7 @@ class TestAzureTTS:
 
         mock_write_bytes = MagicMock(return_value={"kind": "audio"})
         with _patch_sdk(sdk):
-            with patch("noodle_nodes.azure_speech_nodes.write_bytes", mock_write_bytes):
+            with patch("nodyra_nodes.azure_speech_nodes.write_bytes", mock_write_bytes):
                 azure_ai_speech(
                     credentials=CREDS,
                     mode="tts",
@@ -287,7 +287,7 @@ class TestAzureTTS:
 
         mock_write_bytes = MagicMock(return_value={"kind": "audio"})
         with _patch_sdk(sdk):
-            with patch("noodle_nodes.azure_speech_nodes.write_bytes", mock_write_bytes):
+            with patch("nodyra_nodes.azure_speech_nodes.write_bytes", mock_write_bytes):
                 azure_ai_speech(
                     credentials=CREDS,
                     mode="tts",

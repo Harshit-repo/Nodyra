@@ -32,8 +32,8 @@ from app.security import optional_current_user, require_permission
 from app.services.ai_builder import generate_custom_node
 from app.services.audit import log_audit
 from app.services.starter_graph import build_starter_graph
-from noodle.models import NodeManifest
-from noodle.sdk import discover_module_function_manifests, discover_module_nodes
+from nodyra.models import NodeManifest
+from nodyra.sdk import discover_module_function_manifests, discover_module_nodes
 
 # A small import-name → pip-name map for common quirks. Anything not in here
 # falls back to assuming the pip name matches the import name (true for

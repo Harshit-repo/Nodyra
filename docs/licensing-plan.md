@@ -1,11 +1,11 @@
-# Noodle Licensing & Feature-Gating Plan (Open-Core)
+# Nodyra Licensing & Feature-Gating Plan (Open-Core)
 
 > Status: **PLAN ONLY — not implemented.** This document describes how to add
-> license-gated feature limits to self-hosted Noodle. Nothing here is built yet.
+> license-gated feature limits to self-hosted Nodyra. Nothing here is built yet.
 
 ## 1. Goal & Strategy
 
-Monetize self-hosted Noodle via an **open-core** model: the product stays fully
+Monetize self-hosted Nodyra via an **open-core** model: the product stays fully
 self-hostable and free for small/personal use (the **Community** tier), while
 higher resource ceilings and a set of "operate-at-scale / enterprise" features
 require a paid **license key**.
@@ -78,7 +78,7 @@ A license is a single opaque string the customer pastes into Settings. Internall
 it is two base64url parts joined by a dot: `payload.signature`.
 
 ```
-NOODLE-LICENSE-v1.<base64url(payload_json)>.<base64url(ed25519_sig)>
+NODYRA-LICENSE-v1.<base64url(payload_json)>.<base64url(ed25519_sig)>
 ```
 
 `payload_json` (signed, tamper-proof):
@@ -123,7 +123,7 @@ NOODLE-LICENSE-v1.<base64url(payload_json)>.<base64url(ed25519_sig)>
 | `apps/api/app/services/licensing.py` | Core: embed public key, `parse_and_verify(token)`, `get_active_license()` (reads `system_settings.license_key`, caches), `effective_limits()`, `has_feature(name)`, tier-default `LIMITS` table, and `enforce_*` helpers raising HTTP 402. |
 | `apps/api/app/routers/license.py` | `GET /license` (current tier, licensee, expiry, effective limits, current usage counts) and `PUT /license` (admin pastes/updates key; validates before saving; invalidates cache). |
 | `apps/api/alembic/versions/0031_license_key.py` | Adds `system_settings.license_key TEXT NOT NULL DEFAULT ''`. Idempotent inspector guard like 0030. |
-| `scripts/issue_license.py` | **Vendor CLI.** Reads private key from `NOODLE_LICENSE_SIGNING_KEY` (or `.secrets/…`), takes `--tier --licensee --expires --limit k=v --feature x`, prints the signed license string. Never shipped to customers. |
+| `scripts/issue_license.py` | **Vendor CLI.** Reads private key from `NODYRA_LICENSE_SIGNING_KEY` (or `.secrets/…`), takes `--tier --licensee --expires --limit k=v --feature x`, prints the signed license string. Never shipped to customers. |
 | `apps/api/tests/test_licensing.py` | Unit tests: valid/invalid/expired/forged tokens; each enforced limit blocks at threshold; a valid Pro license raises the ceiling; `0 = unlimited`. |
 
 ### Changed files
@@ -212,7 +212,7 @@ async def enforce_limit(session, *, count_query, limit_key, label):
 
 ## 8. Out of Scope (explicitly deferred)
 - Cloud/SaaS multi-tenancy, billing integration (Stripe), per-tenant isolation,
-  sandboxing — these belong to the later **Noodle Cloud** effort, not this
+  sandboxing — these belong to the later **Nodyra Cloud** effort, not this
   self-hosted licensing work.
 - Online license activation / revocation server.
 - Usage-based metering/billing.
@@ -224,7 +224,7 @@ async def enforce_limit(session, *, count_query, limit_key, label):
 > **Why this section exists:** the *feature-gate license keys* described above are
 > only enforceable if the **source code itself** carries a license that (a) lets
 > people legally self-host the free product, and (b) forbids circumventing the
-> paid gates or reselling Noodle as a hosted service. Today the repo has **no
+> paid gates or reselling Nodyra as a hosted service. Today the repo has **no
 > `LICENSE` file at all**, which under copyright law means *all rights reserved* —
 > nobody may legally use, modify, or self-host it. That must be fixed for the
 > open-core plan to work.
@@ -233,12 +233,12 @@ async def enforce_limit(session, *, count_query, limit_key, label):
 
 | Layer | Scope | License | Rationale |
 |-------|-------|---------|-----------|
-| **Core** | Everything except the `ee/` enterprise modules | **Business Source License 1.1** (BSL) with an Additional Use Grant permitting all use *except* offering Noodle as a hosted/managed service to third parties; **Change Date** = 4 years after each release → converts to **Apache 2.0** | Free to self-host & use internally; blocks a competitor from cloning "Noodle Cloud"; auto-opens over time so it's not permanently proprietary. Same approach as Sentry, MariaDB, (now) Terraform/Redis. |
-| **Enterprise** | The licensing/enforcement code and paid features (`app/services/licensing.py`, SSO, audit export, external secrets, etc.) — by convention under an `ee/` path or clearly marked modules | **Proprietary "Noodle Enterprise Edition License"** — usable only with a valid license key | Makes stripping out or circumventing the gate a clear license violation, not just bad manners. Same as GitLab's `ee/` folder. |
+| **Core** | Everything except the `ee/` enterprise modules | **Business Source License 1.1** (BSL) with an Additional Use Grant permitting all use *except* offering Nodyra as a hosted/managed service to third parties; **Change Date** = 4 years after each release → converts to **Apache 2.0** | Free to self-host & use internally; blocks a competitor from cloning "Nodyra Cloud"; auto-opens over time so it's not permanently proprietary. Same approach as Sentry, MariaDB, (now) Terraform/Redis. |
+| **Enterprise** | The licensing/enforcement code and paid features (`app/services/licensing.py`, SSO, audit export, external secrets, etc.) — by convention under an `ee/` path or clearly marked modules | **Proprietary "Nodyra Enterprise Edition License"** — usable only with a valid license key | Makes stripping out or circumventing the gate a clear license violation, not just bad manners. Same as GitLab's `ee/` folder. |
 
 ### Why not the alternatives
 - **MIT / Apache-only (permissive):** anyone — including a hyperscaler — can take
-  the whole codebase, delete `licensing.py`, and sell a competing hosted Noodle.
+  the whole codebase, delete `licensing.py`, and sell a competing hosted Nodyra.
   This is exactly what pushed Elastic, MongoDB, Redis, HashiCorp to relicense.
   Only choose pure Apache 2.0 if community trust + distro inclusion matter more
   than blocking competitors, and you rely on brand + hosted convenience as the moat.
@@ -247,15 +247,15 @@ async def enforce_limit(session, *, count_query, limit_key, label):
   determined competitor who is willing to open their changes.
 
 ### Trademark (cheapest, strongest lever)
-- Register / assert the **"Noodle" name and logo** independently of the code
-  license. Even a permitted fork **may not call itself "Noodle."** This protects
+- Register / assert the **"Nodyra" name and logo** independently of the code
+  license. Even a permitted fork **may not call itself "Nodyra."** This protects
   the brand regardless of which code license is chosen. Add a `TRADEMARK.md`.
 
 ### Files to add (drafted alongside this plan)
 | File | Content |
 |------|---------|
-| `LICENSE` | BSL 1.1 filled in with Noodle parameters (Licensor, Change Date, Change License = Apache 2.0, Additional Use Grant). |
-| `LICENSE.enterprise` | Proprietary Noodle Enterprise Edition License covering `ee/`-marked modules and the license-key system. |
+| `LICENSE` | BSL 1.1 filled in with Nodyra parameters (Licensor, Change Date, Change License = Apache 2.0, Additional Use Grant). |
+| `LICENSE.enterprise` | Proprietary Nodyra Enterprise Edition License covering `ee/`-marked modules and the license-key system. |
 | `TRADEMARK.md` | Short policy: the name/logo are trademarks; forks must rename. |
 | `pyproject.toml` (`license` field) + file headers | Reference the chosen licenses so packaging metadata is accurate. |
 
@@ -263,7 +263,7 @@ async def enforce_limit(session, *, count_query, limit_key, label):
 - `app/services/licensing.py` and the enterprise features are **covered by
   `LICENSE.enterprise`**, so removing/bypassing the key check is a breach of that
   license — the legal teeth behind the technical Ed25519 verification.
-- The BSL **Additional Use Grant** is the clause that stops "Noodle Cloud
+- The BSL **Additional Use Grant** is the clause that stops "Nodyra Cloud
   competitors"; the **Change Date → Apache 2.0** keeps the community comfortable
   that it isn't locked up forever.
 

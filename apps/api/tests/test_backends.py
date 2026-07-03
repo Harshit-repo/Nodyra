@@ -125,7 +125,7 @@ async def test_conda_build_calls_micromamba_with_channels(tmp_path) -> None:
     with patch("app.services.backends.conda._run", side_effect=mock_run):
         with patch("app.services.backends.conda.ensure_tool", return_value=fake_solver):
             with patch("app.services.backends.conda.venv_dir", return_value=tmp_path / "env"):
-                with patch("app.services.backends.conda.local_noodle_packages", return_value=[]):
+                with patch("app.services.backends.conda.local_nodyra_packages", return_value=[]):
                     b = CondaBackend()
                     status, _ = await b.build(env)
 
@@ -220,7 +220,7 @@ def test_pixi_write_toml_puts_conda_in_dependencies(tmp_path) -> None:
     _write_pixi_toml(toml_path, env)
     content = toml_path.read_text()
 
-    assert 'name = "noodle-env-pixi-test"' in content
+    assert 'name = "nodyra-env-pixi-test"' in content
     assert '"conda-forge"' in content
     assert "3.12" in content
     assert "[dependencies]" in content
@@ -292,7 +292,7 @@ async def test_pixi_build_calls_pixi_install(tmp_path) -> None:
     with patch("app.services.backends.pixi._run", side_effect=mock_run):
         with patch("app.services.backends.pixi.ensure_tool", return_value=fake_pixi):
             with patch("app.services.backends.pixi.venv_dir", return_value=tmp_path / "env"):
-                with patch("app.services.backends.pixi.local_noodle_packages", return_value=[]):
+                with patch("app.services.backends.pixi.local_nodyra_packages", return_value=[]):
                     b = PixiBackend()
                     status, _ = await b.build(env)
 
@@ -314,7 +314,7 @@ async def test_pixi_build_incremental_add_when_env_exists(tmp_path) -> None:
 
     # Existing pixi.toml with numpy already installed
     toml_content = (
-        '[project]\nname = "noodle-env-test"\nchannels = ["conda-forge"]\n'
+        '[project]\nname = "nodyra-env-test"\nchannels = ["conda-forge"]\n'
         'platforms = ["linux-64"]\n\n[dependencies]\npython = "3.12.*"\nnumpy = "*"\n'
     )
     (env_dir / "pixi.toml").write_text(toml_content)
@@ -362,7 +362,7 @@ async def test_pixi_build_full_rebuild_on_removal(tmp_path) -> None:
     env_dir.mkdir()
 
     toml_content = (
-        '[project]\nname = "noodle-env-test"\nchannels = ["conda-forge"]\n'
+        '[project]\nname = "nodyra-env-test"\nchannels = ["conda-forge"]\n'
         'platforms = ["linux-64"]\n\n[dependencies]\npython = "3.12.*"\n'
         'numpy = "*"\npandas = "*"\n'
     )
@@ -389,7 +389,7 @@ async def test_pixi_build_full_rebuild_on_removal(tmp_path) -> None:
     with patch("app.services.backends.pixi._run", side_effect=mock_run):
         with patch("app.services.backends.pixi.ensure_tool", return_value=fake_pixi):
             with patch("app.services.backends.pixi.venv_dir", return_value=env_dir):
-                with patch("app.services.backends.pixi.local_noodle_packages", return_value=[]):
+                with patch("app.services.backends.pixi.local_nodyra_packages", return_value=[]):
                     with patch("sys.platform", "linux"):
                         b = PixiBackend()
                         status, _ = await b.build(env)

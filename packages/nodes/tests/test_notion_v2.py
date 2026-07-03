@@ -3,9 +3,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - importing registers provider nodes
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.providers.notion import operations
+import nodyra_nodes  # noqa: F401 - importing registers provider nodes
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.providers.notion import operations
 
 
 def _mock_transport(return_value: Any) -> MagicMock:
@@ -45,7 +45,7 @@ def test_notion_v2_node_is_registered() -> None:
 
 
 def test_notion_v2_generated_source_is_available() -> None:
-    source = getattr(registry.get("notion_create_page_v2").func, "__noodle_source__", "")
+    source = getattr(registry.get("notion_create_page_v2").func, "__nodyra_source__", "")
 
     assert "def notion_create_page_v2(" in source
     assert "credentials=None" in source

@@ -33,8 +33,8 @@ const PLANNER_PROVIDERS = LLM_PROVIDER_VARIANTS.filter(
   (variant) => variant.value === "openai" || variant.value === "anthropic",
 );
 
-const PROVIDER_KEY = "noodle.assistant.provider";
-const MODEL_KEY = "noodle.assistant.model";
+const PROVIDER_KEY = "nodyra.assistant.provider";
+const MODEL_KEY = "nodyra.assistant.model";
 
 function readStored(key: string): string {
   return safeGetItem(key) ?? "";

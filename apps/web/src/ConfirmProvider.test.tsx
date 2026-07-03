@@ -105,9 +105,9 @@ describe("ConfirmProvider", () => {
     // Now trigger prompt dialog
     fireEvent.click(screen.getByRole("button", { name: "trigger-prompt" }));
     fireEvent.change(await screen.findByLabelText("Name"), {
-      target: { value: "Noodle" },
+      target: { value: "Nodyra" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    expect(await screen.findByText("Noodle")).toBeTruthy();
+    expect(await screen.findByText("Nodyra")).toBeTruthy();
   });
 });

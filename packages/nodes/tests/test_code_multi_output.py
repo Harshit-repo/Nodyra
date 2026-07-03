@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-import noodle_nodes  # noqa: F401
-from noodle.engine import execute
-from noodle.models import GraphNode, NodeStatus, WorkflowGraph
-from noodle.sdk import registry
-from noodle_nodes.builtin import (
+import nodyra_nodes  # noqa: F401
+from nodyra.engine import execute
+from nodyra.models import GraphNode, NodeStatus, WorkflowGraph
+from nodyra.sdk import registry
+from nodyra_nodes.builtin import (
     _collect_code_outputs,
     discover_code_output_ports,
 )

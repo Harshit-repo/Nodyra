@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle.sdk import registry
-from noodle_nodes.datasets import csv_parse, csv_write, dataset_to_records
-from noodle_nodes.transform_extra import (
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra.sdk import registry
+from nodyra_nodes.datasets import csv_parse, csv_write, dataset_to_records
+from nodyra_nodes.transform_extra import (
     decrypt_fernet,
     encrypt_fernet,
     gzip_compress,
@@ -95,8 +95,8 @@ def test_template_render_autoescape() -> None:
 
 
 def _with_store(tmp_path):
-    from noodle.artifacts import LocalArtifactStore
-    from noodle.context import artifact_store, current_node_id
+    from nodyra.artifacts import LocalArtifactStore
+    from nodyra.context import artifact_store, current_node_id
 
     store = LocalArtifactStore(tmp_path, run_id="test-run")
     a = artifact_store.set(store)
@@ -105,8 +105,8 @@ def _with_store(tmp_path):
 
 
 def test_csv_parse_with_header_returns_dataset_ref(tmp_path) -> None:
-    from noodle.context import artifact_store, current_node_id
-    from noodle.datasets import is_dataset_ref
+    from nodyra.context import artifact_store, current_node_id
+    from nodyra.datasets import is_dataset_ref
 
     _, a, n = _with_store(tmp_path)
     try:
@@ -122,8 +122,8 @@ def test_csv_parse_with_header_returns_dataset_ref(tmp_path) -> None:
 
 
 def test_csv_write_dataset_returns_artifact_ref(tmp_path) -> None:
-    from noodle.artifacts import is_artifact_ref
-    from noodle.context import artifact_store, current_node_id
+    from nodyra.artifacts import is_artifact_ref
+    from nodyra.context import artifact_store, current_node_id
 
     _, a, n = _with_store(tmp_path)
     try:

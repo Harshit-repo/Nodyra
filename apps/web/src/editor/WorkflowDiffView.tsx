@@ -3,7 +3,7 @@ import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Panel } fr
 import type { Edge, Node } from "@xyflow/react";
 import { api } from "../api";
 import type { WorkflowGraph, WorkflowVersionInfo, DiffStatus } from "../types";
-import { useEditor, graphNodeToNode, graphEdgeToEdge, type NoodleNode } from "./store";
+import { useEditor, graphNodeToNode, graphEdgeToEdge, type NodyraNode } from "./store";
 import { DiffContext, diffWorkflowGraphs } from "./diffWorkflowGraphs";
 import { diffNodeTypes, diffEdgeTypes } from "./nodeTypes";
 import { DiffSummaryBar } from "./DiffSummaryBar";
@@ -76,12 +76,12 @@ export function GraphDiffView({
         shownNodeIds.add(gn.id);
         return graphNodeToNode(gn, manifestsById);
       })
-      .filter((n): n is NoodleNode => n !== null);
+      .filter((n): n is NodyraNode => n !== null);
 
     const ghostRF = result.removedNodes
       .filter((gn) => rejectedNodeIds?.has(gn.id))
       .map((gn) => graphNodeToNode({ ...gn, position: gn.position ?? { x: 0, y: 0 } }, manifestsById))
-      .filter((n): n is NoodleNode => n !== null);
+      .filter((n): n is NodyraNode => n !== null);
     ghostRF.forEach((n) => shownNodeIds.add(n.id));
 
     const allNodes = [...compareRF, ...ghostRF];
@@ -119,7 +119,7 @@ export function GraphDiffView({
       ? result.changedParams[selectedNodeId]
       : null;
   const selectedNodeLabel =
-    (renderNodes.find((n) => n.id === selectedNodeId) as NoodleNode | undefined)?.data.label;
+    (renderNodes.find((n) => n.id === selectedNodeId) as NodyraNode | undefined)?.data.label;
 
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -212,9 +212,9 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
   // useMemo ensures reference equality is preserved across re-renders so that
   // downstream memos (result, statusMap) don't recompute unless the draft changes.
   const draftGraph = useMemo((): WorkflowGraph => ({
-    nodes: draftNodes.map((n: NoodleNode) => ({
+    nodes: draftNodes.map((n: NodyraNode) => ({
       id: n.id,
-      type: n.type ?? "noodle",
+      type: n.type ?? "nodyra",
       params: n.data.params,
       position: n.position,
       disabled: n.data.disabled,
@@ -294,7 +294,7 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
     [result],
   );
 
-  // Memoize the ReactFlow node/edge lists — converting GraphNode→NoodleNode via
+  // Memoize the ReactFlow node/edge lists — converting GraphNode→NodyraNode via
   // graphNodeToNode is expensive and only changes when the diff result changes.
   const { renderNodes, renderEdges, truncated } = useMemo(() => {
     if (!result || !compareGraph || !baseGraph) {
@@ -303,10 +303,10 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
 
     const compareRF = compareGraph.nodes
       .map((gn) => graphNodeToNode(gn, manifestsById))
-      .filter((n): n is NoodleNode => n !== null);
+      .filter((n): n is NodyraNode => n !== null);
     const ghostRF = result.removedNodes
       .map((gn) => graphNodeToNode({ ...gn, position: gn.position ?? { x: 0, y: 0 } }, manifestsById))
-      .filter((n): n is NoodleNode => n !== null);
+      .filter((n): n is NodyraNode => n !== null);
 
     const allNodes = [...compareRF, ...ghostRF];
     const isTruncated = allNodes.length > MAX_RENDER_NODES;
@@ -344,7 +344,7 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
       : null;
 
   const selectedNodeLabel =
-    (renderNodes.find((n) => n.id === selectedNodeId) as NoodleNode | undefined)?.data.label;
+    (renderNodes.find((n) => n.id === selectedNodeId) as NodyraNode | undefined)?.data.label;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

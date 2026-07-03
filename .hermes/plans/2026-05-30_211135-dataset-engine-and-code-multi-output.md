@@ -2,22 +2,22 @@
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** Make Noodle handle large table/file workloads predictably by introducing first-class `DatasetRef`s, DuckDB/Parquet-backed dataset nodes, artifact-backed files/bytes, and a Code node that can intentionally produce multiple named outputs without forcing large data through inline JSON.
+**Goal:** Make Nodyra handle large table/file workloads predictably by introducing first-class `DatasetRef`s, DuckDB/Parquet-backed dataset nodes, artifact-backed files/bytes, and a Code node that can intentionally produce multiple named outputs without forcing large data through inline JSON.
 
-**Architecture:** Split Noodle values into a small inline control plane and an artifact-backed data plane. Built-in table/file nodes use explicit node contracts and always return `DatasetRef`/`ArtifactRef` where appropriate; the runtime only guesses for ambiguous custom/code outputs via conservative auto-promotion. Because the product has no users, this plan intentionally chooses clean breaking semantics over compatibility with old `csv_parse -> list[dict]` / `csv_write -> str` behavior.
+**Architecture:** Split Nodyra values into a small inline control plane and an artifact-backed data plane. Built-in table/file nodes use explicit node contracts and always return `DatasetRef`/`ArtifactRef` where appropriate; the runtime only guesses for ambiguous custom/code outputs via conservative auto-promotion. Because the product has no users, this plan intentionally chooses clean breaking semantics over compatibility with old `csv_parse -> list[dict]` / `csv_write -> str` behavior.
 
-**Tech Stack:** Python 3.12, Pydantic, FastAPI, SQLAlchemy, existing Noodle SDK/runtime, DuckDB, Parquet, existing artifact APIs, React/Vite editor.
+**Tech Stack:** Python 3.12, Pydantic, FastAPI, SQLAlchemy, existing Nodyra SDK/runtime, DuckDB, Parquet, existing artifact APIs, React/Vite editor.
 
 ---
 
 ## Executive decisions
 
 1. **Yes, add dataset processing nodes.** Join, sort, group-by, filter, select, limit, sample, dedupe, union, append, SQL, preview, and import/export should all exist as dataset-aware nodes.
-2. **Do not make Noodle guess every “heavy” node.** Heavy behavior is primarily known from node contracts: dataset nodes declare dataset inputs/outputs and always use `DatasetRef`s.
+2. **Do not make Nodyra guess every “heavy” node.** Heavy behavior is primarily known from node contracts: dataset nodes declare dataset inputs/outputs and always use `DatasetRef`s.
 3. **Parquet is the internal table format.** CSV/JSONL/Excel/API records are import/export shapes; internal table processing should normalize to Parquet unless a node is explicitly exporting.
 4. **Inline values are still valid.** Booleans, numbers, short strings, small config objects, control-flow payloads, and status objects stay inline.
 5. **Table-shaped data from dataset nodes is never inline by default.** Even tiny CSV reads return `DatasetRef`; users use explicit extraction nodes to produce inline rows.
-6. **Code node should support multiple outputs.** Noodle already has engine support for multi-output nodes via `outputs_override`; Code should expose it cleanly in the UI/runtime.
+6. **Code node should support multiple outputs.** Nodyra already has engine support for multi-output nodes via `outputs_override`; Code should expose it cleanly in the UI/runtime.
 7. **Code output should be auto-promoted.** DataFrames become Parquet-backed `DatasetRef`s; large row-shaped arrays become `DatasetRef`s; large bytes/text become `ArtifactRef`s; small control values remain inline.
 8. **No backward compatibility.** Replace old CSV/table node semantics now rather than carrying parallel “legacy” and “dataset” node families.
 
@@ -25,30 +25,30 @@
 
 ## Current codebase facts observed
 
-- `packages/core/noodle/sdk.py`
+- `packages/core/nodyra/sdk.py`
   - `@node(outputs=[...])` already supports declared multiple outputs.
   - Multi-output nodes must return a dict keyed by output names.
   - `GraphNode.outputs_override` already exists and can dynamically define output port names.
   - Uploaded user module functions currently always preview/register as one `main` output.
-- `packages/core/noodle/models.py`
+- `packages/core/nodyra/models.py`
   - `NodeManifest` has `inputs`, `params`, `outputs`, but ports do not currently carry data-kind metadata.
   - `GraphNode.outputs_override` already exists.
-- `packages/core/noodle/engine.py`
+- `packages/core/nodyra/engine.py`
   - `_normalize_outputs()` already supports multi-output nodes and `outputs_override`.
   - Code nodes are process-isolated by node type `code`.
   - Node output size capping currently JSON-dumps outputs and errors if above cap; this must run after auto-promotion, not before.
-- `packages/nodes/noodle_nodes/builtin.py`
+- `packages/nodes/nodyra_nodes/builtin.py`
   - Code node currently accepts `input` and `code`, executes Python, and returns `namespace.get("output")` only.
   - Code node docs tell users to assign `output`.
   - It passes `artifacts` to user code.
-- `packages/nodes/noodle_nodes/transform_extra.py`
+- `packages/nodes/nodyra_nodes/transform_extra.py`
   - `csv_parse` currently materializes all CSV rows as a Python list.
   - `csv_write` currently materializes a full CSV string.
   - These are exactly the semantics to replace.
-- `packages/core/noodle/artifacts.py`
+- `packages/core/nodyra/artifacts.py`
   - Existing `LocalArtifactStore` writes bytes and returns JSON-compatible artifact refs.
   - Existing `write_dataframe()` only supports CSV/JSON and materializes the whole payload; it should move to Parquet/DatasetRef for table data.
-- `packages/core/noodle/serialization.py`
+- `packages/core/nodyra/serialization.py`
   - DataFrames currently serialize as typed preview envelopes with a default 100-row preview.
   - Truncated DataFrames are marked non-restorable.
   - This is useful for UI preview, but not sufficient for data-plane processing.
@@ -112,11 +112,11 @@ Suggested shape:
 
 ```json
 {
-  "__noodle_dataset__": true,
+  "__nodyra_dataset__": true,
   "version": 1,
   "dataset_id": "uuid-or-artifact-id",
   "artifact": {
-    "__noodle_artifact__": true,
+    "__nodyra_artifact__": true,
     "version": 1,
     "artifact_id": "...",
     "run_id": "...",
@@ -162,7 +162,7 @@ Implementation notes:
 
 ---
 
-## Node contract model: how Noodle knows what is heavy
+## Node contract model: how Nodyra knows what is heavy
 
 Add data-kind metadata to port specs and manifests.
 
@@ -443,8 +443,8 @@ Add dependencies to `packages/nodes/pyproject.toml` or core if helpers live ther
 
 Core helper module options:
 
-- `packages/core/noodle/datasets.py` for `DatasetRef`, detection, writing, schema, preview helpers.
-- `packages/nodes/noodle_nodes/datasets.py` for node definitions.
+- `packages/core/nodyra/datasets.py` for `DatasetRef`, detection, writing, schema, preview helpers.
+- `packages/nodes/nodyra_nodes/datasets.py` for node definitions.
 
 Recommended split:
 
@@ -636,9 +636,9 @@ Path safety:
 
 **Task 1.1: Add core dataset envelope helpers**
 
-- Create: `packages/core/noodle/datasets.py`.
+- Create: `packages/core/nodyra/datasets.py`.
 - Implement:
-  - `DATASET_MARKER = "__noodle_dataset__"`
+  - `DATASET_MARKER = "__nodyra_dataset__"`
   - `DATASET_VERSION = 1`
   - `is_dataset_ref(value)`
   - `make_dataset_ref(...)`
@@ -649,7 +649,7 @@ Path safety:
 
 **Task 1.2: Teach serialization to preserve DatasetRefs**
 
-- Modify: `packages/core/noodle/serialization.py`.
+- Modify: `packages/core/nodyra/serialization.py`.
 - Behavior:
   - `serialize_value(dataset_ref)` returns it as-is after serializing preview/schema safely.
   - `deserialize_value(dataset_ref)` returns it as-is.
@@ -658,14 +658,14 @@ Path safety:
 
 **Task 1.3: Add port data kinds**
 
-- Modify: `packages/core/noodle/models.py`.
+- Modify: `packages/core/nodyra/models.py`.
 - Add `PortDataKind` enum and optional `data_kind` field on `PortSpec`.
 - Keep default `any` so existing manifests validate.
 - Tests: `packages/core/tests/test_sdk.py` or existing SDK tests.
 
 **Task 1.4: Extend SDK decorator for port kinds**
 
-- Modify: `packages/core/noodle/sdk.py`.
+- Modify: `packages/core/nodyra/sdk.py`.
 - Add optional `input_kinds: dict[str, str] | None` and `output_kinds: dict[str, str] | None` to `node()`.
 - `_build_manifest()` sets `PortSpec(data_kind=...)`.
 - Static user function discovery remains `any` for now.
@@ -673,7 +673,7 @@ Path safety:
 
 **Task 1.5: Runtime validation for declared dataset/artifact ports**
 
-- Modify: `packages/core/noodle/engine.py`.
+- Modify: `packages/core/nodyra/engine.py`.
 - Before function call, validate wired inputs for ports with `data_kind=dataset/artifact`.
 - After output normalization/promotion, validate outputs for declared kind.
 - Error messages must tell user which conversion node to add.
@@ -683,7 +683,7 @@ Path safety:
 
 **Task 2.1: Add safe artifact write-path support**
 
-- Modify: `packages/core/noodle/artifacts.py`.
+- Modify: `packages/core/nodyra/artifacts.py`.
 - Existing store only exposes `write_bytes`, which materializes data.
 - Add a helper such as `reserve_path(name, content_type, kind, metadata)` or `write_file_from_path(path, ...)`.
 - Need to create artifact ref after DuckDB writes to path without reading whole file into memory.
@@ -692,7 +692,7 @@ Path safety:
 
 **Task 2.2: Add dataset write/read helpers**
 
-- Modify/Create: `packages/core/noodle/datasets.py`.
+- Modify/Create: `packages/core/nodyra/datasets.py`.
 - Helpers:
   - `write_parquet_from_duckdb_query(conn, sql, params, name, metadata)`
   - `dataset_path(ref)`
@@ -712,13 +712,13 @@ Path safety:
 
 **Task 3.1: Create dataset nodes module**
 
-- Create: `packages/nodes/noodle_nodes/datasets.py`.
-- Register it from `packages/nodes/noodle_nodes/__init__.py`.
+- Create: `packages/nodes/nodyra_nodes/datasets.py`.
+- Register it from `packages/nodes/nodyra_nodes/__init__.py`.
 - Add basic helpers for quoting identifiers and resolving dataset refs.
 
 **Task 3.2: Replace `csv_parse` with DatasetRef-producing implementation**
 
-- Modify: `packages/nodes/noodle_nodes/transform_extra.py` or move to dataset module while preserving node id `csv_parse`.
+- Modify: `packages/nodes/nodyra_nodes/transform_extra.py` or move to dataset module while preserving node id `csv_parse`.
 - Output: DatasetRef.
 - Use DuckDB `read_csv_auto` / `read_csv` and write Parquet.
 - Tests: update `packages/nodes/tests/test_transform_extra.py`.
@@ -790,7 +790,7 @@ Path safety:
 
 **Task 4.1: Add Code output mode params**
 
-- Modify: `packages/nodes/noodle_nodes/builtin.py`.
+- Modify: `packages/nodes/nodyra_nodes/builtin.py`.
 - Params:
   - `output_ports` text default `main`.
   - `output_mode` choices `auto`, `inline`, `dataset`, `artifact`.
@@ -818,7 +818,7 @@ Path safety:
 
 **Task 4.4: Add auto-promotion hook in engine**
 
-- Modify: `packages/core/noodle/engine.py`.
+- Modify: `packages/core/nodyra/engine.py`.
 - Add `auto_promote_outputs(outputs, manifest, graph_node, settings?)` before output size cap.
 - Since engine is core and does not know app settings, pass thresholds to `execute()`:
   - `max_inline_dataset_rows`
@@ -829,7 +829,7 @@ Path safety:
 
 **Task 4.5: Implement DataFrame -> DatasetRef auto-promotion**
 
-- Modify: `packages/core/noodle/datasets.py` and engine hook.
+- Modify: `packages/core/nodyra/datasets.py` and engine hook.
 - Use Parquet.
 - Need optional pandas/pyarrow or DuckDB registration.
 - Tests with pandas if available; otherwise mark optional or use DuckDB relation.

@@ -1,8 +1,8 @@
 # Deployment
 
-> **⚠️ Trust boundary — read before exposing Noodle.** With the default
+> **⚠️ Trust boundary — read before exposing Nodyra.** With the default
 > `EXECUTION_SANDBOX=off`, workflow Code nodes and uploaded code modules run
-> **arbitrary Python in the worker process on the Noodle host** — deploy for
+> **arbitrary Python in the worker process on the Nodyra host** — deploy for
 > **single-tenant, trusted authors** only: put it behind authentication and
 > restrict edit/deploy access to people you trust to run code on the host.
 > To serve untrusted authors, enable [sandboxed
@@ -57,12 +57,12 @@ run for another worker.
 ## Kubernetes (Helm)
 
 ```sh
-helm install noodle deploy/helm/noodle \
-  --set postgres.url=postgresql+asyncpg://noodle:noodle@postgres:5432/noodle \
+helm install nodyra deploy/helm/nodyra \
+  --set postgres.url=postgresql+asyncpg://nodyra:nodyra@postgres:5432/nodyra \
   --set redis.url=redis://redis:6379/0 \
   --set secret.key=$(openssl rand -hex 32) \
   --set secret.internalApiToken=$(openssl rand -hex 32) \
-  --set api.corsOrigins=https://noodle.example.com
+  --set api.corsOrigins=https://nodyra.example.com
 ```
 
 The chart deploys the API (control plane), web, and the dispatch worker.
@@ -135,14 +135,14 @@ Production deploys/restarts should drain before terminating:
 curl -X POST -H 'Authorization: Bearer $ADMIN_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{"draining": true}' \
-  https://noodle.example.com/ops/drain
+  https://nodyra.example.com/ops/drain
 
 # Wait for /ops/queue stats to settle (no leased entries), then terminate.
 # Re-enable after the new revision is up:
 curl -X POST -H 'Authorization: Bearer $ADMIN_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{"draining": false}' \
-  https://noodle.example.com/ops/drain
+  https://nodyra.example.com/ops/drain
 ```
 
 `GET /ops/drain` returns `{"draining": bool}` and is unauthenticated for use
@@ -208,8 +208,8 @@ Off by default. To enable, set on every API replica **and** worker:
 
 Each run produces one trace: `run.enqueue` (API, child of the HTTP request
 span) → `run.lease` (the worker that picked the entry up) → `run.execute` →
-one `node.execute` span per node with `noodle.node_id`, `noodle.node_type`,
-`noodle.status`, `noodle.org_id`, and `noodle.iteration_path` attributes.
+one `node.execute` span per node with `nodyra.node_id`, `nodyra.node_type`,
+`nodyra.status`, `nodyra.org_id`, and `nodyra.iteration_path` attributes.
 Node spans carry the engine's real start/finish timestamps, including for
 nodes executed inside runtime subprocesses — the subprocesses themselves
 need no OTel dependencies. Trace context crosses the API→worker boundary on
@@ -243,7 +243,7 @@ and every hook is a single boolean check. `/ops/runtime-mode` reports
 
 ## Editions & licensing
 
-Noodle ships in three editions. With **no license key the instance is
+Nodyra ships in three editions. With **no license key the instance is
 Community** and behaves exactly as an unlicensed self-hosted install, subject to
 the Community resource caps below.
 
@@ -267,7 +267,7 @@ per-org quota overrides).
 A license is a signed key verified **offline** (no phone-home). Provide it either
 way — the env var wins when both are set:
 
-- **Env var:** `NOODLE_LICENSE_KEY=<key>`.
+- **Env var:** `NODYRA_LICENSE_KEY=<key>`.
 - **UI:** *Settings → License* (admin only), which persists the key to
   `system_settings` (`PUT /system-settings/license`).
 
@@ -302,7 +302,7 @@ secret. Mint per-customer keys with `… sign --tier pro --customer "Acme" --day
 ## Enabling multi-tenancy
 
 Multi-tenancy ships dormant: with `MULTI_TENANCY_ENABLED=false` (default)
-behaviour is identical to single-tenant Noodle. To enable:
+behaviour is identical to single-tenant Nodyra. To enable:
 
 1. Run on **Postgres** (RLS is the DB-enforced isolation backstop; SQLite has
    none) with a **non-superuser app role** — see the security checklist above.
@@ -404,7 +404,7 @@ overridable. Warm-pool sizing: `SANDBOX_WARM_PER_KEY` (`1`),
 `SANDBOX_WARM_TOTAL` (`8`).
 
 Network: run containers attach to the `SANDBOX_NETWORK` bridge
-(`noodle-sandbox`, created on demand). They get outbound internet (HTTP
+(`nodyra-sandbox`, created on demand). They get outbound internet (HTTP
 nodes need it) but sit isolated from the compose service network. Stricter
 egress (blocking cloud metadata endpoints, allow-listing destinations) is
 operator-supplied: point `SANDBOX_NETWORK` at a network you manage with

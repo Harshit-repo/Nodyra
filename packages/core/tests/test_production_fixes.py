@@ -9,9 +9,9 @@ import time
 
 import pytest
 
-from noodle.engine import execute
-from noodle.models import GraphNode, RunStatus, WorkflowGraph
-from noodle.sdk import NodeRegistry, node
+from nodyra.engine import execute
+from nodyra.models import GraphNode, RunStatus, WorkflowGraph
+from nodyra.sdk import NodeRegistry, node
 
 # ---------------------------------------------------------------------------
 # Fix 2 — engine.py:1233
@@ -81,7 +81,7 @@ def test_truncate_serialized_value_preview_does_not_require_full_encode():
     """A simpler variant: verify truncation uses _approx_json_length, not json.dumps, for size."""
     import inspect
 
-    from noodle import serialization
+    from nodyra import serialization
 
     source = inspect.getsource(serialization.truncate_serialized_value)
 
@@ -118,7 +118,7 @@ async def test_resolve_agent_actions_terminates_after_max_iterations():
     tool_calls repeatedly, step is never incremented and the loop is infinite.
     The fix adds an independent iteration counter in resolve_agent_actions.
     """
-    from noodle.engine import _MAX_AGENT_LOOP_ITERATIONS  # expected after fix
+    from nodyra.engine import _MAX_AGENT_LOOP_ITERATIONS  # expected after fix
 
     # Verify the cap constant exists (added by the fix)
     assert _MAX_AGENT_LOOP_ITERATIONS > 0, (

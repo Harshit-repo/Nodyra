@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import noodle_nodes  # noqa: F401 - registers code/manual_trigger
-from noodle.engine import _expand_metanodes, execute
-from noodle.models import WorkflowGraph
-from noodle.sdk import registry
+import nodyra_nodes  # noqa: F401 - registers code/manual_trigger
+from nodyra.engine import _expand_metanodes, execute
+from nodyra.models import WorkflowGraph
+from nodyra.sdk import registry
 
 
 def _g(nodes, edges) -> WorkflowGraph:

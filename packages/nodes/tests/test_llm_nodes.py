@@ -5,14 +5,14 @@ import json
 
 import requests
 
-import noodle_nodes  # noqa: F401 - registers nodes
-import noodle_nodes.llm as llm_module
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, current_node_id
-from noodle.datasets import is_dataset_ref
-from noodle.sdk import registry
-from noodle_nodes.datasets import dataset_to_records, records_to_dataset
-from noodle_nodes.llm import (
+import nodyra_nodes  # noqa: F401 - registers nodes
+import nodyra_nodes.llm as llm_module
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id
+from nodyra.datasets import is_dataset_ref
+from nodyra.sdk import registry
+from nodyra_nodes.datasets import dataset_to_records, records_to_dataset
+from nodyra_nodes.llm import (
     ai_agent,
     ai_batch_embeddings,
     ai_chat,
@@ -54,7 +54,7 @@ class StreamingFakeResponse:
 
 
 def test_assemble_openai_stream_emits_and_accumulates() -> None:
-    from noodle_nodes.llm import _assemble_openai_stream
+    from nodyra_nodes.llm import _assemble_openai_stream
 
     emitted: list[str] = []
     lines = [
@@ -73,7 +73,7 @@ def test_assemble_openai_stream_emits_and_accumulates() -> None:
 
 
 def test_assemble_openai_stream_accumulates_tool_call_deltas() -> None:
-    from noodle_nodes.llm import _assemble_openai_stream
+    from nodyra_nodes.llm import _assemble_openai_stream
 
     lines = [
         'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
@@ -90,7 +90,7 @@ def test_assemble_openai_stream_accumulates_tool_call_deltas() -> None:
 
 
 def test_assemble_anthropic_stream_emits_text() -> None:
-    from noodle_nodes.llm import _assemble_anthropic_stream
+    from nodyra_nodes.llm import _assemble_anthropic_stream
 
     emitted: list[str] = []
     lines = [
@@ -109,7 +109,7 @@ def test_assemble_anthropic_stream_emits_text() -> None:
 
 
 def test_ai_chat_streams_when_emitter_active(monkeypatch) -> None:
-    from noodle.context import node_emitter
+    from nodyra.context import node_emitter
 
     chunks: list[str] = []
 
@@ -299,8 +299,8 @@ def test_ai_chat_openrouter_uses_first_class_provider(monkeypatch) -> None:
         credentials={
             "provider": "openrouter",
             "api_key": "sk-or-test",
-            "site_url": "https://noodle.dev",
-            "app_name": "Noodle",
+            "site_url": "https://nodyra.dev",
+            "app_name": "Nodyra",
         },
         provider="openrouter",
         model="openai/gpt-4.1-mini",
@@ -309,8 +309,8 @@ def test_ai_chat_openrouter_uses_first_class_provider(monkeypatch) -> None:
     assert out["provider"] == "openrouter"
     assert calls[0]["url"] == "https://openrouter.ai/api/v1/chat/completions"
     assert calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer sk-or-test"
-    assert calls[0]["kwargs"]["headers"]["HTTP-Referer"] == "https://noodle.dev"
-    assert calls[0]["kwargs"]["headers"]["X-Title"] == "Noodle"
+    assert calls[0]["kwargs"]["headers"]["HTTP-Referer"] == "https://nodyra.dev"
+    assert calls[0]["kwargs"]["headers"]["X-Title"] == "Nodyra"
 
 
 def test_structured_output_validates_schema(monkeypatch) -> None:

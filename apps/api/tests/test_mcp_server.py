@@ -75,7 +75,7 @@ async def test_initialize(client: AsyncClient) -> None:
     assert resp.status_code == 200
     result = resp.json()["result"]
     assert result["protocolVersion"] == "2025-06-18"
-    assert result["serverInfo"]["name"] == "noodle"
+    assert result["serverInfo"]["name"] == "nodyra"
     assert "tools" in result["capabilities"]
     assert result["capabilities"]["tools"]["listChanged"] is False
     assert "resources" in result["capabilities"]
@@ -376,7 +376,7 @@ async def test_get_run_events_missing_run(client: AsyncClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Loopback: MCP client nodes against Noodle's own /mcp server (B3)
+# Loopback: MCP client nodes against Nodyra's own /mcp server (B3)
 # ---------------------------------------------------------------------------
 
 
@@ -993,26 +993,26 @@ async def test_resources_list(client: AsyncClient) -> None:
     result = resp.json()["result"]
     assert "resources" in result
     uris = {r["uri"] for r in result["resources"]}
-    assert "noodle://node-types" in uris
+    assert "nodyra://node-types" in uris
 
 
 async def test_resource_templates_list(client: AsyncClient) -> None:
     response = await client.post("/mcp", json=rpc("resources/templates/list"))
     templates = response.json()["result"]["resourceTemplates"]
-    assert templates[0]["uriTemplate"] == "noodle://workflow/{workflow_id}"
+    assert templates[0]["uriTemplate"] == "nodyra://workflow/{workflow_id}"
 
 
 async def test_resources_list_includes_workflows(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Resource WF")
     resp = await client.post("/mcp", json=rpc("resources/list"))
     uris = {r["uri"] for r in resp.json()["result"]["resources"]}
-    assert f"noodle://workflow/{workflow_id}" in uris
+    assert f"nodyra://workflow/{workflow_id}" in uris
 
 
 async def test_resources_read_node_types(client: AsyncClient) -> None:
     resp = await client.post(
         "/mcp",
-        json=rpc("resources/read", {"uri": "noodle://node-types"}),
+        json=rpc("resources/read", {"uri": "nodyra://node-types"}),
     )
     result = resp.json()["result"]
     assert "contents" in result
@@ -1025,7 +1025,7 @@ async def test_resources_read_workflow(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "ReadRes WF")
     resp = await client.post(
         "/mcp",
-        json=rpc("resources/read", {"uri": f"noodle://workflow/{workflow_id}"}),
+        json=rpc("resources/read", {"uri": f"nodyra://workflow/{workflow_id}"}),
     )
     result = resp.json()["result"]
     data = json.loads(result["contents"][0]["text"])
@@ -1036,7 +1036,7 @@ async def test_resources_read_workflow(client: AsyncClient) -> None:
 async def test_resources_read_unknown_uri(client: AsyncClient) -> None:
     resp = await client.post(
         "/mcp",
-        json=rpc("resources/read", {"uri": "noodle://nonexistent"}),
+        json=rpc("resources/read", {"uri": "nodyra://nonexistent"}),
     )
     assert resp.json()["error"]["code"] == -32601
 
@@ -1101,7 +1101,7 @@ async def test_prompts_get_unknown(client: AsyncClient) -> None:
 async def test_client_nodes_loopback_against_own_server(
     client: AsyncClient, monkeypatch
 ) -> None:
-    from noodle_nodes.ai_v2 import mcp as mcp_module
+    from nodyra_nodes.ai_v2 import mcp as mcp_module
 
     @asynccontextmanager
     async def _loopback(config):
@@ -1123,7 +1123,7 @@ async def test_client_nodes_loopback_against_own_server(
 
 
 async def test_mcp_list_resources_loopback(client: AsyncClient, monkeypatch) -> None:
-    from noodle_nodes.ai_v2 import mcp as mcp_module
+    from nodyra_nodes.ai_v2 import mcp as mcp_module
 
     @asynccontextmanager
     async def _loopback(config):
@@ -1133,11 +1133,11 @@ async def test_mcp_list_resources_loopback(client: AsyncClient, monkeypatch) -> 
 
     creds = {"url": "https://loopback.invalid/mcp"}
     resources = await mcp_module.mcp_list_resources(credentials=creds)
-    assert any(r["uri"] == "noodle://node-types" for r in resources)
+    assert any(r["uri"] == "nodyra://node-types" for r in resources)
 
 
 async def test_mcp_read_resource_loopback(client: AsyncClient, monkeypatch) -> None:
-    from noodle_nodes.ai_v2 import mcp as mcp_module
+    from nodyra_nodes.ai_v2 import mcp as mcp_module
 
     @asynccontextmanager
     async def _loopback(config):
@@ -1146,13 +1146,13 @@ async def test_mcp_read_resource_loopback(client: AsyncClient, monkeypatch) -> N
     monkeypatch.setattr(mcp_module, "_mcp_session", _loopback)
 
     creds = {"url": "https://loopback.invalid/mcp"}
-    data = await mcp_module.mcp_read_resource(credentials=creds, resource_uri="noodle://node-types")
+    data = await mcp_module.mcp_read_resource(credentials=creds, resource_uri="nodyra://node-types")
     assert isinstance(data, dict)
     assert "node_types" in data
 
 
 async def test_mcp_get_prompt_loopback(client: AsyncClient, monkeypatch) -> None:
-    from noodle_nodes.ai_v2 import mcp as mcp_module
+    from nodyra_nodes.ai_v2 import mcp as mcp_module
 
     @asynccontextmanager
     async def _loopback(config):
@@ -1174,7 +1174,7 @@ async def test_mcp_call_tool_image_result(client: AsyncClient, monkeypatch) -> N
     """mcp_call_tool returns image dict when server responds with image content."""
     from types import SimpleNamespace
 
-    from noodle_nodes.ai_v2 import mcp as mcp_module
+    from nodyra_nodes.ai_v2 import mcp as mcp_module
 
     @asynccontextmanager
     async def _loopback(config):

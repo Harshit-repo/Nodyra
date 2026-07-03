@@ -31,7 +31,7 @@ from app.services.artifact_backends import (
 )
 from app.services.redaction import load_secret_values, redact_value
 from app.tenancy import run_as_system
-from noodle.artifacts import ARTIFACT_MARKER, LocalArtifactStore, is_artifact_ref
+from nodyra.artifacts import ARTIFACT_MARKER, LocalArtifactStore, is_artifact_ref
 
 
 def artifact_base_dir() -> Path:

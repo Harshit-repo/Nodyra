@@ -16,7 +16,7 @@ is where the source lives and when it's loaded.
 ```python
 from typing import Any
 
-from noodle.sdk import node
+from nodyra.sdk import node
 
 
 @node(
@@ -152,7 +152,7 @@ output = artifacts.write_dataframe(df, name="processed.csv")
 ```
 
 `artifacts` is available in Code node scope automatically; user modules can
-`import noodle.artifacts as artifacts`. Helpers:
+`import nodyra.artifacts as artifacts`. Helpers:
 
 - `artifacts.write_bytes(data, name, content_type)`
 - `artifacts.write_text(text, name)`
@@ -165,7 +165,7 @@ Writers return a small JSON-friendly ref:
 
 ```json
 {
-  "__noodle_artifact__": true,
+  "__nodyra_artifact__": true,
   "version": 1,
   "artifact_id": "…",
   "run_id": "…",
@@ -233,10 +233,10 @@ previews.
 The engine is async and importable. A complete graph round-trip:
 
 ```python
-from noodle.engine import execute
-from noodle.models import Edge, GraphNode, WorkflowGraph
-from noodle.sdk import registry
-import noodle_nodes  # registers the built-ins
+from nodyra.engine import execute
+from nodyra.models import Edge, GraphNode, WorkflowGraph
+from nodyra.sdk import registry
+import nodyra_nodes  # registers the built-ins
 
 graph = WorkflowGraph(
     nodes=[

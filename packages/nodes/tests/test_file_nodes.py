@@ -11,10 +11,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import noodle_nodes  # noqa: F401 — registers nodes
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, current_node_id
-from noodle_nodes.file_nodes import (
+import nodyra_nodes  # noqa: F401 — registers nodes
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import artifact_store, current_node_id
+from nodyra_nodes.file_nodes import (
     read_csv_file,
     read_json_file,
     read_text_file,
@@ -60,7 +60,7 @@ def test_read_text_file_no_source() -> None:
 
 def test_read_text_file_from_upload() -> None:
     with patch(
-        "noodle_nodes.file_nodes._read_upload_bytes",
+        "nodyra_nodes.file_nodes._read_upload_bytes",
         return_value=(b"uploaded content", "notes.txt"),
     ):
         result = read_text_file(input=None, file="abc123")
@@ -102,10 +102,10 @@ def test_read_csv_empty_file(tmp_path: Path) -> None:
 
 
 def test_read_csv_as_dataset(tmp_path: Path) -> None:
-    fake_ref = {"__noodle_dataset__": True, "version": 1}
+    fake_ref = {"__nodyra_dataset__": True, "version": 1}
     f = tmp_path / "data.csv"
     f.write_text(CSV_TEXT, encoding="utf-8")
-    with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
+    with patch("nodyra_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
         result = read_csv_file(input=None, path=str(f), output_as_dataset=True)
     assert result is fake_ref
     # csv_parse should receive the raw CSV text
@@ -142,10 +142,10 @@ def test_read_json_raw_object(tmp_path: Path) -> None:
 
 
 def test_read_json_as_dataset(tmp_path: Path) -> None:
-    fake_ref = {"__noodle_dataset__": True, "version": 1}
+    fake_ref = {"__nodyra_dataset__": True, "version": 1}
     f = tmp_path / "arr.json"
     f.write_text(JSON_ARRAY, encoding="utf-8")
-    with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref):
+    with patch("nodyra_nodes.file_nodes.csv_parse", return_value=fake_ref):
         result = read_json_file(input=None, path=str(f), output_as_dataset=True)
     assert result is fake_ref
 
@@ -198,10 +198,10 @@ def test_read_xml_raw(tmp_path: Path) -> None:
 
 
 def test_read_xml_as_dataset(tmp_path: Path) -> None:
-    fake_ref = {"__noodle_dataset__": True, "version": 1}
+    fake_ref = {"__nodyra_dataset__": True, "version": 1}
     f = tmp_path / "data.xml"
     f.write_text(XML_TEXT, encoding="utf-8")
-    with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
+    with patch("nodyra_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
         result = read_xml_file(input=None, path=str(f), row_xpath="person", output_as_dataset=True)
     assert result is fake_ref
     # Both persons should have been extracted — csv_parse gets 2-row CSV
@@ -258,7 +258,7 @@ def _mock_boto3_client(content_bytes: bytes):
 
 
 def test_read_s3_csv_raw_mode() -> None:
-    from noodle_nodes.file_nodes import read_s3_file
+    from nodyra_nodes.file_nodes import read_s3_file
 
     csv_bytes = b"name,age\nAlice,30\nBob,25\n"
     mock_client = _mock_boto3_client(csv_bytes)
@@ -277,13 +277,13 @@ def test_read_s3_csv_raw_mode() -> None:
 
 
 def test_read_s3_csv_as_dataset() -> None:
-    from noodle_nodes.file_nodes import read_s3_file
+    from nodyra_nodes.file_nodes import read_s3_file
 
-    fake_ref = {"__noodle_dataset__": True}
+    fake_ref = {"__nodyra_dataset__": True}
     csv_bytes = b"name,age\nAlice,30\n"
     mock_client = _mock_boto3_client(csv_bytes)
     with patch("boto3.client", return_value=mock_client):
-        with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
+        with patch("nodyra_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
             result = read_s3_file(
                 input=None,
                 credentials=_make_s3_creds(),
@@ -297,7 +297,7 @@ def test_read_s3_csv_as_dataset() -> None:
 
 
 def test_read_s3_json_raw_mode() -> None:
-    from noodle_nodes.file_nodes import read_s3_file
+    from nodyra_nodes.file_nodes import read_s3_file
 
     data = [{"x": 1}, {"x": 2}]
     json_bytes = json.dumps(data).encode()
@@ -316,15 +316,15 @@ def test_read_s3_json_raw_mode() -> None:
 
 
 def test_read_s3_json_as_dataset() -> None:
-    from noodle_nodes.file_nodes import read_s3_file
+    from nodyra_nodes.file_nodes import read_s3_file
 
-    fake_ref = {"__noodle_dataset__": True}
+    fake_ref = {"__nodyra_dataset__": True}
     data = [{"x": 1}, {"x": 2}]
     json_bytes = json.dumps(data).encode()
     mock_client = _mock_boto3_client(json_bytes)
     with patch("boto3.client", return_value=mock_client):
         with patch(
-            "noodle_nodes.file_nodes._parse_file_bytes", return_value=fake_ref
+            "nodyra_nodes.file_nodes._parse_file_bytes", return_value=fake_ref
         ) as mock_parse:
             result = read_s3_file(
                 input=None,
@@ -339,7 +339,7 @@ def test_read_s3_json_as_dataset() -> None:
 
 
 def test_read_s3_text_format() -> None:
-    from noodle_nodes.file_nodes import read_s3_file
+    from nodyra_nodes.file_nodes import read_s3_file
 
     mock_client = _mock_boto3_client(b"hello world")
     with patch("boto3.client", return_value=mock_client):
@@ -356,11 +356,11 @@ def test_read_s3_text_format() -> None:
 
 
 def test_read_s3_empty_endpoint_passes_none_to_boto3() -> None:
-    from noodle_nodes.file_nodes import read_s3_file
+    from nodyra_nodes.file_nodes import read_s3_file
 
     mock_client = _mock_boto3_client(b"a,b\n1,2\n")
     with patch("boto3.client", return_value=mock_client) as mock_boto3:
-        with patch("noodle_nodes.file_nodes.csv_parse", return_value={}):
+        with patch("nodyra_nodes.file_nodes.csv_parse", return_value={}):
             read_s3_file(
                 input=None,
                 credentials=_make_s3_creds(endpoint=""),
@@ -377,8 +377,8 @@ def test_read_s3_parquet_as_dataset(store_ctx, tmp_path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from noodle.datasets import is_dataset_ref
-    from noodle_nodes.file_nodes import read_s3_file
+    from nodyra.datasets import is_dataset_ref
+    from nodyra_nodes.file_nodes import read_s3_file
 
     parquet_file = tmp_path / "sample.parquet"
     table = pa.table({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
@@ -405,14 +405,14 @@ def test_read_s3_parquet_as_dataset(store_ctx, tmp_path: Path) -> None:
 
 
 def test_read_url_csv_auto_detect_by_extension() -> None:
-    from noodle_nodes.file_nodes import read_url_file
+    from nodyra_nodes.file_nodes import read_url_file
 
-    fake_ref = {"__noodle_dataset__": True}
+    fake_ref = {"__nodyra_dataset__": True}
     with patch(
-        "noodle_nodes.file_nodes._ssrf_safe_fetch",
+        "nodyra_nodes.file_nodes._ssrf_safe_fetch",
         return_value=(b"a,b\n1,2\n", "application/octet-stream"),
     ):
-        with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
+        with patch("nodyra_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
             result = read_url_file(
                 input=None,
                 url="https://example.com/data.csv",
@@ -424,13 +424,13 @@ def test_read_url_csv_auto_detect_by_extension() -> None:
 
 
 def test_read_url_csv_auto_detect_by_content_type() -> None:
-    from noodle_nodes.file_nodes import read_url_file
+    from nodyra_nodes.file_nodes import read_url_file
 
-    fake_ref = {"__noodle_dataset__": True}
+    fake_ref = {"__nodyra_dataset__": True}
     with patch(
-        "noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"x,y\n1,2\n", "text/csv")
+        "nodyra_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"x,y\n1,2\n", "text/csv")
     ):
-        with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref):
+        with patch("nodyra_nodes.file_nodes.csv_parse", return_value=fake_ref):
             result = read_url_file(
                 input=None,
                 url="https://example.com/download?token=abc",
@@ -441,9 +441,9 @@ def test_read_url_csv_auto_detect_by_content_type() -> None:
 
 
 def test_read_url_text_format_explicit() -> None:
-    from noodle_nodes.file_nodes import read_url_file
+    from nodyra_nodes.file_nodes import read_url_file
 
-    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"hello", "text/plain")):
+    with patch("nodyra_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"hello", "text/plain")):
         result = read_url_file(
             input=None,
             url="https://example.com/readme.txt",
@@ -455,10 +455,10 @@ def test_read_url_text_format_explicit() -> None:
 
 
 def test_read_url_custom_headers_forwarded() -> None:
-    from noodle_nodes.file_nodes import read_url_file
+    from nodyra_nodes.file_nodes import read_url_file
 
     with patch(
-        "noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"ok", "text/plain")
+        "nodyra_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"ok", "text/plain")
     ) as mock_fetch:
         read_url_file(
             input=None,
@@ -473,10 +473,10 @@ def test_read_url_custom_headers_forwarded() -> None:
 
 
 def test_read_url_http_error_raises() -> None:
-    from noodle_nodes.file_nodes import read_url_file
+    from nodyra_nodes.file_nodes import read_url_file
 
     with patch(
-        "noodle_nodes.file_nodes._ssrf_safe_fetch",
+        "nodyra_nodes.file_nodes._ssrf_safe_fetch",
         side_effect=ValueError("HTTP 403 from https://example.com/private.csv"),
     ):
         with pytest.raises(ValueError, match="HTTP 403"):
@@ -488,9 +488,9 @@ def test_ssrf_fetch_blocks_private_by_default(monkeypatch) -> None:
     rejected before any connection is attempted."""
     import socket
 
-    from noodle_nodes.file_nodes import _ssrf_safe_fetch
+    from nodyra_nodes.file_nodes import _ssrf_safe_fetch
 
-    monkeypatch.delenv("NOODLE_ALLOW_PRIVATE_EGRESS", raising=False)
+    monkeypatch.delenv("NODYRA_ALLOW_PRIVATE_EGRESS", raising=False)
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("10.0.0.5", 80))])
     with pytest.raises(ValueError, match="globally routable"):
         _ssrf_safe_fetch("http://internal.example/data", {})
@@ -502,9 +502,9 @@ def test_ssrf_fetch_allows_private_when_opted_in(monkeypatch) -> None:
 
     import urllib3
 
-    from noodle_nodes.file_nodes import _ssrf_safe_fetch
+    from nodyra_nodes.file_nodes import _ssrf_safe_fetch
 
-    monkeypatch.setenv("NOODLE_ALLOW_PRIVATE_EGRESS", "1")
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "1")
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("10.0.0.5", 80))])
 
     class _FakeResp:
@@ -526,7 +526,7 @@ def test_ssrf_fetch_allows_private_when_opted_in(monkeypatch) -> None:
 
 
 def test_read_url_invalid_headers_json_raises() -> None:
-    from noodle_nodes.file_nodes import read_url_file
+    from nodyra_nodes.file_nodes import read_url_file
 
     # JSON parsing happens before _ssrf_safe_fetch is called — no mock needed.
     with pytest.raises(ValueError, match="request_headers must be valid JSON"):
@@ -539,23 +539,23 @@ def test_read_url_invalid_headers_json_raises() -> None:
 
 
 def test_read_url_missing_url_raises() -> None:
-    from noodle_nodes.file_nodes import read_url_file
+    from nodyra_nodes.file_nodes import read_url_file
 
     with pytest.raises(ValueError, match="url must be provided"):
         read_url_file(input=None, url="", format="auto")
 
 
 def test_read_url_json_auto_detect_by_extension() -> None:
-    from noodle_nodes.file_nodes import read_url_file
+    from nodyra_nodes.file_nodes import read_url_file
 
     data = [{"id": 1}, {"id": 2}]
     json_bytes = json.dumps(data).encode()
-    fake_ref = {"__noodle_dataset__": True}
+    fake_ref = {"__nodyra_dataset__": True}
     with patch(
-        "noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(json_bytes, "application/json")
+        "nodyra_nodes.file_nodes._ssrf_safe_fetch", return_value=(json_bytes, "application/json")
     ):
         with patch(
-            "noodle_nodes.file_nodes._parse_file_bytes", return_value=fake_ref
+            "nodyra_nodes.file_nodes._parse_file_bytes", return_value=fake_ref
         ) as mock_parse:
             result = read_url_file(
                 input=None,
@@ -589,83 +589,83 @@ def _make_ndjson_bytes(rows: int = 3) -> bytes:
 
 def test_stream_large_file_csv_returns_dataset_ref(store_ctx) -> None:
     """stream_large_file on a CSV upload always returns a DatasetRef."""
-    from noodle_nodes.file_nodes import stream_large_file
+    from nodyra_nodes.file_nodes import stream_large_file
 
     upload_dir = store_ctx.base_dir / "uploads" / "upload-001"
     upload_dir.mkdir(parents=True)
     (upload_dir / "big.csv").write_bytes(_make_csv_bytes(100))
 
     chunks: list[str] = []
-    with patch("noodle.context.emit_chunk", side_effect=lambda msg: chunks.append(msg)):
+    with patch("nodyra.context.emit_chunk", side_effect=lambda msg: chunks.append(msg)):
         result = stream_large_file(input=None, file="upload-001", format="csv")
 
-    assert result.get("__noodle_dataset__") is True
+    assert result.get("__nodyra_dataset__") is True
     assert any("big.csv" in c for c in chunks)
     assert any("rows" in c.lower() or "done" in c.lower() for c in chunks)
 
 
 def test_stream_large_file_json_returns_dataset_ref(store_ctx) -> None:
-    from noodle_nodes.file_nodes import stream_large_file
+    from nodyra_nodes.file_nodes import stream_large_file
 
     upload_dir = store_ctx.base_dir / "uploads" / "upload-002"
     upload_dir.mkdir(parents=True)
     (upload_dir / "records.jsonl").write_bytes(_make_ndjson_bytes(50))
 
     result = stream_large_file(input=None, file="upload-002", format="json")
-    assert result.get("__noodle_dataset__") is True
+    assert result.get("__nodyra_dataset__") is True
 
 
 def test_stream_large_file_server_path_csv(store_ctx, tmp_path) -> None:
-    from noodle_nodes.file_nodes import stream_large_file
+    from nodyra_nodes.file_nodes import stream_large_file
 
     csv_file = tmp_path / "data.csv"
     csv_file.write_bytes(_make_csv_bytes(200))
 
     result = stream_large_file(input=None, path=str(csv_file), format="csv")
-    assert result.get("__noodle_dataset__") is True
+    assert result.get("__nodyra_dataset__") is True
 
 
 def test_stream_large_file_emits_three_chunks(store_ctx) -> None:
-    from noodle_nodes.file_nodes import stream_large_file
+    from nodyra_nodes.file_nodes import stream_large_file
 
     upload_dir = store_ctx.base_dir / "uploads" / "upload-003"
     upload_dir.mkdir(parents=True)
     (upload_dir / "sample.csv").write_bytes(_make_csv_bytes(10))
 
     chunks: list[str] = []
-    with patch("noodle.context.emit_chunk", side_effect=lambda msg: chunks.append(msg)):
+    with patch("nodyra.context.emit_chunk", side_effect=lambda msg: chunks.append(msg)):
         stream_large_file(input=None, file="upload-003", format="csv")
 
     assert len(chunks) == 3, f"Expected 3 emit_chunk calls, got {len(chunks)}: {chunks}"
 
 
 def test_stream_large_file_missing_source_raises() -> None:
-    from noodle_nodes.file_nodes import stream_large_file
+    from nodyra_nodes.file_nodes import stream_large_file
 
     with pytest.raises(ValueError, match="path or file"):
         stream_large_file(input=None, path="", file="", format="csv")
 
 
 def test_stream_large_file_auto_format_csv_extension(store_ctx) -> None:
-    from noodle_nodes.file_nodes import stream_large_file
+    from nodyra_nodes.file_nodes import stream_large_file
 
     upload_dir = store_ctx.base_dir / "uploads" / "upload-004"
     upload_dir.mkdir(parents=True)
     (upload_dir / "sales.csv").write_bytes(_make_csv_bytes(5))
 
     result = stream_large_file(input=None, file="upload-004", format="auto")
-    assert result.get("__noodle_dataset__") is True
+    assert result.get("__nodyra_dataset__") is True
 
 
 def test_stream_large_file_auto_format_json_extension(store_ctx) -> None:
-    from noodle_nodes.file_nodes import stream_large_file
+    from nodyra_nodes.file_nodes import stream_large_file
 
     upload_dir = store_ctx.base_dir / "uploads" / "upload-005"
     upload_dir.mkdir(parents=True)
     (upload_dir / "events.jsonl").write_bytes(_make_ndjson_bytes(5))
 
     result = stream_large_file(input=None, file="upload-005", format="auto")
-    assert result.get("__noodle_dataset__") is True
+    assert result.get("__nodyra_dataset__") is True
 
 
 # ---------------------------------------------------------------------------
@@ -677,7 +677,7 @@ import pathlib as _pathlib  # noqa: E402 — section-local import, kept with its
 import pyarrow as _pa  # noqa: E402
 import pyarrow.parquet as _pq  # noqa: E402
 
-from noodle_nodes.file_nodes import read_parquet_file, write_parquet_file  # noqa: E402
+from nodyra_nodes.file_nodes import read_parquet_file, write_parquet_file  # noqa: E402
 
 
 def _write_test_parquet(path: _pathlib.Path) -> None:
@@ -718,7 +718,7 @@ def test_read_parquet_file_from_upload(store_ctx, tmp_path: Path) -> None:
     _write_test_parquet(p)
     raw = p.read_bytes()
     with patch(
-        "noodle_nodes.file_nodes._read_upload_bytes",
+        "nodyra_nodes.file_nodes._read_upload_bytes",
         return_value=(raw, "up.parquet"),
     ):
         result = read_parquet_file(input=None, file="abc123")
@@ -751,7 +751,7 @@ def test_write_parquet_rejects_none_input(store_ctx) -> None:
 
 import openpyxl as _openpyxl  # noqa: E402 — section-local import, kept with its tests
 
-from noodle_nodes.file_nodes import read_excel_file, write_excel_file  # noqa: E402
+from nodyra_nodes.file_nodes import read_excel_file, write_excel_file  # noqa: E402
 
 
 def _write_test_excel(path: _pathlib.Path) -> None:
@@ -769,7 +769,7 @@ def test_read_excel_file_from_path(tmp_path: Path, store_ctx) -> None:
     result = read_excel_file(input=None, path=str(p))
     assert result["row_count"] == 2
     assert result["format"] == "parquet"
-    assert result.get("__noodle_dataset__") is True
+    assert result.get("__nodyra_dataset__") is True
 
 
 def test_read_excel_file_column_filter(tmp_path: Path, store_ctx) -> None:
@@ -796,7 +796,7 @@ def test_read_excel_file_from_upload(store_ctx, tmp_path: Path) -> None:
     _write_test_excel(p)
     raw = p.read_bytes()
     with patch(
-        "noodle_nodes.file_nodes._read_upload_bytes",
+        "nodyra_nodes.file_nodes._read_upload_bytes",
         return_value=(raw, "up.xlsx"),
     ):
         result = read_excel_file(input=None, file="abc456")

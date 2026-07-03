@@ -51,7 +51,7 @@ export type { RunSlice } from "./runSlice";
 // F-10: type alias (not interface) satisfies xyflow's `extends Record<string,unknown>`
 // constraint without a blanket index signature that disables TypeScript excess-property checks.
 // Add explicit optional fields here instead of relying on [key: string]: unknown.
-export type NoodleNodeData = {
+export type NodyraNodeData = {
   manifest: NodeManifest;
   params: Record<string, unknown>;
   disabled: boolean;
@@ -121,7 +121,7 @@ export interface PinnedOutput {
 
 export interface ChildWorkflowState {
   workflowId: string;
-  nodes: NoodleNode[];
+  nodes: NodyraNode[];
   edges: Edge[];
   dirty: boolean;
   loading: boolean;
@@ -164,7 +164,7 @@ export function childToGraph(cw: ChildWorkflowState): WorkflowGraph {
  * dangle (the engine rejects a Loop End whose pair is missing). Clear those
  * back-references so the orphaned Loop End is simply unpaired, not broken.
  */
-function unpairOrphanedLoopEnds(nodes: NoodleNode[], deletedIds: Set<string>): NoodleNode[] {
+function unpairOrphanedLoopEnds(nodes: NodyraNode[], deletedIds: Set<string>): NodyraNode[] {
   let unpaired = 0;
   const next = nodes.map((n) => {
     if (
@@ -216,7 +216,7 @@ interface GraphEdgeLike {
   target_input: string;
 }
 
-function nodeToGraphNode(n: NoodleNode): GraphNodeLike {
+function nodeToGraphNode(n: NodyraNode): GraphNodeLike {
   return {
     id: n.id,
     type: n.data.manifest.id,
@@ -255,7 +255,7 @@ function placeholderManifest(typeId: string): NodeManifest {
 export function graphNodeToNode(
   gn: GraphNodeLike,
   byId: Record<string, NodeManifest>,
-): NoodleNode | null {
+): NodyraNode | null {
   let manifest = byId[gn.type];
   let unavailableType: string | undefined;
   if (!manifest && gn.type === "meta_node") {
@@ -274,7 +274,7 @@ export function graphNodeToNode(
   }
   return {
     id: gn.id,
-    type: gn.type === "map_group" ? "mapGroup" : gn.type === "mcp_tool" ? "mcpTool" : "noodle",
+    type: gn.type === "map_group" ? "mapGroup" : gn.type === "mcp_tool" ? "mcpTool" : "nodyra",
     position: gn.position,
     data: {
       manifest,
@@ -294,7 +294,7 @@ export function graphNodeToNode(
       label: gn.label || undefined,
       ...(unavailableType ? { unavailableType } : {}),
     },
-  } as NoodleNode;
+  } as NodyraNode;
 }
 
 function edgeToGraphEdge(e: Edge): GraphEdgeLike {
@@ -362,7 +362,7 @@ function buildMetanodeManifest(
 
 /** data_kind of a node's named input/output port (undefined → treated as "any"). */
 function metaPortKind(
-  node: NoodleNode | undefined,
+  node: NodyraNode | undefined,
   side: "input" | "output",
   portName: string,
 ): string | undefined {
@@ -376,7 +376,7 @@ function makeBar(
   side: "input" | "output",
   ports: { id: string; label: string; data_kind?: string }[],
   position: { x: number; y: number },
-): NoodleNode {
+): NodyraNode {
   return {
     id: side === "input" ? META_BAR_INPUT_ID : META_BAR_OUTPUT_ID,
     type: "metaBar",
@@ -388,16 +388,16 @@ function makeBar(
     deletable: false,
     selectable: false,
     data: { bar: side, ports },
-  } as unknown as NoodleNode;
+  } as unknown as NodyraNode;
 }
 
 interface InteriorMaterial {
-  nodes: NoodleNode[];
+  nodes: NodyraNode[];
   edges: Edge[];
 }
 
 function materializeInterior(
-  meta: NoodleNode,
+  meta: NodyraNode,
   byId: Record<string, NodeManifest>,
 ): InteriorMaterial {
   const params = meta.data.params as {
@@ -456,13 +456,13 @@ function materializeInterior(
   };
 }
 
-function origByIdOf(meta: NoodleNode): Record<string, GraphNodeShape> {
+function origByIdOf(meta: NodyraNode): Record<string, GraphNodeShape> {
   const sub = (meta.data.params as { subgraph?: { nodes: GraphNodeShape[] } }).subgraph;
   return Object.fromEntries((sub?.nodes ?? []).map((gn) => [gn.id, gn]));
 }
 
 function foldInterior(
-  liveNodes: NoodleNode[],
+  liveNodes: NodyraNode[],
   liveEdges: Edge[],
   origById: Record<string, GraphNodeShape>,
 ): { subgraph: { nodes: GraphNodeLike[]; edges: GraphEdgeLike[] }; ports: MetaPorts } {
@@ -529,10 +529,10 @@ function foldInterior(
 }
 
 function updateMetaNode(
-  meta: NoodleNode,
+  meta: NodyraNode,
   subgraph: { nodes: GraphNodeLike[]; edges: GraphEdgeLike[] },
   ports: MetaPorts,
-): NoodleNode {
+): NodyraNode {
   return {
     ...meta,
     data: {
@@ -556,7 +556,7 @@ function reconcileParentEdges(parentEdges: Edge[], metaId: string, ports: MetaPo
   });
 }
 
-function serializeGraph(nodes: NoodleNode[], edges: Edge[]): WorkflowGraph {
+function serializeGraph(nodes: NodyraNode[], edges: Edge[]): WorkflowGraph {
   return {
     nodes: nodes
       .filter((n) => n.data?.manifest && !isMetaBar(n))
@@ -649,7 +649,7 @@ function getBodyEdgeIndex(childWorkflows: Record<string, ChildWorkflowState>): R
   return _getBodyIndices(childWorkflows).edge;
 }
 
-function nodeChangeId(change: NodeChange<NoodleNode>): string {
+function nodeChangeId(change: NodeChange<NodyraNode>): string {
   return change.type === "add" ? change.item.id : change.id;
 }
 
@@ -665,14 +665,14 @@ export function isTriggerManifest(manifest: NodeManifest | null | undefined): bo
   );
 }
 
-export function pickEditorRunTrigger(nodes: NoodleNode[]): NoodleNode | null {
+export function pickEditorRunTrigger(nodes: NodyraNode[]): NodyraNode | null {
   const triggers = nodes.filter((n) => isTriggerManifest(n.data.manifest));
   if (triggers.length === 0) return null;
   const manual = triggers.find((n) => n.data.manifest?.id === "manual_trigger");
   return manual ?? triggers[0];
 }
 
-export function isTriggerNode(node: NoodleNode | undefined): boolean {
+export function isTriggerNode(node: NodyraNode | undefined): boolean {
   return Boolean(node && isTriggerManifest(node.data.manifest));
 }
 
@@ -684,7 +684,7 @@ function deriveSwitchOutputs(rules: unknown): string[] {
   return ["fallback"];
 }
 
-// Mirrors `noodle_nodes.builtin.discover_code_output_ports`: scans the user's
+// Mirrors `nodyra_nodes.builtin.discover_code_output_ports`: scans the user's
 // Code-node source for `output` and `output_<name>` assignments so the editor
 // can render the right number of output handles before the workflow runs.
 function deriveCodeOutputs(code: unknown): string[] {
@@ -774,7 +774,7 @@ const AI_INPUT_PORT_KINDS = new Set([
 ]);
 
 function shouldEnableSourceForConnection(
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   connection: Connection,
 ): boolean {
   if (!connection.source || !connection.target) return false;
@@ -786,7 +786,7 @@ function shouldEnableSourceForConnection(
 }
 
 function disabledAgentDependencySourceIds(
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   edges: Edge[],
 ): Set<string> {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
@@ -802,9 +802,9 @@ function disabledAgentDependencySourceIds(
 }
 
 function enableAgentDependencies(
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   edges: Edge[],
-): { nodes: NoodleNode[]; changed: number } {
+): { nodes: NodyraNode[]; changed: number } {
   const ids = disabledAgentDependencySourceIds(nodes, edges);
   if (ids.size === 0) return { nodes, changed: 0 };
   return {
@@ -817,7 +817,7 @@ function enableAgentDependencies(
   };
 }
 
-export type NoodleNode = Node<NoodleNodeData, string>;
+export type NodyraNode = Node<NodyraNodeData, string>;
 
 // ---------------------------------------------------------------------------
 // Agent live activity (n8n-style sub-node highlighting)
@@ -832,7 +832,7 @@ export type AgentActivityStatus = "running" | "done" | "error";
 const AGENT_MANIFEST_IDS = new Set(["ai_agent", "ai_agent_v2"]);
 const AGENT_SUBNODE_HANDLES = ["model", "memory", "tool"];
 
-function collectAgentIds(nodes: NoodleNode[]): Set<string> {
+function collectAgentIds(nodes: NodyraNode[]): Set<string> {
   return new Set(
     nodes
       .filter((n) => n.data?.manifest && AGENT_MANIFEST_IDS.has(n.data.manifest.id))
@@ -845,7 +845,7 @@ function collectAgentIds(nodes: NoodleNode[]): Set<string> {
  *  agent events rather than the normal node lifecycle, so they should not show
  *  the generic upstream "running" spinner for the whole turn. */
 function isAgentSubNode(
-  node: NoodleNode,
+  node: NodyraNode,
   edges: Edge[],
   agentIds: Set<string>,
 ): boolean {
@@ -873,7 +873,7 @@ function agentProviderNodeIds(
 }
 
 function allowsMultipleTargetConnections(
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   connection: Connection,
 ): boolean {
   if (!connection.target) return false;
@@ -888,7 +888,7 @@ function allowsMultipleTargetConnections(
 
 function keepEdgesForConnection(
   edges: Edge[],
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   connection: Connection,
 ): Edge[] {
   const targetHandle = connection.targetHandle ?? null;
@@ -916,7 +916,7 @@ function keepEdgesForConnection(
  *  provides it, so we can pulse the right tile. Prefers tools wired to the
  *  agent's tool port, then any tool-mode node, then a sole connected tool. */
 function resolveAgentToolNodeId(
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   edges: Edge[],
   agentId: string,
   toolName: string,
@@ -926,8 +926,8 @@ function resolveAgentToolNodeId(
   const connected = edges
     .filter((e) => e.target === agentId && (e.targetHandle ?? "") === "tool")
     .map((e) => byId.get(e.source))
-    .filter((n): n is NoodleNode => Boolean(n));
-  const names = (n: NoodleNode) =>
+    .filter((n): n is NodyraNode => Boolean(n));
+  const names = (n: NodyraNode) =>
     [
       n.data.toolName,
       n.data.params.name,
@@ -967,7 +967,7 @@ function runEventToolCalls(
 export interface EditorStore {
   manifests: NodeManifest[];
   manifestsById: Record<string, NodeManifest>;
-  nodes: NoodleNode[];
+  nodes: NodyraNode[];
   edges: Edge[];
   selectedId: string | null;
   dirty: boolean;
@@ -1014,7 +1014,7 @@ export interface EditorStore {
   setManifests: (manifests: NodeManifest[]) => void;
   loadGraph: (graph: WorkflowGraph, opts?: { dirty?: boolean }) => void;
   toGraph: () => WorkflowGraph;
-  onNodesChange: (changes: NodeChange<NoodleNode>[]) => void;
+  onNodesChange: (changes: NodeChange<NodyraNode>[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
   onConnect: (connection: Connection) => ConnectionCheck;
   addNode: (manifestId: string, position: { x: number; y: number }) => void;
@@ -1084,8 +1084,8 @@ export interface EditorStore {
   // History (undo/redo) — snapshots of {nodes, edges} only. Reset whenever
   // `loadGraph` is called for a different workflow so undo never crosses
   // workflow boundaries.
-  _past: Array<{ nodes: NoodleNode[]; edges: Edge[] }>;
-  _future: Array<{ nodes: NoodleNode[]; edges: Edge[] }>;
+  _past: Array<{ nodes: NodyraNode[]; edges: Edge[] }>;
+  _future: Array<{ nodes: NodyraNode[]; edges: Edge[] }>;
   undo: () => void;
   redo: () => void;
 
@@ -1130,7 +1130,7 @@ function newEdgeId(
 }
 
 interface EditorClipboard {
-  nodes: NoodleNode[];
+  nodes: NodyraNode[];
   edges: Edge[];
   pasteCount: number;
 }
@@ -1236,21 +1236,21 @@ function cloneValue<T>(value: T): T {
   return cloneFallback(value);
 }
 
-function cloneNode(node: NoodleNode): NoodleNode {
+function cloneNode(node: NodyraNode): NodyraNode {
   const cloned = cloneValue(node);
   delete (cloned as { dragging?: boolean }).dragging;
   delete (cloned as { resizing?: boolean }).resizing;
   return cloned;
 }
 
-function selectedNodes(nodes: NoodleNode[], selectedId: string | null): NoodleNode[] {
+function selectedNodes(nodes: NodyraNode[], selectedId: string | null): NodyraNode[] {
   const selected = nodes.filter((node) => node.selected && !isMetaBar(node));
   if (selected.length > 0) return selected;
   const fallback = selectedId ? nodes.find((node) => node.id === selectedId && !isMetaBar(node)) : null;
   return fallback ? [fallback] : [];
 }
 
-function buildClipboard(nodes: NoodleNode[], edges: Edge[]): EditorClipboard | null {
+function buildClipboard(nodes: NodyraNode[], edges: Edge[]): EditorClipboard | null {
   if (nodes.length === 0) return null;
   const copiedIds = new Set(nodes.map((node) => node.id));
   const copiedEdges = edges.filter(
@@ -1270,7 +1270,7 @@ function buildClipboard(nodes: NoodleNode[], edges: Edge[]): EditorClipboard | n
 }
 
 function layoutPositions(
-  nodes: NoodleNode[],
+  nodes: NodyraNode[],
   edges: Edge[],
 ): Record<string, { x: number; y: number }> {
   const incoming = new Map<string, number>();
@@ -1315,7 +1315,7 @@ function layoutPositions(
     layer.set(node.id, upstreamLayers.length ? Math.max(...upstreamLayers) : 0);
   }
 
-  const groups = new Map<number, NoodleNode[]>();
+  const groups = new Map<number, NodyraNode[]>();
   for (const node of nodes) {
     const group = layer.get(node.id) ?? 0;
     groups.set(group, [...(groups.get(group) ?? []), node]);
@@ -1362,7 +1362,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   loadGraph: (graph, opts) => {
     const byId = get().manifestsById;
-    const nodes: NoodleNode[] = [];
+    const nodes: NodyraNode[] = [];
     for (const n of graph.nodes) {
       // Metanodes carry an embedded sub-graph; rebuild their (synthetic)
       // manifest from the stored boundary ports so they survive a reload even
@@ -1390,7 +1390,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       if (!outputsOverride && manifest.id === "api_endpoint") {
         outputsOverride = deriveApiEndpointOutputs(params.routes);
       }
-      const rfType = n.type === "map_group" ? "mapGroup" : n.type === "mcp_tool" ? "mcpTool" : "noodle";
+      const rfType = n.type === "map_group" ? "mapGroup" : n.type === "mcp_tool" ? "mcpTool" : "nodyra";
       nodes.push({
         id: n.id,
         type: rfType,
@@ -1467,8 +1467,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const state = get();
     const bodyIndex = getBodyIndex(state.childWorkflows);
 
-    const parentChanges: NodeChange<NoodleNode>[] = [];
-    const byGroup: Record<string, NodeChange<NoodleNode>[]> = {};
+    const parentChanges: NodeChange<NodyraNode>[] = [];
+    const byGroup: Record<string, NodeChange<NodyraNode>[]> = {};
     for (const change of changes) {
       const mgId = bodyIndex[nodeChangeId(change)];
       if (mgId) (byGroup[mgId] ??= []).push(change);
@@ -1626,9 +1626,9 @@ export const useEditor = create<EditorStore>((set, get) => ({
     if (!manifest || !source || !target) return { ok: false, check };
 
     const helperId = newNodeId();
-    const helper: NoodleNode = {
+    const helper: NodyraNode = {
       id: helperId,
-      type: "noodle",
+      type: "nodyra",
       position: {
         x: (source.position.x + target.position.x) / 2,
         y: (source.position.y + target.position.y) / 2 + 72,
@@ -1707,9 +1707,9 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
     const nodeId = newNodeId();
     const sourceOut = edge.sourceHandle ?? findOutputPort(source.data.manifest, edge.sourceHandle)?.name ?? "main";
-    const node: NoodleNode = {
+    const node: NodyraNode = {
       id: nodeId,
-      type: manifest.id === "map_group" ? "mapGroup" : manifest.id.startsWith("mcp_tool") ? "mcpTool" : "noodle",
+      type: manifest.id === "map_group" ? "mapGroup" : manifest.id.startsWith("mcp_tool") ? "mcpTool" : "nodyra",
       position,
       ...(manifest.id === "map_group" ? { style: { width: 380, height: 280, zIndex: -1 } } : {}),
       data: {
@@ -1780,9 +1780,9 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const manifest = state.manifestsById[manifestId];
     if (!manifest) return;
 
-    const makeNode = (m: NodeManifest, pos: { x: number; y: number }): NoodleNode => ({
+    const makeNode = (m: NodeManifest, pos: { x: number; y: number }): NodyraNode => ({
       id: newNodeId(),
-      type: m.id === "map_group" ? "mapGroup" : m.id.startsWith("mcp_tool") ? "mcpTool" : "noodle",
+      type: m.id === "map_group" ? "mapGroup" : m.id.startsWith("mcp_tool") ? "mcpTool" : "nodyra",
       position: pos,
       ...(m.id === "map_group" ? { style: { width: 380, height: 280, zIndex: -1 } } : {}),
       data: {
@@ -1835,7 +1835,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       type: "sticky",
       position,
       data: { content: "", color: "yellow" },
-    } as unknown as NoodleNode;
+    } as unknown as NodyraNode;
     set({
       nodes: [...state.nodes, node],
       selectedId: node.id,
@@ -1930,9 +1930,9 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const cx = selNodes.reduce((a, n) => a + n.position.x, 0) / selNodes.length;
     const cy = selNodes.reduce((a, n) => a + n.position.y, 0) / selNodes.length;
 
-    const metaNode: NoodleNode = {
+    const metaNode: NodyraNode = {
       id: metaId,
-      type: "noodle",
+      type: "nodyra",
       position: { x: cx, y: cy },
       data: {
         manifest: buildMetanodeManifest(
@@ -1950,7 +1950,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
         alwaysOutputData: false,
         timeoutSeconds: null,
       },
-    } as NoodleNode;
+    } as NodyraNode;
 
     const keepEdges = edges.filter((e) => !sel.has(e.source) && !sel.has(e.target));
     const newEdges: Edge[] = [...keepEdges];
@@ -2003,7 +2003,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
     const childNodes = subgraph.nodes
       .map((gn) => graphNodeToNode(gn, byId))
-      .filter((n): n is NoodleNode => n !== null);
+      .filter((n): n is NodyraNode => n !== null);
     const childEdges = subgraph.edges.map(graphEdgeToEdge);
 
     const inputsByPort = new Map((ports.inputs ?? []).map((p) => [p.port, p.targets]));
@@ -2173,7 +2173,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       position,
       data: { label: "Group", color: "rgba(99,102,241,0.08)" },
       style: { width: 320, height: 220, zIndex: -1 },
-    } as unknown as NoodleNode;
+    } as unknown as NodyraNode;
     set({
       nodes: [node, ...state.nodes],
       selectedId: node.id,
@@ -2203,7 +2203,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const state = get();
     const source = state.nodes.find((node) => node.id === id);
     if (!source) return;
-    const node: NoodleNode = {
+    const node: NodyraNode = {
       ...source,
       id: newNodeId(),
       selected: false,
@@ -2240,7 +2240,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
     if (targets.length === 0) return 0;
     const idMap = new Map<string, string>();
     for (const node of targets) idMap.set(node.id, newNodeId());
-    const pastedNodes: NoodleNode[] = targets.map((node) => ({
+    const pastedNodes: NodyraNode[] = targets.map((node) => ({
       ...cloneNode(node),
       id: idMap.get(node.id)!,
       selected: true,
@@ -3022,7 +3022,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   loadChildGraph: (mapGroupId, workflowId, graph) => {
     const byId = get().manifestsById;
-    const nodes: NoodleNode[] = [];
+    const nodes: NodyraNode[] = [];
     for (const n of graph.nodes) {
       const manifest = byId[n.type];
       if (!manifest) continue;
@@ -3033,7 +3033,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       if (!outputsOverride && manifest.id === "api_endpoint") outputsOverride = deriveApiEndpointOutputs(params.routes);
       nodes.push({
         id: n.id,
-        type: "noodle",
+        type: "nodyra",
         position: n.position,
         parentId: mapGroupId,
         extent: "parent" as const,
@@ -3110,9 +3110,9 @@ export const useEditor = create<EditorStore>((set, get) => ({
     if (!manifest) return;
     const cw = state.childWorkflows[mapGroupId];
     if (!cw) return;
-    const node: NoodleNode = {
+    const node: NodyraNode = {
       id: newNodeId(),
-      type: "noodle",
+      type: "nodyra",
       position,
       parentId: mapGroupId,
       extent: "parent" as const,

@@ -18,7 +18,7 @@ from app.redis_client import redis_client
 logger = logging.getLogger(__name__)
 
 REPLICA_ID = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
-_HEARTBEAT_KEY = "noodle:replicas:heartbeats"
+_HEARTBEAT_KEY = "nodyra:replicas:heartbeats"
 _HEARTBEAT_TTL = 30  # seconds — must be refreshed before expiry
 
 

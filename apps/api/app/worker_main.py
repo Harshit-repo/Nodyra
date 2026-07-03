@@ -36,7 +36,7 @@ from app.services.sandbox_pool import pool as sandbox_pool
 from app.services.stuck_run_detector import stuck_run_detector_loop
 from app.tenancy import assert_safe_postgres_role, run_as_system
 
-logger = logging.getLogger("noodle.worker")
+logger = logging.getLogger("nodyra.worker")
 
 
 def _validate() -> None:
@@ -101,7 +101,7 @@ async def _amain() -> None:
     await assert_safe_postgres_role(engine)
     # A5: no-ops unless OTEL_ENABLED=true. The worker has no HTTP surface, so
     # only SQLAlchemy gets instrumented; run spans come from the runner hooks.
-    tracing.setup_tracing("noodle-worker")
+    tracing.setup_tracing("nodyra-worker")
     tracing.instrument_sqlalchemy(engine)
     if settings.artifact_storage_backend == "s3":
         from app.services.s3_artifact_backend import register_s3_backend  # noqa: PLC0415
@@ -139,7 +139,7 @@ async def _amain() -> None:
         tasks.append(asyncio.create_task(_as_system(idle_reaper_loop)()))
 
     logger.info(
-        "noodle worker up (drain timeout %.1fs)",
+        "nodyra worker up (drain timeout %.1fs)",
         settings.queue_dispatch_shutdown_timeout_seconds,
     )
     try:

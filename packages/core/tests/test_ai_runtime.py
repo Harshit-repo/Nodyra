@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle.ai_runtime import (
+from nodyra.ai_runtime import (
     AgentActionRequest,
     AgentActionResponse,
     AgentResumeInput,
@@ -146,7 +146,7 @@ class TestModelUsage:
 
 class TestAgentActionRequest:
     def test_fields(self):
-        tc = ToolCall(id="c1", name="search", arguments={"q": "noodle"})
+        tc = ToolCall(id="c1", name="search", arguments={"q": "nodyra"})
         req = AgentActionRequest(
             tool_calls=[tc],
             messages_so_far=[AIMessage.user("go")],
@@ -270,7 +270,7 @@ def _mock_response(body: dict[str, Any], status: int = 200) -> MagicMock:
 
 class TestOpenAIChatAdapter:
     def test_basic_completion(self):
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = OpenAIChatAdapter(
             api_key="sk-test",
@@ -292,7 +292,7 @@ class TestOpenAIChatAdapter:
         assert resp.tool_calls == []
 
     def test_tool_call_response(self):
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = OpenAIChatAdapter(api_key="sk-test", model="gpt-4.1-mini")
         tool = ToolSchema(
@@ -317,7 +317,7 @@ class TestOpenAIChatAdapter:
         assert resp.tool_calls[0].id == "call_1"
 
     def test_http_error_raises(self):
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = OpenAIChatAdapter(api_key="sk-test", model="gpt-4.1-mini")
         req = ChatRequest(messages=[AIMessage.user("Hi")], model="gpt-4.1-mini")
@@ -329,7 +329,7 @@ class TestOpenAIChatAdapter:
                 adapter.complete(req)
 
     def test_missing_api_key_raises(self):
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = OpenAIChatAdapter(api_key="", model="gpt-4.1-mini", provider="openai")
         req = ChatRequest(messages=[AIMessage.user("Hi")], model="gpt-4.1-mini")
@@ -337,7 +337,7 @@ class TestOpenAIChatAdapter:
             adapter.complete(req)
 
     def test_capabilities_for_gpt4(self):
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = OpenAIChatAdapter(api_key="k", model="gpt-4o")
         caps = adapter.capabilities
@@ -345,7 +345,7 @@ class TestOpenAIChatAdapter:
         assert caps.supports_json_mode is True
 
     def test_config_roundtrip(self):
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = OpenAIChatAdapter(
             api_key="sk-x",
@@ -359,7 +359,7 @@ class TestOpenAIChatAdapter:
         assert restored._organization == "org-1"
 
     def test_ollama_uses_local_base(self):
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = OpenAIChatAdapter(model="llama3.2", provider="ollama")
         req = ChatRequest(messages=[AIMessage.user("Hi")], model="llama3.2")
@@ -370,7 +370,7 @@ class TestOpenAIChatAdapter:
         assert "localhost:11434" in url
 
     def test_openrouter_requires_api_key(self):
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = OpenAIChatAdapter(api_key="", provider="openrouter")
         req = ChatRequest(messages=[AIMessage.user("Hi")], model="openai/gpt-4o")
@@ -385,7 +385,7 @@ class TestOpenAIChatAdapter:
 
 class TestAzureOpenAIChatAdapter:
     def test_basic_completion(self):
-        from noodle_nodes.ai_v2.providers.openai import AzureOpenAIChatAdapter
+        from nodyra_nodes.ai_v2.providers.openai import AzureOpenAIChatAdapter
 
         adapter = AzureOpenAIChatAdapter(
             api_key="azure-key",
@@ -405,12 +405,12 @@ class TestAzureOpenAIChatAdapter:
 
     def test_missing_endpoint_raises(self):
         with pytest.raises(ValueError, match="azure_endpoint"):
-            from noodle_nodes.ai_v2.providers.openai import AzureOpenAIChatAdapter
+            from nodyra_nodes.ai_v2.providers.openai import AzureOpenAIChatAdapter
 
             AzureOpenAIChatAdapter(api_key="key", azure_endpoint="", deployment="gpt-4o")
 
     def test_config_roundtrip(self):
-        from noodle_nodes.ai_v2.providers.openai import AzureOpenAIChatAdapter
+        from nodyra_nodes.ai_v2.providers.openai import AzureOpenAIChatAdapter
 
         adapter = AzureOpenAIChatAdapter(
             api_key="az-key",
@@ -458,7 +458,7 @@ _ANTHROPIC_TOOL_BODY: dict[str, Any] = {
 
 class TestAnthropicChatAdapter:
     def test_basic_completion(self):
-        from noodle_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
+        from nodyra_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
 
         adapter = AnthropicChatAdapter(
             api_key="ant-key",
@@ -482,7 +482,7 @@ class TestAnthropicChatAdapter:
         assert resp.usage.estimated_cost_usd == 0.000126
 
     def test_system_message_extracted(self):
-        from noodle_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
+        from nodyra_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
 
         adapter = AnthropicChatAdapter(api_key="k")
         req = ChatRequest(
@@ -503,7 +503,7 @@ class TestAnthropicChatAdapter:
         assert all(m["role"] != "system" for m in payload["messages"])
 
     def test_tool_call_response(self):
-        from noodle_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
+        from nodyra_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
 
         adapter = AnthropicChatAdapter(api_key="k")
         req = ChatRequest(
@@ -531,7 +531,7 @@ class TestAnthropicChatAdapter:
 
     def test_tool_result_message_format(self):
         """Tool results must be sent as Anthropic's tool_result content blocks."""
-        from noodle_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
+        from nodyra_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
 
         adapter = AnthropicChatAdapter(api_key="k")
         req = ChatRequest(
@@ -559,20 +559,20 @@ class TestAnthropicChatAdapter:
         assert last["content"][0]["tool_use_id"] == "toolu_01"
 
     def test_missing_api_key_raises(self):
-        from noodle_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
+        from nodyra_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
 
         with pytest.raises(ValueError, match="api_key"):
             AnthropicChatAdapter(api_key="")
 
     def test_capabilities(self):
-        from noodle_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
+        from nodyra_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
 
         adapter = AnthropicChatAdapter(api_key="k", model="claude-3-5-haiku-latest")
         caps = adapter.capabilities
         assert caps.supports_tools is True
 
     def test_config_roundtrip(self):
-        from noodle_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
+        from nodyra_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
 
         adapter = AnthropicChatAdapter(
             api_key="ant-k",
@@ -591,8 +591,8 @@ class TestAnthropicChatAdapter:
 
 class TestAdapterFactory:
     def test_openai_provider(self):
-        from noodle_nodes.ai_v2.factory import adapter_from_credentials
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.factory import adapter_from_credentials
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = adapter_from_credentials(
             {"api_key": "sk-x", "provider": "openai"},
@@ -601,8 +601,8 @@ class TestAdapterFactory:
         assert isinstance(adapter, OpenAIChatAdapter)
 
     def test_anthropic_provider(self):
-        from noodle_nodes.ai_v2.factory import adapter_from_credentials
-        from noodle_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
+        from nodyra_nodes.ai_v2.factory import adapter_from_credentials
+        from nodyra_nodes.ai_v2.providers.anthropic import AnthropicChatAdapter
 
         adapter = adapter_from_credentials(
             {"api_key": "ant-x", "provider": "anthropic"},
@@ -611,8 +611,8 @@ class TestAdapterFactory:
         assert isinstance(adapter, AnthropicChatAdapter)
 
     def test_azure_openai_provider(self):
-        from noodle_nodes.ai_v2.factory import adapter_from_credentials
-        from noodle_nodes.ai_v2.providers.openai import AzureOpenAIChatAdapter
+        from nodyra_nodes.ai_v2.factory import adapter_from_credentials
+        from nodyra_nodes.ai_v2.providers.openai import AzureOpenAIChatAdapter
 
         adapter = adapter_from_credentials(
             {
@@ -625,8 +625,8 @@ class TestAdapterFactory:
         assert isinstance(adapter, AzureOpenAIChatAdapter)
 
     def test_alias_azure(self):
-        from noodle_nodes.ai_v2.factory import adapter_from_credentials
-        from noodle_nodes.ai_v2.providers.openai import AzureOpenAIChatAdapter
+        from nodyra_nodes.ai_v2.factory import adapter_from_credentials
+        from nodyra_nodes.ai_v2.providers.openai import AzureOpenAIChatAdapter
 
         adapter = adapter_from_credentials(
             {
@@ -639,15 +639,15 @@ class TestAdapterFactory:
         assert isinstance(adapter, AzureOpenAIChatAdapter)
 
     def test_none_credentials_defaults_to_openai(self):
-        from noodle_nodes.ai_v2.factory import adapter_from_credentials
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.factory import adapter_from_credentials
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = adapter_from_credentials(None, provider="openai", model="gpt-4o")
         assert isinstance(adapter, OpenAIChatAdapter)
 
     def test_ollama_provider(self):
-        from noodle_nodes.ai_v2.factory import adapter_from_credentials
-        from noodle_nodes.ai_v2.providers.openai import OpenAIChatAdapter
+        from nodyra_nodes.ai_v2.factory import adapter_from_credentials
+        from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
         adapter = adapter_from_credentials({}, provider="ollama", model="llama3.2")
         assert isinstance(adapter, OpenAIChatAdapter)
@@ -661,7 +661,7 @@ class TestAdapterFactory:
 
 class TestEmbeddingAdapters:
     def test_openai_embedding_usage_cost(self):
-        from noodle_nodes.ai_v2.providers.embeddings import OpenAIEmbeddingAdapter
+        from nodyra_nodes.ai_v2.providers.embeddings import OpenAIEmbeddingAdapter
 
         adapter = OpenAIEmbeddingAdapter(
             api_key="sk-test",

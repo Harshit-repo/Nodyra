@@ -381,7 +381,7 @@ class RemoteDispatcher:
 
 
 def build_env_payload(
-    env_id: str, python_version: str, packages: list[str], noodle_version: str = "0.0.1"
+    env_id: str, python_version: str, packages: list[str], nodyra_version: str = "0.0.1"
 ) -> dict:
     packages_hash = hashlib.sha256(
         json.dumps(sorted(packages)).encode()
@@ -391,7 +391,7 @@ def build_env_payload(
         "python_version": python_version,
         "packages": packages,
         "packages_hash": packages_hash,
-        "noodle_version": noodle_version,
+        "nodyra_version": nodyra_version,
     }
 
 

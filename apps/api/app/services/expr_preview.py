@@ -1,8 +1,8 @@
 """Manages the isolated expression-preview subprocess (C1).
 
-The worker (``noodle.expr_preview_worker``) is spawned with a from-scratch
+The worker (``nodyra.expr_preview_worker``) is spawned with a from-scratch
 minimal environment — secrets are absent by construction, not scrubbed — so a
-sandbox escape in ``noodle.expr`` lands in a process that holds nothing. One
+sandbox escape in ``nodyra.expr`` lands in a process that holds nothing. One
 warm worker, requests serialized by a lock (preview traffic is light and each
 eval is sub-millisecond); a timeout kills and respawns the worker.
 
@@ -50,7 +50,7 @@ def _current_state() -> _WorkerState:
 
 def _minimal_env() -> dict[str, str]:
     env: dict[str, str] = {}
-    # Only what Python needs to start and import noodle; nothing app-specific
+    # Only what Python needs to start and import nodyra; nothing app-specific
     # (SECRET_KEY, DATABASE_URL, REDIS_URL, cloud creds, ...) crosses over.
     # On Windows, APPDATA/LOCALAPPDATA/USERPROFILE are needed so Python can
     # locate user-site-packages (where editable installs register .pth files).
@@ -68,7 +68,7 @@ async def _ensure_worker(state: _WorkerState) -> asyncio.subprocess.Process:
     if state.proc is not None and state.proc.returncode is None:
         return state.proc
     state.proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-u", "-m", "noodle.expr_preview_worker",
+        sys.executable, "-u", "-m", "nodyra.expr_preview_worker",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-import noodle_nodes  # noqa: F401 - registers nodes
-from noodle_nodes.builtin import _run_code_isolated
+import nodyra_nodes  # noqa: F401 - registers nodes
+from nodyra_nodes.builtin import _run_code_isolated
 
 
 def test_code_node_blocks_subprocess_import() -> None:

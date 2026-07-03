@@ -209,12 +209,12 @@ async def test_ai_builder_attaches_existing_credentials(
     slack_credentials = nodes["notify_slack"]["params"]["credentials"]
 
     assert summarize_key == {
-        "__noodle_credential__": True,
+        "__nodyra_credential__": True,
         "id": llm_cred["id"],
         "key": "*",
     }
     assert slack_credentials == {
-        "__noodle_credential__": True,
+        "__nodyra_credential__": True,
         "id": slack_cred["id"],
         "key": "*",
     }
@@ -249,7 +249,7 @@ async def test_ai_builder_uses_github_v2_operations_and_credentials(
     nodes = {node["id"]: node for node in response["graph"]["nodes"]}
     assert nodes["create_issue"]["type"] == "github_create_issue_v2"
     assert nodes["create_issue"]["params"]["credentials"] == {
-        "__noodle_credential__": True,
+        "__nodyra_credential__": True,
         "id": github_cred["id"],
         "key": "*",
     }
@@ -513,8 +513,8 @@ async def test_resolve_llm_provider_honours_provider_hint(
     for var in (
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
-        "NOODLE_AI_PROVIDER",
-        "NOODLE_AI_MODEL",
+        "NODYRA_AI_PROVIDER",
+        "NODYRA_AI_MODEL",
     ):
         monkeypatch.delenv(var, raising=False)
 

@@ -302,10 +302,10 @@ async def test_saving_a_graph_with_a_metanode_is_accepted(client: AsyncClient) -
 
 async def test_import_workflow_round_trip_t10(client: AsyncClient) -> None:
     """T-10: POST /import accepts a .module.py export and creates a workflow with the graph."""
-    import noodle_nodes  # noqa: F401 - register built-ins
-    from noodle.models import WorkflowGraph
-    from noodle.sdk import registry
-    from noodle_exporter import workflow_to_module
+    import nodyra_nodes  # noqa: F401 - register built-ins
+    from nodyra.models import WorkflowGraph
+    from nodyra.sdk import registry
+    from nodyra_exporter import workflow_to_module
 
     graph_dict = {
         "nodes": [

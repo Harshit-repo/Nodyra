@@ -2,8 +2,8 @@
 
 import hashlib
 
-from noodle.artifacts import LocalArtifactStore
-from noodle.context import current_node_id
+from nodyra.artifacts import LocalArtifactStore
+from nodyra.context import current_node_id
 
 
 def test_write_bytes_stamps_checksum(tmp_path):

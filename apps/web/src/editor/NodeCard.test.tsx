@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Edge } from "@xyflow/react";
 import { NodeCard, hasTriggerUpstream } from "./NodeCard";
-import { type NoodleNode, useEditor } from "./store";
+import { type NodyraNode, useEditor } from "./store";
 
 vi.mock("@xyflow/react", async () => {
   const React = await import("react");
@@ -83,7 +83,7 @@ describe("NodeCard", () => {
     const count = 2_000;
     const nodes = Array.from({ length: count }, (_, index) => ({
       id: `n${index}`,
-      type: "noodle",
+      type: "nodyra",
       position: { x: index, y: 0 },
       data: {
         ...standardNodeData(),
@@ -93,7 +93,7 @@ describe("NodeCard", () => {
           category: index === 0 ? "Triggers" : "Data",
         },
       },
-    })) as unknown as NoodleNode[];
+    })) as unknown as NodyraNode[];
     const edges: Edge[] = Array.from({ length: count - 1 }, (_, index) => ({
       id: `e${index}`,
       source: `n${index}`,

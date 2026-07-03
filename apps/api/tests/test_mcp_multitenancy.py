@@ -80,12 +80,12 @@ async def test_mcp_isolates_tools_resources_and_tokens_by_org(
         "/mcp", headers=headers_a, json=rpc("resources/list")
     )
     uris = {item["uri"] for item in resources.json()["result"]["resources"]}
-    assert f"noodle://workflow/{wf_a}" in uris
-    assert f"noodle://workflow/{wf_b}" not in uris
+    assert f"nodyra://workflow/{wf_a}" in uris
+    assert f"nodyra://workflow/{wf_b}" not in uris
     foreign_resource = await client.post(
         "/mcp",
         headers=headers_a,
-        json=rpc("resources/read", {"uri": f"noodle://workflow/{wf_b}"}),
+        json=rpc("resources/read", {"uri": f"nodyra://workflow/{wf_b}"}),
     )
     assert foreign_resource.json()["error"]["code"] == -32601
 

@@ -1,15 +1,15 @@
 """Phase 4 (A3): sub-workflow resolution through the engine callback."""
 
-import noodle_nodes  # noqa: F401 - registers execute_workflow / manual_trigger / code
-from noodle.engine import execute
-from noodle.engine.subworkflows import (
+import nodyra_nodes  # noqa: F401 - registers execute_workflow / manual_trigger / code
+from nodyra.engine import execute
+from nodyra.engine.subworkflows import (
     InlineSubworkflow,
     SubworkflowCall,
     SubworkflowMeta,
     extract_leaf_value,
 )
-from noodle.models import WorkflowGraph
-from noodle.sdk import registry
+from nodyra.models import WorkflowGraph
+from nodyra.sdk import registry
 
 
 def test_extract_leaf_value_single_leaf():

@@ -66,7 +66,7 @@ def test_production_fully_configured_has_no_warnings():
         runtime_mode="production",
         database_url=_PG,
         artifact_storage_backend="s3",
-        artifact_s3_bucket="prod-noodle-artifacts",
+        artifact_s3_bucket="prod-nodyra-artifacts",
         queue_backend="redis",
         secret_key="a-strong-random-production-secret-key-xyz",
         cors_origins="https://app.example.com",
@@ -111,7 +111,7 @@ def test_production_with_inline_webhook_role_warns():
         runtime_mode="production",
         database_url=_PG,
         artifact_storage_backend="s3",
-        artifact_s3_bucket="prod-noodle-artifacts",
+        artifact_s3_bucket="prod-nodyra-artifacts",
         queue_backend="redis",
         webhook_role="inline",
     )

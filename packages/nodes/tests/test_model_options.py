@@ -1,4 +1,4 @@
-import noodle_nodes.ai_v2.model_options as mo
+import nodyra_nodes.ai_v2.model_options as mo
 
 
 def test_openrouter_models_parses_data_ids(monkeypatch):
@@ -69,8 +69,8 @@ def test_unreachable_provider_falls_back_to_curated(monkeypatch):
 
 
 def test_loader_is_registered():
-    import noodle_nodes  # noqa: F401 - triggers registration
-    from noodle_nodes.integrations_v2.dynamic_options import list_loader_ids
+    import nodyra_nodes  # noqa: F401 - triggers registration
+    from nodyra_nodes.integrations_v2.dynamic_options import list_loader_ids
 
     assert "llm_models" in list_loader_ids()
     assert "embedding_models" in list_loader_ids()

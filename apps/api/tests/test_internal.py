@@ -26,14 +26,14 @@ async def test_scheduler_tick_requires_matching_token(client: AsyncClient) -> No
         # Wrong header → rejected.
         resp = await client.post(
             "/internal/scheduler/tick",
-            headers={"X-Noodle-Internal-Token": "wrong"},
+            headers={"X-Nodyra-Internal-Token": "wrong"},
         )
         assert resp.status_code == 401
 
         # Right header → ok.
         resp = await client.post(
             "/internal/scheduler/tick",
-            headers={"X-Noodle-Internal-Token": "secret-abc"},
+            headers={"X-Nodyra-Internal-Token": "secret-abc"},
         )
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}

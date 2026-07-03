@@ -34,7 +34,7 @@ logs carry an empty id and can't be correlated across a request's log lines.
 - **Status:** Reviewed — easy add.
 
 ### OBS-2 — Logs are plain-text, not structured/JSON (LOW–MEDIUM)
-Logging is `logging.getLogger("noodle")` with `%`-format human messages and no
+Logging is `logging.getLogger("nodyra")` with `%`-format human messages and no
 JSON formatter / `logging.config`. Production aggregation (Loki/ELK/Datadog,
 including on Render/k8s) wants one JSON object per line with stable fields
 (level, logger, request_id, org_id, run_id, msg).

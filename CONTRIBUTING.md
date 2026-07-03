@@ -1,6 +1,6 @@
-# Contributing To Noodle
+# Contributing To Nodyra
 
-Noodle is not ready for public distribution yet, and the repository does not
+Nodyra is not ready for public distribution yet, and the repository does not
 currently include a software license. Do not submit code, documentation, design,
 or other copyrightable material unless the maintainers have confirmed that your
 contribution can be accepted.
@@ -13,7 +13,7 @@ can be merged.
 
 The CLA is intended to let contributors keep ownership of their work while
 granting the Project Owner the rights needed to maintain, distribute, relicense,
-and commercially license Noodle. The CLA contains contact and governing-law
+and commercially license Nodyra. The CLA contains contact and governing-law
 placeholders that must be completed before the process is used for external
 contributors.
 

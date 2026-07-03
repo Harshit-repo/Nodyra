@@ -4,7 +4,7 @@ import { buildLoadOptionsParams, mergeOptions } from "./NodeDetails";
 
 describe("buildLoadOptionsParams", () => {
   it("includes credential_id + provider/base_url from params, skips empties", () => {
-    const ref = { __noodle_credential__: true, id: "cred1", key: "*" };
+    const ref = { __nodyra_credential__: true, id: "cred1", key: "*" };
     const out = buildLoadOptionsParams(ref, {
       provider: "ollama",
       base_url: "",
@@ -19,7 +19,7 @@ describe("buildLoadOptionsParams", () => {
   });
 
   it("forwards depends_on params (e.g. spreadsheet_id) so cascading loaders work", () => {
-    const ref = { __noodle_credential__: true, id: "cred1", key: "*" };
+    const ref = { __nodyra_credential__: true, id: "cred1", key: "*" };
     const out = buildLoadOptionsParams(
       ref,
       { spreadsheet_id: "sheet-abc", range_name: "" },

@@ -1,4 +1,4 @@
-# Noodle Tenant and Enterprise Readiness Audit & Fix Report
+# Nodyra Tenant and Enterprise Readiness Audit & Fix Report
 
 Date: 2026-06-30
 Branch: `feat/ms4-enterprise-scale` (30 commits, 119 files, 22,691+ insertions)
@@ -36,7 +36,7 @@ Ready for private beta multi-tenant after fixes, not production-ready enterprise
 
 ## Test Environment
 
-- OS: Windows, repository at `D:\noodle`
+- OS: Windows, repository at `D:\nodyra`
 - Python: 3.12.5
 - Node: v22.20.0
 - npm: 10.9.3
@@ -141,7 +141,7 @@ Deployment files:
 - `deploy/docker-compose.yml`
 - `deploy/Dockerfile.python`
 - `apps/web/Dockerfile`
-- `deploy/helm/noodle`
+- `deploy/helm/nodyra`
 
 ## Existing Tests Run
 
@@ -632,11 +632,11 @@ Docker:
 Compose:
 
 - `docker compose --env-file .env.example config --quiet` passed.
-- Compose requires production `NOODLE_SECRET_KEY` and includes Postgres/Redis health dependencies.
+- Compose requires production `NODYRA_SECRET_KEY` and includes Postgres/Redis health dependencies.
 
 Helm:
 
-- Chart exists under `deploy/helm/noodle`.
+- Chart exists under `deploy/helm/nodyra`.
 - Helm is not installed locally, so `helm lint` and `helm template` were not run.
 
 Health checks:
@@ -651,7 +651,7 @@ Env validation:
 
 Secret handling:
 
-- Compose uses required secret interpolation for `NOODLE_SECRET_KEY`.
+- Compose uses required secret interpolation for `NODYRA_SECRET_KEY`.
 - External KMS provider code and health endpoints exist.
 - Need runtime secret leak audit over logs and traces.
 
@@ -749,4 +749,4 @@ One P1-class architectural risk remains open: RLS is fail-open when `app.current
 
 Ready for private beta multi-tenant after fixes.
 
-Noodle now has stronger tenant/database/SSO correctness than at the start of this audit, and the highest-priority reproduced blockers were fixed with regression coverage. It is not yet enterprise production-ready because full adversarial IDOR coverage, sandbox proof, load/stress testing, Docker/Helm smoke, and operational recovery tests remain open.
+Nodyra now has stronger tenant/database/SSO correctness than at the start of this audit, and the highest-priority reproduced blockers were fixed with regression coverage. It is not yet enterprise production-ready because full adversarial IDOR coverage, sandbox proof, load/stress testing, Docker/Helm smoke, and operational recovery tests remain open.

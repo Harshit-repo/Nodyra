@@ -54,12 +54,12 @@ async def assign_k8s_run(
         cfg = pool.provider_config if pool else {}
 
     kubeconfig_yaml = cfg.get("kubeconfig_yaml")
-    namespace = cfg.get("namespace", "noodle")
+    namespace = cfg.get("namespace", "nodyra")
     image_registry = cfg.get("image_registry", "")
     node_selector = cfg.get("node_selector") or {}
 
     image_tag = (
-        f"noodle-env:{env_payload.get('id', 'default')}"
+        f"nodyra-env:{env_payload.get('id', 'default')}"
         f"-{env_payload.get('packages_hash', 'latest')}"
     )
     full_image = f"{image_registry}/{image_tag}" if image_registry else image_tag
@@ -77,7 +77,7 @@ async def assign_k8s_run(
     )
 
     from app.config import settings as app_settings  # noqa: PLC0415
-    api_url = getattr(app_settings, "public_api_url", "http://noodle-api:8000")
+    api_url = getattr(app_settings, "public_api_url", "http://nodyra-api:8000")
 
     # Load kubeconfig.
     if kubeconfig_yaml:
@@ -92,7 +92,7 @@ async def assign_k8s_run(
         await k8s_config.load_incluster_config()
 
     batch_v1 = k8s_client.BatchV1Api()
-    job_name = f"noodle-run-{run_id[:16]}"
+    job_name = f"nodyra-run-{run_id[:16]}"
 
     job_body = k8s_client.V1Job(
         metadata=k8s_client.V1ObjectMeta(name=job_name, namespace=namespace),
@@ -108,12 +108,12 @@ async def assign_k8s_run(
                             image=full_image,
                             command=[
                                 "python", "-u", "-m",
-                                "noodle_runner_agent.k8s_entrypoint",
+                                "nodyra_runner_agent.k8s_entrypoint",
                             ],
                             env=[
-                                k8s_client.V1EnvVar(name="NOODLE_API_URL", value=api_url),
-                                k8s_client.V1EnvVar(name="NOODLE_RUN_TOKEN", value=token),
-                                k8s_client.V1EnvVar(name="NOODLE_RUN_ID", value=run_id),
+                                k8s_client.V1EnvVar(name="NODYRA_API_URL", value=api_url),
+                                k8s_client.V1EnvVar(name="NODYRA_RUN_TOKEN", value=token),
+                                k8s_client.V1EnvVar(name="NODYRA_RUN_ID", value=run_id),
                             ],
                         )
                     ],

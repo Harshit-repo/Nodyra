@@ -5,11 +5,11 @@ Independent audit, 2026-06-16. Synthesizes frontend reviews (01 architecture/sta
 README/product framing.
 
 ## Product positioning (clear and differentiated)
-Noodle is **n8n/Windmill-adjacent but Python-first**: every node is a plain Python
+Nodyra is **n8n/Windmill-adjacent but Python-first**: every node is a plain Python
 function, workflows run in per-environment virtualenvs at native speed, and the
 builder exposes full input/output inspection. The differentiator is real — it's
 not "JS wrappers around Python," it's Python end-to-end with a schema-driven UI
-generated from decorators. The docs (`n8n-vs-noodle`, `noodle-vs-windmill`) frame
+generated from decorators. The docs (`n8n-vs-nodyra`, `nodyra-vs-windmill`) frame
 this honestly.
 
 ## UX strengths (verified)

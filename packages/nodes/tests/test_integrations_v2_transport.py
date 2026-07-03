@@ -2,11 +2,11 @@ import json
 
 import pytest
 
-from noodle.context import node_debug
-from noodle_nodes.http_security import UnsafeHttpTargetError
-from noodle_nodes.integrations_v2 import ProviderError, ProviderTransport, RetryPolicy
-from noodle_nodes.integrations_v2.providers.google import GoogleTransport
-from noodle_nodes.integrations_v2.providers.microsoft import MicrosoftGraphTransport
+from nodyra.context import node_debug
+from nodyra_nodes.http_security import UnsafeHttpTargetError
+from nodyra_nodes.integrations_v2 import ProviderError, ProviderTransport, RetryPolicy
+from nodyra_nodes.integrations_v2.providers.google import GoogleTransport
+from nodyra_nodes.integrations_v2.providers.microsoft import MicrosoftGraphTransport
 
 
 class FakeResponse:

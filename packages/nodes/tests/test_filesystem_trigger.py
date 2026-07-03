@@ -7,10 +7,10 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import noodle_nodes  # noqa: F401
-from noodle.sdk import registry
-from noodle_nodes.integrations_v2.providers.filesystem import triggers as fs_triggers
-from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext
+import nodyra_nodes  # noqa: F401
+from nodyra.sdk import registry
+from nodyra_nodes.integrations_v2.providers.filesystem import triggers as fs_triggers
+from nodyra_nodes.integrations_v2.specs import ProviderTriggerPollContext
 
 
 def _ctx(params: dict, cursor: dict) -> ProviderTriggerPollContext:

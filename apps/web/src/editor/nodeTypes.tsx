@@ -6,12 +6,12 @@ import { MapGroupNode } from "./MapGroupNode";
 import { MetaBar } from "./MetaBar";
 import { NodeCard } from "./NodeCard";
 import { NodeGroup } from "./NodeGroup";
-import { NoodleEdge } from "./NoodleEdge";
+import { NodyraEdge } from "./NodyraEdge";
 import { StickyNote } from "./StickyNote";
 import { McpToolNode } from "./nodes/McpToolNode";
 
 export const nodeTypes = {
-  noodle: NodeCard,
+  nodyra: NodeCard,
   sticky: StickyNote,
   group: NodeGroup,
   mapGroup: MapGroupNode,
@@ -20,7 +20,7 @@ export const nodeTypes = {
   mcpTool: McpToolNode,
 };
 
-export const edgeTypes = { default: NoodleEdge };
+export const edgeTypes = { default: NodyraEdge };
 
 export const diffNodeTypes = Object.fromEntries(
   Object.entries(nodeTypes).map(([type, Component]) => [

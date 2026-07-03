@@ -4,10 +4,10 @@ import time
 
 import pytest
 
-from noodle.context import cancel_event
-from noodle.engine import execute
-from noodle.models import GraphNode, WorkflowGraph
-from noodle.sdk import NodeRegistry, node
+from nodyra.context import cancel_event
+from nodyra.engine import execute
+from nodyra.models import GraphNode, WorkflowGraph
+from nodyra.sdk import NodeRegistry, node
 
 
 @pytest.fixture

@@ -26,7 +26,7 @@ from app.services.run_persistence import (
     _contains_unrestorable_object,
     _graph_node_types,
 )
-from noodle.ai_runtime import AgentActionRequest
+from nodyra.ai_runtime import AgentActionRequest
 
 logger = logging.getLogger(__name__)
 

@@ -9,17 +9,17 @@ from __future__ import annotations
 
 import asyncio
 
-from noodle.ai_runtime import (
+from nodyra.ai_runtime import (
     AgentActionRequest,
     AgentActionResponse,
     AIMessage,
     ToolAdapter,
     ToolCall,
 )
-from noodle.engine import execute
-from noodle.models import Edge, GraphNode, RunStatus, WorkflowGraph
-from noodle.node_tool import TOOL_MODE_OUTPUT
-from noodle.sdk import NodeRegistry, node
+from nodyra.engine import execute
+from nodyra.models import Edge, GraphNode, RunStatus, WorkflowGraph
+from nodyra.node_tool import TOOL_MODE_OUTPUT
+from nodyra.sdk import NodeRegistry, node
 
 
 def _registry() -> NodeRegistry:

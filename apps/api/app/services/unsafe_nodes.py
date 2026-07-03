@@ -22,7 +22,7 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from noodle.models import WorkflowGraph
+from nodyra.models import WorkflowGraph
 
 # Node type id → finding kind. Pure ``ssh``/``code``/``execute_command`` nodes
 # are flagged unconditionally because they execute arbitrary code on the

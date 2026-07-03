@@ -1,6 +1,6 @@
 """SSH-based runner onboarding.
 
-Given a host + SSH credentials, connect once, install ``noodle-runner`` into
+Given a host + SSH credentials, connect once, install ``nodyra-runner`` into
 the user's Python, register it against a pool with a one-time token, and start
 it (systemd if available, else nohup). The machine then connects back over the
 WS like any agent runner.
@@ -27,8 +27,8 @@ def _install_script(req: SSHOnboardRequest, api_url: str, token: str, name: str)
     q_name = shlex.quote(name)
 
     nohup = (
-        "nohup /usr/bin/env python3 -m noodle_runner_agent.agent start "
-        '> "$HOME/noodle-runner.log" 2>&1 &'
+        "nohup /usr/bin/env python3 -m nodyra_runner_agent.agent start "
+        '> "$HOME/nodyra-runner.log" 2>&1 &'
     )
 
     if req.use_systemd:
@@ -37,10 +37,10 @@ def _install_script(req: SSHOnboardRequest, api_url: str, token: str, name: str)
         # unit literal.
         unit = (
             "[Unit]\n"
-            "Description=Noodle Runner Agent\n"
+            "Description=Nodyra Runner Agent\n"
             "After=network.target\n"
             "[Service]\n"
-            "ExecStart=/usr/bin/env python3 -m noodle_runner_agent.agent start\n"
+            "ExecStart=/usr/bin/env python3 -m nodyra_runner_agent.agent start\n"
             "Restart=always\n"
             f"User={req.username}\n"
             f"Environment=PATH=/home/{req.username}/.local/bin:/usr/bin:/bin\n"
@@ -50,36 +50,36 @@ def _install_script(req: SSHOnboardRequest, api_url: str, token: str, name: str)
         start = (
             "if command -v sudo >/dev/null 2>&1 "
             "&& command -v systemctl >/dev/null 2>&1; then\n"
-            "  sudo tee /etc/systemd/system/noodle-runner.service "
+            "  sudo tee /etc/systemd/system/nodyra-runner.service "
             ">/dev/null <<'UNIT'\n"
             f"{unit}"
             "UNIT\n"
             "  sudo systemctl daemon-reload\n"
-            "  if sudo systemctl enable --now noodle-runner; then\n"
-            '    echo "[noodle] started via systemd"\n'
+            "  if sudo systemctl enable --now nodyra-runner; then\n"
+            '    echo "[nodyra] started via systemd"\n'
             "  else\n"
             f"    {nohup}\n"
-            '    echo "[noodle] systemd failed, started via nohup"\n'
+            '    echo "[nodyra] systemd failed, started via nohup"\n'
             "  fi\n"
             "else\n"
             f"  {nohup}\n"
-            '  echo "[noodle] started via nohup (no sudo/systemctl)"\n'
+            '  echo "[nodyra] started via nohup (no sudo/systemctl)"\n'
             "fi\n"
         )
     else:
-        start = f'{nohup}\necho "[noodle] started via nohup"\n'
+        start = f'{nohup}\necho "[nodyra] started via nohup"\n'
 
     register = (
-        "/usr/bin/env python3 -m noodle_runner_agent.agent register "
+        "/usr/bin/env python3 -m nodyra_runner_agent.agent register "
         f"--api-url {q_api} --token {q_token} --name {q_name}"
     )
     return (
         "set -e\n"
         "PYBIN=$(command -v python3 || command -v python)\n"
-        'if [ -z "$PYBIN" ]; then echo "[noodle] no python found" >&2; exit 1; fi\n'
-        f'"$PYBIN" -m pip install --user --upgrade --find-links {q_api}/runner-pools/wheels/ noodle-runner\n'
+        'if [ -z "$PYBIN" ]; then echo "[nodyra] no python found" >&2; exit 1; fi\n'
+        f'"$PYBIN" -m pip install --user --upgrade --find-links {q_api}/runner-pools/wheels/ nodyra-runner\n'
         f"{register}\n"
-        f"echo [noodle] registered runner {q_name}\n"
+        f"echo [nodyra] registered runner {q_name}\n"
         f"{start}"
     )
 
@@ -130,21 +130,21 @@ async def onboard_machine(req: SSHOnboardRequest, api_url: str, token: str, name
 
 
 def _restart_script(creds: dict) -> str:
-    """Shell script to restart the noodle-runner service on the remote machine."""
+    """Shell script to restart the nodyra-runner service on the remote machine."""
     nohup = (
-        "nohup /usr/bin/env python3 -m noodle_runner_agent.agent start "
-        '> "$HOME/noodle-runner.log" 2>&1 &'
+        "nohup /usr/bin/env python3 -m nodyra_runner_agent.agent start "
+        '> "$HOME/nodyra-runner.log" 2>&1 &'
     )
     return (
         "set -e\n"
         "if command -v sudo >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 "
-        "&& sudo systemctl is-active --quiet noodle-runner 2>/dev/null; then\n"
-        "  sudo systemctl restart noodle-runner\n"
-        '  echo "[noodle] restarted via systemd"\n'
+        "&& sudo systemctl is-active --quiet nodyra-runner 2>/dev/null; then\n"
+        "  sudo systemctl restart nodyra-runner\n"
+        '  echo "[nodyra] restarted via systemd"\n'
         "else\n"
-        "  pkill -f 'noodle_runner_agent.agent start' || true\n"
+        "  pkill -f 'nodyra_runner_agent.agent start' || true\n"
         f"  {nohup}\n"
-        '  echo "[noodle] restarted via nohup"\n'
+        '  echo "[nodyra] restarted via nohup"\n'
         "fi\n"
     )
 

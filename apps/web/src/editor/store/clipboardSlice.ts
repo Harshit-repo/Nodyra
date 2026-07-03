@@ -1,6 +1,6 @@
 import type { Edge } from "@xyflow/react";
 
-import type { ClipboardResult, EditorStore, NoodleNode } from "./index";
+import type { ClipboardResult, EditorStore, NodyraNode } from "./index";
 
 export type ClipboardSlice = Pick<
   EditorStore,
@@ -22,7 +22,7 @@ export const clipboardInitialState: ClipboardSliceState = {
 };
 
 export type ClipboardSnapshot = {
-  nodes: NoodleNode[];
+  nodes: NodyraNode[];
   edges: Edge[];
   result: ClipboardResult;
 };

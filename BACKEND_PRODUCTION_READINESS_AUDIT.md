@@ -1,4 +1,4 @@
-# Noodle Backend Production Readiness Audit
+# Nodyra Backend Production Readiness Audit
 
 **Date:** 2026-06-28
 **Audit Scope:** Full backend codebase (apps/api, packages/core, deploy)
@@ -10,7 +10,7 @@
 
 ### Current Production Readiness Score: 5.5 / 10
 
-Noodle's backend architecture is **well-designed and thoughtfully engineered** with deliberate attention to security, multi-tenancy, execution isolation, and operational concerns. The codebase demonstrates mature engineering practices: structured JSON logging, OpenTelemetry tracing, CSRF protection, envelope encryption for credentials, container sandboxing, Postgres RLS, leader election, graceful shutdown, and comprehensive test isolation.
+Nodyra's backend architecture is **well-designed and thoughtfully engineered** with deliberate attention to security, multi-tenancy, execution isolation, and operational concerns. The codebase demonstrates mature engineering practices: structured JSON logging, OpenTelemetry tracing, CSRF protection, envelope encryption for credentials, container sandboxing, Postgres RLS, leader election, graceful shutdown, and comprehensive test isolation.
 
 However, the backend is **not yet production-ready for multi-tenant or internet-facing deployment** due to systemic issues in three areas:
 
@@ -117,10 +117,10 @@ However, the backend is **not yet production-ready for multi-tenant or internet-
 - Plus: `ai_builder.py`, `artifacts.py`, `artifact_backends.py`, `cache.py`, `chat_service.py`, `credential_tests.py`, `datasets_query.py`, `dispatcher_health.py`, `expr_preview.py`, `github_sync.py`, `github_sync_jobs.py`, `live_settings.py`, `oauth.py`, `org_limits.py`, `package_preflight.py`, `provider_triggers.py`, `s3_artifact_backend.py`, `ssh_onboard.py`, `starter_graph.py`, `unsafe_nodes.py`, `venv.py`, `wheel_index.py`, `ws_ticket.py`
 
 ### Engine Layer (separate package)
-- `packages/core/noodle/engine/scheduler.py` — Topological sort, dependency-counting execution
-- `packages/core/noodle/engine/loops.py` — Loop region detection and iteration
-- `packages/core/noodle/engine/metanodes.py` — Metanode expansion
-- `packages/core/noodle/engine/validation.py` — Port kind validation
+- `packages/core/nodyra/engine/scheduler.py` — Topological sort, dependency-counting execution
+- `packages/core/nodyra/engine/loops.py` — Loop region detection and iteration
+- `packages/core/nodyra/engine/metanodes.py` — Metanode expansion
+- `packages/core/nodyra/engine/validation.py` — Port kind validation
 
 ### Config & Infrastructure
 - `apps/api/app/config.py` — Pydantic Settings (500 lines, comprehensive)
@@ -136,7 +136,7 @@ However, the backend is **not yet production-ready for multi-tenant or internet-
 ### Deployment Files
 - `deploy/docker-compose.yml` — Full stack (API, worker, Postgres, Redis, MinIO)
 - `deploy/Dockerfile.python` — Multi-stage Python image
-- `deploy/helm/noodle/` — Kubernetes Helm chart
+- `deploy/helm/nodyra/` — Kubernetes Helm chart
 
 ### Test Files
 - `apps/api/tests/` — 90+ test files covering all major subsystems
@@ -285,8 +285,8 @@ However, the backend is **not yet production-ready for multi-tenant or internet-
 **Area:** API / Correctness
 **File:** `routers/workflows.py:740`
 **Evidence:** `logger.warning(...)` called inside `publish_workflow` but `logger` is never imported or defined in the file. If webhook path collision is detected on publish, this raises `NameError`.
-**Fix:** Add `import logging; logger = logging.getLogger("noodle")`.
-**Status:** ✅ Fixed — Added `import logging` and `logger = logging.getLogger("noodle")` at top of workflows.py.
+**Fix:** Add `import logging; logger = logging.getLogger("nodyra")`.
+**Status:** ✅ Fixed — Added `import logging` and `logger = logging.getLogger("nodyra")` at top of workflows.py.
 
 ### P1-8: RunEvent INSERT is Per-Row, Not Bulk
 
@@ -406,14 +406,14 @@ However, the backend is **not yet production-ready for multi-tenant or internet-
 **Severity:** P1
 **Area:** DevOps / Security
 **File:** `deploy/docker-compose.yml:77`
-**Evidence:** `SECRET_KEY` defaults to `noodle-dev-secret-change-me-in-production` if env var is unset. `INTERNAL_API_TOKEN` uses the safer `${VAR:?...}` pattern but `SECRET_KEY` does not.
-**Fix:** Use `${NOODLE_SECRET_KEY:?SECRET_KEY is required}` pattern.
+**Evidence:** `SECRET_KEY` defaults to `nodyra-dev-secret-change-me-in-production` if env var is unset. `INTERNAL_API_TOKEN` uses the safer `${VAR:?...}` pattern but `SECRET_KEY` does not.
+**Fix:** Use `${NODYRA_SECRET_KEY:?SECRET_KEY is required}` pattern.
 
 ### P1-23: Helm Chart Missing Worker Probes and HPA
 
 **Severity:** P1
 **Area:** DevOps
-**Files:** `deploy/helm/noodle/templates/worker-deployment.yaml`, `deploy/helm/noodle/templates/api-deployment.yaml`
+**Files:** `deploy/helm/nodyra/templates/worker-deployment.yaml`, `deploy/helm/nodyra/templates/api-deployment.yaml`
 **Evidence:** Worker deployment has no liveness or readiness probes. No HPA template for API or worker.
 **Fix:** Add probes with appropriate thresholds. Add HPA template.
 
@@ -568,7 +568,7 @@ Worker image inherits API healthcheck hitting `/health/live` on port 8000. Worke
 ### Strengths
 - **90+ test files** covering all major subsystems
 - **Best-in-class test isolation**: 17 module-level `SessionLocal` patches, event broker reset, dispatch state cleanup, queue drain flag reset, sandbox policy reset, rate limit reset, license state reset, webhook session cleanup
-- **Dual-backend support**: `NOODLE_TEST_DATABASE_URL` switches from SQLite to PostgreSQL
+- **Dual-backend support**: `NODYRA_TEST_DATABASE_URL` switches from SQLite to PostgreSQL
 - **CI "postgres" lane**: Exercises `SELECT ... FOR UPDATE SKIP LOCKED` path
 - **Good coverage**: Auth, credentials, crypto, webhooks, triggers, runs, workflows, environments, deployments, sandbox, MCP, licensing, rate limiting
 
@@ -639,7 +639,7 @@ Worker image inherits API healthcheck hitting `/health/live` on port 8000. Worke
 
 **Internal-only with auth enabled. Not ready for public beta.**
 
-The Noodle backend demonstrates strong architectural foundations and thoughtful security design. The engineering team clearly understands production concerns. However, the systemic lack of authentication on read endpoints, the credential cross-tenant memory leak, and the absence of global webhook auth enforcement mean the platform should not be exposed to untrusted users or the public internet.
+The Nodyra backend demonstrates strong architectural foundations and thoughtful security design. The engineering team clearly understands production concerns. However, the systemic lack of authentication on read endpoints, the credential cross-tenant memory leak, and the absence of global webhook auth enforcement mean the platform should not be exposed to untrusted users or the public internet.
 
 **Recommended path:**
 1. Fix all P0 issues (estimated 2-3 weeks of focused work)
@@ -648,7 +648,7 @@ The Noodle backend demonstrates strong architectural foundations and thoughtful 
 4. Address P2 issues during public beta
 5. P3 issues can be addressed incrementally post-launch
 
-The backend is fundamentally sound. With the identified fixes, Noodle can be a credible production workflow automation platform.
+The backend is fundamentally sound. With the identified fixes, Nodyra can be a credible production workflow automation platform.
 
 ---
 

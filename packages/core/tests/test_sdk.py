@@ -1,13 +1,13 @@
 import pytest
 
-from noodle.sdk import (
+from nodyra.sdk import (
     NodeRegistry,
     discover_module_function_manifests,
     discover_module_nodes,
     node,
     register_module_functions,
 )
-from noodle.sdk import (
+from nodyra.sdk import (
     registry as global_registry,
 )
 
@@ -326,7 +326,7 @@ async def fetch(url: str, retries: int = 3):
 # ---- @node decorators in user modules (explicit mode) ----
 
 DECORATED_SOURCE = '''
-from noodle import node
+from nodyra import node
 
 
 def _clean(text: str) -> str:
@@ -379,7 +379,7 @@ def test_explicit_mode_reads_decorator_metadata() -> None:
 
 def test_ast_decorator_reads_role_param_groups_and_rich_metadata() -> None:
     source = '''
-from noodle import node
+from nodyra import node
 
 @node(
     name="Tool",

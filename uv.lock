@@ -15,15 +15,15 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "nodyra",
+    "nodyra-api",
     "nodyra-client",
-    "noodle",
-    "noodle-api",
-    "noodle-core",
-    "noodle-exporter",
-    "noodle-importer",
-    "noodle-nodes",
-    "noodle-runner",
-    "noodle-runtime",
+    "nodyra-core",
+    "nodyra-exporter",
+    "nodyra-importer",
+    "nodyra-nodes",
+    "nodyra-runner",
+    "nodyra-runtime",
 ]
 
 [[package]]
@@ -1675,39 +1675,7 @@ wheels = [
 ]
 
 [[package]]
-name = "nodyra-client"
-version = "0.1.0"
-source = { editable = "packages/client" }
-dependencies = [
-    { name = "click" },
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "rich" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-httpx" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8.1" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25" },
-    { name = "pytest-httpx", marker = "extra == 'dev'", specifier = ">=0.32" },
-    { name = "rich", specifier = ">=13.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9" },
-]
-provides-extras = ["dev"]
-
-[[package]]
-name = "noodle"
+name = "nodyra"
 version = "0.0.1"
 source = { virtual = "." }
 
@@ -1748,7 +1716,7 @@ dev = [
 ]
 
 [[package]]
-name = "noodle-api"
+name = "nodyra-api"
 version = "0.0.1"
 source = { editable = "apps/api" }
 dependencies = [
@@ -1762,10 +1730,10 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
-    { name = "noodle-core" },
-    { name = "noodle-exporter" },
-    { name = "noodle-importer" },
-    { name = "noodle-nodes" },
+    { name = "nodyra-core" },
+    { name = "nodyra-exporter" },
+    { name = "nodyra-importer" },
+    { name = "nodyra-nodes" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "opentelemetry-instrumentation-sqlalchemy" },
@@ -1807,11 +1775,11 @@ requires-dist = [
     { name = "google-cloud-kms", marker = "extra == 'kms-gcp'", specifier = ">=2.21" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.21" },
-    { name = "noodle-api", extras = ["kms-aws", "kms-gcp"], marker = "extra == 'kms-all'" },
-    { name = "noodle-core", editable = "packages/core" },
-    { name = "noodle-exporter", editable = "packages/exporter" },
-    { name = "noodle-importer", editable = "packages/importer" },
-    { name = "noodle-nodes", editable = "packages/nodes" },
+    { name = "nodyra-api", extras = ["kms-aws", "kms-gcp"], marker = "extra == 'kms-all'" },
+    { name = "nodyra-core", editable = "packages/core" },
+    { name = "nodyra-exporter", editable = "packages/exporter" },
+    { name = "nodyra-importer", editable = "packages/importer" },
+    { name = "nodyra-nodes", editable = "packages/nodes" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.30" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.51b0" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.51b0" },
@@ -1829,7 +1797,39 @@ requires-dist = [
 provides-extras = ["kms-aws", "kms-gcp", "kms-all"]
 
 [[package]]
-name = "noodle-core"
+name = "nodyra-client"
+version = "0.1.0"
+source = { editable = "packages/client" }
+dependencies = [
+    { name = "click" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "rich" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-httpx" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8.1" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25" },
+    { name = "pytest-httpx", marker = "extra == 'dev'", specifier = ">=0.32" },
+    { name = "rich", specifier = ">=13.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "nodyra-core"
 version = "0.0.1"
 source = { editable = "packages/core" }
 dependencies = [
@@ -1844,29 +1844,29 @@ requires-dist = [
 ]
 
 [[package]]
-name = "noodle-exporter"
+name = "nodyra-exporter"
 version = "0.0.1"
 source = { editable = "packages/exporter" }
 dependencies = [
-    { name = "noodle-core" },
+    { name = "nodyra-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "noodle-core", editable = "packages/core" }]
+requires-dist = [{ name = "nodyra-core", editable = "packages/core" }]
 
 [[package]]
-name = "noodle-importer"
+name = "nodyra-importer"
 version = "0.0.1"
 source = { editable = "packages/importer" }
 dependencies = [
-    { name = "noodle-core" },
+    { name = "nodyra-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "noodle-core", editable = "packages/core" }]
+requires-dist = [{ name = "nodyra-core", editable = "packages/core" }]
 
 [[package]]
-name = "noodle-nodes"
+name = "nodyra-nodes"
 version = "0.0.1"
 source = { editable = "packages/nodes" }
 dependencies = [
@@ -1879,7 +1879,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "markdown" },
     { name = "mcp" },
-    { name = "noodle-core" },
+    { name = "nodyra-core" },
     { name = "pyarrow" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -1960,7 +1960,7 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'matplotlib'", specifier = ">=3.8" },
     { name = "mcp", specifier = ">=1.9" },
     { name = "networkx", marker = "extra == 'networkx'", specifier = ">=3.2" },
-    { name = "noodle-core", editable = "packages/core" },
+    { name = "nodyra-core", editable = "packages/core" },
     { name = "numpy", marker = "extra == 'ml'", specifier = ">=1.26" },
     { name = "numpy", marker = "extra == 'numpy'", specifier = ">=1.26" },
     { name = "ollama", marker = "extra == 'ollama'", specifier = ">=0.4" },
@@ -1980,7 +1980,7 @@ requires-dist = [
 provides-extras = ["ml", "storage", "voice", "deepgram", "ollama", "azure-speech", "huggingface", "pandas", "numpy", "matplotlib", "pydantic-extra", "opencv", "scipy", "spacy", "networkx", "sympy", "zvec"]
 
 [[package]]
-name = "noodle-runner"
+name = "nodyra-runner"
 version = "0.0.1"
 source = { editable = "packages/runner" }
 dependencies = [
@@ -1995,20 +1995,20 @@ requires-dist = [
 ]
 
 [[package]]
-name = "noodle-runtime"
+name = "nodyra-runtime"
 version = "0.0.1"
 source = { editable = "packages/runtime" }
 dependencies = [
     { name = "httpx" },
-    { name = "noodle-core" },
-    { name = "noodle-nodes" },
+    { name = "nodyra-core" },
+    { name = "nodyra-nodes" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "noodle-core", editable = "packages/core" },
-    { name = "noodle-nodes", editable = "packages/nodes" },
+    { name = "nodyra-core", editable = "packages/core" },
+    { name = "nodyra-nodes", editable = "packages/nodes" },
 ]
 
 [[package]]

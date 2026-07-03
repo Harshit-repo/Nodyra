@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.models import ProviderTriggerSubscription, ScheduleState
 from app.services import provider_triggers, triggers
-from noodle_nodes.integrations_v2.providers.github import triggers as github_triggers
+from nodyra_nodes.integrations_v2.providers.github import triggers as github_triggers
 
 
 def _webhook_graph(path: str) -> dict:
@@ -1243,7 +1243,7 @@ async def test_webhook_raw_body_captured_as_artifact(
     run = (await client.get(f"/runs/{run_id}")).json()
     proc = {n["node_id"]: n for n in run["node_runs"]}["proc"]
     ref = proc["output"]["main"]
-    assert ref.get("__noodle_artifact__") is True
+    assert ref.get("__nodyra_artifact__") is True
     assert ref["size_bytes"] == len(body)
 
     dl = await client.get(f"/artifacts/{ref['artifact_id']}/download")

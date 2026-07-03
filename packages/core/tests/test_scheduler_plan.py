@@ -1,9 +1,9 @@
 """_build_plan: dependency graph over scheduling units, with loop regions
 contracted into their loop_start node."""
 
-from noodle.engine import _loop_regions
-from noodle.engine.scheduler import _build_plan
-from noodle.models import Edge, GraphNode, WorkflowGraph
+from nodyra.engine import _loop_regions
+from nodyra.engine.scheduler import _build_plan
+from nodyra.models import Edge, GraphNode, WorkflowGraph
 
 
 def _loop_graph() -> WorkflowGraph:

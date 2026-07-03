@@ -1,6 +1,6 @@
-# Connecting an LLM to Noodle over MCP
+# Connecting an LLM to Nodyra over MCP
 
-Noodle ships a built-in **MCP server** at `POST /mcp`. Any MCP-capable client —
+Nodyra ships a built-in **MCP server** at `POST /mcp`. Any MCP-capable client —
 Claude Code, Claude Desktop, OpenAI Codex, Cursor, Continue, or your own
 script — can connect to it and then **discover node types, build workflow
 graphs, run them, and publish versions** entirely through tool calls.
@@ -11,7 +11,7 @@ This guide covers:
 2. [Connecting each client](#2-connecting-each-client) (Claude Code / Desktop / Codex / Cursor / generic)
 3. [The tool catalogue](#3-tool-catalogue)
 4. [Building & testing workflows through MCP](#4-building--testing-workflows-through-mcp)
-5. [Hosting Noodle behind SSL so you can test OAuth](#5-hosting-noodle-behind-ssl-so-you-can-test-oauth)
+5. [Hosting Nodyra behind SSL so you can test OAuth](#5-hosting-nodyra-behind-ssl-so-you-can-test-oauth)
 
 ---
 
@@ -26,7 +26,7 @@ This guide covers:
 
 ### Getting a token
 
-Noodle uses the same session token everywhere. Mint one by logging in:
+Nodyra uses the same session token everywhere. Mint one by logging in:
 
 ```bash
 curl -s -X POST http://localhost:8000/auth/login \
@@ -56,12 +56,12 @@ clients can discover authorization metadata at
 `/.well-known/oauth-protected-resource/mcp`. Configure
 `MCP_AUTHORIZATION_SERVER_URL` and `MCP_OAUTH_INTROSPECTION_URL` when an
 external OAuth 2.1 authorization server protects the deployment. Introspection
-responses must include `active: true`, a Noodle user id/email in `sub`, the
-tenant in `org_id`, and space-delimited Noodle permissions in `scope`.
+responses must include `active: true`, a Nodyra user id/email in `sub`, the
+tenant in `org_id`, and space-delimited Nodyra permissions in `scope`.
 
 ### What each token can do (RBAC)
 
-Tool permissions map onto Noodle's existing role table:
+Tool permissions map onto Nodyra's existing role table:
 
 | Tool group | Permission | Minimum role |
 |---|---|---|
@@ -85,12 +85,12 @@ type, missing param, run error) comes back as a normal MCP result with
 ### Claude Code (native HTTP)
 
 ```bash
-claude mcp add --transport http noodle http://localhost:8000/mcp \
+claude mcp add --transport http nodyra http://localhost:8000/mcp \
   --header "Authorization: Bearer <token>"
 ```
 
-Then in a Claude Code session the `noodle` tools appear automatically. Remove
-with `claude mcp remove noodle`.
+Then in a Claude Code session the `nodyra` tools appear automatically. Remove
+with `claude mcp remove nodyra`.
 
 ### Claude Desktop
 
@@ -98,7 +98,7 @@ Two options:
 
 **a) Custom connector (paid plans).** Settings → Connectors → *Add custom
 connector* → paste the URL `https://your-host/mcp`. This requires a public
-**HTTPS** URL (see [section 5](#5-hosting-noodle-behind-ssl-so-you-can-test-oauth)) —
+**HTTPS** URL (see [section 5](#5-hosting-nodyra-behind-ssl-so-you-can-test-oauth)) —
 `localhost` http is rejected by the connectors UI.
 
 **b) `mcp-remote` bridge (works on any plan, even against localhost).** Edit
@@ -109,32 +109,32 @@ connector* → paste the URL `https://your-host/mcp`. This requires a public
 ```json
 {
   "mcpServers": {
-    "noodle": {
+    "nodyra": {
       "command": "npx",
       "args": [
         "-y", "mcp-remote", "http://localhost:8000/mcp",
-        "--header", "Authorization: Bearer ${NOODLE_TOKEN}"
+        "--header", "Authorization: Bearer ${NODYRA_TOKEN}"
       ],
-      "env": { "NOODLE_TOKEN": "eyJ...your token..." }
+      "env": { "NODYRA_TOKEN": "eyJ...your token..." }
     }
   }
 }
 ```
 
-Restart Claude Desktop. The Noodle tools appear under the 🔌 / tools menu.
+Restart Claude Desktop. The Nodyra tools appear under the 🔌 / tools menu.
 
 ### OpenAI Codex CLI
 
 Edit `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.noodle]
+[mcp_servers.nodyra]
 command = "npx"
 args = ["-y", "mcp-remote", "http://localhost:8000/mcp",
         "--header", "Authorization: Bearer eyJ...your token..."]
 ```
 
-Run `codex` and the `noodle` tools are available. (Newer Codex builds also
+Run `codex` and the `nodyra` tools are available. (Newer Codex builds also
 accept a `url = "..."` streamable-HTTP entry directly; the `mcp-remote` form
 above works regardless of version.)
 
@@ -143,7 +143,7 @@ above works regardless of version.)
 ```json
 {
   "mcpServers": {
-    "noodle": {
+    "nodyra": {
       "url": "http://localhost:8000/mcp",
       "headers": { "Authorization": "Bearer eyJ...your token..." }
     }
@@ -158,7 +158,7 @@ client that runs the full `initialize → create → set_graph → validate → 
 publish` loop. Drive it with:
 
 ```bash
-NOODLE_MCP_TOKEN=eyJ... python scripts/mcp_smoke.py
+NODYRA_MCP_TOKEN=eyJ... python scripts/mcp_smoke.py
 ```
 
 ---
@@ -232,7 +232,7 @@ The reliable loop an LLM should follow (and the one `mcp_smoke.py` demonstrates)
 Running `scripts/mcp_smoke.py` against the local stack produces:
 
 ```
-initialize -> {'name': 'noodle', 'version': '0.0.1'}
+initialize -> {'name': 'nodyra', 'version': '0.0.1'}
 create_workflow -> 1e2def5b5cf34305bde7819d8959ea02
 validate_graph -> {'valid': True, 'node_count': 2, 'edge_count': 1}
 set_workflow_graph -> {... 'node_count': 2, 'edge_count': 1}
@@ -248,7 +248,7 @@ publish_workflow -> {... "version": 2}
 
 ### Prompts to try once a client is connected
 
-> "List Noodle node types in the *Triggers* and *AI* categories, then build a
+> "List Nodyra node types in the *Triggers* and *AI* categories, then build a
 > workflow with a chat trigger that summarises the incoming message with an LLM
 > node, run it on the draft, and publish it when it succeeds."
 
@@ -261,13 +261,13 @@ will iterate (wrong key, missing param, unknown node id) until the run is green.
 
 ---
 
-## 5. Hosting Noodle behind SSL so you can test OAuth
+## 5. Hosting Nodyra behind SSL so you can test OAuth
 
 OAuth providers (Google, Microsoft, Slack, GitHub) require an **HTTPS redirect
 URI** — `http://localhost` is rejected by most of them. To run the real
-provider OAuth flow you need Noodle reachable over a public HTTPS origin.
+provider OAuth flow you need Nodyra reachable over a public HTTPS origin.
 
-### How Noodle builds the redirect URI
+### How Nodyra builds the redirect URI
 
 The credential OAuth flow (`POST /credentials/oauth/start` →
 `GET /credentials/oauth/callback`) computes the redirect URI as:
@@ -277,7 +277,7 @@ ${OAUTH_REDIRECT_BASE_URL}/credentials/oauth/callback
 ```
 
 falling back to the request's own origin when `OAUTH_REDIRECT_BASE_URL` is
-unset. So the two things you must do are: (a) put Noodle behind HTTPS, and
+unset. So the two things you must do are: (a) put Nodyra behind HTTPS, and
 (b) point `OAUTH_REDIRECT_BASE_URL` at that HTTPS origin.
 
 ### Step 1 — get a public HTTPS URL
@@ -293,9 +293,9 @@ cloudflared tunnel --url http://localhost:8000
 
 # Or a named tunnel bound to your own domain (stable URL):
 cloudflared tunnel login
-cloudflared tunnel create noodle
-cloudflared tunnel route dns noodle noodle.yourdomain.com
-cloudflared tunnel run --url http://localhost:8000 noodle
+cloudflared tunnel create nodyra
+cloudflared tunnel route dns nodyra nodyra.yourdomain.com
+cloudflared tunnel run --url http://localhost:8000 nodyra
 ```
 
 **ngrok (fastest one-off):**
@@ -308,7 +308,7 @@ ngrok http 8000        # -> https://xxxx.ngrok-free.app
 
 ```caddyfile
 # Caddyfile — Caddy fetches & renews the cert automatically
-noodle.yourdomain.com {
+nodyra.yourdomain.com {
     reverse_proxy localhost:8000
 }
 ```
@@ -317,13 +317,13 @@ noodle.yourdomain.com {
 caddy run   # needs ports 80+443 reachable and DNS pointing at the host
 ```
 
-### Step 2 — point Noodle at the HTTPS origin
+### Step 2 — point Nodyra at the HTTPS origin
 
 In `deploy/.env` (consumed by `deploy/docker-compose.yml`):
 
 ```dotenv
-PUBLIC_API_URL=https://noodle.yourdomain.com
-OAUTH_REDIRECT_BASE_URL=https://noodle.yourdomain.com
+PUBLIC_API_URL=https://nodyra.yourdomain.com
+OAUTH_REDIRECT_BASE_URL=https://nodyra.yourdomain.com
 
 # Provider client credentials (only the ones you're testing):
 GOOGLE_OAUTH_CLIENT_ID=...
@@ -349,7 +349,7 @@ docker compose -f deploy/docker-compose.yml up -d --build api worker
 Add this **exact** authorised redirect URI to every OAuth app you create:
 
 ```
-https://noodle.yourdomain.com/credentials/oauth/callback
+https://nodyra.yourdomain.com/credentials/oauth/callback
 ```
 
 - **Google** → APIs & Services → Credentials → OAuth client → *Authorised
@@ -361,12 +361,12 @@ https://noodle.yourdomain.com/credentials/oauth/callback
 
 ### Step 4 — test it
 
-In the Noodle web UI: **Credentials → New → pick an OAuth type** (e.g. Google
+In the Nodyra web UI: **Credentials → New → pick an OAuth type** (e.g. Google
 Sheets, Slack, Outlook, GitHub) → *Connect*. A popup runs the provider flow and
 posts back to `…/credentials/oauth/callback`, which stores the encrypted token.
 Tokens auto-refresh from the stored `refresh_token` when they near expiry.
 
 > The same public HTTPS origin also lets remote MCP clients (Claude Desktop
-> custom connectors) reach `https://noodle.yourdomain.com/mcp` — so steps 1–2
+> custom connectors) reach `https://nodyra.yourdomain.com/mcp` — so steps 1–2
 > double as MCP exposure. Keep `AUTH_REQUIRED=true` and a bearer token on that
 > public endpoint.

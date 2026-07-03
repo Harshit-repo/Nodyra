@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from noodle_nodes.http_security import UnsafeHttpTargetError
-from noodle_nodes.integrations_v2.providers.twilio.voice_respond import twilio_voice_respond
+from nodyra_nodes.http_security import UnsafeHttpTargetError
+from nodyra_nodes.integrations_v2.providers.twilio.voice_respond import twilio_voice_respond
 
 
 def _call(**kwargs):

@@ -73,7 +73,7 @@ async def _redis_client():
 # Public API
 # ---------------------------------------------------------------------------
 
-_TICKET_PREFIX = "noodle:ws_ticket:"
+_TICKET_PREFIX = "nodyra:ws_ticket:"
 
 
 async def create_ticket(user_id: str) -> str:

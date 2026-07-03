@@ -17,7 +17,7 @@ export function SdkModal({ nodeId, manifestId, onClose }: SdkModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
-  const snippet = `from noodle_sdk import run_node
+  const snippet = `from nodyra_sdk import run_node
 
 result = run_node(
     "${manifestId}",

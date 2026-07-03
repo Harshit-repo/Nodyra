@@ -5,9 +5,9 @@
 > [`connect-mcp.md`](./connect-mcp.md) (clients, tool catalogue, and hosting
 > behind SSL for OAuth). This page is the concise reference.
 
-## Noodle as an MCP server
+## Nodyra as an MCP server
 
-Noodle exposes an MCP 2025-11-25 server at `POST /mcp` (Streamable HTTP,
+Nodyra exposes an MCP 2025-11-25 server at `POST /mcp` (Streamable HTTP,
 stateless JSON). Each POST carries exactly one JSON-RPC message; JSON-RPC batch
 arrays are rejected.
 Disable with `MCP_SERVER_ENABLED=false`.
@@ -18,7 +18,7 @@ permission scopes. Session bearer tokens remain supported for interactive use.
 
 Connect from Claude Code:
 
-    claude mcp add --transport http noodle http://localhost:8000/mcp \
+    claude mcp add --transport http nodyra http://localhost:8000/mcp \
       --header "Authorization: Bearer <session token>"
 
 When `AUTH_REQUIRED=false` (local dev) the header may be omitted.
@@ -38,7 +38,7 @@ builder tools need `workflow:write` (editor+).
 Workflows with **MCP** enabled in the editor toolbar additionally
 appear as their own tools (published version runs).
 
-## Noodle as an MCP client
+## Nodyra as an MCP client
 
 Create an **MCP Server** credential (URL + optional bearer token), then use:
 

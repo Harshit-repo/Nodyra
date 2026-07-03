@@ -6,15 +6,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle_nodes.http_security import UnsafeHttpTargetError
-from noodle_nodes.integrations_v2.providers.twilio.voice_outbound import (
+from nodyra_nodes.http_security import UnsafeHttpTargetError
+from nodyra_nodes.integrations_v2.providers.twilio.voice_outbound import (
     twilio_call_status_handler,
     twilio_outbound_call,
 )
 
 CREDS = {"account_sid": "ACtest", "auth_token": "token123"}
 
-_TRANSPORT_PATH = "noodle_nodes.integrations_v2.providers.twilio.voice_outbound._transport"
+_TRANSPORT_PATH = "nodyra_nodes.integrations_v2.providers.twilio.voice_outbound._transport"
 
 _FAKE_RESPONSE = {
     "sid": "CA1",

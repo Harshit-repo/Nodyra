@@ -2,20 +2,20 @@ import io
 import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from noodle_importer import import_module
+from nodyra_importer import import_module
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import noodle_nodes  # noqa: F401 - registers built-in nodes
+import nodyra_nodes  # noqa: F401 - registers built-in nodes
 from app.db import get_session
 from app.models import Environment, Workflow, WorkflowVersion
 from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
-from noodle.models import WorkflowGraph
-from noodle.sdk import registry as node_registry
-from noodle_exporter import docker_bundle, slugify, workflow_to_module, workflow_to_script
+from nodyra.models import WorkflowGraph
+from nodyra.sdk import registry as node_registry
+from nodyra_exporter import docker_bundle, slugify, workflow_to_module, workflow_to_script
 
 router = APIRouter(tags=["export"])
 
@@ -198,9 +198,9 @@ async def import_workflow(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
     # Validate the imported graph structure before persisting.
-    from noodle.engine.types import GraphError
-    from noodle.engine.validation import _validate_graph
-    from noodle.sdk import registry as node_registry
+    from nodyra.engine.types import GraphError
+    from nodyra.engine.validation import _validate_graph
+    from nodyra.sdk import registry as node_registry
 
     try:
         _validate_graph(graph, node_registry)

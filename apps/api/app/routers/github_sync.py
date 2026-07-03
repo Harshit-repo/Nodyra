@@ -214,17 +214,17 @@ async def resolve_github_conflict(
     if cfg is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No sync config")
 
-    if body.side == "noodle":
-        # Noodle wins: reset SHA so next push overwrites GitHub, enqueue atomically
+    if body.side == "nodyra":
+        # Nodyra wins: reset SHA so next push overwrites GitHub, enqueue atomically
         workflow.github_sync_sha = workflow.github_sync_conflict_sha
         workflow.github_sync_status = "pending"
         workflow.github_sync_conflict_sha = None
-        await log_audit(session, "github_conflict_resolved", "workflow", workflow_id, "noodle")
+        await log_audit(session, "github_conflict_resolved", "workflow", workflow_id, "nodyra")
         await enqueue_github_push(session, workflow, "ui")
         await session.commit()
         notify_sync_workers()
     else:  # github wins
-        # Enqueue a pull to overwrite noodle with GitHub's version
+        # Enqueue a pull to overwrite nodyra with GitHub's version
         job = GithubSyncJob(
             org_id=workflow.org_id,
             workflow_id=workflow_id,

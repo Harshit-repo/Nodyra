@@ -29,7 +29,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.db import SessionLocal
 
-logger = logging.getLogger("noodle.leader")
+logger = logging.getLogger("nodyra.leader")
 
 
 def _stable_key(name: str) -> int:

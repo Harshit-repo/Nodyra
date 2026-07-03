@@ -174,7 +174,7 @@ export function NodeRegistryPage() {
         </div>
 
         {/* ── Tabs ── */}
-        <div className="noodle-settings-nav" role="tablist">
+        <div className="nodyra-settings-nav" role="tablist">
           <button
             className={tab === "browse" ? "is-active" : ""}
             onClick={() => setTab("browse")}
@@ -233,7 +233,7 @@ export function NodeRegistryPage() {
 
             {/* Loading state */}
             {loading && (
-              <div className="noodle-settings-skeleton">
+              <div className="nodyra-settings-skeleton">
                 <span />
                 <span />
                 <span />

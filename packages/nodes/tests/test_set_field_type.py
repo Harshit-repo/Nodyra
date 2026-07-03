@@ -1,10 +1,10 @@
 """Tests for the Set Field Type node."""
 import pytest
 
-import noodle_nodes  # noqa: F401
-from noodle.engine import execute
-from noodle.models import Edge, GraphNode, WorkflowGraph
-from noodle.sdk import registry
+import nodyra_nodes  # noqa: F401
+from nodyra.engine import execute
+from nodyra.models import Edge, GraphNode, WorkflowGraph
+from nodyra.sdk import registry
 
 
 def test_set_field_type_registered():

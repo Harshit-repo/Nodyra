@@ -178,7 +178,7 @@ async def test_integration_node_resolves_stored_credential_ref(
                 "type": "slack_send_message",
                 "params": {
                     "bot_token": {
-                        "__noodle_credential__": True,
+                        "__nodyra_credential__": True,
                         "id": credential["id"],
                         "key": "bot_token",
                     },
@@ -514,7 +514,7 @@ async def test_oauth_start_and_callback_create_encrypted_credential(
     assert callback.status_code == 200
     assert callback.headers["content-type"].startswith("text/html")
     html = callback.text
-    assert "noodle_oauth_success" in html
+    assert "nodyra_oauth_success" in html
     assert "Sheets OAuth" in html
     assert "google-access-token" not in html
     assert calls == [
@@ -663,7 +663,7 @@ async def test_expired_oauth_credential_refreshes_before_workflow_run(
                     "spreadsheet_id": "spreadsheet-id",
                     "range_name": "Sheet1!A1:B2",
                     "access_token": {
-                        "__noodle_credential__": True,
+                        "__nodyra_credential__": True,
                         "id": credential["id"],
                         "key": "access_token",
                     },
@@ -697,7 +697,7 @@ async def test_expired_oauth_credential_refreshes_before_workflow_run(
 
 async def test_credential_spec_carries_test_service_metadata() -> None:
     """``CredentialSpec.test_service`` rides through to node manifests."""
-    from noodle.models import CredentialSpec, NodeManifest, ParamSpec
+    from nodyra.models import CredentialSpec, NodeManifest, ParamSpec
 
     spec = CredentialSpec(
         type="github",

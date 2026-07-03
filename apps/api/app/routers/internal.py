@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
-_HEADER = "x-noodle-internal-token"
+_HEADER = "x-nodyra-internal-token"
 
 
 def _check_token(request: Request) -> None:

@@ -34,7 +34,7 @@ class VaultKMSProvider(KMSProvider):
         vault_url: str,
         token: str,
         mount: str = "transit",
-        key_name: str = "noodle-master",
+        key_name: str = "nodyra-master",
     ) -> None:
         self._vault_url = vault_url.rstrip("/")
         self._token = token
