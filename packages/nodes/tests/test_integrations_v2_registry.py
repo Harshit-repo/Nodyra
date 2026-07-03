@@ -2,6 +2,7 @@ from nodyra.models import CredentialSpec, PortDataKind
 from nodyra.sdk import NodeRegistry
 from nodyra_nodes.integrations_v2.node_factory import operation_source, trigger_source
 from nodyra_nodes.integrations_v2.registry import (
+    execute_integration_operation,
     execute_registered_operation,
     get_registered_provider_trigger,
     register_operation,
@@ -165,6 +166,44 @@ def test_registered_operation_can_execute_by_node_id() -> None:
     ) == {"received": "sheet-id"}
     operation_keys = {spec.operation_key for spec in registered_operation_specs()}
     assert "google_sheets.values.append" in operation_keys
+
+
+def test_duplicate_operation_key_keeps_first_dispatcher() -> None:
+    first = OperationSpec(
+        node_id="demo_first_operation_key_test",
+        name="Demo First",
+        provider="demo",
+        resource="thing",
+        operation="do",
+    )
+    second = OperationSpec(
+        node_id="demo_second_operation_key_test",
+        name="Demo Second",
+        provider="demo",
+        resource="thing",
+        operation="do",
+    )
+    try:
+        register_operation(
+            first,
+            lambda **_kwargs: {"which": "first"},
+            node_registry=NodeRegistry(),
+        )
+        register_operation(
+            second,
+            lambda **_kwargs: {"which": "second"},
+            node_registry=NodeRegistry(),
+        )
+
+        assert execute_registered_operation(
+            "demo_second_operation_key_test"
+        ) == {"which": "second"}
+        assert execute_integration_operation("demo", "thing", "do") == {
+            "which": "first"
+        }
+    finally:
+        unregister_operation("demo_second_operation_key_test")
+        unregister_operation("demo_first_operation_key_test")
 
 
 def test_operation_source_is_explicit_python() -> None:

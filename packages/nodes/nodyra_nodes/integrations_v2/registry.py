@@ -63,7 +63,11 @@ def clear_registered_provider_triggers() -> None:
 
 
 def unregister_operation(node_id: str) -> None:
-    _operations.pop(node_id, None)
+    registered = _operations.pop(node_id, None)
+    if registered is None:
+        return
+    if _operations_by_key.get(registered.spec.operation_key) is registered:
+        _operations_by_key.pop(registered.spec.operation_key, None)
 
 
 def unregister_provider_trigger(node_id: str) -> None:
@@ -85,7 +89,7 @@ def register_operation(
         node_def=node_def,
     )
     _operations[spec.node_id] = registered
-    _operations_by_key[spec.operation_key] = registered
+    _operations_by_key.setdefault(spec.operation_key, registered)
     if node_registry is not None:
         node_registry.register(node_def)
     return node_def

@@ -65,6 +65,7 @@ from nodyra_nodes.integrations_v2.providers import google_calendar as google_cal
 from nodyra_nodes.integrations_v2.providers import google_drive as google_drive_v2
 from nodyra_nodes.integrations_v2.providers import google_sheets as google_sheets_v2
 from nodyra_nodes.integrations_v2.providers import hubspot as hubspot_v2
+from nodyra_nodes.integrations_v2.providers import huggingface as huggingface_v2
 from nodyra_nodes.integrations_v2.providers import imap as imap_v2
 from nodyra_nodes.integrations_v2.providers import jira as jira_v2
 from nodyra_nodes.integrations_v2.providers import kafka_trigger as kafka_trigger_v2
@@ -129,6 +130,7 @@ __all__ = [
     "jira_v2",
     "linear_v2",
     "hubspot_v2",
+    "huggingface_v2",
     "asana_v2",
     "telegram_v2",
     "twilio_v2",
