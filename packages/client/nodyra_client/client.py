@@ -22,9 +22,10 @@ from nodyra_client.models import (
 class NodyraError(Exception):
     """Raised when the API returns a non-2xx status."""
 
-    def __init__(self, status: int, detail: str) -> None:
+    def __init__(self, status: int, detail: str, hint: str | None = None) -> None:
         self.status = status
         self.detail = detail
+        self.hint = hint
         super().__init__(f"[{status}] {detail}")
 
 
@@ -68,6 +69,7 @@ class NodyraClient:
             base_url=self._base,
             timeout=self._timeout,
             headers=self._headers(),
+            transport=httpx.HTTPTransport(retries=2),
         )
 
     def close(self) -> None:
@@ -116,7 +118,15 @@ class NodyraClient:
             detail = r.json().get("detail", r.text)
         except Exception:
             detail = r.text or f"HTTP {r.status_code}"
-        raise NodyraError(r.status_code, detail)
+        hint = None
+        if r.status_code == 401:
+            hint = "Authentication failed - run 'nodyra login' or set NODYRA_TOKEN."
+        elif r.status_code == 403:
+            hint = (
+                "Permission denied - the token lacks a required scope or role. "
+                "Create a token with the needed scopes in Settings > API tokens."
+            )
+        raise NodyraError(r.status_code, detail, hint)
 
     # ── Auth ─────────────────────────────────────────────────────────────
 

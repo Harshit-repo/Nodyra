@@ -104,6 +104,9 @@ def _json_mode() -> bool:
 def _handle_error(exc: Exception) -> None:
     """Print a clean error message and exit 1."""
     click.echo(f"Error: {exc}", err=True)
+    hint = getattr(exc, "hint", None)
+    if hint:
+        click.echo(f"Hint: {hint}", err=True)
     sys.exit(1)
 
 
