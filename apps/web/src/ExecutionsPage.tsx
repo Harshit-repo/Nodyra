@@ -16,6 +16,7 @@ import {
   queryKeys,
   useAllRuns,
   useQueueStats,
+  useReplayRunMutation,
   useRetryRunMutation,
   useRerunRunMutation,
   useRun,
@@ -590,17 +591,20 @@ function RunDetailPanel({
   const runQuery = useRun(runId);
   const run = runQuery.data ?? null;
   const [actionError, setActionError] = useState("");
-  const [actionPending, setActionPending] = useState<"rerun" | "retry" | null>(
-    null,
-  );
+  const [actionPending, setActionPending] = useState<
+    "rerun" | "retry" | "replay" | null
+  >(null);
+  const [replayNodeId, setReplayNodeId] = useState<string | null>(null);
   const rerunMutation = useRerunRunMutation();
   const retryMutation = useRetryRunMutation();
+  const replayMutation = useReplayRunMutation();
   const error =
     actionError ||
     (runQuery.isError && !runQuery.data ? errorMessage(runQuery.error) : "");
 
   useEffect(() => {
     setActionPending(null);
+    setReplayNodeId(null);
     setActionError("");
   }, [runId]);
 
@@ -613,6 +617,20 @@ function RunDetailPanel({
       setActionError(errorMessage(e));
     } finally {
       setActionPending(null);
+    }
+  }
+
+  async function replayFromNode(fromNodeId: string): Promise<void> {
+    setActionPending("replay");
+    setReplayNodeId(fromNodeId);
+    try {
+      const { run_id } = await replayMutation.mutateAsync({ runId, fromNodeId });
+      onJump(run_id);
+    } catch (e) {
+      setActionError(errorMessage(e));
+    } finally {
+      setActionPending(null);
+      setReplayNodeId(null);
     }
   }
 
@@ -741,6 +759,12 @@ function RunDetailPanel({
                     : `${n.node_id}#${i}`
                 }
                 node={n}
+                canReplay={run.status === "error" || run.status === "failed"}
+                disabled={actionPending !== null}
+                replayPending={
+                  actionPending === "replay" && replayNodeId === n.node_id
+                }
+                onReplayFromNode={(nodeId) => void replayFromNode(nodeId)}
               />
             ))
           )}
@@ -757,9 +781,22 @@ function RunDetailPanel({
   );
 }
 
-function NodeRunRow({ node }: { node: NodeRunResult }) {
+function NodeRunRow({
+  node,
+  canReplay,
+  disabled,
+  replayPending,
+  onReplayFromNode,
+}: {
+  node: NodeRunResult;
+  canReplay: boolean;
+  disabled: boolean;
+  replayPending: boolean;
+  onReplayFromNode: (nodeId: string) => void;
+}) {
   const [open, setOpen] = useState(node.status === "error");
   const hasLogs = Boolean(node.logs && node.logs.length > 0);
+  const isReplayableFailure = canReplay && ["error", "failed"].includes(node.status);
   return (
     <div className={`exec-node${open ? " open" : ""}`}>
       <header className="exec-node-head" onClick={() => setOpen(!open)}>
@@ -780,6 +817,20 @@ function NodeRunRow({ node }: { node: NodeRunResult }) {
         )}
         {hasLogs && (
           <span className="exec-node-logs-count">{node.logs!.length} logs</span>
+        )}
+        {isReplayableFailure && (
+          <button
+            type="button"
+            className="btn btn-sm exec-node-replay"
+            onClick={(event) => {
+              event.stopPropagation();
+              onReplayFromNode(node.node_id);
+            }}
+            disabled={disabled}
+            title="Replay from this node and reuse successful upstream outputs"
+          >
+            {replayPending ? "Starting..." : "Replay from here"}
+          </button>
         )}
       </header>
       {open && (

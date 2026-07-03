@@ -689,6 +689,14 @@ export const api = {
     request<{ run_id: string }>(`/runs/${runId}/rerun`, { method: "POST" }),
   retryRun: (runId: string) =>
     request<{ run_id: string }>(`/runs/${runId}/retry`, { method: "POST" }),
+  replayRun: (runId: string, fromNodeId?: string | null) =>
+    request<{ run_id: string; previous_status: string; status: string }>(
+      `/runs/${runId}/replay`,
+      {
+        method: "POST",
+        body: JSON.stringify({ from_node_id: fromNodeId ?? null }),
+      },
+    ),
 
   listDeployments: (workflowId?: string) =>
     requestAllPages<Deployment>(

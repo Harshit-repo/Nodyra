@@ -869,6 +869,19 @@ export function useRetryRunMutation() {
   });
 }
 
+export function useReplayRunMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, fromNodeId }: { runId: string; fromNodeId?: string | null }) =>
+      api.replayRun(runId, fromNodeId),
+    onSuccess: (result, variables) => {
+      invalidateRunLists(queryClient);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.run(variables.runId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.run(result.run_id) });
+    },
+  });
+}
+
 export function useDecideRunApprovalMutation() {
   const queryClient = useQueryClient();
   return useMutation({

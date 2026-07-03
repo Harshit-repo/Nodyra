@@ -5260,6 +5260,10 @@ kbd {
   font-size: 10.5px;
   color: var(--accent, #66b2ff);
 }
+.exec-node-replay {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 .exec-node-body {
   padding: 4px 12px 12px;
   border-top: 1px solid var(--line-2);
