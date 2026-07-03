@@ -562,7 +562,7 @@ def _expired_lease_stmt(moment: datetime):
     return (
         select(RunQueueEntry)
         .where(
-            RunQueueEntry.status == "leased",
+            RunQueueEntry.status.in_(("leased", "running")),
             RunQueueEntry.lease_expires_at.is_not(None),
             RunQueueEntry.lease_expires_at <= moment,
         )
@@ -571,9 +571,13 @@ def _expired_lease_stmt(moment: datetime):
 
 
 async def requeue_expired_leases(session: AsyncSession, *, now: datetime | None = None) -> int:
-    """Find leased entries whose lease has expired (worker presumed lost) and
-    requeue them if attempts remain, otherwise fail them. Returns the number of
-    entries acted on."""
+    """Find in-flight entries whose lease has expired (worker presumed lost)
+    and requeue them if attempts remain, otherwise fail them.
+
+    Entries move from ``leased`` to ``running`` once dispatch starts. A worker
+    crash can therefore strand either state; both are recoverable while the
+    lease deadline is in the past.
+    """
     moment = _now(now)
     leased = (await session.scalars(_expired_lease_stmt(moment))).all()
 

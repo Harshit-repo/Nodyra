@@ -38,7 +38,7 @@ WORKFLOW_GRAPH = {
         {
             "id": "c",
             "type": "code",
-            "params": {"code": "import time\ntime.sleep(2)\nreturn {'ok': True}"},
+            "params": {"code": "import time\ntime.sleep(2)\noutput = {'ok': True}"},
             "position": {"x": 200, "y": 0},
         },
     ],

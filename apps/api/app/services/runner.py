@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import nodyra_nodes  # noqa: F401 - importing registers the built-in nodes
@@ -828,9 +829,10 @@ async def cancel_run(run_id: str) -> str | None:
         if run is None:
             return None
         if run.status in ("running", "queued", "waiting"):
+            await run_queue.cancel(session, run_id=run_id)
+            await session.flush()
             run.status = "cancelled"
             run.finished_at = datetime.now(UTC)
-            await run_queue.cancel(session, run_id=run_id)
             await session.commit()
             broker.publish(
                 run_id,
@@ -955,6 +957,15 @@ class _PreparedRunContext:
     max_artifacts_per_run: int | None = None
 
 
+@dataclass
+class _QueuedRunStart:
+    """State consumed when a durable-queue entry is promoted to running."""
+
+    replay_seed: dict | None
+    trace_carrier: dict | None
+    prior_queue_status: str
+
+
 async def _prepare_run_context(
     run_id: str,
     workflow_id: str,
@@ -1057,6 +1068,56 @@ async def _prepare_run_context(
         max_artifact_bytes=max_artifact_bytes,
         max_artifacts_per_run=max_artifacts_per_run,
     )
+
+
+def _lock_for_update_if_supported(session: AsyncSession, stmt):
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        return stmt.with_for_update()
+    return stmt
+
+
+async def _mark_queued_run_started(
+    session: AsyncSession,
+    *,
+    run_id: str,
+) -> _QueuedRunStart | None:
+    """Atomically promote a queued run and queue entry to running.
+
+    Cancellation can race this transition. Refresh and lock the queue row before
+    the run row, then write them in that order, so a stale queue read cannot
+    overwrite a cancellation and Postgres does not see inverted row-update
+    ordering under load.
+    """
+    entry_stmt = (
+        select(RunQueueEntry)
+        .where(RunQueueEntry.run_id == run_id)
+        .execution_options(populate_existing=True, skip_org_filter=True)
+    )
+    entry = await session.scalar(_lock_for_update_if_supported(session, entry_stmt))
+    if entry is None or entry.status not in ("queued", "leased"):
+        return None
+
+    start_state = _QueuedRunStart(
+        replay_seed=dict(entry.replay_seed) if entry.replay_seed else None,
+        trace_carrier=dict(entry.trace_context) if entry.trace_context else None,
+        prior_queue_status=entry.status,
+    )
+    run_stmt = (
+        select(Run)
+        .where(Run.id == run_id)
+        .execution_options(populate_existing=True)
+    )
+    run = await session.scalar(_lock_for_update_if_supported(session, run_stmt))
+    if run is None or run.status != "queued":
+        return None
+
+    entry.status = "running"
+    entry.replay_seed = None
+    await session.flush()
+    run.status = "running"
+    run.finished_at = None
+    await session.flush()
+    return start_state
 
 
 async def _execute_run_impl(
@@ -1585,24 +1646,6 @@ async def _execute_queued_entry(run_id: str) -> None:
         mode = run.mode
         wf_version_id = run.workflow_version_id
 
-        # Pick up any replay-from-failure seed left by the replay endpoint
-        # before we transition the entry to running.
-        queue_entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
-        replay_seed: dict | None = (
-            dict(queue_entry.replay_seed) if queue_entry and queue_entry.replay_seed else None
-        )
-        if queue_entry is not None and queue_entry.replay_seed:
-            queue_entry.replay_seed = None  # consumed; don't re-apply on later retries
-        # A5: carrier stamped at enqueue — lets this (possibly different)
-        # process join the originating request's trace.
-        entry_trace_carrier: dict | None = (
-            dict(queue_entry.trace_context)
-            if queue_entry is not None and queue_entry.trace_context
-            else None
-        )
-
         workflow = await session.scalar(
             select(Workflow)
             .where(Workflow.id == workflow_id)
@@ -1649,9 +1692,16 @@ async def _execute_queued_entry(run_id: str) -> None:
         )
         pinned_cache: dict = {row.node_id: row.payload for row in pinned_rows.all()}
 
-        run.status = "running"
+        queue_start = await _mark_queued_run_started(session, run_id=run_id)
+        if queue_start is None:
+            await session.rollback()
+            return
         await session.commit()
 
+    replay_seed = queue_start.replay_seed
+    # A5: carrier stamped at enqueue — lets this (possibly different)
+    # process join the originating request's trace.
+    entry_trace_carrier = queue_start.trace_carrier
     trigger = first_trigger_node(graph_dict)
     trigger_id = (trigger.id if hasattr(trigger, "id") else trigger["id"]) if trigger else None
     targets = resolve_trigger_targets(graph_dict, trigger_id, None) if trigger_id else None
@@ -1662,7 +1712,7 @@ async def _execute_queued_entry(run_id: str) -> None:
     # The dispatch loop leases the queue entry (status → "leased") BEFORE
     # calling us, and approval-resume keeps it "queued".  Accept both so
     # crash recovery AND approval-resume both benefit from the checkpoint.
-    if queue_entry is not None and queue_entry.status in ("queued", "leased"):
+    if queue_start.prior_queue_status in ("queued", "leased"):
         cp = run.checkpoint if isinstance(run.checkpoint, dict) else None
         if cp and isinstance(cp.get("node_outputs"), dict) and cp["node_outputs"]:
             node_outputs = cp["node_outputs"]

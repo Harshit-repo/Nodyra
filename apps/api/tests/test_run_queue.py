@@ -592,6 +592,7 @@ async def test_requeue_expired_lease_resets_running_run(session) -> None:
     moment = datetime.now(UTC)
     leased = await q.lease(session, worker_id="lost-worker", now=moment)
     assert leased is not None and leased.run_id == run.id
+    leased.status = "running"
     await session.commit()
 
     acted = await q.requeue_expired_leases(

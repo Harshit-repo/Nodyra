@@ -1329,6 +1329,58 @@ async def test_queued_entry_consumes_replay_seed(client: AsyncClient) -> None:
     assert by_node["c"]["output"]["main"] == 10
 
 
+async def test_queued_start_refreshes_stale_cancelled_entry(client: AsyncClient) -> None:
+    """A stale identity-map row must not overwrite a queued-run cancellation."""
+    from app.models import Run, RunQueueEntry
+    from app.services.runner import SessionLocal, _mark_queued_run_started
+
+    workflow_id = await _workflow_with_graph(client)
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
+
+    async with SessionLocal() as setup_session:
+        entry = await setup_session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        )
+        assert entry is not None
+        entry.status = "queued"
+        entry.replay_seed = {"targets": ["c"]}
+        run = await setup_session.get(Run, run_id)
+        assert run is not None
+        run.status = "queued"
+        await setup_session.commit()
+
+    async with SessionLocal() as stale_session:
+        stale_entry = await stale_session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        )
+        assert stale_entry is not None
+        assert stale_entry.status == "queued"
+
+        async with SessionLocal() as cancel_session:
+            cancelled_entry = await cancel_session.scalar(
+                select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+            )
+            assert cancelled_entry is not None
+            cancelled_entry.status = "cancelled"
+            cancelled_entry.replay_seed = None
+            await cancel_session.commit()
+
+        started = await _mark_queued_run_started(stale_session, run_id=run_id)
+        assert started is None
+        await stale_session.rollback()
+
+    async with SessionLocal() as verify_session:
+        entry = await verify_session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        )
+        assert entry is not None
+        assert entry.status == "cancelled"
+        assert entry.replay_seed is None
+        run = await verify_session.get(Run, run_id)
+        assert run is not None
+        assert run.status == "queued"
+
+
 async def test_local_run_parks_in_queue_when_at_capacity(client: AsyncClient, monkeypatch) -> None:
     """A local run with no immediate admission slot is parked as a durable
     ``queued`` entry (reason ``local_capacity``) instead of executing."""

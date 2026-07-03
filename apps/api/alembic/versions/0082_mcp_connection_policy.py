@@ -16,7 +16,7 @@ depends_on = None
 def upgrade() -> None:
     op.add_column(
         "mcp_connections",
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
     )
     op.add_column("mcp_connections", sa.Column("allowed_tools", sa.JSON(), nullable=True))
 
