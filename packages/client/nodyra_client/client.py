@@ -218,6 +218,13 @@ class _WorkflowsAPI:
     def publish(self, workflow_id: str) -> dict[str, Any]:
         return self._c._post(f"/workflows/{workflow_id}/publish")
 
+    def import_module(self, source: str, *, name: str) -> dict[str, Any]:
+        """Create a workflow from a .module.py export.
+
+        The source is parsed server-side; importing does not execute local code.
+        """
+        return self._c._post("/import", {"source": source, "name": name})
+
 
 class _RunsAPI:
     def __init__(self, client: NodyraClient) -> None:
@@ -311,3 +318,9 @@ class _ExportAPI:
         )
         self._c._check(r)
         return r.text
+
+    def as_docker_zip(self, workflow_id: str) -> bytes:
+        r = self._c._client.get(f"/workflows/{workflow_id}/export/docker")
+        if not r.is_success:
+            self._c._check(r)
+        return r.content

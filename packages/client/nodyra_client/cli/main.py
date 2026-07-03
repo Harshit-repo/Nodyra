@@ -270,6 +270,18 @@ def workflow_publish(workflow_id: str) -> None:
         _handle_error(exc)
 
 
+@workflow.command("import")
+@click.argument("path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--name", required=True, help="Name for the imported workflow")
+def workflow_import(path: Path, name: str) -> None:
+    """Import a .module.py export as a new workflow."""
+    try:
+        result = _client().workflows.import_module(path.read_text(encoding="utf-8"), name=name)
+        emit(result, json_mode=_json_mode())
+    except (NodyraError, httpx.TransportError) as exc:
+        _handle_error(exc)
+
+
 # ── Runs ───────────────────────────────────────────────────────────────
 
 @main.group()
@@ -391,6 +403,20 @@ def export_module(workflow_id: str, output: str | None) -> None:
         click.echo(f"Written to {output}")
     else:
         click.echo(code)
+
+
+@export.command("docker")
+@click.argument("workflow_id")
+@click.option("--output", "-o", required=True, help="Output .zip path")
+def export_docker(workflow_id: str, output: str) -> None:
+    """Export a workflow as a self-contained Docker bundle."""
+    try:
+        blob = _client().export_.as_docker_zip(workflow_id)
+    except (NodyraError, httpx.TransportError) as exc:
+        _handle_error(exc)
+        return
+    Path(output).write_bytes(blob)
+    click.echo(f"Written {len(blob)} bytes to {output}")
 
 
 # ── Credentials ────────────────────────────────────────────────────────
