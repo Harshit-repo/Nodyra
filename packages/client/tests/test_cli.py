@@ -3,6 +3,8 @@ from __future__ import annotations
 import json as _json
 import os
 import stat
+import tomllib
+from pathlib import Path
 
 import pytest
 from nodyra_client.cli import main as cli_main
@@ -23,6 +25,13 @@ def test_write_token_file_replaces_existing_file_atomically(tmp_path, monkeypatc
         assert stat.S_IMODE(token_file.parent.stat().st_mode) == 0o700
         assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
     assert not list(token_file.parent.glob("*.tmp"))
+
+
+def test_version_single_source() -> None:
+    from nodyra_client._version import __version__
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    assert tomllib.loads(pyproject.read_text())["project"]["version"] == __version__
 
 
 def test_write_token_file_replaces_symlink_instead_of_truncating_target(

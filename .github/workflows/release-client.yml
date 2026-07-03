@@ -1,0 +1,38 @@
+name: Release nodyra-client
+
+on:
+  push:
+    tags: ["client-v*"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --all-packages
+      - run: uv run ruff check packages/client
+      - run: uv run pytest packages/client/tests -q
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Guard - tag must match package version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#client-v}"
+          PKG_VERSION=$(uv run --no-sync python -c "import tomllib;print(tomllib.load(open('packages/client/pyproject.toml','rb'))['project']['version'])")
+          test "$TAG_VERSION" = "$PKG_VERSION" || { echo "tag $TAG_VERSION != pyproject $PKG_VERSION"; exit 1; }
+      - run: uv build --package nodyra-client
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
