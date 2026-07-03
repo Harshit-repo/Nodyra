@@ -104,3 +104,45 @@ def test_workflow_list_json_flag(httpx_mock, monkeypatch, tmp_path) -> None:
     result = CliRunner().invoke(cli_main.main, ["--json", "workflow", "list"])
     assert result.exit_code == 0, result.output
     assert _json.loads(result.output)[0]["id"] == "wf_1"
+
+
+def test_login_verifies_before_saving(httpx_mock, monkeypatch, tmp_path) -> None:
+    from click.testing import CliRunner
+
+    token_file = tmp_path / ".nodyra" / "token"
+    monkeypatch.setattr(cli_main, "_TOKEN_FILE", token_file)
+    httpx_mock.add_response(status_code=401, json={"detail": "bad token"})
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["login", "--base-url", "http://api.test", "--token", "bad"],
+    )
+    assert result.exit_code == 1
+    assert not token_file.exists()
+
+
+def test_login_token_stdin(httpx_mock, monkeypatch, tmp_path) -> None:
+    from click.testing import CliRunner
+
+    token_file = tmp_path / ".nodyra" / "token"
+    monkeypatch.setattr(cli_main, "_TOKEN_FILE", token_file)
+    httpx_mock.add_response(json={"email": "ci@example.com"})
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["login", "--base-url", "http://api.test", "--token-stdin"],
+        input="ndpat_secret\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "ci@example.com" in result.output
+    assert _json.loads(token_file.read_text())["token"] == "ndpat_secret"
+
+
+def test_logout_removes_token_file(monkeypatch, tmp_path) -> None:
+    from click.testing import CliRunner
+
+    token_file = tmp_path / ".nodyra" / "token"
+    token_file.parent.mkdir()
+    token_file.write_text("{}")
+    monkeypatch.setattr(cli_main, "_TOKEN_FILE", token_file)
+    result = CliRunner().invoke(cli_main.main, ["logout"])
+    assert result.exit_code == 0
+    assert not token_file.exists()

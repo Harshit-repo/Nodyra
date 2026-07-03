@@ -179,21 +179,53 @@ def main(ctx: click.Context, json_mode: bool) -> None:
 
 @main.command()
 @click.option("--base-url", prompt=True, help="Nodyra instance URL")
-@click.option("--token", prompt=True, hide_input=True, help="Bearer token")
-def login(base_url: str, token: str) -> None:
-    """Save credentials to ~/.nodyra/token."""
-    # Atomically replace the file with mode 0o600 so an existing file or
-    # symlink cannot be followed and truncated.
-    payload = json.dumps({"base_url": base_url.rstrip("/"), "token": token}).encode()
+@click.option("--token", default=None, help="Bearer token (omit to be prompted)")
+@click.option(
+    "--token-stdin",
+    is_flag=True,
+    help="Read the token from stdin.",
+)
+@click.option(
+    "--no-verify",
+    is_flag=True,
+    help="Save without calling /auth/me.",
+)
+def login(
+    base_url: str,
+    token: str | None,
+    token_stdin: bool,
+    no_verify: bool,
+) -> None:
+    """Verify and save credentials to ~/.nodyra/token."""
+    if token_stdin:
+        token = sys.stdin.readline().strip()
+    if not token:
+        token = click.prompt("Token", hide_input=True)
+    base_url = base_url.rstrip("/")
+    if not no_verify:
+        with NodyraClient(base_url=base_url, token=token) as client:
+            try:
+                user = client.whoami()
+            except (NodyraError, httpx.TransportError) as exc:
+                click.echo(
+                    f"Error: token verification failed, nothing saved: {exc}",
+                    err=True,
+                )
+                sys.exit(1)
+        click.echo(f"Authenticated as {user.get('email', 'unknown')}")
+    payload = json.dumps({"base_url": base_url, "token": token}).encode()
     _write_token_file(payload)
-    # Verify the token — use context manager to ensure the connection pool
-    # is closed even if whoami() raises.
-    with NodyraClient(base_url=base_url, token=token) as client:
-        try:
-            user = client.whoami()
-            click.echo(f"Authenticated as {user.get('email', 'unknown')}")
-        except (NodyraError, httpx.TransportError) as exc:
-            click.echo(f"Warning: token saved but /auth/me failed: {exc}", err=True)
+    click.echo(f"Credentials saved to {_TOKEN_FILE}")
+
+
+@main.command()
+def logout() -> None:
+    """Remove saved credentials."""
+    try:
+        _TOKEN_FILE.unlink()
+        click.echo("Logged out.")
+    except FileNotFoundError:
+        click.echo("No saved credentials.")
 
 
 @main.command()
