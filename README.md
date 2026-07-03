@@ -126,6 +126,8 @@ operations dashboard and a first-class admin restart control.
 - Read-only credential test connections for supported integrations.
 - Audit log surface.
 - Workflow draft vs published versions.
+- GitOps two-way GitHub sync for workflow definitions
+  ([docs/gitops.md](docs/gitops.md)).
 - Deployments pinned to workflow versions.
 - Error workflows and failure payloads.
 - Workspace settings for retention, output caps, artifacts, timezones, and
