@@ -10,6 +10,7 @@ export const queryKeys = {
     ["workflows", workflowId, "runs"] as const,
   workflowVersions: (workflowId: string) =>
     ["workflows", workflowId, "versions"] as const,
+  templates: ["templates"] as const,
 
   deployments: (workflowId?: string) =>
     ["deployments", workflowId ?? "all"] as const,

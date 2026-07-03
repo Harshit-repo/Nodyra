@@ -92,6 +92,14 @@ export function useWorkflows(options?: QueryControls<Awaited<ReturnType<typeof a
   });
 }
 
+export function useTemplates(options?: QueryControls<Awaited<ReturnType<typeof api.listTemplates>>>) {
+  return useQuery({
+    queryKey: queryKeys.templates,
+    queryFn: api.listTemplates,
+    ...options,
+  });
+}
+
 export function useWorkflow(
   workflowId: string | null,
   options?: QueryControls<Awaited<ReturnType<typeof api.getWorkflow>>>,
@@ -515,6 +523,17 @@ export function useCreateWorkflowMutation() {
       if (!graph) return created;
       return api.updateWorkflow(created.id, { graph });
     },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.workflows });
+    },
+  });
+}
+
+export function useInstantiateTemplateMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      api.instantiateTemplate(id, name),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.workflows });
     },

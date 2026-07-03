@@ -70,6 +70,7 @@ import type {
   WorkflowPublishResponse,
   WorkflowRevisionInfo,
   WorkflowSummary,
+  WorkflowTemplateSummary,
   WorkflowVersionInfo,
   RegistryPackage,
   RegistrySearchResult,
@@ -419,6 +420,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
+  listTemplates: () => request<WorkflowTemplateSummary[]>("/templates"),
+  instantiateTemplate: (templateId: string, name: string) =>
+    request<{ id: string; name: string }>(
+      `/templates/${encodeURIComponent(templateId)}/instantiate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      },
+    ),
   getWorkflow: (id: string) => request<WorkflowDetail>(`/workflows/${id}`),
   updateWorkflow: (id: string, patch: WorkflowPatch) =>
     request<WorkflowDetail>(`/workflows/${id}`, {

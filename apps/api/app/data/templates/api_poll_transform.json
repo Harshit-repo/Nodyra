@@ -1,0 +1,59 @@
+{
+  "id": "api_poll_transform",
+  "name": "API poll and transform",
+  "description": "Poll an API on a schedule and normalize the first page of results with Python.",
+  "tags": ["api", "python", "schedule"],
+  "graph": {
+    "nodes": [
+      {
+        "id": "schedule",
+        "type": "schedule_trigger",
+        "params": {
+          "every": 1,
+          "interval": "hours",
+          "cron": "",
+          "timezone": "UTC"
+        },
+        "position": {"x": 0, "y": 40}
+      },
+      {
+        "id": "fetch",
+        "type": "http_request",
+        "params": {
+          "url": "https://jsonplaceholder.typicode.com/posts",
+          "method": "GET",
+          "headers": {},
+          "query": {},
+          "body": {},
+          "timeout_seconds": 30,
+          "max_retries": 1
+        },
+        "position": {"x": 280, "y": 40}
+      },
+      {
+        "id": "transform",
+        "type": "code",
+        "params": {
+          "code": "rows = input or []\noutput = [\n    {\n        'id': row.get('id'),\n        'title': row.get('title'),\n        'summary': (row.get('body') or '')[:120],\n    }\n    for row in rows[:10]\n]"
+        },
+        "position": {"x": 560, "y": 40}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "schedule",
+        "source_output": "main",
+        "target": "fetch",
+        "target_input": "input"
+      },
+      {
+        "id": "e2",
+        "source": "fetch",
+        "source_output": "main",
+        "target": "transform",
+        "target_input": "input"
+      }
+    ]
+  }
+}

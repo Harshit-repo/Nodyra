@@ -357,6 +357,13 @@ export interface WorkflowSummary {
   github_sync_status?: GithubSyncStatus;
 }
 
+export interface WorkflowTemplateSummary {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+}
+
 export interface WorkflowDetail {
   id: string;
   name: string;

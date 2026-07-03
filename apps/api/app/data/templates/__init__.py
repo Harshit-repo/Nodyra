@@ -1,0 +1,1 @@
+"""Repo-shipped workflow templates."""

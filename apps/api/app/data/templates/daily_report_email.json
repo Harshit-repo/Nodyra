@@ -1,0 +1,86 @@
+{
+  "id": "daily_report_email",
+  "name": "Daily report email",
+  "description": "Fetch a report endpoint on a schedule, shape key fields, and send an email.",
+  "tags": ["reporting", "email", "schedule"],
+  "graph": {
+    "nodes": [
+      {
+        "id": "schedule",
+        "type": "schedule_trigger",
+        "params": {
+          "every": 1,
+          "interval": "days",
+          "cron": "",
+          "timezone": "UTC"
+        },
+        "position": {"x": 0, "y": 40}
+      },
+      {
+        "id": "fetch",
+        "type": "http_request",
+        "params": {
+          "url": "https://api.example.com/report",
+          "method": "GET",
+          "headers": {},
+          "query": {},
+          "body": {},
+          "timeout_seconds": 30,
+          "max_retries": 1
+        },
+        "position": {"x": 280, "y": 40}
+      },
+      {
+        "id": "shape",
+        "type": "edit_fields",
+        "params": {
+          "fields": {
+            "subject": "Daily Nodyra report",
+            "body": "Report payload: {{ $json }}"
+          },
+          "keep_only_set": true
+        },
+        "position": {"x": 560, "y": 40}
+      },
+      {
+        "id": "email",
+        "type": "smtp_send_email",
+        "params": {
+          "host": "smtp.example.com",
+          "port": 587,
+          "credentials": {},
+          "use_tls": true,
+          "from_email": "nodyra@example.com",
+          "to_email": "ops@example.com",
+          "subject": "{{ $json.subject }}",
+          "body_format": "text",
+          "body": "{{ $json.body }}"
+        },
+        "position": {"x": 840, "y": 40}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "schedule",
+        "source_output": "main",
+        "target": "fetch",
+        "target_input": "input"
+      },
+      {
+        "id": "e2",
+        "source": "fetch",
+        "source_output": "main",
+        "target": "shape",
+        "target_input": "input"
+      },
+      {
+        "id": "e3",
+        "source": "shape",
+        "source_output": "main",
+        "target": "email",
+        "target_input": "input"
+      }
+    ]
+  }
+}

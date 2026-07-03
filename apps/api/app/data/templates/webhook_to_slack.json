@@ -1,0 +1,57 @@
+{
+  "id": "webhook_to_slack",
+  "name": "Webhook to Slack alert",
+  "description": "Receive a JSON webhook, format a message, and post it to Slack.",
+  "tags": ["alerting", "webhook", "starter"],
+  "graph": {
+    "nodes": [
+      {
+        "id": "trigger",
+        "type": "webhook_trigger",
+        "params": {
+          "path": "incoming-event",
+          "response_mode": "On Received"
+        },
+        "position": {"x": 0, "y": 40}
+      },
+      {
+        "id": "format",
+        "type": "code",
+        "params": {
+          "code": "event = input or {}\noutput = {\n    'text': f\"New event: {event.get('event', 'unknown')}\",\n    'event': event,\n}"
+        },
+        "position": {"x": 280, "y": 40}
+      },
+      {
+        "id": "notify",
+        "type": "slack",
+        "params": {
+          "resource": "message",
+          "operation": "send",
+          "credentials": "",
+          "channel": "#alerts",
+          "text": "{{ $json.text }}",
+          "blocks": null,
+          "thread_ts": ""
+        },
+        "position": {"x": 560, "y": 40}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "trigger",
+        "source_output": "main",
+        "target": "format",
+        "target_input": "input"
+      },
+      {
+        "id": "e2",
+        "source": "format",
+        "source_output": "main",
+        "target": "notify",
+        "target_input": "input"
+      }
+    ]
+  }
+}

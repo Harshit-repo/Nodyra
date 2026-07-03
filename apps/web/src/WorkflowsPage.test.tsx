@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +7,9 @@ import { ToastProvider } from "./ToastProvider";
 import type { WorkflowSummary } from "./types";
 
 const credentialQueryOptions: Array<{ enabled?: boolean }> = [];
+const navigateMock = vi.hoisted(() => vi.fn());
+const createWorkflowMock = vi.hoisted(() => vi.fn());
+const instantiateTemplateMock = vi.hoisted(() => vi.fn());
 const workflow: WorkflowSummary = {
   id: "workflow-1",
   name: "Read-only workflow",
@@ -20,8 +23,28 @@ const workflow: WorkflowSummary = {
   updated_at: "2026-06-22T00:00:00Z",
 } as WorkflowSummary;
 
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>();
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  };
+});
+
 vi.mock("./queries", () => ({
   useWorkflows: () => ({ data: [workflow], isError: false, error: null, refetch: vi.fn() }),
+  useTemplates: () => ({
+    data: [
+      {
+        id: "webhook_to_slack",
+        name: "Webhook to Slack alert",
+        description: "Receive a webhook and notify Slack.",
+        tags: ["starter"],
+      },
+    ],
+    isError: false,
+    error: null,
+  }),
   useDeployments: () => ({ data: [] }),
   useCredentials: (options: { enabled?: boolean }) => {
     credentialQueryOptions.push(options);
@@ -32,7 +55,8 @@ vi.mock("./queries", () => ({
   useCreateFolderMutation: () => ({ mutateAsync: vi.fn() }),
   useUpdateFolderMutation: () => ({ mutateAsync: vi.fn() }),
   useDeleteFolderMutation: () => ({ mutateAsync: vi.fn() }),
-  useCreateWorkflowMutation: () => ({ mutateAsync: vi.fn() }),
+  useCreateWorkflowMutation: () => ({ mutateAsync: createWorkflowMock }),
+  useInstantiateTemplateMutation: () => ({ mutateAsync: instantiateTemplateMock }),
   useDeleteWorkflowMutation: () => ({ mutateAsync: vi.fn() }),
   useUpdateWorkflowMutation: () => ({ mutateAsync: vi.fn() }),
 }));
@@ -52,6 +76,9 @@ function renderPage() {
 afterEach(() => {
   setUser(null);
   credentialQueryOptions.length = 0;
+  navigateMock.mockReset();
+  createWorkflowMock.mockReset();
+  instantiateTemplateMock.mockReset();
 });
 
 describe("WorkflowsPage permissions", () => {
@@ -74,5 +101,29 @@ describe("WorkflowsPage permissions", () => {
     expect(screen.getByRole("button", { name: "More options" })).toBeTruthy();
     expect(screen.getByText("Credential attention")).toBeTruthy();
     expect(credentialQueryOptions.at(-1)?.enabled).toBe(true);
+  });
+
+  it("instantiates a selected server template from the create dialog", async () => {
+    setUser({ id: "editor", email: "editor@example.com", name: "Editor", company: "Nodyra", role: "editor" });
+    instantiateTemplateMock.mockResolvedValue({
+      id: "workflow-from-template",
+      name: "Webhook to Slack alert",
+    });
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "New workflow" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Webhook to Slack alert/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() =>
+      expect(instantiateTemplateMock).toHaveBeenCalledWith({
+        id: "webhook_to_slack",
+        name: "Webhook to Slack alert",
+      }),
+    );
+    expect(createWorkflowMock).not.toHaveBeenCalled();
+    expect(navigateMock).toHaveBeenCalledWith("/workflows/workflow-from-template");
   });
 });

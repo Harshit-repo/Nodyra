@@ -51,6 +51,7 @@ from app.routers import (
     runner_pools,
     runs,
     system_settings,
+    templates,
     webhooks,
     workflows,
 )
@@ -835,6 +836,7 @@ app.include_router(internal.router)
 if settings.mcp_server_enabled:
     app.include_router(mcp.router)
 app.include_router(export.router)
+app.include_router(templates.router)
 app.include_router(auth.router)
 app.include_router(credentials.router)
 app.include_router(admin.router)

@@ -32,6 +32,8 @@ import {
   useDeleteWorkflowMutation,
   useDeployments,
   useFolders,
+  useInstantiateTemplateMutation,
+  useTemplates,
   useUpdateFolderMutation,
   useUpdateWorkflowMutation,
   useWorkflowProviderTriggers,
@@ -45,11 +47,17 @@ import type {
   FolderInfo,
   ProviderTriggerStatusCounts,
   ProviderTriggerSubscription,
+  WorkflowTemplateSummary,
   WorkflowSummary,
 } from "./types";
-import { WORKFLOW_TEMPLATES as TEMPLATES } from "./workflowTemplates";
 
 const WORKFLOWS_PER_PAGE = 18;
+const BLANK_TEMPLATE: WorkflowTemplateSummary = {
+  id: "blank",
+  name: "Blank workflow",
+  description: "Start with an empty canvas.",
+  tags: ["blank"],
+};
 
 const FOLDER_COLORS: Array<{ value: string; label: string }> = [
   { value: "#4c9eff", label: "Blue" },
@@ -149,33 +157,51 @@ function CreateModal({
   onCreated: (id: string) => void;
   initialTemplateId: string;
 }) {
-  const initialTemplate =
-    TEMPLATES.find((item) => item.id === initialTemplateId) ?? TEMPLATES[0];
+  const templatesQuery = useTemplates();
+  const templates = templatesQuery.data ?? [];
+  const [templateId, setTemplateId] = useState(initialTemplateId);
   const [name, setName] = useState(
-    initialTemplate.id === "blank" ? "Untitled workflow" : initialTemplate.name,
+    initialTemplateId === "blank" ? "Untitled workflow" : "",
   );
-  const [templateId, setTemplateId] = useState(initialTemplate.id);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { notify } = useToast();
   const createWorkflow = useCreateWorkflowMutation();
+  const instantiateTemplate = useInstantiateTemplateMutation();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
+  const selectedTemplate =
+    templateId === "blank"
+      ? BLANK_TEMPLATE
+      : templates.find((template) => template.id === templateId);
+
+  useEffect(() => {
+    if (templateId === "blank") {
+      setName((current) => current || "Untitled workflow");
+      return;
+    }
+    const template = templates.find((item) => item.id === templateId);
+    if (!template) return;
+    setName((current) =>
+      !current || current === "Untitled workflow" ? template.name : current,
+    );
+  }, [templateId, templates]);
 
   async function submit() {
     if (busy) return;
     setBusy(true);
     setError("");
     try {
-      const template = TEMPLATES.find((item) => item.id === templateId);
-      const created = await createWorkflow.mutateAsync({
-        name: name.trim() || "Untitled workflow",
-        graph: template?.graph?.(),
-      });
-      notify(
-        template?.id === "blank" ? "Workflow created." : "Template created.",
-        "success",
-      );
+      const workflowName =
+        name.trim() || selectedTemplate?.name || "Untitled workflow";
+      const created =
+        templateId === "blank"
+          ? await createWorkflow.mutateAsync({ name: workflowName })
+          : await instantiateTemplate.mutateAsync({
+              id: templateId,
+              name: workflowName,
+            });
+      notify(templateId === "blank" ? "Workflow created." : "Template created.", "success");
       onCreated(created.id);
     } catch (err) {
       setError(userFriendlyError(err));
@@ -208,17 +234,15 @@ function CreateModal({
           onKeyDown={(e) => e.key === "Enter" && void submit()}
         />
         <div className="template-picker">
-          {TEMPLATES.map((template) => (
+          {[BLANK_TEMPLATE, ...templates].map((template) => (
             <button
               type="button"
               key={template.id}
               className={templateId === template.id ? "is-selected" : ""}
               onClick={() => {
+                const previousName = selectedTemplate?.name ?? "Untitled workflow";
                 setTemplateId(template.id);
-                const previous =
-                  TEMPLATES.find((item) => item.id === templateId)?.name ??
-                  "Untitled workflow";
-                if (name === "Untitled workflow" || name === previous) {
+                if (!name || name === "Untitled workflow" || name === previousName) {
                   setName(
                     template.id === "blank"
                       ? "Untitled workflow"
@@ -232,6 +256,11 @@ function CreateModal({
             </button>
           ))}
         </div>
+        {templatesQuery.isError && (
+          <p className="error-text">
+            Could not load templates. Blank workflow is still available.
+          </p>
+        )}
         {error && <p className="error-text">{error}</p>}
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onClose}>
@@ -305,6 +334,10 @@ export function WorkflowsPage() {
     placeholderData: keepPreviousData,
   });
   const deploymentsQuery = useDeployments(undefined, { placeholderData: keepPreviousData });
+  const templatesQuery = useTemplates({
+    enabled: canWrite,
+    placeholderData: keepPreviousData,
+  });
   const credentialsQuery = useCredentials({
     enabled: canReadCredentials,
     placeholderData: keepPreviousData,
@@ -314,6 +347,7 @@ export function WorkflowsPage() {
     { enabled: providerModalWorkflow !== null },
   );
   const workflows = workflowsQuery.data ?? null;
+  const templates = templatesQuery.data ?? [];
   const deployments = deploymentsQuery.data ?? null;
   const credentials = credentialsQuery.data ?? null;
   const error =
@@ -939,20 +973,22 @@ export function WorkflowsPage() {
                 <button className="btn btn-primary" onClick={() => openCreate()}>
                   New workflow
                 </button>
-                <div className="template-strip">
-                  {TEMPLATES.filter((template) => template.id !== "blank").map((template) => (
-                    <button
-                      key={template.id}
-                      type="button"
-                      onClick={() => {
-                        openCreate(template.id);
-                        setQuery("");
-                      }}
-                    >
-                      {template.name}
-                    </button>
-                  ))}
-                </div>
+                {templates.length > 0 && (
+                  <div className="template-strip">
+                    {templates.slice(0, 4).map((template) => (
+                      <button
+                        key={template.id}
+                        type="button"
+                        onClick={() => {
+                          openCreate(template.id);
+                          setQuery("");
+                        }}
+                      >
+                        {template.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </>
             ) : (
               <p className="muted">You have read-only access. Ask a workspace editor to create the first workflow.</p>
