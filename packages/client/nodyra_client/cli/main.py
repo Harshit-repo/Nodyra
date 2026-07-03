@@ -7,16 +7,32 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import click
 import httpx
 
 from nodyra_client._version import __version__
+from nodyra_client.cli.render import emit
 from nodyra_client.client import NodyraClient, NodyraError
 
 # Token cache in user home directory.
 _TOKEN_FILE = Path.home() / ".nodyra" / "token"
+_WF_COLUMNS = [
+    ("ID", "id"),
+    ("Name", "name"),
+    ("Status", "status"),
+    ("Version", "latest_version"),
+    ("Updated", "updated_at"),
+]
+_RUN_COLUMNS = [
+    ("ID", "id"),
+    ("Workflow", "workflow_name"),
+    ("Status", "status"),
+    ("Mode", "mode"),
+    ("Started", "started_at"),
+    ("Duration (s)", "duration_seconds"),
+]
+_CRED_COLUMNS = [("ID", "id"), ("Name", "name"), ("Type", "type"), ("Scope", "scope")]
 
 
 def _write_token_file(payload: bytes) -> None:
@@ -71,27 +87,18 @@ def _client() -> NodyraClient:
                 err=True,
             )
             sys.exit(1)
+    base = os.environ.get("NODYRA_BASE_URL", base)
+    token = os.environ.get("NODYRA_TOKEN", token)
     return NodyraClient(base_url=base, token=token)
 
 
-def _render(data: Any) -> None:
-    """Render output as formatted JSON."""
-    if data is None:
-        click.echo("OK")
-        return
-    if isinstance(data, list):
-        click.echo(json.dumps(
-            [_simplify(item) for item in data], indent=2, default=str
-        ))
-    else:
-        click.echo(json.dumps(_simplify(data), indent=2, default=str))
-
-
-def _simplify(obj: Any) -> Any:
-    """Convert Pydantic models and datetimes for JSON serialization."""
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump()
-    return obj
+def _json_mode() -> bool:
+    ctx = click.get_current_context(silent=True)
+    while ctx is not None:
+        if isinstance(ctx.obj, dict) and "json" in ctx.obj:
+            return bool(ctx.obj["json"])
+        ctx = ctx.parent
+    return False
 
 
 def _handle_error(exc: Exception) -> None:
@@ -102,12 +109,22 @@ def _handle_error(exc: Exception) -> None:
 
 @click.group()
 @click.version_option(__version__, prog_name="nodyra")
-def main() -> None:
+@click.option(
+    "--json",
+    "json_mode",
+    is_flag=True,
+    envvar="NODYRA_JSON",
+    help="Machine-readable JSON output.",
+)
+@click.pass_context
+def main(ctx: click.Context, json_mode: bool) -> None:
     """nodyra — CLI for the Nodyra workflow automation platform.
 
     Set NODYRA_TOKEN and NODYRA_BASE_URL environment variables, or use
     'nodyra login' to save credentials.
     """
+    ctx.ensure_object(dict)
+    ctx.obj["json"] = json_mode
 
 
 # ── Auth ──────────────────────────────────────────────────────────────
@@ -135,7 +152,7 @@ def login(base_url: str, token: str) -> None:
 def whoami() -> None:
     """Show the currently authenticated user."""
     try:
-        _render(_client().whoami())
+        emit(_client().whoami(), json_mode=_json_mode())
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 
@@ -153,7 +170,11 @@ def workflow() -> None:
 def workflow_list(status: str | None, search: str | None) -> None:
     """List workflows."""
     try:
-        _render(_client().workflows.list(status=status, search=search))
+        emit(
+            _client().workflows.list(status=status, search=search),
+            json_mode=_json_mode(),
+            columns=_WF_COLUMNS,
+        )
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 
@@ -163,7 +184,7 @@ def workflow_list(status: str | None, search: str | None) -> None:
 def workflow_get(workflow_id: str) -> None:
     """Get workflow details."""
     try:
-        _render(_client().workflows.get(workflow_id))
+        emit(_client().workflows.get(workflow_id), json_mode=_json_mode())
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 
@@ -174,7 +195,7 @@ def workflow_get(workflow_id: str) -> None:
 def workflow_create(name: str, folder_id: str | None) -> None:
     """Create a new workflow."""
     try:
-        _render(_client().workflows.create(name=name, folder_id=folder_id))
+        emit(_client().workflows.create(name=name, folder_id=folder_id), json_mode=_json_mode())
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 
@@ -186,7 +207,7 @@ def workflow_delete(workflow_id: str) -> None:
     """Delete a workflow."""
     try:
         _client().workflows.delete(workflow_id)
-        click.echo("Deleted")
+        emit(None, json_mode=_json_mode())
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 
@@ -196,7 +217,7 @@ def workflow_delete(workflow_id: str) -> None:
 def workflow_publish(workflow_id: str) -> None:
     """Publish a workflow version."""
     try:
-        _render(_client().workflows.publish(workflow_id))
+        emit(_client().workflows.publish(workflow_id), json_mode=_json_mode())
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 
@@ -221,7 +242,7 @@ def run_start(workflow_id: str, data: str | None) -> None:
             click.echo(f"Error: --data must be valid JSON: {exc}", err=True)
             sys.exit(1)
     try:
-        _render(_client().runs.start(workflow_id, data=payload))
+        emit(_client().runs.start(workflow_id, data=payload), json_mode=_json_mode())
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 
@@ -231,7 +252,7 @@ def run_start(workflow_id: str, data: str | None) -> None:
 def run_get(run_id: str) -> None:
     """Get run details."""
     try:
-        _render(_client().runs.get(run_id))
+        emit(_client().runs.get(run_id), json_mode=_json_mode())
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 
@@ -241,7 +262,7 @@ def run_get(run_id: str) -> None:
 def run_cancel(run_id: str) -> None:
     """Cancel a running workflow."""
     try:
-        _render(_client().runs.cancel(run_id))
+        emit(_client().runs.cancel(run_id), json_mode=_json_mode())
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 
@@ -252,7 +273,11 @@ def run_cancel(run_id: str) -> None:
 def run_list(workflow_id: str | None, status: str | None) -> None:
     """List runs."""
     try:
-        _render(_client().runs.list(workflow_id=workflow_id, status=status))
+        emit(
+            _client().runs.list(workflow_id=workflow_id, status=status),
+            json_mode=_json_mode(),
+            columns=_RUN_COLUMNS,
+        )
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 
@@ -309,7 +334,11 @@ def credential() -> None:
 def credential_list() -> None:
     """List credentials."""
     try:
-        _render(_client().credentials.list())
+        emit(
+            _client().credentials.list(),
+            json_mode=_json_mode(),
+            columns=_CRED_COLUMNS,
+        )
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 

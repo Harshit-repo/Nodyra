@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json as _json
 import os
 import stat
 
@@ -58,3 +59,48 @@ def test_write_token_file_cleans_temp_file_on_write_error(tmp_path, monkeypatch)
 
     assert not token_file.exists()
     assert not list(token_file.parent.glob("*.tmp"))
+
+
+def test_workflow_list_renders_table(httpx_mock, monkeypatch, tmp_path) -> None:
+    from click.testing import CliRunner
+
+    monkeypatch.setenv("NODYRA_BASE_URL", "http://api.test")
+    monkeypatch.setenv("NODYRA_TOKEN", "t")
+    monkeypatch.setattr(cli_main, "_TOKEN_FILE", tmp_path / "token")
+    httpx_mock.add_response(
+        url="http://api.test/workflows?limit=50&offset=0",
+        json=[
+            {
+                "id": "wf_1",
+                "name": "Daily ETL",
+                "active": True,
+                "status": "published",
+                "latest_version": 3,
+            }
+        ],
+    )
+    result = CliRunner().invoke(cli_main.main, ["workflow", "list"])
+    assert result.exit_code == 0, result.output
+    assert "Daily ETL" in result.output
+
+
+def test_workflow_list_json_flag(httpx_mock, monkeypatch, tmp_path) -> None:
+    from click.testing import CliRunner
+
+    monkeypatch.setenv("NODYRA_BASE_URL", "http://api.test")
+    monkeypatch.setenv("NODYRA_TOKEN", "t")
+    monkeypatch.setattr(cli_main, "_TOKEN_FILE", tmp_path / "token")
+    httpx_mock.add_response(
+        url="http://api.test/workflows?limit=50&offset=0",
+        json=[
+            {
+                "id": "wf_1",
+                "name": "Daily ETL",
+                "active": True,
+                "status": "published",
+            }
+        ],
+    )
+    result = CliRunner().invoke(cli_main.main, ["--json", "workflow", "list"])
+    assert result.exit_code == 0, result.output
+    assert _json.loads(result.output)[0]["id"] == "wf_1"
