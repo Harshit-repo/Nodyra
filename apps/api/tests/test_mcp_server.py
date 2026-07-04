@@ -76,6 +76,7 @@ async def test_initialize(client: AsyncClient) -> None:
     result = resp.json()["result"]
     assert result["protocolVersion"] == "2025-06-18"
     assert result["serverInfo"]["name"] == "nodyra"
+    assert "get_workflow_authoring_guide" in result["instructions"]
     assert "tools" in result["capabilities"]
     assert result["capabilities"]["tools"]["listChanged"] is False
     assert "resources" in result["capabilities"]
@@ -166,13 +167,77 @@ async def test_batch_all_notifications_is_rejected(client: AsyncClient) -> None:
 async def test_tools_list_contains_static_tools(client: AsyncClient) -> None:
     resp = await client.post("/mcp", json=rpc("tools/list"))
     names = {t["name"] for t in resp.json()["result"]["tools"]}
-    assert {"run_workflow", "set_workflow_graph", "list_node_types"} <= names
+    assert {
+        "run_workflow",
+        "set_workflow_graph",
+        "list_node_types",
+        "get_workflow_authoring_guide",
+        "get_node_contracts",
+    } <= names
     descriptor = next(
         item for item in resp.json()["result"]["tools"] if item["name"] == "run_workflow"
     )
     assert descriptor["outputSchema"]["type"] == "object"
     assert descriptor["annotations"]["openWorldHint"] is True
     assert descriptor["execution"]["taskSupport"] == "forbidden"
+
+
+async def test_workflow_authoring_guide_tool(client: AsyncClient) -> None:
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "get_workflow_authoring_guide",
+                    "arguments": {
+                        "goal": "create an inventory API",
+                        "detail": "full",
+                    },
+                },
+            ),
+        )
+    )
+    assert data["goal"] == "create an inventory API"
+    assert "graph_contract" in data
+    assert "api_endpoint" in data["trigger_recipes"]
+    assert any("schedule" in item["name"] for item in data["important_tools"])
+
+
+async def test_get_node_contracts_returns_llm_guidance(client: AsyncClient) -> None:
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "get_node_contracts",
+                    "arguments": {"node_types": ["api_endpoint", "code"]},
+                },
+            ),
+        )
+    )
+    contracts = {contract["id"]: contract for contract in data["contracts"]}
+    assert {"api_endpoint", "code"} <= set(contracts)
+    assert "outputs_override" in json.dumps(
+        contracts["api_endpoint"]["llm_guidance"], sort_keys=True
+    )
+    assert contracts["code"]["graph_node_shape"]["type"] == "code"
+
+
+async def test_get_node_type_includes_llm_guidance(client: AsyncClient) -> None:
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {"name": "get_node_type", "arguments": {"node_type": "schedule_trigger"}},
+            ),
+        )
+    )
+    assert "llm_guidance" in data
+    assert "production_notes" in data["llm_guidance"]
+    assert data["graph_node_shape"]["type"] == "schedule_trigger"
 
 
 async def test_tool_arguments_are_validated(client: AsyncClient) -> None:
@@ -203,6 +268,37 @@ async def test_validate_graph_rejects_cycles(client: AsyncClient) -> None:
     result = response.json()["result"]
     assert result["isError"] is True
     assert "cycle" in result["content"][0]["text"].lower()
+
+
+async def test_validate_graph_accepts_outputs_override_ports(client: AsyncClient) -> None:
+    graph = {
+        "nodes": [
+            {
+                "id": "api",
+                "type": "api_endpoint",
+                "params": {
+                    "base_path": "items",
+                    "routes": [{"method": "GET", "path": "/{sku}", "output": "lookup"}],
+                },
+                "outputs_override": ["lookup"],
+            },
+            {"id": "code", "type": "code", "params": {"code": "output = input"}},
+        ],
+        "edges": [
+            {
+                "source": "api",
+                "source_output": "lookup",
+                "target": "code",
+                "target_input": "input",
+            }
+        ],
+    }
+    response = await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "validate_graph", "arguments": {"graph": graph}}),
+    )
+    result = response.json()["result"]
+    assert result["isError"] is False, result["content"][0]["text"]
 
 
 def _tool_payload(resp) -> dict:
@@ -993,13 +1089,16 @@ async def test_resources_list(client: AsyncClient) -> None:
     result = resp.json()["result"]
     assert "resources" in result
     uris = {r["uri"] for r in result["resources"]}
+    assert "nodyra://workflow-authoring-guide" in uris
     assert "nodyra://node-types" in uris
 
 
 async def test_resource_templates_list(client: AsyncClient) -> None:
     response = await client.post("/mcp", json=rpc("resources/templates/list"))
     templates = response.json()["result"]["resourceTemplates"]
-    assert templates[0]["uriTemplate"] == "nodyra://workflow/{workflow_id}"
+    uri_templates = {template["uriTemplate"] for template in templates}
+    assert "nodyra://workflow/{workflow_id}" in uri_templates
+    assert "nodyra://node-type/{node_type}" in uri_templates
 
 
 async def test_resources_list_includes_workflows(client: AsyncClient) -> None:
@@ -1019,6 +1118,29 @@ async def test_resources_read_node_types(client: AsyncClient) -> None:
     text = result["contents"][0]["text"]
     data = json.loads(text)
     assert "node_types" in data
+    assert "llm_guidance" in data["node_types"][0]
+
+
+async def test_resources_read_workflow_authoring_guide(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("resources/read", {"uri": "nodyra://workflow-authoring-guide"}),
+    )
+    result = resp.json()["result"]
+    data = json.loads(result["contents"][0]["text"])
+    assert "authoring_sequence" in data
+    assert "api_endpoint" in data["trigger_recipes"]
+
+
+async def test_resources_read_node_type_contract(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("resources/read", {"uri": "nodyra://node-type/api_endpoint"}),
+    )
+    result = resp.json()["result"]
+    data = json.loads(result["contents"][0]["text"])
+    assert data["id"] == "api_endpoint"
+    assert "outputs_override" in json.dumps(data["llm_guidance"], sort_keys=True)
 
 
 async def test_resources_read_workflow(client: AsyncClient) -> None:
@@ -1070,7 +1192,11 @@ async def test_prompts_get_build_workflow(client: AsyncClient) -> None:
     result = resp.json()["result"]
     assert "messages" in result
     assert len(result["messages"]) >= 1
-    assert "send a daily email" in result["messages"][0]["content"]["text"]
+    text = result["messages"][0]["content"]["text"]
+    assert "send a daily email" in text
+    assert "get_workflow_authoring_guide" in text
+    assert "get_node_contracts" in text
+    assert "outputs_override" in text
 
 
 async def test_prompts_validate_required_arguments(client: AsyncClient) -> None:

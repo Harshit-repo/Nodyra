@@ -22,6 +22,14 @@ INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
 SERVER_INFO = {"name": "nodyra", "version": "0.0.1"}
+SERVER_INSTRUCTIONS = (
+    "Nodyra builds and runs workflow graphs. For workflow creation, first call "
+    "get_workflow_authoring_guide, then use search_node_catalog/get_node_contracts "
+    "to choose nodes, validate_workflow_graph before running, run_workflow with "
+    "use_draft=true for tests, and publish_workflow only after validation succeeds "
+    "and human approval is explicit. Production schedules require create_schedule "
+    "or update_schedule after publishing."
+)
 SERVER_CAPABILITIES: dict[str, Any] = {
     # This endpoint is intentionally stateless and opens no server-initiated
     # stream, so it cannot truthfully emit tools/list_changed notifications.
@@ -54,6 +62,7 @@ def initialize_result(client_protocol_version: Any) -> dict:
         "protocolVersion": version,
         "capabilities": SERVER_CAPABILITIES,
         "serverInfo": SERVER_INFO,
+        "instructions": SERVER_INSTRUCTIONS,
     }
 
 

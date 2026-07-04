@@ -96,6 +96,22 @@ export {
 const PACKAGE_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const PACKAGE_INSTALL_POLL_MS = 2000;
 
+function nextParamsForParamChange(
+  manifestId: string,
+  params: Record<string, unknown>,
+  name: string,
+  value: unknown,
+): Record<string, unknown> {
+  const next = { ...params, [name]: value };
+  if (
+    manifestId === "schedule_trigger" &&
+    (name === "interval" || name === "every")
+  ) {
+    next.cron = "";
+  }
+  return next;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -4583,7 +4599,7 @@ export function NodeDetails({
   const color = categoryColor(manifest.category);
 
   const setParam = (name: string, value: unknown) => {
-    updateParams(node.id, { ...params, [name]: value });
+    updateParams(node.id, nextParamsForParamChange(manifest.id, params, name, value));
   };
 
   // Packages this node needs that the workflow's env doesn't have.

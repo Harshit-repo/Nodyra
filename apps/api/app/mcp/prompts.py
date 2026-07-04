@@ -47,15 +47,21 @@ def get_prompt(name: str, arguments: dict[str, str]) -> dict[str, Any] | None:
         desc = arguments.get("description", "")
         text = (
             f"You are building a Nodyra workflow. Goal: {desc}\n\n"
-            "Steps:\n"
-            "1. list_node_types — discover available node types.\n"
-            "2. create_workflow — create the workflow.\n"
-            "3. get_node_type — inspect each node's required params before placing it.\n"
-            "4. add_node — add each node individually (safer than set_workflow_graph).\n"
-            "5. add_edge — connect nodes in execution order.\n"
-            "6. validate_graph — confirm the graph is structurally valid.\n"
-            "7. run_workflow (use_draft=true) — test the draft.\n"
-            "8. publish_workflow — publish once the run succeeds.\n"
+            "Production workflow-authoring sequence:\n"
+            "1. get_workflow_authoring_guide with the goal and detail='standard' to load graph rules, trigger recipes, and common mistakes.\n"
+            "2. search_node_catalog and get_node_contracts to choose node types and read params, ports, examples, and pitfalls.\n"
+            "3. create_workflow to create the empty workflow.\n"
+            "4. suggest_node_config or get_node_type before placing each node.\n"
+            "5. Assemble the graph with set_workflow_graph, or preview_workflow_patch then apply_workflow_patch for edits.\n"
+            "6. validate_workflow_graph before running; fix missing packages, invalid ports, missing triggers, or cycles.\n"
+            "7. run_workflow with use_draft=true and realistic parameters; inspect failures with get_run, get_run_events, and get_node_run.\n"
+            "8. publish_workflow only after tests pass and human approval is explicit.\n"
+            "9. If it must run automatically, create_schedule/update_schedule after publishing. If it should be callable by other agents, enable_mcp_tool with a clear JSON Schema.\n\n"
+            "Important graph rules:\n"
+            "- Use source_output='main' and target_input='input' unless the node contract says otherwise.\n"
+            "- For api_endpoint route branches, set outputs_override to each routes[].output value and connect edges from those output names.\n"
+            "- A non-empty cron value takes precedence over interval/every; clear cron when interval/every should control cadence.\n"
+            "- Published production webhooks and schedules use published workflow versions, not unsaved draft changes.\n"
         )
     elif name == "debug_run":
         run_id = arguments.get("run_id", "")

@@ -24,6 +24,11 @@ from sqlalchemy.orm import selectinload
 
 import nodyra_nodes  # noqa: F401 - registers built-in nodes
 from app.db import SessionLocal
+from app.mcp.guidance import (
+    compact_node_contract,
+    node_llm_guidance,
+    workflow_authoring_guide,
+)
 from app.models import (
     Deployment,
     Environment,
@@ -45,6 +50,7 @@ from app.services.environment_builds import (
 from app.services.github_sync import enqueue_github_push
 from app.services.github_sync_jobs import notify_sync_workers
 from app.services.graph_utils import first_trigger_node
+from app.services.output_store import resolved_output
 from app.services.runner import cancel_run as _runner_cancel_run
 from app.services.runner import start_run
 from app.services.sandbox_policy import (
@@ -347,6 +353,14 @@ async def _get_workflow(session: AsyncSession, user: User | None, args: dict) ->
     }
 
 
+async def _get_workflow_authoring_guide(
+    session: AsyncSession, user: User | None, args: dict
+) -> Any:
+    goal = str(args.get("goal") or "").strip()
+    detail = str(args.get("detail") or "standard").strip() or "standard"
+    return workflow_authoring_guide(goal=goal, detail=detail)
+
+
 async def _list_node_types(session: AsyncSession, user: User | None, args: dict) -> Any:
     category = str(args.get("category") or "").strip()
     search = str(args.get("search") or "").strip().lower()
@@ -373,8 +387,57 @@ async def _get_node_type(session: AsyncSession, user: User | None, args: dict) -
     node_type = str(args.get("node_type") or "")
     for manifest in node_registry.manifests():
         if manifest.id == node_type:
-            return manifest.model_dump(mode="json")
+            payload = manifest.model_dump(mode="json")
+            payload["llm_guidance"] = node_llm_guidance(manifest)
+            payload["graph_node_shape"] = compact_node_contract(
+                manifest, include_examples=False
+            )["graph_node_shape"]
+            return payload
     raise McpToolError(f"Unknown node type: {node_type!r}. Use list_node_types to discover ids.")
+
+
+async def _get_node_contracts(session: AsyncSession, user: User | None, args: dict) -> Any:
+    requested = {
+        str(item).strip()
+        for item in (args.get("node_types") or [])
+        if str(item).strip()
+    }
+    category = str(args.get("category") or "").strip().lower()
+    search = str(args.get("search") or args.get("query") or "").strip().lower()
+    include_examples = bool(args.get("include_examples", True))
+    limit = max(1, min(int(args.get("limit") or 25), 100))
+    contracts: list[dict[str, Any]] = []
+    matched_ids: set[str] = set()
+    total = 0
+    for manifest in node_registry.manifests():
+        if manifest.hidden or manifest.deprecated:
+            continue
+        if requested and manifest.id not in requested:
+            continue
+        if category and manifest.category.lower() != category:
+            continue
+        haystack = " ".join(
+            [manifest.id, manifest.name, manifest.category, manifest.description]
+        ).lower()
+        if search and search not in haystack:
+            continue
+        matched_ids.add(manifest.id)
+        total += 1
+        if len(contracts) < limit:
+            contracts.append(
+                compact_node_contract(manifest, include_examples=include_examples)
+            )
+    missing = sorted(requested - matched_ids) if requested else []
+    return {
+        "contracts": contracts,
+        "total": total,
+        "missing_node_types": missing,
+        "next_steps": [
+            "Use suggest_node_config for starter node JSON.",
+            "Use validate_graph or validate_workflow_graph before running.",
+            "Use get_workflow_authoring_guide for graph-level production rules.",
+        ],
+    }
 
 
 async def _search_node_catalog(session: AsyncSession, user: User | None, args: dict) -> Any:
@@ -428,6 +491,7 @@ async def _search_node_catalog(session: AsyncSession, user: User | None, args: d
             "description": manifest.description,
             "requirements": requirements,
             "deprecated": bool(manifest.deprecated),
+            "llm_guidance": node_llm_guidance(manifest),
         }
         if include_ports:
             item["inputs"] = [port.model_dump(mode="json") for port in manifest.inputs]
@@ -503,6 +567,7 @@ async def _suggest_node_config(session: AsyncSession, user: User | None, args: d
             "inputs": [port.model_dump(mode="json") for port in manifest.inputs],
             "outputs": [port.model_dump(mode="json") for port in manifest.outputs],
             "requirements": list(manifest.requirements or []),
+            "llm_guidance": node_llm_guidance(manifest),
             "hint": "Replace placeholder values before applying the node to a workflow.",
         }
     raise McpToolError(f"Unknown node type: {node_type!r}. Use search_node_catalog first.")
@@ -528,7 +593,8 @@ async def _get_run(session: AsyncSession, user: User | None, args: dict) -> Any:
                 "node_id": nr.node_id,
                 "status": nr.status,
                 "error": nr.error,
-                "output": _truncated(nr.output),
+                # Resolve offloaded-output markers before transport (OS-1).
+                "output": _truncated(resolved_output(nr.output)),
             }
             for nr in run.node_runs
         ],
@@ -799,6 +865,8 @@ def _validate_graph_payload(graph: Any, *, require_trigger: bool = True) -> Work
         target_manifest = manifests.get(target_node.type)
         if source_manifest and source_manifest.outputs:
             valid = {port.name for port in source_manifest.outputs}
+            if source_node.outputs_override:
+                valid.update(str(port) for port in source_node.outputs_override if port)
             if source_node.tool_mode:
                 valid.add("tool")
             if edge.source_output not in valid:
@@ -2776,7 +2844,8 @@ async def _get_node_run(session: AsyncSession, user: User | None, args: dict) ->
                 "duration_ms": row.duration_ms,
                 "started_at": row.started_at,
                 "finished_at": row.finished_at,
-                "output": _truncated(row.output),
+                # Resolve offloaded-output markers before transport (OS-1).
+                "output": _truncated(resolved_output(row.output)),
                 "error": row.error,
                 "logs": _truncated(row.logs),
                 "debug": _truncated(row.debug),
@@ -2881,6 +2950,30 @@ STATIC_TOOLS: list[McpTool] = [
         handler=_get_workflow,
     ),
     McpTool(
+        name="get_workflow_authoring_guide",
+        description=(
+            "Production workflow-building guide for LLM clients. Returns the "
+            "recommended tool sequence, graph shape, trigger recipes, schedule "
+            "rules, production checklist, and common mistakes to avoid."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "Optional natural-language workflow goal to echo in the guide.",
+                },
+                "detail": {
+                    "type": "string",
+                    "enum": ["compact", "standard", "full"],
+                    "description": "How much guidance to return. Default: standard.",
+                },
+            },
+        },
+        permission=None,
+        handler=_get_workflow_authoring_guide,
+    ),
+    McpTool(
         name="list_node_types",
         description=(
             "List available node types (id, name, category, description) for building "
@@ -2909,6 +3002,30 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission=None,
         handler=_get_node_type,
+    ),
+    McpTool(
+        name="get_node_contracts",
+        description=(
+            "Return compact LLM-ready contracts for node types: purpose, params, "
+            "ports, requirements, graph node shape, examples, and node-specific "
+            "pitfalls. Use this before assembling workflow graphs."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "node_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional exact node type ids to return.",
+                },
+                "category": {"type": "string"},
+                "search": {"type": "string"},
+                "include_examples": {"type": "boolean", "default": True},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+        },
+        permission=None,
+        handler=_get_node_contracts,
     ),
     McpTool(
         name="search_node_catalog",

@@ -158,6 +158,49 @@ def _draft_graph(workflow: Workflow) -> dict:
     return _latest(workflow).graph or EMPTY_GRAPH
 
 
+def _schedule_deployment_fields(graph: dict) -> dict[str, object] | None:
+    """Return deployment schedule fields from the first schedule trigger."""
+    for node in graph.get("nodes", []):
+        if not isinstance(node, dict) or node.get("type") != "schedule_trigger":
+            continue
+        params = node.get("params") or {}
+        if not isinstance(params, dict):
+            return None
+        try:
+            every = max(int(params.get("every", 1) or 1), 1)
+        except (TypeError, ValueError):
+            every = 1
+        return {
+            "schedule_cron": str(params.get("cron") or "").strip(),
+            "schedule_interval": str(params.get("interval") or "hours"),
+            "schedule_every": every,
+            "schedule_tz": str(params.get("tz") or ""),
+        }
+    return None
+
+
+async def _sync_deployments_to_published_graph(
+    session: AsyncSession,
+    workflow_id: str,
+    workflow_version_id: str,
+    graph: dict,
+) -> int:
+    from app.models import Deployment
+
+    deployments = (
+        await session.scalars(select(Deployment).where(Deployment.workflow_id == workflow_id))
+    ).all()
+    schedule_fields = _schedule_deployment_fields(graph)
+    for deployment in deployments:
+        deployment.workflow_version_id = workflow_version_id
+        if schedule_fields is not None:
+            deployment.schedule_cron = str(schedule_fields["schedule_cron"])
+            deployment.schedule_interval = str(schedule_fields["schedule_interval"])
+            deployment.schedule_every = int(schedule_fields["schedule_every"])
+            deployment.schedule_tz = str(schedule_fields["schedule_tz"])
+    return len(deployments)
+
+
 def _has_unpublished_changes(workflow: Workflow) -> bool:
     return _draft_graph(workflow) != (_latest(workflow).graph or EMPTY_GRAPH)
 
@@ -961,11 +1004,20 @@ async def publish_workflow(
     latest = _latest(workflow)
     graph = _draft_graph(workflow)
     if graph == (latest.graph or EMPTY_GRAPH):
+        updated_deployments = 0
+        if body.update_deployments:
+            updated_deployments = await _sync_deployments_to_published_graph(
+                session,
+                workflow.id,
+                latest.id,
+                graph,
+            )
+            await session.commit()
         return WorkflowPublishResponse(
             workflow_id=workflow.id,
             workflow_version_id=latest.id,
             version=latest.version,
-            updated_deployments=0,
+            updated_deployments=updated_deployments,
         )
 
     next_version = latest.version + 1
@@ -1013,7 +1065,6 @@ async def publish_workflow(
                 # Latest version only — see _latest_versions_by_id pattern.
                 WorkflowVersion.version == Workflow.published_version,
                 WorkflowVersion.graph != None,  # noqa: E711
-                WorkflowVersion.graph != {},
             )
             .limit(1)
         )
@@ -1082,14 +1133,12 @@ async def publish_workflow(
 
     updated_deployments = 0
     if body.update_deployments:
-        from app.models import Deployment
-
-        deployments = (
-            await session.scalars(select(Deployment).where(Deployment.workflow_id == workflow.id))
-        ).all()
-        for deployment in deployments:
-            deployment.workflow_version_id = version.id
-            updated_deployments += 1
+        updated_deployments = await _sync_deployments_to_published_graph(
+            session,
+            workflow.id,
+            version.id,
+            graph,
+        )
 
     await log_audit(
         session,

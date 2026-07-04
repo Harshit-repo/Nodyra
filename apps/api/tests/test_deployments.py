@@ -111,6 +111,104 @@ async def test_deployment_crud(client: AsyncClient) -> None:
     assert deleted.status_code == 204
 
 
+async def test_deployment_interval_update_clears_stale_cron(
+    client: AsyncClient,
+) -> None:
+    workflow_id = await _create_workflow(client)
+    deployment = (
+        await client.post(
+            "/deployments",
+            json={
+                "workflow_id": workflow_id,
+                "name": "Hourly",
+                "schedule_cron": "0 * * * *",
+                "active": False,
+            },
+        )
+    ).json()
+
+    updated = (
+        await client.put(
+            f"/deployments/{deployment['id']}",
+            json={"schedule_interval": "minutes", "schedule_every": 1},
+        )
+    ).json()
+
+    assert updated["schedule_cron"] == ""
+    assert updated["schedule_interval"] == "minutes"
+    assert updated["schedule_every"] == 1
+
+
+async def test_publish_update_deployments_syncs_schedule_cadence(
+    client: AsyncClient,
+) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Scheduled"})
+    ).json()["id"]
+    hourly_graph = {
+        "nodes": [
+            {
+                "id": "sched",
+                "type": "schedule_trigger",
+                "params": {
+                    "interval": "hours",
+                    "every": 1,
+                    "cron": "0 * * * *",
+                    "tz": "Australia/Sydney",
+                },
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": hourly_graph})
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+    deployment = (
+        await client.post(
+            "/deployments",
+            json={
+                "workflow_id": workflow_id,
+                "name": "Production schedule",
+                "schedule_cron": "0 * * * *",
+                "schedule_interval": "hours",
+                "schedule_every": 1,
+                "schedule_tz": "Australia/Sydney",
+                "active": True,
+            },
+        )
+    ).json()
+
+    minute_graph = {
+        **hourly_graph,
+        "nodes": [
+            {
+                **hourly_graph["nodes"][0],
+                "params": {
+                    "interval": "minutes",
+                    "every": 1,
+                    "cron": "",
+                    "tz": "Australia/Sydney",
+                },
+            }
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": minute_graph})
+    published = (
+        await client.post(
+            f"/workflows/{workflow_id}/publish",
+            json={"update_deployments": True},
+        )
+    ).json()
+
+    updated = (await client.get(f"/deployments/{deployment['id']}")).json()
+    assert published["updated_deployments"] == 1
+    assert updated["workflow_version_id"] == published["workflow_version_id"]
+    assert updated["schedule_cron"] == ""
+    assert updated["schedule_interval"] == "minutes"
+    assert updated["schedule_every"] == 1
+    assert updated["schedule_tz"] == "Australia/Sydney"
+
+
 async def test_run_now_seeds_default_parameters(client: AsyncClient) -> None:
     workflow_id = await _create_workflow(client)
     deployment = (

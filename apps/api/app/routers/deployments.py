@@ -267,10 +267,13 @@ async def update_deployment(
     actor: User | None = Depends(optional_current_user),
 ):
     deployment = await _load(session, deployment_id)
+    sent = body.model_fields_set
     if body.name is not None:
         deployment.name = body.name
     if body.schedule_cron is not None:
         deployment.schedule_cron = body.schedule_cron
+    elif {"schedule_interval", "schedule_every"} & sent:
+        deployment.schedule_cron = ""
     if body.schedule_interval is not None:
         deployment.schedule_interval = body.schedule_interval
     if body.schedule_every is not None:

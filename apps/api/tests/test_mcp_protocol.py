@@ -18,7 +18,9 @@ def test_jsonrpc_error_envelope() -> None:
 
 
 def test_initialize_echoes_known_version() -> None:
-    assert initialize_result("2025-03-26")["protocolVersion"] == "2025-03-26"
+    result = initialize_result("2025-03-26")
+    assert result["protocolVersion"] == "2025-03-26"
+    assert "get_workflow_authoring_guide" in result["instructions"]
 
 
 def test_initialize_falls_back_for_unknown_version() -> None:

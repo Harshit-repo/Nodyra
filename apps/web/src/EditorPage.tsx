@@ -146,6 +146,10 @@ function triggerTypes(graph: WorkflowGraph | null | undefined): string[] {
     .sort();
 }
 
+function graphHasScheduleTrigger(graph: WorkflowGraph | null | undefined): boolean {
+  return Boolean(graph?.nodes.some((node) => node.type === "schedule_trigger"));
+}
+
 function pinnedPayload(pin: PinnedOutput | undefined): unknown {
   return pin?.payload;
 }
@@ -994,10 +998,11 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   }
 
   function openPublishReview(): void {
+    const currentGraph = toGraph();
     setPublishSummary(
-      buildPublishSummary(workflow?.graph, toGraph(), workflow?.environment_id, environmentId),
+      buildPublishSummary(workflow?.graph, currentGraph, workflow?.environment_id, environmentId),
     );
-    setPublishUpdateDeployments(false);
+    setPublishUpdateDeployments(graphHasScheduleTrigger(currentGraph));
     setPublishReviewOpen(true);
   }
 
@@ -1975,7 +1980,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
               />
               <span className="field-toggle-track" />
               <span className="field-toggle-text">
-                Update deployments to this version
+                Update deployments to this version and schedule
               </span>
             </label>
             <label className="field publish-notes-field">

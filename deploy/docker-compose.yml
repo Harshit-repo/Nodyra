@@ -74,7 +74,7 @@ services:
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
       AUTH_ALLOW_REGISTRATION: ${AUTH_ALLOW_REGISTRATION:-false}
       AUTH_REGISTRATION_ROLE: ${AUTH_REGISTRATION_ROLE:-viewer}
-      SECRET_KEY: ${NODYRA_SECRET_KEY:?SECRET_KEY is required for production}
+      SECRET_KEY: ${NODYRA_SECRET_KEY:-${NOODLE_SECRET_KEY:?SECRET_KEY is required for production}}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-}
       MCP_AUTHORIZATION_SERVER_URL: ${MCP_AUTHORIZATION_SERVER_URL:-}
       MCP_OAUTH_INTROSPECTION_URL: ${MCP_OAUTH_INTROSPECTION_URL:-}
@@ -119,7 +119,7 @@ services:
       ARTIFACTS_DIR: /app/artifacts
       # DATA_DIR: /app/data
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
-      SECRET_KEY: ${NODYRA_SECRET_KEY:?SECRET_KEY is required for production}
+      SECRET_KEY: ${NODYRA_SECRET_KEY:-${NOODLE_SECRET_KEY:?SECRET_KEY is required for production}}
       # --- Sandboxed execution (container-per-run isolation) ---
       # Uncomment to run each workflow in a disposable hardened container
       # instead of a worker subprocess. Requires the docker.sock volume below.

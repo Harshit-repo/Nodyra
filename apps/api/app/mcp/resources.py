@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.mcp.guidance import compact_node_contract, workflow_authoring_guide
 from app.models import Workflow
 from nodyra.sdk import registry as node_registry
 
@@ -20,9 +21,23 @@ async def list_resources(
     if offset == 0:
         resources.append(
             {
+                "uri": "nodyra://workflow-authoring-guide",
+                "name": "Workflow Authoring Guide",
+                "description": (
+                    "LLM-oriented guide for creating, validating, testing, "
+                    "publishing, scheduling, and exposing Nodyra workflows."
+                ),
+                "mimeType": "application/json",
+            }
+        )
+        resources.append(
+            {
                 "uri": "nodyra://node-types",
                 "name": "Node Type Catalogue",
-                "description": "All available node types with ids, categories, and descriptions.",
+                "description": (
+                    "All available node types with ids, categories, descriptions, "
+                    "and compact LLM guidance."
+                ),
                 "mimeType": "application/json",
             }
         )
@@ -54,20 +69,32 @@ def list_resource_templates() -> list[dict[str, Any]]:
             "name": "Workflow",
             "description": "A workflow's current graph and metadata by id.",
             "mimeType": "application/json",
-        }
+        },
+        {
+            "uriTemplate": "nodyra://node-type/{node_type}",
+            "name": "Node Type Contract",
+            "description": "A compact LLM-ready contract for one node type.",
+            "mimeType": "application/json",
+        },
     ]
 
 
 async def read_resource(session: AsyncSession, uri: str) -> dict[str, Any]:
     """Return {uri, mimeType, text}. Raises ValueError for unknown URIs."""
+    if uri == "nodyra://workflow-authoring-guide":
+        return {
+            "uri": uri,
+            "mimeType": "application/json",
+            "text": json.dumps(
+                workflow_authoring_guide(detail="full"),
+                ensure_ascii=False,
+                default=str,
+            ),
+        }
+
     if uri == "nodyra://node-types":
         types = [
-            {
-                "id": m.id,
-                "name": m.name,
-                "category": m.category,
-                "description": m.description,
-            }
+            compact_node_contract(m, include_examples=False)
             for m in node_registry.manifests()
             if not m.hidden and not m.deprecated
         ]
@@ -76,6 +103,21 @@ async def read_resource(session: AsyncSession, uri: str) -> dict[str, Any]:
             "mimeType": "application/json",
             "text": json.dumps({"node_types": types}, ensure_ascii=False),
         }
+
+    if uri.startswith("nodyra://node-type/"):
+        node_type = uri[len("nodyra://node-type/"):]
+        for manifest in node_registry.manifests():
+            if manifest.id == node_type and not manifest.hidden:
+                return {
+                    "uri": uri,
+                    "mimeType": "application/json",
+                    "text": json.dumps(
+                        compact_node_contract(manifest, include_examples=True),
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                }
+        raise ValueError(f"Resource not found: {uri!r}")
 
     if uri.startswith("nodyra://workflow/"):
         workflow_id = uri[len("nodyra://workflow/"):]
