@@ -186,6 +186,12 @@ body::before {
   background-clip: padding-box;
 }
 
+.nodyra-logo-mark {
+  display: block;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
 h1 {
   font-family: var(--font-display);
   font-size: 28px;

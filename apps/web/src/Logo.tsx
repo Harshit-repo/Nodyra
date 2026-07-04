@@ -1,20 +1,17 @@
 export function Logo({ size = 26 }: { size?: number }) {
+  const dimension = Math.max(0, size);
+
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 32 32"
-      fill="none"
+    <img
+      className="nodyra-logo-mark"
+      src="/brand/nodyra-mark.png"
+      width={dimension}
+      height={dimension}
+      style={{ width: dimension, height: dimension }}
+      alt=""
       aria-hidden="true"
-    >
-      <path
-        d="M5 21 C 9 9, 13.5 9, 16 16 S 23 23, 27 11"
-        stroke="var(--accent)"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
-      <circle cx="5" cy="21" r="3.6" fill="var(--accent)" />
-      <circle cx="27" cy="11" r="3.6" fill="var(--accent-2)" />
-    </svg>
+      decoding="async"
+      draggable={false}
+    />
   );
 }

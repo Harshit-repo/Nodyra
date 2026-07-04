@@ -320,7 +320,7 @@ export function HomeHeader() {
       <div className="nodyra-shell-page-context">
         <Link className="nodyra-shell-topbar-brand" to="/" aria-label="Nodyra home">
           <Logo size={22} />
-          <span>nodyra</span>
+          <span>Nodyra</span>
         </Link>
         <span className="nodyra-shell-page-scope">{scope ? `${scope[0].toUpperCase()}${scope.slice(1)}` : "Nodyra"}</span>
         <strong>{title}</strong>

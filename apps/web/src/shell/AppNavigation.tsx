@@ -128,7 +128,7 @@ export function AppSidebar({
       <div className="nodyra-shell-sidebar-head">
         <Link className="nodyra-shell-brand" to="/" aria-label="Nodyra workflows">
           <Logo size={26} />
-          <span>nodyra</span>
+          <span>Nodyra</span>
         </Link>
         {organizationSlot && (
           <div className="nodyra-shell-organization-slot">{organizationSlot}</div>
