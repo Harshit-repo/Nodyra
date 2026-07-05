@@ -86,3 +86,68 @@ def test_clamp_min_over_max():
 def test_one_action_per_pool_per_tick():
     actions = plan_scaling([_pool(queued=99, runners=[_runner(current=2, max_concurrent_runs=2)], max_runners=8)])
     assert len(actions) == 1
+
+
+class FakeImages:
+    def __init__(self, existing=()):
+        self._have = set(existing)
+        self.built = []
+
+    def get(self, tag):
+        if tag not in self._have:
+            raise KeyError(tag)
+        return object()
+
+    def build(self, **kw):
+        self.built.append(kw)
+        self._have.add(kw.get("tag"))
+        return (object(), iter(()))
+
+
+class FakeContainers:
+    def __init__(self):
+        self.run_calls = []
+        self._by_name = {}
+
+    def run(self, image, **kw):
+        self.run_calls.append({"image": image, **kw})
+        name = kw.get("name")
+        c = type("C", (), {"name": name, "removed": False})()
+        self._by_name[name] = c
+        return c
+
+    def get(self, name):
+        if name not in self._by_name:
+            raise KeyError(name)
+        return self._by_name[name]
+
+    def list(self, **kw):
+        return list(self._by_name.values())
+
+
+class FakeDockerClient:
+    def __init__(self, existing_images=()):
+        self.images = FakeImages(existing_images)
+        self.containers = FakeContainers()
+
+    def info(self):
+        return {"Runtimes": {"runc": {}}}
+
+
+async def test_ensure_agent_image_builds_when_absent(monkeypatch):
+    from app.services import docker_workers
+
+    async def _fake_wheels(*a, **k):
+        from pathlib import Path
+        return [Path("nodyra_core.whl")]
+
+    monkeypatch.setattr(docker_workers, "ensure_wheels", _fake_wheels)
+    monkeypatch.setattr(docker_workers, "_agent_build_context", lambda wheels: b"ctx")
+    client = FakeDockerClient()
+    tag = await docker_workers.ensure_agent_image(client)
+    assert tag == docker_workers.agent_image_tag()
+    assert client.images.built  # built once
+    # Cache hit: second call does not rebuild
+    client.images.built.clear()
+    await docker_workers.ensure_agent_image(client)
+    assert not client.images.built
