@@ -267,6 +267,32 @@ def _extract_aws_secret(pool: RunnerPool, provider_config: dict) -> dict:
     return provider_config
 
 
+_DOCKER_HOST_SCHEMES = ("tcp://", "ssh://", "unix://", "npipe://")
+
+
+def _validate_docker_pool_config(cfg: dict) -> None:
+    from app.config import settings as _s
+    host = cfg.get("docker_host") or ""
+    if host and not host.startswith(_DOCKER_HOST_SCHEMES):
+        raise HTTPException(422, f"docker_host must start with one of {_DOCKER_HOST_SCHEMES}")
+    rc = cfg.get("docker_runner") or {}
+    if rc:
+        cpu = float(rc.get("cpu", 1.0))
+        if not (0 < cpu <= _s.sandbox_max_cpu):
+            raise HTTPException(422, f"cpu must be in (0, {_s.sandbox_max_cpu}]")
+        mem = int(rc.get("memory_mb", 1024))
+        if not (128 <= mem <= _s.sandbox_max_memory_mb):
+            raise HTTPException(422, f"memory_mb must be in [128, {_s.sandbox_max_memory_mb}]")
+    auto = cfg.get("docker_autoscale") or {}
+    if auto:
+        mn = int(auto.get("min_runners", 0))
+        mx = int(auto.get("max_runners", 4))
+        if not (0 <= mn <= mx <= 32):
+            raise HTTPException(422, "require 0 <= min_runners <= max_runners <= 32")
+        if int(auto.get("idle_seconds", 300)) < 30:
+            raise HTTPException(422, "idle_seconds must be >= 30")
+
+
 def _pool_info(pool: RunnerPool, runners: list[Runner]) -> RunnerPoolInfo:
     online = sum(1 for r in runners if r.status in ("online", "busy"))
     ghost_count = sum(1 for r in runners if r.last_seen_at is None and r.status == "offline")
@@ -380,6 +406,7 @@ async def update_runner_pool(
     if body.name is not None:
         pool.name = body.name
     if body.provider_config is not None:
+        _validate_docker_pool_config(body.provider_config)
         cfg = dict(body.provider_config)
         pool.provider_config = _extract_aws_secret(pool, cfg)
     if body.max_concurrent_runs is not None:
@@ -524,6 +551,67 @@ async def create_registration_token(
     return RegistrationTokenResponse(
         token=token, runner_id=runner.id, expires_at=expires_at, api_url=api_url
     )
+
+
+# ---------------------------------------------------------------------------
+# Docker runners
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{pool_id}/docker-runners",
+    response_model=RunnerInfo,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission("runner_pool:write"))],
+)
+async def add_docker_runner(
+    pool_id: str,
+    body: dict | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> RunnerInfo:
+    from app.services import docker_workers
+
+    pool = await session.get(RunnerPool, pool_id)
+    if pool is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner pool not found")
+    if pool.provider != "agent":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Docker runners attach to agent pools")
+    try:
+        runner = await docker_workers.spawn_docker_runner(
+            session, pool, name=(body or {}).get("name")
+        )
+    except docker_workers.DaemonUnreachable as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return _runner_info(runner)
+
+
+@router.delete(
+    "/{pool_id}/docker-runners/{runner_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_permission("runner_pool:write"))],
+)
+async def remove_docker_runner_ep(
+    pool_id: str,
+    runner_id: str,
+    force: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    from app.services import docker_workers
+
+    runner = await session.get(Runner, runner_id)
+    if runner is None or runner.pool_id != pool_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner not found")
+    pool = await session.get(RunnerPool, pool_id)
+    client = None
+    try:
+        client = docker_workers._docker_client((pool.provider_config or {}) if pool else {})
+    except docker_workers.DaemonUnreachable:
+        pass
+    try:
+        await docker_workers.remove_docker_runner(session, runner, client=client, force=force)
+    except docker_workers.RunnerBusy as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
