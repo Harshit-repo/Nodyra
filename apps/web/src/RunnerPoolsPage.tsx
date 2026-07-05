@@ -1433,6 +1433,69 @@ function FleetBar({ health }: { health: RunnerFleetHealth }) {
   );
 }
 
+export function DockerWorkerCard({
+  poolId: _poolId,
+  config,
+  canWrite,
+  onSave,
+  onAddRunner,
+}: {
+  poolId: string;
+  config: Record<string, unknown>;
+  canWrite: boolean;
+  onSave: (next: Record<string, unknown>) => void | Promise<void>;
+  onAddRunner: () => void | Promise<void>;
+}) {
+  const [loading, setLoading] = useState(false);
+  const sandbox = (config?.docker_runner as Record<string, unknown> | undefined)?.sandbox || false;
+
+  return (
+    <div className="docker-worker-card">
+      <div className="docker-settings">
+        <label>
+          <input
+            type="checkbox"
+            checked={!!sandbox}
+            onChange={(e) => {
+              const next = {
+                ...config,
+                docker_runner: {
+                  ...(config?.docker_runner as Record<string, unknown> | undefined),
+                  sandbox: e.target.checked,
+                },
+              };
+              onSave(next);
+            }}
+            aria-label="Sandboxed execution support"
+          />
+          Sandboxed execution support
+        </label>
+        <p className="helper-text">
+          When enabled, each run executes in a hardened container. The runner has root-equivalent access
+          to the Docker daemon (DooD); runs themselves execute in hardened siblings without elevated privileges.
+        </p>
+      </div>
+      {canWrite && (
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={loading}
+          onClick={async () => {
+            setLoading(true);
+            try {
+              await onAddRunner();
+            } finally {
+              setLoading(false);
+            }
+          }}
+        >
+          {loading ? "Adding..." : "Add Docker Runner"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function RunnerPoolsPage() {
   const [creating, setCreating] = useState(false);
   const canWrite = useCan("runner_pool:write");
