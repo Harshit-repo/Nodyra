@@ -1,5 +1,7 @@
 """Docker-worker autoscaling planner + spawn/remove/reconcile."""
 
+import pytest
+
 from app.services.docker_workers import (
     PoolState,
     RunnerState,
@@ -151,3 +153,88 @@ async def test_ensure_agent_image_builds_when_absent(monkeypatch):
     client.images.built.clear()
     await docker_workers.ensure_agent_image(client)
     assert not client.images.built
+
+
+import pytest_asyncio
+import os
+import tempfile
+from collections.abc import AsyncIterator
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+from app import models  # noqa: F401
+from app.db import Base
+from app.models import RunnerPool, Runner
+
+
+@pytest_asyncio.fixture
+async def session() -> AsyncIterator:
+    handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    handle.close()
+    engine = create_async_engine(f"sqlite+aiosqlite:///{handle.name}", poolclass=NullPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        yield s
+    await engine.dispose()
+    try:
+        os.unlink(handle.name)
+    except OSError:
+        pass
+
+
+async def test_spawn_docker_runner_sets_caps_and_labels(session, monkeypatch):
+    from app.services import docker_workers
+
+    pool = RunnerPool(
+        name="dw", provider="agent",
+        provider_config={
+            "docker_runner": {"cpu": 1.0, "memory_mb": 512, "pids": 256,
+                              "max_concurrent_runs": 2, "sandbox": True},
+            "docker_api_url": "http://host.docker.internal:8000",
+        },
+    )
+    session.add(pool)
+    await session.commit()
+
+    client = FakeDockerClient(existing_images=(docker_workers.agent_image_tag(),))
+    runner = await docker_workers.spawn_docker_runner(session, pool, client=client)
+
+    assert runner.capabilities["docker_managed"] is True
+    assert runner.capabilities["sandbox"] is True
+    call = client.containers.run_calls[0]
+    assert call["nano_cpus"] == 1_000_000_000
+    assert call["mem_limit"] == "512m"
+    assert call["pids_limit"] == 256
+    assert call["labels"]["nodyra.pool"] == pool.id
+    assert call["labels"]["nodyra.runner"] == runner.id
+    # sandbox=True → docker socket mounted into the runner
+    assert any("docker.sock" in str(v) for v in call["volumes"])
+    assert call["environment"]["NODYRA_RUNNER_TOKEN"]
+
+
+async def test_spawn_no_socket_when_sandbox_off(session):
+    from app.services import docker_workers
+    pool = RunnerPool(name="dw2", provider="agent",
+                      provider_config={"docker_runner": {"sandbox": False},
+                                       "docker_api_url": "http://x:8000"})
+    session.add(pool)
+    await session.commit()
+    client = FakeDockerClient(existing_images=(docker_workers.agent_image_tag(),))
+    await docker_workers.spawn_docker_runner(session, pool, client=client)
+    call = client.containers.run_calls[0]
+    assert not call.get("volumes")
+
+
+async def test_remove_busy_runner_refused(session):
+    from app.services import docker_workers
+    pool = RunnerPool(name="dw3", provider="agent", provider_config={})
+    session.add(pool)
+    await session.commit()
+    r = Runner(pool_id=pool.id, name="r", status="online", current_runs=1,
+               capabilities={"docker_managed": True, "container_name": "c"})
+    session.add(r)
+    await session.commit()
+    client = FakeDockerClient()
+    with pytest.raises(docker_workers.RunnerBusy):
+        await docker_workers.remove_docker_runner(session, r, client=client)

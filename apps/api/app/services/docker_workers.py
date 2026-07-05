@@ -159,3 +159,120 @@ async def ensure_agent_image(client) -> str:
     )
     logger.info("built agent image %s", tag)
     return tag
+
+
+from app.config import settings
+from app.models import Runner, RunnerPool
+from app.services.runner_tokens import mint_runner_registration
+
+
+class RunnerBusy(Exception):
+    """Raised when removing a runner that still has in-flight runs."""
+
+
+class DaemonUnreachable(Exception):
+    """Raised when the configured Docker daemon can't be contacted."""
+
+
+def _docker_client(cfg: dict):
+    try:
+        import docker  # noqa: PLC0415
+    except ImportError as exc:
+        raise DaemonUnreachable(
+            "the 'docker' package is required for Docker workers"
+        ) from exc
+    host = (cfg or {}).get("docker_host") or ""
+    try:
+        return docker.DockerClient(base_url=host) if host else docker.from_env()
+    except Exception as exc:  # noqa: BLE001
+        raise DaemonUnreachable(str(exc)) from exc
+
+
+def _resolve_api_url(cfg: dict) -> str:
+    url = (cfg or {}).get("docker_api_url") or settings.public_api_url
+    if not url and not (cfg or {}).get("docker_host"):
+        url = "http://host.docker.internal:8000"
+    if not url:
+        raise DaemonUnreachable(
+            "cannot resolve an API URL for the runner to dial back to; set "
+            "provider_config.docker_api_url or PUBLIC_API_URL"
+        )
+    return url.rstrip("/")
+
+
+async def spawn_docker_runner(session, pool: RunnerPool, *, client=None, name=None) -> Runner:
+    cfg = pool.provider_config or {}
+    rc = cfg.get("docker_runner") or {}
+    sandbox = bool(rc.get("sandbox"))
+    client = client or _docker_client(cfg)
+    await ensure_agent_image(client)
+
+    runner, token, _ = await mint_runner_registration(
+        session, pool.id, org_id=pool.org_id,
+        name=name or f"docker-{pool.name[:16]}",
+        max_concurrent_runs=int(rc.get("max_concurrent_runs", 2)),
+        capabilities={"docker_managed": True, "sandbox": sandbox},
+    )
+    container_name = f"nodyra-worker-{runner.id[:12]}"
+    api_url = _resolve_api_url(cfg)
+
+    volumes = {}
+    if sandbox:
+        volumes["/var/run/docker.sock"] = {
+            "bind": "/var/run/docker.sock", "mode": "rw"
+        }
+    run_kwargs = dict(
+        detach=True,
+        name=container_name,
+        environment={
+            "NODYRA_API_URL": api_url,
+            "NODYRA_RUNNER_TOKEN": token,
+            "NODYRA_RUNNER_NAME": runner.name,
+        },
+        network=cfg.get("docker_network") or None,
+        mem_limit=f"{int(rc.get('memory_mb', 1024))}m",
+        nano_cpus=int(float(rc.get("cpu", 1.0)) * 1_000_000_000),
+        pids_limit=int(rc.get("pids", 512)),
+        restart_policy={"Name": "on-failure", "MaximumRetryCount": 3},
+        security_opt=["no-new-privileges:true"],
+        init=True,
+        extra_hosts={"host.docker.internal": "host-gateway"},
+        volumes=volumes or None,
+        labels={
+            "nodyra.managed": "true",
+            "nodyra.pool": pool.id,
+            "nodyra.runner": runner.id,
+        },
+    )
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(
+            None, lambda: client.containers.run(agent_image_tag(), **run_kwargs)
+        )
+    except Exception as exc:  # noqa: BLE001 — roll back the placeholder row
+        await session.delete(runner)
+        await session.commit()
+        raise DaemonUnreachable(f"failed to start runner container: {exc}") from exc
+
+    caps = dict(runner.capabilities or {})
+    caps["container_name"] = container_name
+    runner.capabilities = caps
+    await session.commit()
+    await session.refresh(runner)
+    return runner
+
+
+async def remove_docker_runner(session, runner: Runner, *, client=None, force=False) -> None:
+    if runner.current_runs > 0 and not force:
+        raise RunnerBusy(f"runner {runner.id} has {runner.current_runs} in-flight run(s)")
+    container_name = (runner.capabilities or {}).get("container_name")
+    if client is not None and container_name:
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                None, lambda: client.containers.get(container_name).remove(force=True)
+            )
+        except Exception:  # noqa: BLE001 — already gone
+            pass
+    await session.delete(runner)
+    await session.commit()
