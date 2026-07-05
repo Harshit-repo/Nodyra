@@ -159,23 +159,32 @@ class RunnerAgent:
 
             status = "error"
             try:
-                status = await run_workflow_subprocess(
-                    python=python,
-                    run_id=run_id,
-                    graph=msg.get("graph") or {},
-                    cache=msg.get("cache") or None,
-                    targets=msg.get("targets") or None,
-                    workflow_modules=msg.get("workflow_modules") or [],
-                    on_event=on_event,
-                    artifacts_upload_url=self._cfg.artifact_upload_url,
-                    artifacts_runner_token=self._cfg.token,
-                    call_workflow=broker,
-                    pause_on_approval=bool(msg.get("pause_on_approval")),
-                    agent_action_resume=msg.get("agent_action_resume") or {},
-                    artifact_key_prefix=str(msg.get("artifact_key_prefix") or ""),
-                    org_limits=msg.get("org_limits") or {},
-                    subworkflow_meta=msg.get("subworkflow_meta") or {},
-                )
+                if msg.get("sandbox_required"):
+                    from nodyra_runner_agent.sandbox_exec import run_workflow_sandboxed
+                    status = await run_workflow_sandboxed(
+                        run_id=run_id, graph=msg.get("graph", {}),
+                        cache=msg.get("cache"), targets=msg.get("targets"),
+                        workflow_modules=msg.get("workflow_modules", []),
+                        on_event=on_event, env_payload=msg.get("env", {}),
+                    )
+                else:
+                    status = await run_workflow_subprocess(
+                        python=python,
+                        run_id=run_id,
+                        graph=msg.get("graph") or {},
+                        cache=msg.get("cache") or None,
+                        targets=msg.get("targets") or None,
+                        workflow_modules=msg.get("workflow_modules") or [],
+                        on_event=on_event,
+                        artifacts_upload_url=self._cfg.artifact_upload_url,
+                        artifacts_runner_token=self._cfg.token,
+                        call_workflow=broker,
+                        pause_on_approval=bool(msg.get("pause_on_approval")),
+                        agent_action_resume=msg.get("agent_action_resume") or {},
+                        artifact_key_prefix=str(msg.get("artifact_key_prefix") or ""),
+                        org_limits=msg.get("org_limits") or {},
+                        subworkflow_meta=msg.get("subworkflow_meta") or {},
+                    )
             except asyncio.CancelledError:
                 logger.info("run %s cancelled", run_id)
                 await self._client.send({

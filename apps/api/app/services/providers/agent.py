@@ -75,6 +75,7 @@ async def assign_agent_run(
     pause_on_approval: bool = False,
     agent_action_resume: dict | None = None,
     subworkflow_meta: dict | None = None,
+    sandbox_required: bool = False,
 ) -> str:
     required_labels: dict | None = None
     async with session_factory() as session:
@@ -95,15 +96,22 @@ async def assign_agent_run(
 
     # Update runner current_runs and persist the runner id on the run so
     # cancel_run can route a run_cancel to this agent.
+    runner_caps = {}
     async with session_factory() as session:
         runner = await session.get(Runner, conn.runner_id)
         if runner is not None:
             runner.current_runs = max(0, runner.current_runs) + 1
             runner.status = "busy"
+            runner_caps = runner.capabilities or {}
         run = await session.get(Run, run_id)
         if run is not None:
             run.runner_id = conn.runner_id
         await session.commit()
+
+    # Dispatch guard: sandbox-required runs can only go to runners
+    # that advertise sandbox support.
+    if sandbox_required and not runner_caps.get("sandbox"):
+        raise RuntimeError("sandbox-required run cannot dispatch to a non-sandbox runner")
 
     # Multi-tenancy F/C5: remote runs carry the same org namespace and
     # amplification caps as local subprocess runs — the agent forwards
@@ -111,7 +119,7 @@ async def assign_agent_run(
     from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org  # noqa: PLC0415
 
     run_org = await _resolve_run_org(run_id)
-    await conn.send({
+    payload = {
         "type": "run_assigned",
         "run_id": run_id,
         "env": env_payload,
@@ -124,7 +132,9 @@ async def assign_agent_run(
         "subworkflow_meta": subworkflow_meta or {},
         "artifact_key_prefix": run_org,
         "org_limits": await _org_run_limits_for(run_org),
-    })
+    }
+    payload["sandbox_required"] = bool(sandbox_required and runner_caps.get("sandbox"))
+    await conn.send(payload)
 
     try:
         status = await asyncio.wait_for(future, timeout=QUEUE_TTL_SECONDS)
