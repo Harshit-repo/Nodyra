@@ -238,3 +238,23 @@ async def test_remove_busy_runner_refused(session):
     client = FakeDockerClient()
     with pytest.raises(docker_workers.RunnerBusy):
         await docker_workers.remove_docker_runner(session, r, client=client)
+
+
+async def test_build_pool_states_counts_queue_and_runners(session):
+    from app.services import docker_workers
+    from app.models import RunQueueEntry
+    pool = RunnerPool(name="dw", provider="agent",
+                      provider_config={"docker_autoscale": {"enabled": True,
+                          "min_runners": 0, "max_runners": 3, "idle_seconds": 300}})
+    session.add(pool)
+    await session.commit()
+    session.add(Runner(pool_id=pool.id, name="r", status="online",
+                       current_runs=0, capabilities={"docker_managed": True}))
+    session.add(RunQueueEntry(run_id="x", workflow_id="w",
+                              runner_pool_id=pool.id, status="queued"))
+    await session.commit()
+    states = await docker_workers._build_pool_states(session)
+    assert len(states) == 1
+    assert states[0].queued == 1
+    assert states[0].enabled is True
+    assert len(states[0].runners) == 1

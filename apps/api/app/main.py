@@ -60,6 +60,7 @@ from app.routers import (
 )
 from app.security import get_client_ip
 from app.services import expr_preview
+from app.services.docker_workers import docker_workers_autoscale_loop
 from app.services.environment_builds import run_environment_build_dispatch_loop
 from app.services.events import broker_reaper_loop
 from app.services.ghost_cleanup import ghost_cleanup_loop
@@ -356,6 +357,11 @@ async def lifespan(app: FastAPI):
         if dispatch_inline and settings.use_subprocess_runner and settings.pool_autoscale_enabled
         else None
     )
+    docker_autoscale = (
+        asyncio.create_task(_as_system(docker_workers_autoscale_loop)())
+        if dispatch_inline
+        else None
+    )
     # Pin the run-event broker transport once: Redis (fans out across
     # replicas) when reachable, else the in-process buffer. Doing this at
     # startup — rather than probing Redis on every publish/subscribe — is what
@@ -402,7 +408,7 @@ async def lifespan(app: FastAPI):
     # (matters for tests that reuse the process).
     _prior_drain = settings.queue_drain
     settings.queue_drain = True
-    for task in (scheduler, retention, reaper, autoscaler, broker_reaper, queue_loop, environment_builds, cloud_idle, heartbeat, github_sync, ghost_cleanup, replica_heartbeat, stuck_detector):
+    for task in (scheduler, retention, reaper, autoscaler, docker_autoscale, broker_reaper, queue_loop, environment_builds, cloud_idle, heartbeat, github_sync, ghost_cleanup, replica_heartbeat, stuck_detector):
         if task is None:
             continue
         task.cancel()

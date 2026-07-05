@@ -134,6 +134,10 @@ class Settings(BaseSettings):
     # IS NULL) and were created more than this many hours ago. Set to 0 to
     # disable auto-cleanup.
     runner_ghost_ttl_hours: int = 48
+    # Docker-workers autoscaler tick (seconds). The loop runs where a Docker
+    # daemon is reachable (worker + inline API) and only acts on agent pools
+    # with docker_autoscale.enabled or existing docker-managed runners.
+    docker_autoscale_tick_seconds: float = 30.0
     # Run the in-process schedule loop. Multi-replica deployments keep this
     # on and set scheduler_role=leader so one replica owns it (avoids
     # double-fire); set false to disable scheduling in this process entirely.
@@ -163,6 +167,17 @@ class Settings(BaseSettings):
     # Worker-only: serve GET /metrics on this port (OpenMetrics text) so
     # Prometheus can scrape the execution plane directly. 0 = disabled.
     worker_metrics_port: int = 0
+    # Worker-only: HTTP health listener for K8s/compose probes. Serves
+    # /health/live and /health/ready (DB + Redis + sandbox — same checks as
+    # the API route) on this port; the Helm chart's ``worker.healthPort``
+    # readiness probe targets it. May equal worker_metrics_port (one listener
+    # serves both paths). 0 = disabled.
+    worker_health_port: int = 0
+    # Worker-only capability labels advertised by this dispatch worker, as
+    # comma-separated key=value pairs (for example: gpu=a100,mem=high).
+    # Queue entries with required_labels only lease to workers whose labels
+    # contain every requested key/value pair.
+    worker_labels: str = ""
     # Durable environment-build queue tuning. These jobs rebuild Python
     # environments after create/package/backend changes. Keep leases much
     # longer than run leases because package resolution can legitimately take
@@ -443,6 +458,23 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def worker_label_map(self) -> dict[str, str]:
+        labels: dict[str, str] = {}
+        for item in self.worker_labels.split(","):
+            part = item.strip()
+            if not part:
+                continue
+            if "=" not in part:
+                labels[part] = "true"
+                continue
+            key, value = part.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if key:
+                labels[key] = value
+        return labels
 
     @property
     def is_production(self) -> bool:

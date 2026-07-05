@@ -276,3 +276,109 @@ async def remove_docker_runner(session, runner: Runner, *, client=None, force=Fa
             pass
     await session.delete(runner)
     await session.commit()
+
+
+from datetime import UTC, datetime
+
+from sqlalchemy import func, select
+
+from app.db import SessionLocal
+from app.models import RunQueueEntry
+
+
+def _idle_seconds(runner: Runner, now: datetime) -> float:
+    last = runner.last_seen_at
+    if last is None:
+        return 0.0
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return max(0.0, (now - last).total_seconds())
+
+
+async def _build_pool_states(session) -> list[PoolState]:
+    now = datetime.now(UTC)
+    pools = (await session.scalars(
+        select(RunnerPool).where(RunnerPool.provider == "agent")
+    )).all()
+    queued_rows = (await session.execute(
+        select(RunQueueEntry.runner_pool_id, func.count())
+        .where(RunQueueEntry.status == "queued")
+        .group_by(RunQueueEntry.runner_pool_id)
+    )).all()
+    queued_by_pool = {pid: n for pid, n in queued_rows}
+    runners = (await session.scalars(select(Runner))).all()
+    by_pool: dict[str, list[Runner]] = {}
+    for r in runners:
+        if (r.capabilities or {}).get("docker_managed"):
+            by_pool.setdefault(r.pool_id, []).append(r)
+
+    states: list[PoolState] = []
+    for pool in pools:
+        cfg = pool.provider_config or {}
+        auto = cfg.get("docker_autoscale") or {}
+        managed = by_pool.get(pool.id, [])
+        # Only surface pools that either autoscale or already have managed runners.
+        if not auto.get("enabled") and not managed:
+            continue
+        states.append(PoolState(
+            pool_id=pool.id,
+            queued=int(queued_by_pool.get(pool.id, 0)),
+            runners=[
+                RunnerState(
+                    runner_id=r.id,
+                    current_runs=r.current_runs,
+                    idle_seconds=_idle_seconds(r, now),
+                    draining=r.status in ("draining", "offline", "online"),
+                    online=r.status in ("online", "busy"),
+                    max_concurrent_runs=r.max_concurrent_runs or 2,
+                )
+                for r in managed
+            ],
+            enabled=bool(auto.get("enabled")),
+            min_runners=int(auto.get("min_runners", 0)),
+            max_runners=int(auto.get("max_runners", 4)),
+            idle_seconds=float(auto.get("idle_seconds", 300)),
+        ))
+    return states
+
+
+async def _apply_action(action: Action) -> None:
+    async with SessionLocal() as session:
+        if isinstance(action, SpawnRunner):
+            pool = await session.get(RunnerPool, action.pool_id)
+            if pool is None:
+                return
+            try:
+                await spawn_docker_runner(session, pool)
+            except DaemonUnreachable as exc:
+                logger.warning("autoscale spawn skipped for %s: %s", action.pool_id, exc)
+        elif isinstance(action, RemoveRunner):
+            runner = await session.get(Runner, action.runner_id)
+            if runner is not None:
+                cfg_pool = await session.get(RunnerPool, runner.pool_id)
+                client = None
+                try:
+                    client = _docker_client((cfg_pool.provider_config or {}) if cfg_pool else {})
+                except DaemonUnreachable:
+                    pass
+                await remove_docker_runner(session, runner, client=client, force=False)
+
+
+async def docker_workers_autoscale_loop() -> None:
+    """Tick: snapshot → plan_scaling → apply. Never lets one tick kill the loop."""
+    while True:
+        try:
+            async with SessionLocal() as session:
+                states = await _build_pool_states(session)
+            for action in plan_scaling(states):
+                try:
+                    await _apply_action(action)
+                except RunnerBusy:
+                    pass
+                except Exception:  # noqa: BLE001
+                    logger.exception("autoscale action failed: %s", action)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("docker autoscale loop tick failed")
+        await asyncio.sleep(settings.docker_autoscale_tick_seconds)
