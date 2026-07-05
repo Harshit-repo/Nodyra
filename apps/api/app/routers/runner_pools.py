@@ -68,6 +68,7 @@ from app.services.graph_utils import first_trigger_node
 from app.services.licensing import Feature, require_feature
 from app.services.remote_dispatch import dispatcher
 from app.services.runner import cancel_run, start_run
+from app.services.runner_tokens import mint_runner_registration
 from app.services.ssh_onboard import onboard_machine
 
 router = APIRouter(prefix="/runner-pools", tags=["runner-pools"])
@@ -88,9 +89,7 @@ async def runner_wheel_index() -> HTMLResponse:
 
     wheels = await ensure_wheels()
     links = "\n".join(f'<a href="{w.name}">{w.name}</a><br>' for w in wheels)
-    return HTMLResponse(
-        f"<!doctype html><html><body>\n{links}\n</body></html>"
-    )
+    return HTMLResponse(f"<!doctype html><html><body>\n{links}\n</body></html>")
 
 
 @router.get("/wheels/{filename}", include_in_schema=False)
@@ -104,9 +103,7 @@ async def runner_wheel_file(filename: str) -> FileResponse:
     target = wheels_dir() / filename
     if target.name != filename or not target.is_file():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "wheel not found")
-    return FileResponse(
-        target, media_type="application/octet-stream", filename=filename
-    )
+    return FileResponse(target, media_type="application/octet-stream", filename=filename)
 
 
 # ---------------------------------------------------------------------------
@@ -166,17 +163,14 @@ async def runner_fleet_health(
     online_caps_by_pool: dict[str, list[dict]] = {}
     for r in runners:
         if r.status in ("online", "busy"):
-            online_caps_by_pool.setdefault(r.pool_id, []).append(
-                r.capabilities or {}
-            )
+            online_caps_by_pool.setdefault(r.pool_id, []).append(r.capabilities or {})
     label_mismatch_by_pool: dict[str, int] = {}
     for pid, req_labels in label_queued_rows:
         if not req_labels or pid is None:
             continue
         caps_list = online_caps_by_pool.get(pid, [])
         satisfiable = any(
-            all(caps.get(k) == v for k, v in req_labels.items())
-            for caps in caps_list
+            all(caps.get(k) == v for k, v in req_labels.items()) for caps in caps_list
         )
         if not satisfiable:
             label_mismatch_by_pool[pid] = label_mismatch_by_pool.get(pid, 0) + 1
@@ -195,9 +189,7 @@ async def runner_fleet_health(
         runs_by_pool.setdefault(pid, {})[run_status] = n
 
     in_flight = (
-        await session.scalar(
-            select(func.count()).select_from(Run).where(Run.status == "running")
-        )
+        await session.scalar(select(func.count()).select_from(Run).where(Run.status == "running"))
     ) or 0
     live = await live_providers()
 
@@ -210,14 +202,10 @@ async def runner_fleet_health(
         online = sum(1 for r in prunners if r.status in ("online", "busy"))
         runners_online += online
         cap_used = sum(r.current_runs for r in prunners)
-        cap_total = sum(r.max_concurrent_runs for r in prunners) or (
-            pool.max_concurrent_runs
-        )
+        cap_total = sum(r.max_concurrent_runs for r in prunners) or (pool.max_concurrent_runs)
         qn, oldest = queued_by_pool.get(pool.id, (0, None))
         oldest_aware = _as_utc(oldest)
-        oldest_secs = (
-            (now - oldest_aware).total_seconds() if oldest_aware else None
-        )
+        oldest_secs = (now - oldest_aware).total_seconds() if oldest_aware else None
         stats = runs_by_pool.get(pool.id, {})
         succeeded = stats.get("success", 0)
         finished = succeeded + stats.get("error", 0)
@@ -239,11 +227,7 @@ async def runner_fleet_health(
 
     total_queue = sum(n for n, _ in queued_by_pool.values())
     stuck = sorted(
-        {
-            h.provider
-            for h in pool_healths
-            if h.queue_depth > 0 and not h.dispatcher_reachable
-        }
+        {h.provider for h in pool_healths if h.queue_depth > 0 and not h.dispatcher_reachable}
     )
     # Local (no-pool) entries stuck when no dispatcher leases "local".
     if queued_by_pool.get(None, (0, None))[0] > 0 and "local" not in live:
@@ -278,16 +262,14 @@ def _extract_aws_secret(pool: RunnerPool, provider_config: dict) -> dict:
     if secret is not None:
         pool.aws_secret_key_enc = encrypt_data({"key": secret})
     elif (pool.aws_secret_key_enc or "").startswith("__migrated__"):
-        plaintext = pool.aws_secret_key_enc[len("__migrated__"):]
+        plaintext = pool.aws_secret_key_enc[len("__migrated__") :]
         pool.aws_secret_key_enc = encrypt_data({"key": plaintext})
     return provider_config
 
 
 def _pool_info(pool: RunnerPool, runners: list[Runner]) -> RunnerPoolInfo:
     online = sum(1 for r in runners if r.status in ("online", "busy"))
-    ghost_count = sum(
-        1 for r in runners if r.last_seen_at is None and r.status == "offline"
-    )
+    ghost_count = sum(1 for r in runners if r.last_seen_at is None and r.status == "offline")
     return RunnerPoolInfo(
         id=pool.id,
         name=pool.name,
@@ -330,11 +312,7 @@ async def list_runner_pools(
         return []
     # Batch-load all runners in one query instead of N+1.
     pool_ids = [p.id for p in pools]
-    runners = (
-        await session.scalars(
-            select(Runner).where(Runner.pool_id.in_(pool_ids))
-        )
-    ).all()
+    runners = (await session.scalars(select(Runner).where(Runner.pool_id.in_(pool_ids)))).all()
     by_pool: dict[str, list[Runner]] = {}
     for r in runners:
         by_pool.setdefault(r.pool_id, []).append(r)
@@ -355,6 +333,7 @@ async def create_runner_pool(
     session: AsyncSession = Depends(get_session),
 ) -> RunnerPoolInfo:
     from app.services.licensing import enforce_resource_cap
+
     await enforce_resource_cap(session, "runners")
 
     cfg = dict(body.provider_config or {})
@@ -378,9 +357,7 @@ async def get_runner_pool(
     pool = await session.get(RunnerPool, pool_id)
     if pool is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner pool not found")
-    runners = (
-        await session.scalars(select(Runner).where(Runner.pool_id == pool_id))
-    ).all()
+    runners = (await session.scalars(select(Runner).where(Runner.pool_id == pool_id))).all()
     return _pool_info(pool, list(runners))
 
 
@@ -409,9 +386,7 @@ async def update_runner_pool(
         pool.max_concurrent_runs = body.max_concurrent_runs
     pool.updated_at = datetime.now(UTC)
     await session.commit()
-    runners = (
-        await session.scalars(select(Runner).where(Runner.pool_id == pool_id))
-    ).all()
+    runners = (await session.scalars(select(Runner).where(Runner.pool_id == pool_id))).all()
     return _pool_info(pool, list(runners))
 
 
@@ -423,9 +398,7 @@ async def update_runner_pool(
         Depends(require_feature(Feature.DEDICATED_POOLS)),
     ],
 )
-async def delete_runner_pool(
-    pool_id: str, session: AsyncSession = Depends(get_session)
-) -> None:
+async def delete_runner_pool(pool_id: str, session: AsyncSession = Depends(get_session)) -> None:
     pool = await session.get(RunnerPool, pool_id)
     if pool is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner pool not found")
@@ -525,48 +498,29 @@ async def create_registration_token(
     row is already populated when the agent connects.
 
     The agent uses this token to connect to /ws/runners/{runner_id} and to
-    upload artifacts. The token is a *reusable* runner credential valid for its
-    TTL (24h) — not single-use — because an SSH-onboarded agent reuses the same
-    token across restarts. It is bound to one runner (``sub`` = runner id) and is
-    revocable: deleting the runner row invalidates the token everywhere (RP-1).
+    upload artifacts. The token is a *reusable* runner credential valid for
+    ``settings.runner_token_ttl_days`` (default 365 days) — not single-use —
+    because an SSH-onboarded agent reuses the same token across restarts. It is
+    bound to one runner (``sub`` = runner id) and is revocable: deleting the
+    runner row invalidates the token everywhere (RP-1).
     """
     pool = await session.get(RunnerPool, pool_id)
     if pool is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner pool not found")
 
     body = body or RegistrationTokenRequest()
-    runner = Runner(
-        pool_id=pool_id,
+    runner, token, expires_at = await mint_runner_registration(
+        session,
+        pool_id,
+        org_id=pool.org_id,
         name=(body.name or f"runner-{pool.name[:20]}"),
-        status="offline",
         max_concurrent_runs=body.max_concurrent_runs or 1,
         capabilities=body.capabilities or {},
     )
-    session.add(runner)
-    await session.commit()
-    await session.refresh(runner)
-
-    ttl = settings.runner_token_ttl_days * 86_400
-    token = create_payload_token(
-        {
-            "sub": runner.id,
-            "pool_id": pool_id,
-            "org_id": runner.org_id,
-            "kind": "runner_registration",
-        },
-        ttl_seconds=ttl,
-    )
-    expires_at = datetime.fromtimestamp(
-        datetime.now(UTC).timestamp() + ttl, tz=UTC
-    )
-    runner.token_expires_at = expires_at
-    await session.commit()
     # Prefer the operator-configured public URL; fall back to the URL this
     # request came in on (correct in single-host setups). The web origin is
     # never used — a runner must reach the API directly, not the SPA.
-    api_url = (settings.public_api_url or "").rstrip("/") or str(
-        request.base_url
-    ).rstrip("/")
+    api_url = (settings.public_api_url or "").rstrip("/") or str(request.base_url).rstrip("/")
     return RegistrationTokenResponse(
         token=token, runner_id=runner.id, expires_at=expires_at, api_url=api_url
     )
@@ -607,27 +561,15 @@ async def ssh_onboard(
         )
 
     name = body.name or f"ssh-{body.host}"
-    runner = Runner(
-        pool_id=pool_id,
+    runner, token, expires_at = await mint_runner_registration(
+        session,
+        pool_id,
+        org_id=pool.org_id,
         name=name,
-        status="offline",
         max_concurrent_runs=body.max_concurrent_runs or 1,
         capabilities=body.capabilities or {},
     )
-    session.add(runner)
-    await session.commit()
-    await session.refresh(runner)
-
     ssh_ttl = settings.runner_token_ttl_days * 86_400
-    token = create_payload_token(
-        {
-            "sub": runner.id,
-            "pool_id": pool_id,
-            "org_id": runner.org_id,
-            "kind": "runner_registration",
-        },
-        ttl_seconds=ssh_ttl,
-    )
 
     try:
         install_log = await onboard_machine(body, api_url, token, name)
@@ -650,14 +592,9 @@ async def ssh_onboard(
             "use_systemd": body.use_systemd,
         }
     )
-    runner.token_expires_at = datetime.fromtimestamp(
-        datetime.now(UTC).timestamp() + ssh_ttl, tz=UTC
-    )
     await session.commit()
 
-    return SSHOnboardResponse(
-        runner_id=runner.id, runner_name=name, install_log=install_log
-    )
+    return SSHOnboardResponse(runner_id=runner.id, runner_name=name, install_log=install_log)
 
 
 # ---------------------------------------------------------------------------
@@ -673,8 +610,10 @@ async def runner_ws(
 ) -> None:
     """WebSocket endpoint for agent runners to connect and receive run assignments."""
     payload = decode_payload_token(token)
-    if payload is None or payload.get("sub") != runner_id or payload.get("kind") not in (
-        "runner_registration", "k8s_run"
+    if (
+        payload is None
+        or payload.get("sub") != runner_id
+        or payload.get("kind") not in ("runner_registration", "k8s_run")
     ):
         await ws.close(code=1008)
         return
@@ -784,9 +723,7 @@ async def upload_artifact(
     if runner.org_id != run.org_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Runner and run organizations differ")
     if run.runner_id != payload.get("sub"):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "Runner is not assigned to this run"
-        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Runner is not assigned to this run")
     # Phase F: a runner may only write inside its run's org namespace — a
     # compromised runner token must not plant bytes under another tenant's
     # prefix. Legacy unprefixed keys are rejected too once MT is on; the
@@ -828,6 +765,7 @@ async def upload_artifact(
     # durable metadata row claiming the upload succeeded. Keep blocking disk IO
     # off the request event loop.
     import asyncio
+
     await asyncio.to_thread(atomic_write_bytes, path, body)
 
     if existing is None:
@@ -898,9 +836,7 @@ async def create_batch_run(
     # Pick the trigger node for seeding each run.
     trigger = first_trigger_node(graph_dict, prefer_manual=True)
     if trigger is None:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Workflow needs a trigger to run."
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Workflow needs a trigger to run.")
     trigger_id = trigger.id if hasattr(trigger, "id") else trigger["id"]
 
     runner_pool_id = body.runner_pool_id or workflow.default_runner_pool_id
@@ -936,6 +872,7 @@ async def create_batch_run(
                 parameters=params,
                 batch_id=batch.id,
                 runner_pool_id=runner_pool_id,
+                required_labels=body.required_labels,
             )
             run_ids.append(run_id)
     except Exception:
@@ -969,9 +906,7 @@ async def create_batch_run(
 
 
 @router.get("/run-batches/{batch_id}", response_model=RunBatchInfo)
-async def get_batch(
-    batch_id: str, session: AsyncSession = Depends(get_session)
-) -> RunBatchInfo:
+async def get_batch(batch_id: str, session: AsyncSession = Depends(get_session)) -> RunBatchInfo:
     from app.services.run_batches import reconcile_batch
 
     batch = await reconcile_batch(session, batch_id)
@@ -1004,6 +939,7 @@ async def cancel_batch(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Batch not found")
 
     from app.services.runner import cancel_run  # noqa: PLC0415
+
     queued_runs = (
         await session.scalars(
             select(Run).where(
@@ -1039,9 +975,7 @@ def _check_restart_rate(runner_id: str) -> None:
     import time
 
     now = time.monotonic()
-    attempts = [
-        t for t in _restart_attempts.get(runner_id, []) if now - t < _RESTART_WINDOW_SECS
-    ]
+    attempts = [t for t in _restart_attempts.get(runner_id, []) if now - t < _RESTART_WINDOW_SECS]
     if len(attempts) >= _RESTART_MAX:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
@@ -1169,8 +1103,7 @@ async def runner_pool_run_history(
 
     rows = (
         await session.execute(
-            select(Run.status, Run.finished_at, Run.started_at)
-            .where(
+            select(Run.status, Run.finished_at, Run.started_at).where(
                 Run.runner_pool_id == pool_id,
                 Run.finished_at >= cutoff,
                 Run.status.in_(("success", "error")),
@@ -1200,9 +1133,7 @@ async def runner_pool_run_history(
         if started_at is not None:
             started_aware = _as_utc(started_at)
             if started_aware is not None:
-                result[idx]["durations"].append(
-                    (finished_aware - started_aware).total_seconds()
-                )
+                result[idx]["durations"].append((finished_aware - started_aware).total_seconds())
 
     return [
         RunHistoryBucket(
