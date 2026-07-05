@@ -68,6 +68,8 @@ services:
       ENABLE_INPROCESS_SCHEDULER: "true"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       USE_SUBPROCESS_RUNNER: "true"
+      EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
       ENVS_DIR: /app/envs
       ARTIFACTS_DIR: /app/artifacts
       # DATA_DIR: /app/data
@@ -75,6 +77,8 @@ services:
       AUTH_ALLOW_REGISTRATION: ${AUTH_ALLOW_REGISTRATION:-false}
       AUTH_REGISTRATION_ROLE: ${AUTH_REGISTRATION_ROLE:-viewer}
       SECRET_KEY: ${NODYRA_SECRET_KEY:-${NOODLE_SECRET_KEY:?SECRET_KEY is required for production}}
+      NODYRA_LICENSE_KEY: ${NODYRA_LICENSE_KEY:-${NOODLE_LICENSE_KEY:-}}
+      LICENSE_PUBLIC_KEY: ${LICENSE_PUBLIC_KEY:-}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-}
       MCP_AUTHORIZATION_SERVER_URL: ${MCP_AUTHORIZATION_SERVER_URL:-}
       MCP_OAUTH_INTROSPECTION_URL: ${MCP_OAUTH_INTROSPECTION_URL:-}
@@ -120,18 +124,14 @@ services:
       # DATA_DIR: /app/data
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       SECRET_KEY: ${NODYRA_SECRET_KEY:-${NOODLE_SECRET_KEY:?SECRET_KEY is required for production}}
+      NODYRA_LICENSE_KEY: ${NODYRA_LICENSE_KEY:-${NOODLE_LICENSE_KEY:-}}
+      LICENSE_PUBLIC_KEY: ${LICENSE_PUBLIC_KEY:-}
       # --- Sandboxed execution (container-per-run isolation) ---
-      # Uncomment to run each workflow in a disposable hardened container
-      # instead of a worker subprocess. Requires the docker.sock volume below.
-      # See docs/deployment.md "Sandboxed execution".
-      #   auto     = use the sandbox when Docker is reachable, else fall back
-      #   required = refuse to start without it (mandatory when
-      #              MULTI_TENANCY_ENABLED=true)
-      # EXECUTION_SANDBOX: auto
-      # Container runtime: auto picks the strongest available
-      # (kata > runsc/gVisor > runc). Set explicitly to fail fast when a
-      # specific runtime is mandatory.
-      # SANDBOX_RUNTIME: auto
+      # auto uses the sandbox when Docker is reachable; required refuses to
+      # start without it. SANDBOX_RUNTIME=auto picks the strongest available
+      # runtime (kata > runsc/gVisor > runc).
+      EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
     healthcheck:
       test: ["CMD-SHELL", "python -c \"from pathlib import Path; import sys; sys.exit(0 if b'app.worker_main' in Path('/proc/1/cmdline').read_bytes() else 1)\""]
       interval: 30s
@@ -147,7 +147,7 @@ services:
       # containers on the host daemon (Docker-out-of-Docker). The worker
       # itself never runs untrusted code — runs execute in the hardened
       # sibling containers it creates.
-      # - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
