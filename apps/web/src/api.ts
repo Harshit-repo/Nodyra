@@ -338,6 +338,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await resp.json()) as T;
 }
 
+export function encodeWebhookPath(path: string): string {
+  return path
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map(encodeURIComponent)
+    .join("/");
+}
+
 export interface WorkflowPatch {
   name?: string;
   active?: boolean;
@@ -583,6 +591,7 @@ export const api = {
       cache?: Record<string, Record<string, unknown>>;
       trigger_node_id?: string;
       sandbox?: boolean;
+      required_labels?: Record<string, string>;
     },
   ) =>
     request<{ run_id: string }>(`/workflows/${id}/run`, {
@@ -858,18 +867,18 @@ export const api = {
   listAudit: () => requestList<AuditEvent>("/audit"),
 
   lastWebhook: (path: string) =>
-    request<unknown>(`/webhook-test/${encodeURIComponent(path)}/last`),
+    request<unknown>(`/webhook-test/${encodeWebhookPath(path)}/last`),
   clearWebhook: (path: string) =>
-    request<void>(`/webhook-test/${encodeURIComponent(path)}/last`, {
+    request<void>(`/webhook-test/${encodeWebhookPath(path)}/last`, {
       method: "DELETE",
     }),
   startListen: (path: string) =>
     request<{ listening: boolean; ttl_seconds: number }>(
-      `/webhook-test/${encodeURIComponent(path)}/listen`,
+      `/webhook-test/${encodeWebhookPath(path)}/listen`,
       { method: "POST" },
     ),
   stopListen: (path: string) =>
-    request<void>(`/webhook-test/${encodeURIComponent(path)}/listen`, {
+    request<void>(`/webhook-test/${encodeWebhookPath(path)}/listen`, {
       method: "DELETE",
     }),
 
@@ -1057,6 +1066,7 @@ export const api = {
   // --- Ops dashboard --------------------------------------------------------
   runtimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),
   queueStats: () => request<QueueStats>("/ops/queue"),
+  queueCapacity: () => request<QueueCapacity>("/ops/capacity"),
   sandboxStatus: () => request<SandboxStatus>("/ops/sandbox"),
   runTimeline: (runId: string) => request<RunTimeline>(`/runs/${runId}/timeline`),
   runApprovals: (runId: string) =>
@@ -1296,6 +1306,26 @@ export interface QueueStats {
   /** Multi-tenancy: per-org active counts; "quota_parked" = queued entries
    *  held back by the org's concurrency cap. Absent when MT is off. */
   by_org?: Record<string, Record<string, number>> | null;
+}
+
+export interface DispatcherCapacity {
+  id: string;
+  role: string;
+  providers: string[];
+  labels: Record<string, string>;
+  available_slots: number | null;
+  max_slots: number | null;
+  last_seen: number | null;
+}
+
+export interface QueueCapacity {
+  queued: number;
+  leased: number;
+  running: number;
+  local_available_slots: number;
+  local_max_slots: number;
+  dispatchers: DispatcherCapacity[];
+  label_blocked_queued: number;
 }
 
 export interface RunTimelineEvent {
@@ -1626,12 +1656,25 @@ export const runnerPoolsApi = {
       { method: "POST", body: JSON.stringify(body) }
     ),
 
+  addDockerRunner: (poolId: string, name?: string) =>
+    request<RunnerInfo>(`/runner-pools/${poolId}/docker-runners`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  removeDockerRunner: (poolId: string, runnerId: string, force = false) =>
+    request<void>(
+      `/runner-pools/${poolId}/docker-runners/${runnerId}?force=${force}`,
+      { method: "DELETE" }
+    ),
+
   createBatchRun: (
     workflowId: string,
     body: {
       runner_pool_id?: string | null;
       parameters: Record<string, unknown>[];
       trigger_node_id?: string | null;
+      required_labels?: Record<string, string> | null;
     }
   ) =>
     request<{ batch_id: string; run_ids: string[]; total: number }>(

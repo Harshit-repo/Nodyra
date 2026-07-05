@@ -521,6 +521,7 @@ export interface RunInfo {
   workflow_version_id?: string | null;
   deployment_id?: string | null;
   triggered_by_error_run_id?: string | null;
+  required_labels?: Record<string, string> | null;
   mode: string;
   status: string;
   trigger_type: string;
@@ -1017,6 +1018,25 @@ export interface RecentRun {
   runner_id: string | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface DockerWorkerConfig {
+  docker_host?: string;
+  docker_network?: string;
+  docker_api_url?: string;
+  docker_runner?: {
+    cpu?: number;
+    memory_mb?: number;
+    pids?: number;
+    max_concurrent_runs?: number;
+    sandbox?: boolean;
+  };
+  docker_autoscale?: {
+    enabled?: boolean;
+    min_runners?: number;
+    max_runners?: number;
+    idle_seconds?: number;
+  };
 }
 
 export interface RunnerPoolInfo {
