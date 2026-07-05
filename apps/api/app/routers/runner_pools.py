@@ -60,7 +60,6 @@ from app.schemas import (
 from app.security import require_permission
 from app.services.artifacts import _artifact_path, atomic_write_bytes
 from app.services.crypto import (
-    create_payload_token,
     decode_payload_token,
     encrypt_data,
 )
@@ -657,7 +656,6 @@ async def ssh_onboard(
         max_concurrent_runs=body.max_concurrent_runs or 1,
         capabilities=body.capabilities or {},
     )
-    ssh_ttl = settings.runner_token_ttl_days * 86_400
 
     try:
         install_log = await onboard_machine(body, api_url, token, name)

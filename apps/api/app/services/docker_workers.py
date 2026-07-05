@@ -14,8 +14,15 @@ import io
 import logging
 import tarfile
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy import func, select
+
+from app.config import settings
+from app.db import SessionLocal
+from app.models import Runner, RunnerPool, RunQueueEntry
+from app.services.runner_tokens import mint_runner_registration
 from app.services.wheel_index import ensure_wheels
 
 logger = logging.getLogger(__name__)
@@ -161,11 +168,6 @@ async def ensure_agent_image(client) -> str:
     return tag
 
 
-from app.config import settings
-from app.models import Runner, RunnerPool
-from app.services.runner_tokens import mint_runner_registration
-
-
 class RunnerBusy(Exception):
     """Raised when removing a runner that still has in-flight runs."""
 
@@ -276,14 +278,6 @@ async def remove_docker_runner(session, runner: Runner, *, client=None, force=Fa
             pass
     await session.delete(runner)
     await session.commit()
-
-
-from datetime import UTC, datetime
-
-from sqlalchemy import func, select
-
-from app.db import SessionLocal
-from app.models import RunQueueEntry
 
 
 def _idle_seconds(runner: Runner, now: datetime) -> float:
