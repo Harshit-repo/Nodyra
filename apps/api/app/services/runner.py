@@ -152,12 +152,11 @@ _SINGLE_FLIGHT_LOCKS_MAX = 1024
 def _prune_single_flight_locks() -> None:
     if len(_workflow_single_flight_locks) <= _SINGLE_FLIGHT_LOCKS_MAX:
         return
-    for wf_id in [
-        key for key, lock in _workflow_single_flight_locks.items() if not lock.locked()
-    ]:
+    for wf_id in [key for key, lock in _workflow_single_flight_locks.items() if not lock.locked()]:
         del _workflow_single_flight_locks[wf_id]
         if len(_workflow_single_flight_locks) <= _SINGLE_FLIGHT_LOCKS_MAX:
             break
+
 
 # Back-compat aliases — these moved to run_persistence (A2 split) but are part
 # of this module's established surface (on_event closure, resume path, lazy
@@ -184,6 +183,33 @@ _serialize_checkpoint_outputs = run_checkpoints._serialize_checkpoint_outputs
 _save_checkpoint = run_checkpoints._save_checkpoint
 
 
+def _agent_pool_sandbox_ok(pool: Any) -> bool:
+    """True when an *agent* runner pool is explicitly configured to run
+    sandboxed workflows — i.e. its Docker workers were created with the
+    "Sandboxed execution support" checkbox on
+    (``provider_config.docker_runner.sandbox == True``).
+
+    This is the ONLY way an agent pool may host a sandboxed run: its runners
+    advertise ``capabilities.sandbox`` and execute each run in a disposable
+    hardened container (``nodyra_runner_agent.sandbox_exec``). A plain agent
+    pool (no such config) stays rejected — it would run the code unsandboxed
+    on the agent host. See test_execution_mode.test_sandboxed_workflow_409s_
+    on_non_container_pool (plain agent pool → still 409).
+    """
+    if pool is None or getattr(pool, "provider", None) != "agent":
+        return False
+    cfg = getattr(pool, "provider_config", None) or {}
+    return bool((cfg.get("docker_runner") or {}).get("sandbox"))
+
+
+def _sandboxed_pool_ok(pool: Any) -> bool:
+    """A runner pool may host a sandboxed run when it is a container provider
+    (docker/kubernetes spawn the hardened container themselves) OR a
+    sandbox-configured agent pool (its runners spawn the container)."""
+    provider = getattr(pool, "provider", None)
+    return provider in ("docker", "kubernetes") or _agent_pool_sandbox_ok(pool)
+
+
 def _build_ctx(
     *,
     run_id: str,
@@ -200,6 +226,7 @@ def _build_ctx(
     sandbox_spawn_overrides: dict | None = None,
     subworkflow_meta: dict | None = None,
     org_id: str | None = None,
+    sandbox_required: bool = False,
 ) -> RunExecutionContext:
     return {
         "run_id": run_id,
@@ -214,6 +241,7 @@ def _build_ctx(
         "workflow_modules": workflow_modules,
         "run_timeout": run_timeout,
         "sandbox_spawn_overrides": sandbox_spawn_overrides,
+        "sandbox_required": sandbox_required,
         "default_timeouts": _engine_default_timeouts(),
         "pause_on_approval": True,
         "agent_action_resume": (
@@ -325,6 +353,7 @@ async def start_run(
     batch_id: str | None = None,
     runner_pool_id: str | None = None,
     execution_mode: str | None = None,
+    required_labels: dict | None = None,
 ) -> str:
     """Public run launcher that restores any caller tenant context.
 
@@ -365,6 +394,7 @@ async def start_run(
             batch_id=batch_id,
             runner_pool_id=runner_pool_id,
             execution_mode=execution_mode,
+            required_labels=required_labels,
         )
     finally:
         if org_token is not None:
@@ -407,6 +437,7 @@ async def _start_run_impl(
     batch_id: str | None = None,
     runner_pool_id: str | None = None,
     execution_mode: str | None = None,
+    required_labels: dict | None = None,
 ) -> str:
     """Create a run record and launch execution in the background.
 
@@ -435,21 +466,23 @@ async def _start_run_impl(
     cache = _seed_parameters(graph, cache, parameters, trigger_id=trigger_node_id)
 
     from app.services.metrics import run_starts_total
+
     run_starts_total.inc(mode=mode, trigger_type=trigger_type)
 
     # Per-workflow rate limiting (best-effort, in-process).
     # Production deployments with multiple replicas should use Redis
     # for shared counters; single-process self-hosted is correct as-is.
     from app.services.rate_limit import allow as _rate_allow
+
     _wf_rate_limit = getattr(settings, "workflow_run_rate_per_minute", 0) or 0
     if _wf_rate_limit > 0 and not _rate_allow(
-        "workflow_run", workflow_id,
+        "workflow_run",
+        workflow_id,
         limit=_wf_rate_limit,
         window_seconds=60,
     ):
         raise QuotaExceeded(
-            "Rate limit exceeded for this workflow. "
-            f"Maximum {_wf_rate_limit} runs per minute."
+            f"Rate limit exceeded for this workflow. Maximum {_wf_rate_limit} runs per minute."
         )
 
     logger.info(
@@ -531,20 +564,24 @@ async def _start_run_impl(
         if effective_mode == "sandboxed":
             if runner_pool_id:
                 # A run bound to a runner pool executes THERE, never in the
-                # container sandbox — so the pool itself must be a container
-                # provider. Checked regardless of execution_sandbox: with the
-                # sandbox on, an agent-pool run would otherwise silently
-                # bypass isolation via the remote dispatch path.
+                # container sandbox — so the pool must be able to sandbox it:
+                # a docker/kubernetes container provider, OR an agent pool whose
+                # Docker workers were created with the sandbox checkbox on
+                # (they run each run in a hardened disposable container). A
+                # plain agent pool is rejected — it would run the code
+                # unsandboxed on the agent host.
                 from app.models import RunnerPool as _RunnerPool
 
                 pool = await session.get(_RunnerPool, runner_pool_id)
-                if pool is None or pool.provider not in ("docker", "kubernetes"):
+                if not _sandboxed_pool_ok(pool):
                     raise SandboxRequired(
                         "This run requires sandboxed execution, but its "
                         f"runner pool (provider="
-                        f"{getattr(pool, 'provider', None)!r}) is not a "
-                        "container provider. Assign a docker/kubernetes pool, "
-                        "or clear the pool so the container sandbox runs it."
+                        f"{getattr(pool, 'provider', None)!r}) cannot sandbox "
+                        "it. Assign a docker/kubernetes pool or an agent pool "
+                        "with Docker workers that have sandboxed execution "
+                        "enabled, or clear the pool so the container sandbox "
+                        "runs it."
                     )
             elif settings.execution_sandbox == "off":
                 raise SandboxRequired(
@@ -608,15 +645,11 @@ async def _start_run_impl(
             _lock: asyncio.Lock | None = None
             if not settings.database_url.startswith("postgresql"):
                 _prune_single_flight_locks()
-                _lock = _workflow_single_flight_locks.setdefault(
-                    workflow_id, asyncio.Lock()
-                )
+                _lock = _workflow_single_flight_locks.setdefault(workflow_id, asyncio.Lock())
                 await _lock.acquire()
             try:
                 if settings.database_url.startswith("postgresql"):
-                    await session.get(
-                        Workflow, workflow_id, with_for_update=True
-                    )
+                    await session.get(Workflow, workflow_id, with_for_update=True)
                 existing = await session.scalar(
                     select(Run.id)
                     .where(Run.workflow_id == workflow_id)
@@ -642,6 +675,7 @@ async def _start_run_impl(
             status="running",
             runner_pool_id=runner_pool_id,
             execution_mode=("sandboxed" if execution_mode == "sandboxed" else None),
+            required_labels=run_queue.normalize_required_labels(required_labels),
             deduplication_key=deduplication_key,
             batch_id=batch_id,
         )
@@ -719,6 +753,7 @@ async def _start_run_impl(
                 ),
                 trace_context=trace_carrier,
                 replay_seed=park_seed,
+                required_labels=run.required_labels,
             )
             if not queue_locally:
                 # This process owns immediate execution. Keep the queue ledger
@@ -942,6 +977,7 @@ async def _execute_run(
 @dataclass
 class _PreparedRunContext:
     """Output of ``_prepare_run_context`` — all pre-flight state for a run."""
+
     graph_dict: dict
     cache: dict[str, dict] | None
     env_id: str | None
@@ -1001,22 +1037,16 @@ async def _prepare_run_context(
         # Secret redaction word-list: best-effort.
         try:
             if run_org_id:
-                secret_values = await load_secret_values_for_org(
-                    run_org_id, session
-                )
+                secret_values = await load_secret_values_for_org(run_org_id, session)
             else:
                 secret_values = await load_secret_values(session)
         except Exception:  # noqa: BLE001
             secret_values = []
 
         # Credential resolution MUST fail loudly (H1).
-        graph_dict = await resolve_credential_refs(
-            session, graph_dict, workflow_id=workflow_id
-        )
+        graph_dict = await resolve_credential_refs(session, graph_dict, workflow_id=workflow_id)
         if cache is not None:
-            cache = await resolve_credential_refs(
-                session, cache, workflow_id=workflow_id
-            )
+            cache = await resolve_credential_refs(session, cache, workflow_id=workflow_id)
         await session.commit()
 
         # Code modules: tolerate legacy DB.
@@ -1030,10 +1060,7 @@ async def _prepare_run_context(
                 or_(
                     CodeModule.scope == "global",
                     CodeModule.workflow_id == workflow_id,
-                    (
-                        (CodeModule.scope == "environment")
-                        & (CodeModule.environment_id == env_id)
-                    )
+                    ((CodeModule.scope == "environment") & (CodeModule.environment_id == env_id))
                     if env_id
                     else CodeModule.id.is_(None),
                 )
@@ -1102,11 +1129,7 @@ async def _mark_queued_run_started(
         trace_carrier=dict(entry.trace_context) if entry.trace_context else None,
         prior_queue_status=entry.status,
     )
-    run_stmt = (
-        select(Run)
-        .where(Run.id == run_id)
-        .execution_options(populate_existing=True)
-    )
+    run_stmt = select(Run).where(Run.id == run_id).execution_options(populate_existing=True)
     run = await session.scalar(_lock_for_update_if_supported(session, run_stmt))
     if run is None or run.status != "queued":
         return None
@@ -1260,6 +1283,7 @@ async def _execute_run_impl(
                 )
 
     from app.services.metrics import active_runs, run_duration_seconds
+
     active_runs.inc()
     run_start = time.monotonic()
 
@@ -1288,7 +1312,11 @@ async def _execute_run_impl(
         # Load secrets, resolve credentials, and gather code modules in one
         # DB session via the extracted helper (keeps _execute_run_impl readable).
         prep = await _prepare_run_context(
-            run_id, workflow_id, graph_dict, cache, run_org_id,
+            run_id,
+            workflow_id,
+            graph_dict,
+            cache,
+            run_org_id,
         )
         graph_dict = prep.graph_dict
         cache = prep.cache
@@ -1308,17 +1336,22 @@ async def _execute_run_impl(
                 # runs never re-pass admission, so a sandboxed run must be
                 # re-verified against its pool's provider before remote
                 # dispatch (an agent pool would execute it unsandboxed).
+                remote_sandbox_required = False
                 if effective_execution_mode == "sandboxed":
                     from app.models import RunnerPool as _RunnerPool
 
                     async with SessionLocal() as _pool_session:
                         _pool = await _pool_session.get(_RunnerPool, runner_pool_id)
-                    if _pool is None or _pool.provider not in ("docker", "kubernetes"):
+                    if not _sandboxed_pool_ok(_pool):
                         raise SandboxRequired(
                             "run requires sandboxed execution but its runner "
                             f"pool (provider={getattr(_pool, 'provider', None)!r}) "
-                            "is not a container provider"
+                            "cannot sandbox it"
                         )
+                    # Only an agent pool needs the dispatch flag: docker/k8s
+                    # pools spawn the hardened container themselves, whereas an
+                    # agent runner must be told to run this in its sandbox path.
+                    remote_sandbox_required = _agent_pool_sandbox_ok(_pool)
                 # Remote runner path — build env descriptor and dispatch.
                 env_payload = await _build_env_payload_for_run(env_id)
                 try:
@@ -1336,6 +1369,7 @@ async def _execute_run_impl(
                             run_timeout=run_timeout,
                             agent_action_resume=agent_action_resume,
                             subworkflow_meta=sub_meta.to_payload(),
+                            sandbox_required=remote_sandbox_required,
                         ),
                         on_event,
                     )
@@ -1376,9 +1410,7 @@ async def _execute_run_impl(
                 # executes in a disposable hardened container keyed by
                 # (org, env). env_payload drives the per-env image.
                 env_payload = await _build_env_payload_for_run(env_id)
-                sandbox_spawn_overrides = resolve_sandbox_overrides(
-                    prep.sandbox_resources
-                )
+                sandbox_spawn_overrides = resolve_sandbox_overrides(prep.sandbox_resources)
                 outcome = await sandbox_executor.execute(
                     _build_ctx(
                         run_id=run_id,
@@ -1470,8 +1502,23 @@ async def _execute_run_impl(
                     if (run_timeout and run_timeout > 0)
                     else (settings.workflow_run_timeout_seconds or None)
                 )
+
                 # Install MCP tool callback so mcp_tool nodes can resolve
                 # connections and execute calls through the platform hook.
+                def _emit_mcp_event(payload: dict[str, Any]) -> None:
+                    nonlocal run_event_sequence
+                    clean_payload = redact_value(payload, secret_values)
+                    broker.publish(run_id, clean_payload)
+                    run_event_sequence += 1
+                    if len(run_events) < _MAX_RUN_EVENTS:
+                        run_events.append(
+                            {
+                                "sequence": run_event_sequence,
+                                "ts": datetime.now(UTC),
+                                "event": _cap_output(clean_payload, output_cap),
+                            }
+                        )
+
                 async def _mcp_call_impl(
                     connection_id: str,
                     tool_name: str,
@@ -1487,16 +1534,51 @@ async def _execute_run_impl(
                     from app.services.mcp_client import ensure_tool_allowed
 
                     async with _SessionLocal() as _session:
-                        conn, secret = await _load_conn(
-                            connection_id, _run_org, _session
-                        )
+                        conn, secret = await _load_conn(connection_id, _run_org, _session)
                         ensure_tool_allowed(conn, tool_name)
-                        return await _call_tool(
-                            conn,
-                            tool_name,
-                            arguments,
-                            decrypted_secret=secret,
+                        started = time.monotonic()
+                        _emit_mcp_event(
+                            {
+                                "type": "mcp_tool_started",
+                                "run_id": run_id,
+                                "connection_id": connection_id,
+                                "connection_name": conn.name,
+                                "tool_name": tool_name,
+                            }
                         )
+                        try:
+                            result = await _call_tool(
+                                conn,
+                                tool_name,
+                                arguments,
+                                decrypted_secret=secret,
+                            )
+                        except Exception as exc:
+                            _emit_mcp_event(
+                                {
+                                    "type": "mcp_tool_finished",
+                                    "run_id": run_id,
+                                    "connection_id": connection_id,
+                                    "connection_name": conn.name,
+                                    "tool_name": tool_name,
+                                    "status": "error",
+                                    "duration_ms": int((time.monotonic() - started) * 1000),
+                                    "error": f"{type(exc).__name__}: {exc}",
+                                }
+                            )
+                            raise
+                        _emit_mcp_event(
+                            {
+                                "type": "mcp_tool_finished",
+                                "run_id": run_id,
+                                "connection_id": connection_id,
+                                "connection_name": conn.name,
+                                "tool_name": tool_name,
+                                "status": "success",
+                                "duration_ms": int((time.monotonic() - started) * 1000),
+                            }
+                        )
+                        return result
 
                 set_call_mcp_tool_impl(_mcp_call_impl)
                 async with runtime_pool.global_slot():
@@ -1621,6 +1703,7 @@ async def _execute_run_impl(
         )
 
     from app.services.metrics import active_runs
+
     active_runs.dec()
     run_duration_seconds.observe(time.monotonic() - run_start, status=status)
 
@@ -1723,14 +1806,14 @@ async def _execute_queued_entry(run_id: str) -> None:
             cache = merged_new
             logger.info(
                 "run_id=%s resumed from checkpoint with %d completed node(s)",
-                run_id, len(node_outputs),
+                run_id,
+                len(node_outputs),
             )
         else:
             try:
                 from app.services.run_resume import build_durable_execution_state
-                durable_cache = await build_durable_execution_state(
-                    SessionLocal, run_id=run_id
-                )
+
+                durable_cache = await build_durable_execution_state(SessionLocal, run_id=run_id)
                 if durable_cache:
                     merged_new = dict(cache or {})
                     for nid, outputs in durable_cache.items():
@@ -1739,7 +1822,8 @@ async def _execute_queued_entry(run_id: str) -> None:
                     cache = merged_new
                     logger.info(
                         "run_id=%s rebuilt durable state from %d NodeRun rows",
-                        run_id, len(durable_cache),
+                        run_id,
+                        len(durable_cache),
                     )
             except Exception:  # noqa: BLE001
                 logger.warning(

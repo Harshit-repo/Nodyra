@@ -104,6 +104,7 @@ class RemoteDispatcher:
         pause_on_approval: bool = False,
         agent_action_resume: dict | None = None,
         subworkflow_meta: dict | None = None,
+        sandbox_required: bool = False,
     ) -> str:
         """Dispatch a run to the pool. Returns the final run status string."""
         async with SessionLocal() as session:
@@ -125,6 +126,7 @@ class RemoteDispatcher:
                 pause_on_approval=pause_on_approval,
                 agent_action_resume=agent_action_resume,
                 subworkflow_meta=subworkflow_meta,
+                sandbox_required=sandbox_required,
             )
         if provider == "docker":
             return await self._assign_docker_run(

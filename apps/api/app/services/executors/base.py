@@ -30,6 +30,10 @@ class RunExecutionContext(TypedDict):
     workflow_modules: list[dict]
     run_timeout: float | None
     sandbox_spawn_overrides: dict | None
+    # True only for a sandboxed run dispatched to a sandbox-configured AGENT
+    # pool: the agent runs it in a hardened disposable container. docker/
+    # kubernetes pools ignore this (they spawn the container themselves).
+    sandbox_required: bool
     default_timeouts: dict[str, float]
     pause_on_approval: bool
     agent_action_resume: dict[str, Any] | None  # node_id -> serialized request

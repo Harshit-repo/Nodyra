@@ -99,4 +99,43 @@ async def test_sandboxed_workflow_409s_on_non_container_pool(client, monkeypatch
 
     resp = await client.post(f"/workflows/{wf['id']}/run", json={})
     assert resp.status_code == 409
-    assert "container provider" in resp.json()["detail"]
+    # A plain agent pool (no sandbox-configured Docker workers) cannot sandbox
+    # the run — it would execute unsandboxed on the agent host.
+    assert "cannot sandbox" in resp.json()["detail"]
+
+
+async def test_sandboxed_workflow_allowed_on_sandbox_agent_pool(client, monkeypatch):
+    """An agent pool whose Docker workers were created with the sandbox
+    checkbox on (provider_config.docker_runner.sandbox) MAY host a sandboxed
+    run — its runners execute it in a hardened disposable container. This is
+    admission-only: with no online runner the run parks on the queue rather
+    than 409-ing."""
+    from app import models
+    from app.services import runner as runner_module
+
+    monkeypatch.setattr(settings, "execution_sandbox", "auto")
+    async with runner_module.SessionLocal() as db:
+        pool = models.RunnerPool(
+            name="docker-agents",
+            provider="agent",
+            provider_config={"docker_runner": {"sandbox": True}},
+        )
+        db.add(pool)
+        await db.commit()
+        pool_id = pool.id
+
+    wf = (await client.post("/workflows", json={"name": "SandboxedOnDockerAgents"})).json()
+    resp = await client.put(
+        f"/workflows/{wf['id']}",
+        json={
+            "graph": MANUAL_GRAPH,
+            "execution_mode": "sandboxed",
+            "default_runner_pool_id": pool_id,
+        },
+    )
+    assert resp.status_code == 200
+
+    resp = await client.post(f"/workflows/{wf['id']}/run", json={})
+    # Admission passes (not 409); with no online runner the run is accepted and
+    # queued for a Docker worker rather than rejected for the pool provider.
+    assert resp.status_code != 409, resp.json()
