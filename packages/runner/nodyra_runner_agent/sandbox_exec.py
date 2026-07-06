@@ -93,6 +93,31 @@ def _client():
     return docker.from_env()
 
 
+# Dedicated bridge for sandboxed run containers. Isolates them from unrelated
+# containers on a shared daemon (the default bridge permits inter-container
+# traffic unless the daemon disables icc) while still allowing egress to the
+# API for artifact upload — mirrors the platform's ensure_sandbox_network.
+SANDBOX_NETWORK = "nodyra-agent-sandbox"
+
+
+def _ensure_network(client, name: str = SANDBOX_NETWORK) -> str:
+    """Get-or-create the dedicated sandbox bridge network. Tolerates a
+    concurrent create by re-checking after a failed create."""
+    try:
+        client.networks.get(name)
+        return name
+    except Exception:  # noqa: BLE001 — NotFound
+        pass
+    try:
+        client.networks.create(name, driver="bridge")
+    except Exception:  # noqa: BLE001 — possibly a concurrent create
+        try:
+            client.networks.get(name)
+        except Exception:  # noqa: BLE001 — fall back to default bridge
+            return "bridge"
+    return name
+
+
 class _Demuxer:
     """Strips 8-byte multiplex frame headers from a no-TTY attach stream."""
 
@@ -203,6 +228,8 @@ async def run_workflow_sandboxed(
     except Exception as exc:  # noqa: BLE001
         await on_event({"type": "run_error", "error": f"sandbox image build failed: {exc}"})
         return "error"
+    network = await loop.run_in_executor(None, _ensure_network, client)
+    spawn_kwargs["network"] = network
 
     run_msg: dict[str, Any] = {
         "type": "run",

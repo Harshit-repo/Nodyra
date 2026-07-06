@@ -362,6 +362,10 @@ async def create_runner_pool(
     await enforce_resource_cap(session, "runners")
 
     cfg = dict(body.provider_config or {})
+    # Same validation the PATCH path runs — otherwise a pool could be CREATED in
+    # one call with an out-of-band docker_host or unbounded per-container
+    # resource envelope that spawn_docker_runner would later apply verbatim.
+    _validate_docker_pool_config(cfg)
     pool = RunnerPool(
         name=body.name,
         provider=body.provider,

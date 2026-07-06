@@ -4,6 +4,7 @@ import { useConfirm } from "./ConfirmProvider";
 import { useEntitlements } from "./entitlements";
 import { useCan } from "./permissions";
 import {
+  useAddDockerRunnerMutation,
   useCleanupGhostsMutation,
   useCreateRunnerPoolMutation,
   useCreateRunnerRegistrationTokenMutation,
@@ -11,6 +12,7 @@ import {
   useDeleteRunnerPoolMutation,
   useDrainRunnerMutation,
   useEnvironments,
+  useRemoveDockerRunnerMutation,
   useRestartRunnerMutation,
   useRunnerFleetHealth,
   useRunnerPoolRunHistory,
@@ -1006,6 +1008,9 @@ function PoolCard({
   const drainRunner = useDrainRunnerMutation();
   const restartRunner = useRestartRunnerMutation();
   const cleanupGhosts = useCleanupGhostsMutation();
+  const updatePool = useUpdateRunnerPoolMutation();
+  const addDockerRunner = useAddDockerRunnerMutation();
+  const removeDockerRunner = useRemoveDockerRunnerMutation();
   const runnersQuery = useRunnerPoolRunners(pool.id, {
     enabled: expanded,
     refetchInterval: expanded ? 5000 : undefined,
@@ -1263,17 +1268,40 @@ function PoolCard({
                           type="button"
                           className="btn btn-sm btn-ghost"
                           onClick={async () => {
+                            const isDocker = !!(r.capabilities || {}).docker_managed;
                             const ok = await confirm({
                               title: "Remove runner?",
-                              body: `"${r.name}" will be removed from this pool.`,
+                              body: isDocker
+                                ? `"${r.name}" and its Docker container will be removed from this pool.`
+                                : `"${r.name}" will be removed from this pool.`,
                               confirmLabel: "Remove",
                             });
                             if (!ok) return;
-                            await deleteRunner.mutateAsync({
-                              poolId: pool.id,
-                              runnerId: r.id,
-                            });
-                            onChanged();
+                            try {
+                              if (isDocker) {
+                                // Route through the Docker path so the container
+                                // is stopped, not just the DB row deleted.
+                                await removeDockerRunner.mutateAsync({
+                                  poolId: pool.id,
+                                  runnerId: r.id,
+                                });
+                              } else {
+                                await deleteRunner.mutateAsync({
+                                  poolId: pool.id,
+                                  runnerId: r.id,
+                                });
+                              }
+                              onChanged();
+                            } catch (e) {
+                              await confirm({
+                                title: "Could not remove runner",
+                                body:
+                                  e instanceof Error
+                                    ? e.message
+                                    : "Removal failed. If it is busy, wait for its run to finish.",
+                                confirmLabel: "OK",
+                              });
+                            }
                           }}
                         >
                           Remove
@@ -1304,6 +1332,32 @@ function PoolCard({
               </button>
             </div>
           )}
+
+          <DockerWorkerCard
+            poolId={pool.id}
+            config={pool.provider_config ?? {}}
+            canWrite={canWrite}
+            onSave={async (next) => {
+              await updatePool.mutateAsync({ poolId: pool.id, body: { provider_config: next } });
+              onChanged();
+            }}
+            onAddRunner={async () => {
+              try {
+                await addDockerRunner.mutateAsync({ poolId: pool.id });
+                await runnersQuery.refetch();
+                onChanged();
+              } catch (err) {
+                await confirm({
+                  title: "Could not add Docker runner",
+                  body:
+                    err instanceof Error
+                      ? err.message
+                      : "The Docker daemon may be unreachable. Check the pool's daemon settings.",
+                  confirmLabel: "OK",
+                });
+              }
+            }}
+          />
         </div>
       )}
       {expanded && pool.provider !== "agent" && (
@@ -1433,6 +1487,20 @@ function FleetBar({ health }: { health: RunnerFleetHealth }) {
   );
 }
 
+type DockerRunnerCfg = {
+  cpu?: number;
+  memory_mb?: number;
+  pids?: number;
+  max_concurrent_runs?: number;
+  sandbox?: boolean;
+};
+type DockerAutoscaleCfg = {
+  enabled?: boolean;
+  min_runners?: number;
+  max_runners?: number;
+  idle_seconds?: number;
+};
+
 export function DockerWorkerCard({
   poolId: _poolId,
   config,
@@ -1446,51 +1514,179 @@ export function DockerWorkerCard({
   onSave: (next: Record<string, unknown>) => void | Promise<void>;
   onAddRunner: () => void | Promise<void>;
 }) {
-  const [loading, setLoading] = useState(false);
-  const sandbox = (config?.docker_runner as Record<string, unknown> | undefined)?.sandbox || false;
+  const rc = (config?.docker_runner as DockerRunnerCfg | undefined) ?? {};
+  const auto = (config?.docker_autoscale as DockerAutoscaleCfg | undefined) ?? {};
+  const remoteHost = String((config?.docker_host as string | undefined) ?? "");
+
+  // Local draft so number inputs don't round-trip to the server per keystroke.
+  const [draftRc, setDraftRc] = useState<DockerRunnerCfg>(rc);
+  const [draftAuto, setDraftAuto] = useState<DockerAutoscaleCfg>(auto);
+  const [daemon, setDaemon] = useState<"local" | "remote">(remoteHost ? "remote" : "local");
+  const [host, setHost] = useState(remoteHost);
+  const [adding, setAdding] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const num = (v: string, fallback: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const next: Record<string, unknown> = {
+        ...config,
+        docker_runner: draftRc,
+        docker_autoscale: draftAuto,
+      };
+      if (daemon === "remote" && host.trim()) next.docker_host = host.trim();
+      else delete (next as { docker_host?: string }).docker_host;
+      await onSave(next);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="docker-worker-card">
-      <div className="docker-settings">
-        <label>
-          <input
-            type="checkbox"
-            checked={!!sandbox}
-            onChange={(e) => {
-              const next = {
-                ...config,
-                docker_runner: {
-                  ...(config?.docker_runner as Record<string, unknown> | undefined),
-                  sandbox: e.target.checked,
-                },
-              };
-              onSave(next);
-            }}
-            aria-label="Sandboxed execution support"
-          />
-          Sandboxed execution support
-        </label>
-        <p className="helper-text">
-          When enabled, each run executes in a hardened container. The runner has root-equivalent access
-          to the Docker daemon (DooD); runs themselves execute in hardened siblings without elevated privileges.
-        </p>
-      </div>
+      <h4 className="docker-worker-title">Docker workers</h4>
+      <p className="helper-text">
+        Add long-lived Docker-backed runners to this pool. With autoscaling on, Nodyra adds and
+        removes containers to match queue depth, within the limits you set.
+      </p>
+
       {canWrite && (
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={loading}
-          onClick={async () => {
-            setLoading(true);
-            try {
-              await onAddRunner();
-            } finally {
-              setLoading(false);
-            }
-          }}
-        >
-          {loading ? "Adding..." : "Add Docker Runner"}
-        </button>
+        <fieldset className="docker-settings" disabled={saving}>
+          <label className="docker-field">
+            <span>Daemon</span>
+            <select
+              value={daemon}
+              onChange={(e) => setDaemon(e.target.value as "local" | "remote")}
+              aria-label="Docker daemon"
+            >
+              <option value="local">Local daemon</option>
+              <option value="remote">Remote daemon</option>
+            </select>
+          </label>
+          {daemon === "remote" && (
+            <label className="docker-field">
+              <span>docker_host</span>
+              <input
+                type="text"
+                value={host}
+                placeholder="tcp://host:2375 or ssh://user@host"
+                onChange={(e) => setHost(e.target.value)}
+                aria-label="Remote docker_host"
+              />
+            </label>
+          )}
+
+          <div className="docker-grid">
+            <label className="docker-field">
+              <span>CPU</span>
+              <input
+                type="number" min={0.1} step={0.1} value={draftRc.cpu ?? 1}
+                onChange={(e) => setDraftRc({ ...draftRc, cpu: num(e.target.value, 1) })}
+                aria-label="CPU per runner"
+              />
+            </label>
+            <label className="docker-field">
+              <span>Memory (MB)</span>
+              <input
+                type="number" min={128} step={128} value={draftRc.memory_mb ?? 1024}
+                onChange={(e) => setDraftRc({ ...draftRc, memory_mb: num(e.target.value, 1024) })}
+                aria-label="Memory per runner"
+              />
+            </label>
+            <label className="docker-field">
+              <span>Max runs/runner</span>
+              <input
+                type="number" min={1} step={1} value={draftRc.max_concurrent_runs ?? 2}
+                onChange={(e) =>
+                  setDraftRc({ ...draftRc, max_concurrent_runs: num(e.target.value, 2) })}
+                aria-label="Max concurrent runs per runner"
+              />
+            </label>
+          </div>
+
+          <label className="docker-field docker-checkbox">
+            <input
+              type="checkbox"
+              checked={!!draftRc.sandbox}
+              onChange={(e) => setDraftRc({ ...draftRc, sandbox: e.target.checked })}
+              aria-label="Sandboxed execution support"
+            />
+            Sandboxed execution support
+          </label>
+          <p className="helper-text">
+            When enabled, the runner container mounts the Docker socket and executes each run in a
+            hardened, disposable sibling container. Socket access is root-equivalent on the daemon
+            host — the runner itself is trusted; the run code is what gets sandboxed. Leave off for
+            plain (non-sandboxed) execution.
+          </p>
+
+          <label className="docker-field docker-checkbox">
+            <input
+              type="checkbox"
+              checked={!!draftAuto.enabled}
+              onChange={(e) => setDraftAuto({ ...draftAuto, enabled: e.target.checked })}
+              aria-label="Enable autoscaling"
+            />
+            Autoscale with queue depth
+          </label>
+          {draftAuto.enabled && (
+            <div className="docker-grid">
+              <label className="docker-field">
+                <span>Min runners</span>
+                <input
+                  type="number" min={0} step={1} value={draftAuto.min_runners ?? 0}
+                  onChange={(e) =>
+                    setDraftAuto({ ...draftAuto, min_runners: num(e.target.value, 0) })}
+                  aria-label="Minimum runners"
+                />
+              </label>
+              <label className="docker-field">
+                <span>Max runners</span>
+                <input
+                  type="number" min={1} max={32} step={1} value={draftAuto.max_runners ?? 4}
+                  onChange={(e) =>
+                    setDraftAuto({ ...draftAuto, max_runners: num(e.target.value, 4) })}
+                  aria-label="Maximum runners"
+                />
+              </label>
+              <label className="docker-field">
+                <span>Idle scale-down (s)</span>
+                <input
+                  type="number" min={30} step={30} value={draftAuto.idle_seconds ?? 300}
+                  onChange={(e) =>
+                    setDraftAuto({ ...draftAuto, idle_seconds: num(e.target.value, 300) })}
+                  aria-label="Idle seconds before scale-down"
+                />
+              </label>
+            </div>
+          )}
+
+          <div className="docker-worker-actions">
+            <button type="button" className="btn btn-sm" disabled={saving} onClick={save}>
+              {saving ? "Saving…" : "Save Docker settings"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              disabled={adding}
+              onClick={async () => {
+                setAdding(true);
+                try {
+                  await onAddRunner();
+                } finally {
+                  setAdding(false);
+                }
+              }}
+            >
+              {adding ? "Adding…" : "Add Docker Runner"}
+            </button>
+          </div>
+        </fieldset>
       )}
     </div>
   );

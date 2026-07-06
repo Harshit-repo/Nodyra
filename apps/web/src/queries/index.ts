@@ -346,6 +346,16 @@ export function useQueueStats(
   });
 }
 
+export function useQueueCapacity(
+  options?: QueryControls<Awaited<ReturnType<typeof api.queueCapacity>>>,
+) {
+  return useQuery({
+    queryKey: queryKeys.queueCapacity,
+    queryFn: api.queueCapacity,
+    ...options,
+  });
+}
+
 export function useRun(
   runId: string | null,
   options?: QueryControls<Awaited<ReturnType<typeof api.getRun>>>,
@@ -685,6 +695,41 @@ export function useDeleteRunnerPoolMutation() {
   return useMutation({
     mutationFn: runnerPoolsApi.delete,
     onSuccess: () => invalidateRunnerPools(queryClient),
+  });
+}
+
+export function useAddDockerRunnerMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ poolId, name }: { poolId: string; name?: string }) =>
+      runnerPoolsApi.addDockerRunner(poolId, name),
+    onSuccess: (_runner, vars) => {
+      invalidateRunnerPools(queryClient);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.runnerPoolRunners(vars.poolId),
+      });
+    },
+  });
+}
+
+export function useRemoveDockerRunnerMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      poolId,
+      runnerId,
+      force,
+    }: {
+      poolId: string;
+      runnerId: string;
+      force?: boolean;
+    }) => runnerPoolsApi.removeDockerRunner(poolId, runnerId, force),
+    onSuccess: (_res, vars) => {
+      invalidateRunnerPools(queryClient);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.runnerPoolRunners(vars.poolId),
+      });
+    },
   });
 }
 

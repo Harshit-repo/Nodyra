@@ -83,12 +83,29 @@ async def assign_agent_run(
         if run is not None:
             required_labels = run.required_labels
 
+    # Sandbox routing (defence-in-depth #1): a sandbox-required run is only
+    # ever OFFERED runners that advertise sandbox support, by folding the
+    # capability into the label filter pick_agent already enforces. This keeps
+    # sandboxed runs off plain runners in a mixed pool instead of relying solely
+    # on the post-selection guard below.
+    if sandbox_required:
+        required_labels = {**(required_labels or {}), "sandbox": True}
+
     conn = await pick_agent(d, session_factory, pool_id, required_labels=required_labels)
     if conn is None:
         await d.queue_run(run_id)
         # Provision cloud instances if configured
         await maybe_provision(session_factory, pool_id)
         raise _QueuedError(f"run {run_id} queued — no available runners in pool {pool_id}")
+
+    # Dispatch guard (defence-in-depth #2): re-check the SELECTED runner's
+    # capability BEFORE mutating any shared state, so a guard trip can't leak
+    # an inflated current_runs / stuck "busy" status / dangling future.
+    async with session_factory() as session:
+        _selected = await session.get(Runner, conn.runner_id)
+        selected_caps = (_selected.capabilities or {}) if _selected is not None else {}
+    if sandbox_required and not selected_caps.get("sandbox"):
+        raise RuntimeError("sandbox-required run cannot dispatch to a non-sandbox runner")
 
     future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
     conn.active_runs[run_id] = future
@@ -107,11 +124,6 @@ async def assign_agent_run(
         if run is not None:
             run.runner_id = conn.runner_id
         await session.commit()
-
-    # Dispatch guard: sandbox-required runs can only go to runners
-    # that advertise sandbox support.
-    if sandbox_required and not runner_caps.get("sandbox"):
-        raise RuntimeError("sandbox-required run cannot dispatch to a non-sandbox runner")
 
     # Multi-tenancy F/C5: remote runs carry the same org namespace and
     # amplification caps as local subprocess runs — the agent forwards
@@ -234,7 +246,19 @@ async def handle_agent_message(
         async with session_factory() as session:
             runner = await session.get(Runner, conn.runner_id)
             if runner is not None:
-                caps = msg.get("capabilities") or {}
+                caps = dict(msg.get("capabilities") or {})
+                # Server-authoritative capability keys are set at provisioning
+                # time (spawn_docker_runner / registration) and MUST survive the
+                # agent's hello — otherwise a Docker-managed sandbox runner would
+                # lose its ``docker_managed``/``sandbox``/``container_name`` flags
+                # the instant it connects (breaking autoscale accounting, sandbox
+                # label routing, and the dispatch guard). They also must not be
+                # forgeable: an agent can't claim ``sandbox`` it wasn't
+                # provisioned for, so server values win on conflict.
+                existing = runner.capabilities or {}
+                for _key in ("docker_managed", "sandbox", "container_name"):
+                    if _key in existing:
+                        caps[_key] = existing[_key]
                 runner.capabilities = caps
                 if "max_concurrent" in caps:
                     runner.max_concurrent_runs = int(caps["max_concurrent"])

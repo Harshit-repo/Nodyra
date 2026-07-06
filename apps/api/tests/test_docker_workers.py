@@ -1,14 +1,41 @@
 """Docker-worker autoscaling planner + spawn/remove/reconcile."""
 
-import pytest
+import os
+import tempfile
+from collections.abc import AsyncIterator
 
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from app import models  # noqa: F401 - registers ORM models on Base.metadata
+from app.db import Base
+from app.models import Runner, RunnerPool
 from app.services.docker_workers import (
     PoolState,
+    RemoveRunner,
     RunnerState,
     SpawnRunner,
-    RemoveRunner,
     plan_scaling,
 )
+
+
+@pytest_asyncio.fixture
+async def session() -> AsyncIterator:
+    handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    handle.close()
+    engine = create_async_engine(f"sqlite+aiosqlite:///{handle.name}", poolclass=NullPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as s:
+        yield s
+    await engine.dispose()
+    try:
+        os.unlink(handle.name)
+    except OSError:
+        pass
 
 
 def _pool(**kw):
@@ -106,6 +133,18 @@ class FakeImages:
         return (object(), iter(()))
 
 
+class FakeContainer:
+    def __init__(self, name, labels, owner):
+        self.name = name
+        self.labels = labels or {}
+        self._owner = owner
+        self.removed = False
+
+    def remove(self, force=False):
+        self.removed = True
+        self._owner._by_name.pop(self.name, None)
+
+
 class FakeContainers:
     def __init__(self):
         self.run_calls = []
@@ -114,17 +153,28 @@ class FakeContainers:
     def run(self, image, **kw):
         self.run_calls.append({"image": image, **kw})
         name = kw.get("name")
-        c = type("C", (), {"name": name, "removed": False})()
+        c = FakeContainer(name, kw.get("labels") or {}, self)
         self._by_name[name] = c
         return c
+
+    def add_orphan(self, name, labels):
+        """Seed a container that has no matching Runner row (crash orphan)."""
+        self._by_name[name] = FakeContainer(name, labels, self)
 
     def get(self, name):
         if name not in self._by_name:
             raise KeyError(name)
         return self._by_name[name]
 
-    def list(self, **kw):
-        return list(self._by_name.values())
+    def list(self, all=False, filters=None):  # noqa: A002 - mirror docker SDK kwarg
+        # Loosely honour a label filter so reconcile's filtered list is realistic.
+        conts = list(self._by_name.values())
+        want = (filters or {}).get("label") or []
+        for f in want:
+            if "=" in f:
+                k, v = f.split("=", 1)
+                conts = [c for c in conts if c.labels.get(k) == v]
+        return conts
 
 
 class FakeDockerClient:
@@ -153,34 +203,6 @@ async def test_ensure_agent_image_builds_when_absent(monkeypatch):
     client.images.built.clear()
     await docker_workers.ensure_agent_image(client)
     assert not client.images.built
-
-
-import pytest_asyncio
-import os
-import tempfile
-from collections.abc import AsyncIterator
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
-from app import models  # noqa: F401
-from app.db import Base
-from app.models import RunnerPool, Runner
-
-
-@pytest_asyncio.fixture
-async def session() -> AsyncIterator:
-    handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    handle.close()
-    engine = create_async_engine(f"sqlite+aiosqlite:///{handle.name}", poolclass=NullPool)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    maker = async_sessionmaker(engine, expire_on_commit=False)
-    async with maker() as s:
-        yield s
-    await engine.dispose()
-    try:
-        os.unlink(handle.name)
-    except OSError:
-        pass
 
 
 async def test_spawn_docker_runner_sets_caps_and_labels(session, monkeypatch):
@@ -241,8 +263,8 @@ async def test_remove_busy_runner_refused(session):
 
 
 async def test_build_pool_states_counts_queue_and_runners(session):
-    from app.services import docker_workers
     from app.models import RunQueueEntry
+    from app.services import docker_workers
     pool = RunnerPool(name="dw", provider="agent",
                       provider_config={"docker_autoscale": {"enabled": True,
                           "min_runners": 0, "max_runners": 3, "idle_seconds": 300}})
@@ -258,3 +280,91 @@ async def test_build_pool_states_counts_queue_and_runners(session):
     assert states[0].queued == 1
     assert states[0].enabled is True
     assert len(states[0].runners) == 1
+
+
+async def test_remove_docker_runner_refuses_when_daemon_unreachable(session):
+    """A runner WITH a container but NO reachable daemon must not have its row
+    deleted — that would orphan a live container. reconcile cleans it up later."""
+    from app.services import docker_workers
+    pool = RunnerPool(name="dw", provider="agent", provider_config={})
+    session.add(pool)
+    await session.commit()
+    r = Runner(pool_id=pool.id, name="r", status="online", current_runs=0,
+               capabilities={"docker_managed": True, "container_name": "nodyra-worker-abc"})
+    session.add(r)
+    await session.commit()
+    with pytest.raises(docker_workers.DaemonUnreachable):
+        await docker_workers.remove_docker_runner(session, r, client=None)
+    # Row survives for reconcile.
+    assert await session.get(Runner, r.id) is not None
+
+
+async def test_reconcile_reaps_dead_row_and_orphan_container(session):
+    """A docker-managed row whose container is gone → row deleted; a container
+    labelled for the pool with no row → container removed."""
+    from app.services import docker_workers
+    pool = RunnerPool(name="dw", provider="agent", provider_config={})
+    session.add(pool)
+    await session.commit()
+    # Dead row: has a container_name, but the daemon has no such container.
+    dead = Runner(pool_id=pool.id, name="dead", status="offline", current_runs=0,
+                  capabilities={"docker_managed": True, "container_name": "gone-123"})
+    session.add(dead)
+    await session.commit()
+
+    client = FakeDockerClient()
+    # Orphan container labelled for this pool, no matching row.
+    client.containers.add_orphan(
+        "nodyra-worker-orphan",
+        {"nodyra.managed": "true", "nodyra.pool": pool.id, "nodyra.runner": "no-such-row"},
+    )
+    acted = await docker_workers.reconcile(session, client, pool)
+    assert acted == 2
+    assert await session.get(Runner, dead.id) is None  # dead row reaped
+    assert "nodyra-worker-orphan" not in client.containers._by_name  # orphan removed
+
+
+async def test_reconcile_keeps_row_with_live_container(session):
+    from app.services import docker_workers
+    pool = RunnerPool(name="dw", provider="agent", provider_config={})
+    session.add(pool)
+    await session.commit()
+    r = Runner(pool_id=pool.id, name="live", status="online", current_runs=0,
+               capabilities={"docker_managed": True, "container_name": "nodyra-worker-live"})
+    session.add(r)
+    await session.commit()
+    client = FakeDockerClient()
+    client.containers.add_orphan(
+        "nodyra-worker-live",
+        {"nodyra.pool": pool.id, "nodyra.runner": r.id},
+    )
+    acted = await docker_workers.reconcile(session, client, pool)
+    assert acted == 0
+    assert await session.get(Runner, r.id) is not None
+
+
+async def test_reconcile_spares_mid_spawn_row_without_container_name(session):
+    """A freshly-minted row (no container_name yet) inside the grace window must
+    NOT be reaped — it is mid-spawn."""
+    from app.services import docker_workers
+    pool = RunnerPool(name="dw", provider="agent", provider_config={})
+    session.add(pool)
+    await session.commit()
+    spawning = Runner(pool_id=pool.id, name="spawning", status="offline", current_runs=0,
+                      capabilities={"docker_managed": True})  # no container_name
+    session.add(spawning)
+    await session.commit()
+    client = FakeDockerClient()
+    acted = await docker_workers.reconcile(session, client, pool)
+    assert acted == 0
+    assert await session.get(Runner, spawning.id) is not None
+
+
+def test_plan_scaling_capacity_not_collapsed_by_offline_rows_after_reconcile():
+    """Regression for the capacity-collapse scenario: once reconcile removes
+    dead rows, the surviving count is below max and a backlog spawns again."""
+    from app.services.docker_workers import PoolState, RunnerState, SpawnRunner, plan_scaling
+    # After reconcile, only 1 live (saturated) runner remains; max is 3.
+    live = RunnerState(runner_id="live", current_runs=2, max_concurrent_runs=2, online=True)
+    actions = plan_scaling([PoolState(pool_id="p", queued=5, runners=[live], max_runners=3)])
+    assert actions == [SpawnRunner("p")]

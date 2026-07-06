@@ -28,6 +28,9 @@ from app.services.wheel_index import ensure_wheels
 logger = logging.getLogger(__name__)
 
 _MAX_RUNNERS_CEILING = 32
+# Grace before reconcile reaps a docker-managed row that has not yet recorded a
+# container_name — covers the window between mint-commit and container start.
+_SPAWN_GRACE_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -265,19 +268,114 @@ async def spawn_docker_runner(session, pool: RunnerPool, *, client=None, name=No
 
 
 async def remove_docker_runner(session, runner: Runner, *, client=None, force=False) -> None:
+    """Stop the runner's container and delete its row.
+
+    The row is deleted ONLY after the container is confirmed gone (removed, or
+    already absent) — otherwise a transient daemon blip would orphan a live
+    container holding a valid registration token with no DB record of it. When
+    the runner has a container_name but no reachable client, we refuse
+    (raise DaemonUnreachable) so ``reconcile`` can retry rather than leak it.
+    Pass ``force=True`` only for a runner with no container (never provisioned).
+    """
     if runner.current_runs > 0 and not force:
         raise RunnerBusy(f"runner {runner.id} has {runner.current_runs} in-flight run(s)")
     container_name = (runner.capabilities or {}).get("container_name")
-    if client is not None and container_name:
+    if container_name:
+        if client is None:
+            raise DaemonUnreachable(
+                f"cannot remove runner {runner.id}: its Docker daemon is "
+                "unreachable (would orphan container "
+                f"{container_name!r}); retry when the daemon is back"
+            )
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
                 None, lambda: client.containers.get(container_name).remove(force=True)
             )
-        except Exception:  # noqa: BLE001 — already gone
+        except Exception:  # noqa: BLE001 — NotFound: already gone, safe to delete row
             pass
     await session.delete(runner)
     await session.commit()
+
+
+def _pool_container_labels_filter(pool_id: str) -> dict:
+    return {"label": [f"nodyra.pool={pool_id}"]}
+
+
+async def reconcile(session, client, pool: RunnerPool) -> int:
+    """Two-way reconcile between DB runner rows and live containers for a pool.
+
+    * A docker-managed Runner row whose container is gone → delete the row, so
+      dead runners stop counting toward ``max_runners`` (without this the
+      autoscaler's ``count < max_runners`` gate silently collapses pool
+      capacity toward zero as containers die after connecting once —
+      ghost_cleanup only removes NEVER-connected rows).
+    * A container labelled for this pool with no matching Runner row → remove
+      the container (orphaned by a crash between spawn and row-commit, or by a
+      prior daemon-unreachable removal).
+
+    Returns the number of reconcile actions taken. Best-effort: Docker errors
+    are swallowed so one bad daemon can't wedge the loop.
+    """
+    loop = asyncio.get_running_loop()
+    acted = 0
+    now = datetime.now(UTC)
+
+    rows = (
+        await session.scalars(select(Runner).where(Runner.pool_id == pool.id))
+    ).all()
+    managed = [r for r in rows if (r.capabilities or {}).get("docker_managed")]
+
+    try:
+        containers = await loop.run_in_executor(
+            None,
+            lambda: client.containers.list(
+                all=True, filters=_pool_container_labels_filter(pool.id)
+            ),
+        )
+    except Exception:  # noqa: BLE001 — daemon hiccup; skip this pool this tick
+        return 0
+    live_by_runner: dict[str, object] = {}
+    live_names: set[str] = set()
+    for c in containers:
+        labels = getattr(c, "labels", None) or {}
+        rid = labels.get("nodyra.runner")
+        if rid:
+            live_by_runner[rid] = c
+        live_names.add(getattr(c, "name", ""))
+
+    # Rows whose container is gone → delete the row. A row that has not yet
+    # recorded a container_name is either mid-spawn (spawn commits the row
+    # before starting the container) or a spawn that crashed; only reap the
+    # latter, after a grace window, so an in-flight spawn is never reaped.
+    for runner in managed:
+        cname = (runner.capabilities or {}).get("container_name")
+        container_gone = runner.id not in live_by_runner and (
+            cname is None or cname not in live_names
+        )
+        if not container_gone:
+            continue
+        if cname is None:
+            created = runner.created_at
+            if created is not None and created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            if created is not None and (now - created).total_seconds() < _SPAWN_GRACE_SECONDS:
+                continue  # mid-spawn — leave it alone
+        await session.delete(runner)
+        acted += 1
+    if acted:
+        await session.commit()
+
+    # Containers with no surviving row → remove the container.
+    known_runner_ids = {r.id for r in managed}
+    for rid, container in live_by_runner.items():
+        if rid not in known_runner_ids:
+            try:
+                await loop.run_in_executor(None, lambda c=container: c.remove(force=True))
+                acted += 1
+            except Exception:  # noqa: BLE001
+                pass
+    return acted
 
 
 def _idle_seconds(runner: Runner, now: datetime) -> float:
@@ -350,18 +448,60 @@ async def _apply_action(action: Action) -> None:
             runner = await session.get(Runner, action.runner_id)
             if runner is not None:
                 cfg_pool = await session.get(RunnerPool, runner.pool_id)
-                client = None
                 try:
-                    client = _docker_client((cfg_pool.provider_config or {}) if cfg_pool else {})
-                except DaemonUnreachable:
-                    pass
-                await remove_docker_runner(session, runner, client=client, force=False)
+                    client = _docker_client(
+                        (cfg_pool.provider_config or {}) if cfg_pool else {}
+                    )
+                except DaemonUnreachable as exc:
+                    # Don't delete the row while the daemon is down — that would
+                    # orphan the container. reconcile() cleans it up once the
+                    # daemon returns and finds the container gone.
+                    logger.warning("autoscale remove skipped for %s: %s", action.runner_id, exc)
+                    return
+                try:
+                    await remove_docker_runner(session, runner, client=client, force=False)
+                except DaemonUnreachable as exc:
+                    logger.warning("autoscale remove deferred for %s: %s", action.runner_id, exc)
+
+
+async def _reconcile_all_pools() -> int:
+    """Reconcile every agent pool that has docker-managed runners or autoscale
+    on. Runs each tick before planning so dead rows don't inflate the count."""
+    acted = 0
+    async with SessionLocal() as session:
+        pools = (
+            await session.scalars(select(RunnerPool).where(RunnerPool.provider == "agent"))
+        ).all()
+        candidates = []
+        for pool in pools:
+            cfg = pool.provider_config or {}
+            has_docker = bool(cfg.get("docker_runner") or {})
+            autoscale_on = bool((cfg.get("docker_autoscale") or {}).get("enabled"))
+            if has_docker or autoscale_on:
+                candidates.append(pool)
+    for pool in candidates:
+        try:
+            client = _docker_client(pool.provider_config or {})
+        except DaemonUnreachable:
+            continue
+        try:
+            async with SessionLocal() as session:
+                fresh = await session.get(RunnerPool, pool.id)
+                if fresh is not None:
+                    acted += await reconcile(session, client, fresh)
+        except Exception:  # noqa: BLE001
+            logger.exception("reconcile failed for pool %s", pool.id)
+    return acted
 
 
 async def docker_workers_autoscale_loop() -> None:
-    """Tick: snapshot → plan_scaling → apply. Never lets one tick kill the loop."""
+    """Tick: reconcile → snapshot → plan_scaling → apply. Never lets one tick
+    kill the loop."""
     while True:
         try:
+            reconciled = await _reconcile_all_pools()
+            if reconciled:
+                logger.info("docker autoscale: reconciled %d stale runner(s)/container(s)", reconciled)
             async with SessionLocal() as session:
                 states = await _build_pool_states(session)
             for action in plan_scaling(states):

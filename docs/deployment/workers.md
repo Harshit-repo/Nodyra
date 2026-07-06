@@ -169,13 +169,21 @@ long-lived Docker-backed agent runners from the UI:
 
 Optionally enable autoscaling in the pool config:
 
-- **Bounds:** min/max runners, idle scale-down timeout.
+- **Bounds:** min/max runners (max hard-capped at 32), idle scale-down timeout.
 - **Queue monitoring:** the autoscaler ticks every
   `DOCKER_AUTOSCALE_TICK_SECONDS` (default 30s), snapshots the queued runs,
   and scales up one runner when all online runners are saturated; scales down
   one idle runner after the timeout expires.
+- **Self-healing:** each tick also reconciles the pool — a runner whose
+  container has died is removed from the DB so it stops counting toward
+  `max_runners` (otherwise dead rows would silently collapse pool capacity),
+  and a container whose row is gone is stopped. Removal never deletes a runner
+  row while its daemon is unreachable, so a transient blip can't orphan a live
+  container.
 - **Daemon choice:** target the local Docker daemon (default) or a remote host
-  (`docker_host: tcp://host:2375` or `ssh://user@host`).
+  (`docker_host: tcp://host:2375` or `ssh://user@host`). Only `tcp://`,
+  `ssh://`, `unix://` and `npipe://` schemes are accepted; resource requests are
+  bounds-checked on save.
 
 #### Sandbox checkbox (hardened per-run containers)
 
@@ -185,7 +193,16 @@ container (the runner's WebSocket connection remains untrusted):
 
 - Runner container: standard process, has Docker socket.
 - Run container: hardened (cap_drop ALL, no-new-privileges, read-only rootfs,
-  isolated network), ephemeral, killed after run completion.
+  tmpfs `/tmp`, non-root, cpu/mem/pids caps), on a dedicated
+  `nodyra-agent-sandbox` bridge network (isolated from unrelated containers on
+  the host but able to reach the API to upload artifacts), ephemeral, removed
+  after the run completes.
+- **Routing:** sandbox-required runs are only ever offered runners that
+  advertise sandbox support (the capability is folded into the dispatch label
+  filter), with a fail-closed guard as a second line of defence — so a mixed
+  pool never runs a sandboxed workflow on a plain runner. Admission also
+  requires the pool to be sandbox-configured; a plain agent pool still refuses
+  sandboxed workflows.
 
 **Trust note:** the runner has root-equivalent access to the daemon host
 through the socket. Scope this pool to trusted operators only, or run it on
