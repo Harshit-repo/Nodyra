@@ -108,9 +108,7 @@ async def test_run_queue_entry_queryable_by_status(session) -> None:
     await session.commit()
 
     queued = (
-        await session.scalars(
-            select(RunQueueEntry).where(RunQueueEntry.status == "queued")
-        )
+        await session.scalars(select(RunQueueEntry).where(RunQueueEntry.status == "queued"))
     ).all()
     assert len(queued) == 2
 
@@ -148,6 +146,21 @@ async def test_enqueue_creates_queued_entry(session) -> None:
     assert entry.status == "queued"
     assert entry.queue_reason == "global_concurrency_limit"
     assert entry.attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_enqueue_persists_required_labels(session) -> None:
+    from app.services import queue
+
+    entry = await queue.enqueue(
+        session,
+        run_id="r-label",
+        workflow_id="wf-label",
+        required_labels={" gpu ": " a100 ", " bare ": True},
+    )
+    await session.commit()
+
+    assert entry.required_labels == {"gpu": "a100", "bare": "true"}
 
 
 @pytest.mark.asyncio
@@ -260,12 +273,13 @@ async def test_lease_provider_filter_separates_agent_and_local(session) -> None:
     now = datetime.now(UTC)
     session.add_all(
         [
-            RunQueueEntry(run_id="local", workflow_id="wf", runner_pool_id=None,
-                          available_at=now),
-            RunQueueEntry(run_id="agent", workflow_id="wf",
-                          runner_pool_id=agent_pool.id, available_at=now),
-            RunQueueEntry(run_id="docker", workflow_id="wf",
-                          runner_pool_id=docker_pool.id, available_at=now),
+            RunQueueEntry(run_id="local", workflow_id="wf", runner_pool_id=None, available_at=now),
+            RunQueueEntry(
+                run_id="agent", workflow_id="wf", runner_pool_id=agent_pool.id, available_at=now
+            ),
+            RunQueueEntry(
+                run_id="docker", workflow_id="wf", runner_pool_id=docker_pool.id, available_at=now
+            ),
         ]
     )
     await session.commit()
@@ -274,24 +288,86 @@ async def test_lease_provider_filter_separates_agent_and_local(session) -> None:
     worker_providers = frozenset({"local", "docker"})
 
     # control leases only the agent entry...
-    leased = await queue.lease(session, worker_id="control",
-                               providers=control_providers)
+    leased = await queue.lease(session, worker_id="control", providers=control_providers)
     await session.commit()
     assert leased is not None and leased.run_id == "agent"
 
     # ...and cannot touch the remaining local/docker entries.
-    assert await queue.lease(session, worker_id="control",
-                             providers=control_providers) is None
+    assert await queue.lease(session, worker_id="control", providers=control_providers) is None
 
     # the worker drains local + docker, never the agent entry.
     drained = set()
     for _ in range(2):
-        got = await queue.lease(session, worker_id="worker",
-                                providers=worker_providers)
+        got = await queue.lease(session, worker_id="worker", providers=worker_providers)
         await session.commit()
         assert got is not None
         drained.add(got.run_id)
     assert drained == {"local", "docker"}
+
+
+@pytest.mark.asyncio
+async def test_lease_filters_by_worker_labels(session) -> None:
+    from app.services import queue
+
+    # Seed both entries firmly in the past so eligibility never races the
+    # wall clock: ``lease()`` computes its own ``now``, and a sub-millisecond
+    # commit could otherwise leave the "cpu" entry (previously ``now + 1ms``)
+    # not-yet-available — the labeled "gpu" entry is filtered, lease returns
+    # None, and the test flakes (observed in full-suite runs). The 1ms
+    # stagger keeps the intended FIFO order: "gpu" is older.
+    now = datetime.now(UTC) - timedelta(seconds=5)
+    session.add_all(
+        [
+            RunQueueEntry(
+                run_id="gpu",
+                workflow_id="wf",
+                required_labels={"gpu": "a100"},
+                available_at=now,
+            ),
+            RunQueueEntry(
+                run_id="cpu",
+                workflow_id="wf",
+                available_at=now + timedelta(milliseconds=1),
+            ),
+        ]
+    )
+    await session.commit()
+
+    leased = await queue.lease(session, worker_id="cpu-worker")
+    await session.commit()
+    assert leased is not None and leased.run_id == "cpu"
+
+    leased = await queue.lease(
+        session,
+        worker_id="gpu-worker",
+        worker_labels={"gpu": "a100"},
+    )
+    await session.commit()
+    assert leased is not None and leased.run_id == "gpu"
+
+
+@pytest.mark.asyncio
+async def test_lease_returns_none_when_required_labels_unmatched(session) -> None:
+    from app.services import queue
+
+    session.add(
+        RunQueueEntry(
+            run_id="gpu",
+            workflow_id="wf",
+            required_labels={"gpu": "a100"},
+        )
+    )
+    await session.commit()
+
+    assert await queue.lease(session, worker_id="cpu-worker") is None
+    assert (
+        await queue.lease(
+            session,
+            worker_id="wrong-gpu-worker",
+            worker_labels={"gpu": "l4"},
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -306,9 +382,7 @@ async def test_complete_marks_completed(session) -> None:
     await queue.complete(session, run_id="r1")
     await session.commit()
 
-    entry = await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == "r1")
-    )
+    entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == "r1"))
     assert entry.status == "completed"
 
 
@@ -324,9 +398,7 @@ async def test_fail_retryable_requeues_with_backoff(session) -> None:
     await queue.fail(session, run_id="r1", retryable=True, error="transient")
     await session.commit()
 
-    entry = await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == "r1")
-    )
+    entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == "r1"))
     assert entry.status == "queued"
     assert entry.last_error == "transient"
     assert entry.leased_by is None
@@ -349,9 +421,7 @@ async def test_fail_non_retryable_marks_failed(session) -> None:
     await queue.fail(session, run_id="r1", retryable=False, error="fatal")
     await session.commit()
 
-    entry = await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == "r1")
-    )
+    entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == "r1"))
     assert entry.status == "failed"
     assert entry.last_error == "fatal"
 
@@ -366,9 +436,7 @@ async def test_cancel_marks_cancelled(session) -> None:
     await queue.cancel(session, run_id="r1")
     await session.commit()
 
-    entry = await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == "r1")
-    )
+    entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == "r1"))
     assert entry.status == "cancelled"
 
 
@@ -394,9 +462,7 @@ async def test_requeue_expired_leases(session) -> None:
     await session.commit()
 
     assert count == 1
-    entry = await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == "r1")
-    )
+    entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == "r1"))
     assert entry.status == "queued"
     assert entry.leased_by is None
 
@@ -416,9 +482,7 @@ async def test_stats_reports_counts_and_oldest(session) -> None:
     old = datetime.now(UTC) - timedelta(seconds=30)
     session.add_all(
         [
-            RunQueueEntry(
-                run_id="q1", workflow_id="wf", status="queued", available_at=old
-            ),
+            RunQueueEntry(run_id="q1", workflow_id="wf", status="queued", available_at=old),
             RunQueueEntry(run_id="q2", workflow_id="wf", status="queued"),
             RunQueueEntry(run_id="l1", workflow_id="wf", status="leased"),
             RunQueueEntry(run_id="f1", workflow_id="wf", status="failed"),
@@ -449,9 +513,7 @@ async def test_fail_retryable_dead_letters_when_attempts_exhausted(session) -> N
     await queue.fail(session, run_id="r1", retryable=True, error="boom")
     await session.commit()
 
-    entry = await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == "r1")
-    )
+    entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == "r1"))
     assert entry.status == "dead_lettered"
     assert entry.last_error == "boom"
 
@@ -467,9 +529,7 @@ async def test_fail_records_attempts_log(session) -> None:
     await queue.fail(session, run_id="r1", retryable=True, error="boom")
     await session.commit()
 
-    entry = await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == "r1")
-    )
+    entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == "r1"))
     assert len(entry.attempts_log) == 1
     record = entry.attempts_log[0]
     assert record["event"] == "retry_scheduled"
@@ -517,7 +577,6 @@ async def test_replay_rejects_active_entry(session) -> None:
     assert result is None
 
 
-
 async def test_lease_uses_config_lease_seconds(session) -> None:
     from app.config import settings as app_settings
     from app.services import queue
@@ -525,9 +584,9 @@ async def test_lease_uses_config_lease_seconds(session) -> None:
     original = app_settings.queue_lease_seconds
     app_settings.queue_lease_seconds = 7
     try:
-        await queue.enqueue(session, run_id='r-cfg', workflow_id='wf')
+        await queue.enqueue(session, run_id="r-cfg", workflow_id="wf")
         before = datetime.now(UTC)
-        entry = await queue.lease(session, worker_id='w1')
+        entry = await queue.lease(session, worker_id="w1")
         assert entry is not None
         assert entry.lease_expires_at is not None
         expires = entry.lease_expires_at
@@ -552,12 +611,8 @@ async def test_lease_filters_by_provider(session) -> None:
     await session.flush()
 
     await q.enqueue(session, run_id="r-local", workflow_id="w1")
-    await q.enqueue(
-        session, run_id="r-agent", workflow_id="w1", runner_pool_id=agent_pool.id
-    )
-    await q.enqueue(
-        session, run_id="r-docker", workflow_id="w1", runner_pool_id=docker_pool.id
-    )
+    await q.enqueue(session, run_id="r-agent", workflow_id="w1", runner_pool_id=agent_pool.id)
+    await q.enqueue(session, run_id="r-docker", workflow_id="w1", runner_pool_id=docker_pool.id)
     await session.commit()
 
     worker_caps = frozenset({"local", "docker"})
@@ -582,8 +637,11 @@ async def test_requeue_expired_lease_resets_running_run(session) -> None:
     from app.services import queue as q
 
     run = Run(
-        workflow_id="wf-lost", workflow_version=1, mode="production",
-        trigger_type="schedule", status="running",
+        workflow_id="wf-lost",
+        workflow_version=1,
+        mode="production",
+        trigger_type="schedule",
+        status="running",
     )
     session.add(run)
     await session.flush()
@@ -595,9 +653,7 @@ async def test_requeue_expired_lease_resets_running_run(session) -> None:
     leased.status = "running"
     await session.commit()
 
-    acted = await q.requeue_expired_leases(
-        session, now=moment + timedelta(seconds=9999)
-    )
+    acted = await q.requeue_expired_leases(session, now=moment + timedelta(seconds=9999))
     await session.commit()
     assert acted == 1
     await session.refresh(entry)
@@ -685,9 +741,7 @@ async def test_lease_exclude_local_skips_local_head_of_queue(session) -> None:
     await session.flush()
 
     older = datetime.now(UTC) - timedelta(seconds=60)
-    await q.enqueue(
-        session, run_id="r-local-first", workflow_id="w1", available_at=older
-    )
+    await q.enqueue(session, run_id="r-local-first", workflow_id="w1", available_at=older)
     await q.enqueue(
         session,
         run_id="r-docker-second",
@@ -717,9 +771,7 @@ async def test_lease_exclude_local_composes_with_provider_filter(session) -> Non
 
     older = datetime.now(UTC) - timedelta(seconds=60)
     await q.enqueue(session, run_id="r-local", workflow_id="w1", available_at=older)
-    await q.enqueue(
-        session, run_id="r-docker", workflow_id="w1", runner_pool_id=docker_pool.id
-    )
+    await q.enqueue(session, run_id="r-docker", workflow_id="w1", runner_pool_id=docker_pool.id)
     await session.commit()
 
     entry = await q.lease(

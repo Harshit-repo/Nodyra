@@ -40,6 +40,7 @@ from app.schemas import (
 )
 from app.security import _user_from_session_token, optional_current_user, require_permission
 from app.services import queue as run_queue
+from app.services.data_ref import resolve_ref
 from app.services.events import broker
 from app.services.graph_utils import (
     first_trigger_node,
@@ -124,6 +125,7 @@ async def run_workflow(
             parameters=body.parameters or body.data,
             trigger_node_id=body.trigger_node_id,
             execution_mode=("sandboxed" if body.sandbox else None),
+            required_labels=body.required_labels,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
@@ -198,9 +200,7 @@ async def list_all_runs(
     """
     filters = _runs_filters(workflow_id, status, trigger_type, since, until)
 
-    base_stmt = (
-        select(Run).join(Workflow, Run.workflow_id == Workflow.id).where(*filters)
-    )
+    base_stmt = select(Run).join(Workflow, Run.workflow_id == Workflow.id).where(*filters)
     total = await session.scalar(select(func.count()).select_from(base_stmt.subquery()))
 
     stmt = (
@@ -232,6 +232,34 @@ async def list_all_runs(
         for run, workflow_name in rows
     ]
     return PageResponse(items=items, total=total or 0, limit=limit, offset=offset)
+
+
+async def _run_level_error(
+    session: AsyncSession, run: Run, node_runs: list[NodeRun]
+) -> str | None:
+    """The run-level failure reason for a failed run, or ``None``.
+
+    Node-attributable failures already surface through ``node_runs[*].error``.
+    This fills the gap for failures with no owning node — e.g. a graph-
+    validation error (cycle) or a ``run_error`` emitted before any node ran —
+    by reading the latest ``run_error`` event's message. Only queried for
+    ``error`` runs whose node_runs carry no error, so the happy path is untouched.
+    """
+    if run.status != "error":
+        return None
+    if any(getattr(nr, "error", None) for nr in node_runs):
+        return None
+    event = await session.scalar(
+        select(RunEvent)
+        .where(RunEvent.run_id == run.id, RunEvent.event_type == "run_error")
+        .order_by(RunEvent.sequence.desc())
+        .limit(1)
+    )
+    if event is None:
+        return None
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    message = payload.get("error") or payload.get("message")
+    return str(message) if message else None
 
 
 @router.get("/runs/{run_id}", response_model=RunInfo)
@@ -268,8 +296,10 @@ async def get_run(
         runner_pool_id=getattr(run, "runner_pool_id", None),
         runner_id=getattr(run, "runner_id", None),
         batch_id=getattr(run, "batch_id", None),
+        required_labels=getattr(run, "required_labels", None),
         mode=run.mode,
         status=run.status,
+        error=await _run_level_error(session, run, run.node_runs),
         trigger_type=run.trigger_type,
         started_at=run.started_at,
         finished_at=run.finished_at,
@@ -317,8 +347,11 @@ async def rerun_run(run_id: str, session: AsyncSession = Depends(get_session)) -
                 NodeRun.node_id == trigger_id,
             )
         )
-        if trigger_run and isinstance(trigger_run.output, dict):
-            value = trigger_run.output.get("main")
+        # Resolve an offloaded-output marker so a large trigger payload is
+        # restored, not read as an empty ``{"__output_ref": ...}`` dict (OS-1).
+        trigger_output = resolve_ref(trigger_run.output) if trigger_run else None
+        if isinstance(trigger_output, dict):
+            value = trigger_output.get("main")
             if isinstance(value, dict):
                 parameters = value
 
@@ -331,6 +364,7 @@ async def rerun_run(run_id: str, session: AsyncSession = Depends(get_session)) -
         mode=run.mode,
         trigger_type=run.trigger_type,
         parameters=parameters,
+        required_labels=run.required_labels,
     )
     return RunCreated(run_id=new_run_id)
 
@@ -348,9 +382,7 @@ async def retry_from_failure(
     graph, version, version_id = await _graph_for_run(session, run, workflow)
 
     node_runs = (
-        await session.scalars(
-            select(NodeRun).where(NodeRun.run_id == run_id).limit(5000)
-        )
+        await session.scalars(select(NodeRun).where(NodeRun.run_id == run_id).limit(5000))
     ).all()
 
     failed_ids = {nr.node_id for nr in node_runs if nr.status == "error"}
@@ -361,10 +393,16 @@ async def retry_from_failure(
         )
 
     # Reuse every successful upstream node's output via the engine's cache.
+    # Outputs above the inline threshold were offloaded to a
+    # ``{"__output_ref": key}`` marker by the output store; resolve them back to
+    # the real ``{port: value}`` dict here, or the engine would seed the cache
+    # with a marker that has no output ports and feed downstream nodes garbage.
     cache: dict[str, dict] = {}
     for nr in node_runs:
-        if nr.status == "success" and isinstance(nr.output, dict):
-            cache[nr.node_id] = nr.output
+        if nr.status == "success":
+            resolved = resolve_ref(nr.output)
+            if isinstance(resolved, dict):
+                cache[nr.node_id] = resolved
 
     targets = sorted(forward_descendants(graph, failed_ids))
 
@@ -378,6 +416,7 @@ async def retry_from_failure(
         trigger_type=run.trigger_type,
         targets=targets,
         cache=cache or None,
+        required_labels=run.required_labels,
     )
     return RunCreated(run_id=new_run_id)
 
@@ -478,8 +517,11 @@ async def replay_workflow_run(
         for nr in prior_runs:
             if nr.node_id in replay_set:
                 continue
-            if isinstance(nr.output, dict):
-                latest_outputs[nr.node_id] = nr.output  # later wins (most recent)
+            # Resolve offloaded ``__output_ref`` markers back to the full output
+            # before seeding the cache (see retry_from_failure for why).
+            resolved = resolve_ref(nr.output)
+            if isinstance(resolved, dict):
+                latest_outputs[nr.node_id] = resolved  # later wins (most recent)
         replay_cache = latest_outputs or None
 
     replayed = await run_queue.replay(
@@ -801,9 +843,7 @@ async def run_debug_snapshot(
     graph, version, version_id = await _graph_for_run(session, run, workflow)
 
     node_runs = (
-        await session.scalars(
-            select(NodeRun).where(NodeRun.run_id == run_id).limit(5000)
-        )
+        await session.scalars(select(NodeRun).where(NodeRun.run_id == run_id).limit(5000))
     ).all()
 
     failed_nodes = [nr for nr in node_runs if nr.status == "error"]
@@ -813,7 +853,9 @@ async def run_debug_snapshot(
     node_errors: dict[str, str] = {}
     for nr in node_runs:
         if nr.status == "success" and nr.output is not None:
-            upstream_cache[nr.node_id] = nr.output
+            # Resolve offloaded ``__output_ref`` markers so the editor pins the
+            # real upstream value, not the storage marker.
+            upstream_cache[nr.node_id] = resolve_ref(nr.output)
         if nr.status == "error" and nr.error:
             node_errors[nr.node_id] = nr.error
 
@@ -887,5 +929,5 @@ async def run_events(websocket: WebSocket, run_id: str) -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 await hb_task
     finally:
-        with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+        with contextlib.suppress(Exception):
             await websocket.close()

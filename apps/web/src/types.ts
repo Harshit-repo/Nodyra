@@ -524,6 +524,9 @@ export interface RunInfo {
   required_labels?: Record<string, string> | null;
   mode: string;
   status: string;
+  /** Run-level failure reason for failures not attributable to a single
+   *  node (e.g. graph cycle). Populated by GET /runs/{id}. */
+  error?: string | null;
   trigger_type: string;
   started_at: string;
   finished_at: string | null;

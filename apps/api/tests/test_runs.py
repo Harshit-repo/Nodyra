@@ -172,6 +172,43 @@ async def test_run_records_node_errors(client: AsyncClient) -> None:
     assert "nope" in boom["error"]
 
 
+async def test_run_level_error_is_surfaced_on_run_info(client: AsyncClient) -> None:
+    """A failure with no owning node (graph cycle) must surface a reason.
+
+    Regression: run-level failures previously returned status=error with an
+    empty node_runs list and no error field on RunInfo, so the run-detail view
+    could not explain *why* the run failed without fetching the timeline.
+    """
+    workflow_id = (await client.post("/workflows", json={"name": "Cycle"})).json()["id"]
+    cyclic_graph = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {"id": "a", "type": "code", "params": {"code": "result = {}"},
+             "position": {"x": 200, "y": 0}},
+            {"id": "b", "type": "code", "params": {"code": "result = {}"},
+             "position": {"x": 400, "y": 0}},
+        ],
+        "edges": [
+            {"id": "e0", "source": "t", "source_output": "main",
+             "target": "a", "target_input": "input"},
+            {"id": "e1", "source": "a", "source_output": "main",
+             "target": "b", "target_input": "input"},
+            {"id": "e2", "source": "b", "source_output": "main",
+             "target": "a", "target_input": "input"},
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": cyclic_graph})
+
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
+    run = (await client.get(f"/runs/{run_id}")).json()
+    assert run["status"] == "error"
+    # No single node owns a cycle failure, so node_runs carry no error.
+    assert not any(nr.get("error") for nr in run["node_runs"])
+    # ...but the run-level reason must be present and mention the cycle.
+    assert run.get("error"), "RunInfo.error must be populated for run-level failures"
+    assert "cycle" in run["error"].lower()
+
+
 async def test_typed_outputs_persist_and_stream_as_envelopes(
     client: AsyncClient,
 ) -> None:
@@ -495,6 +532,108 @@ async def test_retry_deserializes_typed_cached_outputs(
     retry = (await client.get(f"/runs/{retry_id}")).json()
     results = {n["node_id"]: n for n in retry["node_runs"]}
     assert results["consumer"]["output"]["main"] == "Decimal"
+
+
+async def test_retry_resolves_offloaded_upstream_outputs(
+    client: AsyncClient, monkeypatch, tmp_path
+) -> None:
+    """Regression: a successful upstream node whose output was offloaded to the
+    output store (``{"__output_ref": key}``) must have its real value restored
+    into the retry cache. Otherwise the engine seeds the cache with a marker
+    that has no output ports and silently skips the retried node."""
+    from app.services import output_store
+
+    # Force every non-trivial output through the offload path, into a temp dir.
+    monkeypatch.setattr(output_store, "_INLINE_THRESHOLD_BYTES", 16)
+    monkeypatch.setattr(output_store, "_output_root", lambda: tmp_path)
+
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Offload Retry"})
+    ).json()["id"]
+    graph = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "producer",
+                "type": "code",
+                # Large enough to be offloaded (well over the patched threshold).
+                "params": {"code": "output = list(range(200))"},
+                "position": {"x": 200, "y": 0},
+            },
+            {
+                "id": "boom",
+                "type": "code",
+                "params": {"code": "raise RuntimeError('nope')"},
+                "position": {"x": 400, "y": 0},
+            },
+        ],
+        "edges": [
+            {"id": "e0", "source": "t", "source_output": "main", "target": "producer", "target_input": "input"},
+            {"id": "e1", "source": "producer", "source_output": "main", "target": "boom", "target_input": "input"},
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    original = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
+    first = (await client.get(f"/runs/{original}")).json()
+    statuses = {n["node_id"]: n["status"] for n in first["node_runs"]}
+    assert statuses["producer"] == "success"
+    assert statuses["boom"] == "error"
+
+    # Fix boom to echo the length of its (offloaded) upstream input.
+    fixed = {**graph}
+    fixed["nodes"] = [
+        n if n["id"] != "boom" else {**n, "params": {"code": "output = len(input)"}}
+        for n in graph["nodes"]
+    ]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": fixed})
+
+    retry_id = (await client.post(f"/runs/{original}/retry")).json()["run_id"]
+    retry = (await client.get(f"/runs/{retry_id}")).json()
+    results = {n["node_id"]: n for n in retry["node_runs"]}
+    # With the marker resolved, boom re-runs and sees the real 200-item list.
+    assert results["boom"]["status"] == "success"
+    assert results["boom"]["output"]["main"] == 200
+
+
+async def test_run_detail_resolves_offloaded_output_for_ui(
+    client: AsyncClient, monkeypatch, tmp_path
+) -> None:
+    """Regression (OS-1): the run-detail endpoint must return the real node
+    output, not the ``{"__output_ref": key}`` storage marker, for outputs large
+    enough to be offloaded. ``NodeRunInfo`` is the canonical UI read path."""
+    from app.services import output_store
+
+    monkeypatch.setattr(output_store, "_INLINE_THRESHOLD_BYTES", 16)
+    monkeypatch.setattr(output_store, "_output_root", lambda: tmp_path)
+
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Offload UI"})
+    ).json()["id"]
+    graph = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "big",
+                "type": "code",
+                "params": {"code": "output = list(range(300))"},
+                "position": {"x": 200, "y": 0},
+            },
+        ],
+        "edges": [
+            {"id": "e0", "source": "t", "source_output": "main", "target": "big", "target_input": "input"},
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
+    detail = (await client.get(f"/runs/{run_id}")).json()
+    big = {n["node_id"]: n for n in detail["node_runs"]}["big"]
+
+    assert big["status"] == "success"
+    # The output must be the resolved value, never the storage marker.
+    assert "__output_ref" not in big["output"]
+    assert big["output"]["main"] == list(range(300))
 
 
 async def test_retry_rejects_runs_with_no_failures(client: AsyncClient) -> None:

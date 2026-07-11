@@ -10,6 +10,24 @@ from nodyra.models import WorkflowGraph
 SUPPORTED_PYTHON_VERSIONS = ("3.12", "3.13", "3.14")
 
 
+def normalize_label_map(value: dict[str, Any] | None) -> dict[str, str] | None:
+    if not value:
+        return None
+    labels: dict[str, str] = {}
+    for raw_key, raw_value in value.items():
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        labels[key] = (
+            "true"
+            if raw_value is True
+            else "false"
+            if raw_value is False
+            else str(raw_value).strip()
+        )
+    return labels or None
+
+
 class PageResponse[T](BaseModel):
     items: list[T]
     total: int
@@ -343,11 +361,17 @@ class RunRequest(BaseModel):
     parameters: dict[str, Any] | None = None
     trigger_node_id: str | None = None
     sandbox: bool = False
+    required_labels: dict[str, Any] | None = Field(default=None, max_length=16)
     # Convenience alias for manual triggers — when the caller posts
     # ``{"data": {...}}`` we treat it as ``parameters`` so the manual_trigger
     # node's output mirrors the request body without forcing clients to
     # learn the engine's internal naming.
     data: dict[str, Any] | None = None
+
+    @field_validator("required_labels")
+    @classmethod
+    def _validate_required_labels(cls, value: dict[str, Any] | None) -> dict[str, str] | None:
+        return normalize_label_map(value)
 
 
 class RunCreated(BaseModel):
@@ -400,6 +424,7 @@ class NodeRunInfo(BaseModel):
         # D-12: DB now stores DateTime; keep API returning float (epoch seconds).
         if isinstance(v, datetime):
             from datetime import UTC
+
             if v.tzinfo is None:
                 v = v.replace(tzinfo=UTC)
             return v.timestamp()
@@ -407,10 +432,17 @@ class NodeRunInfo(BaseModel):
 
     @model_validator(mode="after")
     def _redact_storage_internals(self) -> "NodeRunInfo":
-        """Strip internal artifact storage fields from node output before
-        serving them to API clients — storage_key and storage_backend are
-        implementation details that must not leak through the public API."""
-        self.output = _strip_storage_fields(self.output)
+        """Resolve any offloaded-output marker, then strip internal artifact
+        storage fields before serving to API clients.
+
+        Large outputs are persisted as a ``{"__output_ref": key}`` marker by the
+        output store; resolve it back to the real value here so the UI shows the
+        node's output, not the storage marker. ``storage_key``/``storage_backend``
+        remain implementation details that must not leak through the public API.
+        """
+        from app.services.data_ref import resolve_ref
+
+        self.output = _strip_storage_fields(resolve_ref(self.output))
         return self
 
 
@@ -430,6 +462,7 @@ class RunListItem(BaseModel):
     runner_pool_id: str | None = None
     runner_id: str | None = None
     batch_id: str | None = None
+    required_labels: dict[str, str] | None = None
     mode: str
     status: str
     trigger_type: str
@@ -451,8 +484,14 @@ class RunInfo(BaseModel):
     runner_pool_id: str | None = None
     runner_id: str | None = None
     batch_id: str | None = None
+    required_labels: dict[str, str] | None = None
     mode: str
     status: str
+    # Run-level failure reason. Populated for failures that aren't attributable
+    # to a single node (e.g. graph-validation errors like a cycle, or a
+    # run_error emitted before any node executes) so the run-detail view can
+    # show *why* a run failed without the caller having to fetch the timeline.
+    error: str | None = None
     trigger_type: str
     started_at: datetime
     finished_at: datetime | None
@@ -1130,6 +1169,12 @@ class RunBatchCreate(BaseModel):
     runner_pool_id: str | None = None
     parameters: list[dict[str, Any]] = Field(min_length=1, max_length=1000)
     trigger_node_id: str | None = None
+    required_labels: dict[str, Any] | None = Field(default=None, max_length=16)
+
+    @field_validator("required_labels")
+    @classmethod
+    def _validate_required_labels(cls, value: dict[str, Any] | None) -> dict[str, str] | None:
+        return normalize_label_map(value)
 
 
 class RunBatchInfo(BaseModel):
@@ -1244,6 +1289,26 @@ class QueueStats(BaseModel):
     # Multi-tenancy (C6): per-org active counts; "quota_parked" counts queued
     # entries held back by the org's concurrency cap. None when MT is off.
     by_org: dict[str, dict[str, int]] | None = None
+
+
+class DispatcherCapacity(BaseModel):
+    id: str
+    role: str
+    providers: list[str] = Field(default_factory=list)
+    labels: dict[str, str] = Field(default_factory=dict)
+    available_slots: int | None = None
+    max_slots: int | None = None
+    last_seen: float | None = None
+
+
+class QueueCapacity(BaseModel):
+    queued: int = 0
+    leased: int = 0
+    running: int = 0
+    local_available_slots: int = 0
+    local_max_slots: int = 0
+    dispatchers: list[DispatcherCapacity] = Field(default_factory=list)
+    label_blocked_queued: int = 0
 
 
 class DrainRequest(BaseModel):

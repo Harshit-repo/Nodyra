@@ -5209,6 +5209,18 @@ kbd {
   margin-top: 4px;
   font-size: 11.5px;
 }
+/* Run-level failure reason (e.g. graph cycle) shown under the status pill. */
+.exec-detail-run-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--danger, #b91c1c);
+  background: color-mix(in srgb, var(--danger, #b91c1c) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger, #b91c1c) 25%, transparent);
+  word-break: break-word;
+}
 .exec-detail-actions {
   display: flex;
   align-items: center;

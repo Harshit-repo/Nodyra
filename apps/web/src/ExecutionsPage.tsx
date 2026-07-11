@@ -7,6 +7,7 @@ import { SkeletonRows } from "./Skeleton";
 
 import {
   errorMessage,
+  type QueueCapacity,
   type QueueStats,
   type RuntimeModeStatus,
   type RunTimeline,
@@ -15,6 +16,7 @@ import {
 import {
   queryKeys,
   useAllRuns,
+  useQueueCapacity,
   useQueueStats,
   useReplayRunMutation,
   useRetryRunMutation,
@@ -57,16 +59,27 @@ function formatAge(seconds: number | null): string {
   return `${(seconds / 3600).toFixed(1)}h`;
 }
 
+function formatLabels(labels: Record<string, string> | null | undefined): string {
+  if (!labels || Object.keys(labels).length === 0) return "";
+  return Object.entries(labels)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+}
+
 function OpsDashboard() {
   const runtimeQuery = useRuntimeMode({ refetchInterval: 5000 });
   const queueQuery = useQueueStats({ refetchInterval: 5000 });
+  const capacityQuery = useQueueCapacity({ refetchInterval: 5000 });
   const runtime: RuntimeModeStatus | null = runtimeQuery.data ?? null;
   const queue: QueueStats | null = queueQuery.data ?? null;
+  const capacity: QueueCapacity | null = capacityQuery.data ?? null;
   const err =
     runtimeQuery.isError && !runtimeQuery.data
       ? errorMessage(runtimeQuery.error)
       : queueQuery.isError && !queueQuery.data
       ? errorMessage(queueQuery.error)
+      : capacityQuery.isError && !capacityQuery.data
+      ? errorMessage(capacityQuery.error)
       : "";
 
   if (err && !runtime && !queue) {
@@ -81,6 +94,10 @@ function OpsDashboard() {
   const oldestWarn =
     queue.oldest_queued_age_seconds !== null &&
     queue.oldest_queued_age_seconds > 60;
+  const dispatchers = capacity?.dispatchers ?? [];
+  const workerCount = dispatchers.filter((d) =>
+    d.providers.some((provider) => provider === "local" || provider === "docker"),
+  ).length;
 
   return (
     <section className="ops-dash">
@@ -118,6 +135,18 @@ function OpsDashboard() {
           <div className="ops-card-value">{inFlight}</div>
           <div className="ops-card-sub">
             {queue.leased} leased · {queue.running} running
+          </div>
+        </div>
+        <div className="ops-card">
+          <div className="ops-card-label">Worker capacity</div>
+          <div className="ops-card-value">
+            {capacity ? `${capacity.local_available_slots}/${capacity.local_max_slots}` : "-"}
+          </div>
+          <div className="ops-card-sub">
+            {workerCount} dispatcher{workerCount === 1 ? "" : "s"}
+            {capacity?.label_blocked_queued
+              ? ` · ${capacity.label_blocked_queued} label-blocked`
+              : ""}
           </div>
         </div>
         {queue.by_org && Object.keys(queue.by_org).length > 0 && (
@@ -219,6 +248,33 @@ function RunTimelinePanel({ runId }: { runId: string }) {
   );
 }
 
+function RunToolTracePanel({ runId }: { runId: string }) {
+  const timelineQuery = useRunTimeline(runId);
+  const timeline: RunTimeline | null = timelineQuery.data ?? null;
+  const events = (timeline?.events ?? []).filter(
+    (event) => event.type.startsWith("mcp_tool_") || event.type.startsWith("agent_tool_"),
+  );
+  if (!timeline || events.length === 0) return null;
+  return (
+    <details className="exec-timeline-wrap exec-tool-trace" open>
+      <summary>Tool trace</summary>
+      <ol className="run-timeline">
+        {events.map((event, index) => (
+          <li key={`${event.type}-${index}`} className={`run-timeline-event evt-${event.type}`}>
+            <span className="run-timeline-type">{formatTimelineType(event.type)}</span>
+            <span className="run-timeline-summary">{formatToolTraceSummary(event)}</span>
+            {event.ts && (
+              <span className="run-timeline-ts">
+                {new Date(event.ts).toLocaleTimeString()}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 function formatTimelineSummary(e: RunTimelineEvent): string {
   const d = e.data as Record<string, unknown>;
   if (e.type.startsWith("agent_")) {
@@ -226,6 +282,9 @@ function formatTimelineSummary(e: RunTimelineEvent): string {
   }
   if (e.type.startsWith("guardrail_")) {
     return formatGuardrailTimelineSummary(e.type, d);
+  }
+  if (e.type.startsWith("mcp_tool_")) {
+    return formatToolTraceSummary(e);
   }
   if (typeof d.node_id === "string") {
     const parts: string[] = [d.node_id as string];
@@ -247,6 +306,8 @@ function formatTimelineType(type: string): string {
     agent_tool_approval_required: "Agent approval required",
     agent_tool_auto_approved: "Agent auto-approved",
     agent_tool_finished: "Agent tool finished",
+    mcp_tool_started: "MCP tool started",
+    mcp_tool_finished: "MCP tool finished",
     agent_action_completed: "Agent resumed",
     agent_tool_approval_decided: "Agent approval decided",
     agent_resume_prepared: "Agent resume prepared",
@@ -259,6 +320,18 @@ function formatTimelineType(type: string): string {
     dead_lettered: "Dead lettered",
   };
   return labels[type] || type.replaceAll("_", " ");
+}
+
+function formatToolTraceSummary(e: RunTimelineEvent): string {
+  const data = e.data as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof data.connection_name === "string") parts.push(data.connection_name);
+  if (typeof data.tool_name === "string") parts.push(data.tool_name);
+  if (typeof data.agent_node_id === "string") parts.push(data.agent_node_id);
+  if (typeof data.status === "string") parts.push(data.status);
+  if (typeof data.duration_ms === "number") parts.push(`${data.duration_ms}ms`);
+  if (typeof data.error === "string") parts.push(data.error);
+  return parts.join(" · ");
 }
 
 function formatAgentTimelineSummary(
@@ -679,6 +752,14 @@ function RunDetailPanel({
                 {run.status}
               </span>
               <span className="muted"> · {run.trigger_type} · {run.mode}</span>
+              {formatLabels(run.required_labels) && (
+                <span className="muted"> · labels: {formatLabels(run.required_labels)}</span>
+              )}
+            </div>
+          )}
+          {run?.error && (
+            <div className="exec-detail-run-error" role="alert">
+              {run.error}
             </div>
           )}
         </div>
@@ -770,6 +851,8 @@ function RunDetailPanel({
           )}
         </div>
       )}
+
+      {run && <RunToolTracePanel runId={runId} />}
 
       {run && (
         <details className="exec-timeline-wrap">
