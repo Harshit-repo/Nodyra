@@ -1807,6 +1807,131 @@ textarea:focus-visible,
   margin-top: 12px;
 }
 
+.wf-template-empty {
+  display: grid;
+  gap: 18px;
+  padding: 22px 0 10px;
+}
+
+.wf-template-empty-head {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.wf-template-empty-logo {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.wf-template-empty h2 {
+  margin: 8px 0 3px;
+  font-size: 20px;
+}
+
+.wf-template-empty .muted {
+  margin: 0;
+  font-size: 12px;
+}
+
+.wf-template-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.wf-template-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.wf-template-card {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-height: 190px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.wf-template-card:hover {
+  border-color: var(--accent-deep);
+  background: var(--surface-2);
+}
+
+.wf-template-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.wf-template-card h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.wf-template-card p {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.wf-template-card .btn {
+  justify-self: start;
+  align-self: end;
+  margin-top: auto;
+}
+
+.wf-template-readonly {
+  padding: 0 18px;
+}
+
+@media (max-width: 860px) {
+  .wf-template-empty-head {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+  .wf-template-empty-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+  .wf-template-gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .wf-template-empty-head {
+    grid-template-columns: 1fr;
+  }
+  .wf-template-gallery {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---- onboarding welcome ---- */
 .onboarding-welcome {
   max-width: 600px;

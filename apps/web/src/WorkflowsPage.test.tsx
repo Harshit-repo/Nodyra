@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setUser } from "./api";
 import { ToastProvider } from "./ToastProvider";
@@ -10,6 +10,7 @@ const credentialQueryOptions: Array<{ enabled?: boolean }> = [];
 const navigateMock = vi.hoisted(() => vi.fn());
 const createWorkflowMock = vi.hoisted(() => vi.fn());
 const instantiateTemplateMock = vi.hoisted(() => vi.fn());
+const workflowRows = vi.hoisted(() => ({ current: [] as WorkflowSummary[] }));
 const workflow: WorkflowSummary = {
   id: "workflow-1",
   name: "Read-only workflow",
@@ -32,7 +33,7 @@ vi.mock("react-router-dom", async (importOriginal) => {
 });
 
 vi.mock("./queries", () => ({
-  useWorkflows: () => ({ data: [workflow], isError: false, error: null, refetch: vi.fn() }),
+  useWorkflows: () => ({ data: workflowRows.current, isError: false, error: null, refetch: vi.fn() }),
   useTemplates: () => ({
     data: [
       {
@@ -72,6 +73,10 @@ function renderPage() {
     </MemoryRouter>,
   );
 }
+
+beforeEach(() => {
+  workflowRows.current = [workflow];
+});
 
 afterEach(() => {
   setUser(null);
@@ -125,5 +130,55 @@ describe("WorkflowsPage permissions", () => {
     );
     expect(createWorkflowMock).not.toHaveBeenCalled();
     expect(navigateMock).toHaveBeenCalledWith("/workflows/workflow-from-template");
+  });
+
+  it("shows a template gallery for a fresh writable workspace", async () => {
+    workflowRows.current = [];
+    setUser({ id: "editor", email: "editor@example.com", name: "Editor", company: "Nodyra", role: "editor" });
+    createWorkflowMock.mockResolvedValue({
+      id: "workflow-from-gallery",
+      name: "API fetch + Python",
+    });
+
+    renderPage();
+
+    expect(screen.getByRole("heading", { name: "Start with a workflow template" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create with AI" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Blank workflow" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /Use template:/i }).length).toBeGreaterThanOrEqual(4);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use template: API fetch + Python" }));
+
+    await waitFor(() =>
+      expect(createWorkflowMock).toHaveBeenCalledWith({
+        name: "API fetch + Python",
+        graph: expect.objectContaining({
+          nodes: expect.any(Array),
+          edges: expect.any(Array),
+        }),
+      }),
+    );
+    expect(instantiateTemplateMock).not.toHaveBeenCalled();
+    expect(navigateMock).toHaveBeenCalledWith("/workflows/workflow-from-gallery");
+  });
+
+  it("creates a blank workflow and opens the AI draft path from the empty state", async () => {
+    workflowRows.current = [];
+    setUser({ id: "editor", email: "editor@example.com", name: "Editor", company: "Nodyra", role: "editor" });
+    createWorkflowMock.mockResolvedValue({
+      id: "workflow-ai",
+      name: "AI workflow draft",
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create with AI" }));
+
+    await waitFor(() =>
+      expect(createWorkflowMock).toHaveBeenCalledWith({
+        name: "AI workflow draft",
+      }),
+    );
+    expect(navigateMock).toHaveBeenCalledWith("/workflows/workflow-ai?ai=1");
   });
 });

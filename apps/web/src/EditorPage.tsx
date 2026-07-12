@@ -379,6 +379,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
   const listenPathRef = useRef<string | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
+  const aiStartHandledRef = useRef<string | null>(null);
   const saveInProgressRef = useRef(false);
   const loadedWorkflowIdRef = useRef<string | null>(null);
   const creatingChildIdsRef = useRef<Set<string>>(new Set());
@@ -798,6 +799,32 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
       cancelled = true;
     };
   }, [id, status, loadGraph, setPinned, openNdv]);
+
+  useEffect(() => {
+    if (!id || status !== "ready" || aiStartHandledRef.current === id) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("ai") !== "1") return;
+    aiStartHandledRef.current = id;
+    url.searchParams.delete("ai");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+    if (!canWrite) {
+      setMessage("AI draft requires workflow write access.");
+      return;
+    }
+    setAiMode("draft");
+    setAiFixStrategy("minimal");
+    setAiFailedNodeId(null);
+    setAiFailedError(null);
+    setAiPreview(null);
+    setAiPrompt(
+      "Draft a production-ready workflow for this workspace. Ask for any missing details before choosing credentials or external services.",
+    );
+    setAiOpen(true);
+  }, [canWrite, id, status]);
 
   async function saveRunSetting(patch: { environment_id?: string | null; default_runner_pool_id?: string | null }) {
     if (!id) return;

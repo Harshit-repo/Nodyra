@@ -43,6 +43,7 @@ import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
 import { safeGetItem, safeSetItem } from "./safeStorage";
 import { useCan } from "./permissions";
+import { WORKFLOW_TEMPLATES, type WorkflowTemplate } from "./workflowTemplates";
 import type {
   FolderInfo,
   ProviderTriggerStatusCounts,
@@ -58,6 +59,14 @@ const BLANK_TEMPLATE: WorkflowTemplateSummary = {
   description: "Start with an empty canvas.",
   tags: ["blank"],
 };
+
+type GalleryTemplate = WorkflowTemplate & { graph: NonNullable<WorkflowTemplate["graph"]> };
+
+function hasGalleryGraph(template: WorkflowTemplate): template is GalleryTemplate {
+  return template.id !== "blank" && typeof template.graph === "function";
+}
+
+const TEMPLATE_GALLERY = WORKFLOW_TEMPLATES.filter(hasGalleryGraph).slice(0, 6);
 
 const FOLDER_COLORS: Array<{ value: string; label: string }> = [
   { value: "#4c9eff", label: "Blue" },
@@ -304,9 +313,7 @@ export function WorkflowsPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
     return safeGetItem("nodyra-wf-view") === "list" ? "list" : "grid";
   });
-  const [onboardingDismissed, setOnboardingDismissed] = useState(
-    () => safeGetItem("nodyra-onboarding-dismissed") === "1",
-  );
+  const [starterBusy, setStarterBusy] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
@@ -324,6 +331,7 @@ export function WorkflowsPage() {
   const canReadCredentials = useCan("credential:read");
   const deleteWorkflow = useDeleteWorkflowMutation();
   const updateWorkflow = useUpdateWorkflowMutation();
+  const createWorkflowFromStarter = useCreateWorkflowMutation();
   const duplicateWorkflow = useCreateWorkflowMutation();
 
   const workflowsQuery = useWorkflows({
@@ -334,10 +342,6 @@ export function WorkflowsPage() {
     placeholderData: keepPreviousData,
   });
   const deploymentsQuery = useDeployments(undefined, { placeholderData: keepPreviousData });
-  const templatesQuery = useTemplates({
-    enabled: canWrite,
-    placeholderData: keepPreviousData,
-  });
   const credentialsQuery = useCredentials({
     enabled: canReadCredentials,
     placeholderData: keepPreviousData,
@@ -347,7 +351,6 @@ export function WorkflowsPage() {
     { enabled: providerModalWorkflow !== null },
   );
   const workflows = workflowsQuery.data ?? null;
-  const templates = templatesQuery.data ?? [];
   const deployments = deploymentsQuery.data ?? null;
   const credentials = credentialsQuery.data ?? null;
   const error =
@@ -363,6 +366,38 @@ export function WorkflowsPage() {
   function openCreate(templateId = "blank"): void {
     setModalTemplateId(templateId);
     setModal(true);
+  }
+
+  async function createFromTemplate(template: GalleryTemplate): Promise<void> {
+    if (starterBusy) return;
+    setStarterBusy(template.id);
+    try {
+      const created = await createWorkflowFromStarter.mutateAsync({
+        name: template.name,
+        graph: template.graph(),
+      });
+      notify(`"${template.name}" created.`, "success");
+      navigate(`/workflows/${created.id}`);
+    } catch (err) {
+      notify(`Could not create workflow. ${userFriendlyError(err)}`, "error");
+    } finally {
+      setStarterBusy(null);
+    }
+  }
+
+  async function createWithAi(): Promise<void> {
+    if (starterBusy) return;
+    setStarterBusy("ai");
+    try {
+      const created = await createWorkflowFromStarter.mutateAsync({
+        name: "AI workflow draft",
+      });
+      navigate(`/workflows/${created.id}?ai=1`);
+    } catch (err) {
+      notify(`Could not create AI draft workspace. ${userFriendlyError(err)}`, "error");
+    } finally {
+      setStarterBusy(null);
+    }
   }
 
   function resetFilters(): void {
@@ -925,75 +960,76 @@ export function WorkflowsPage() {
         )}
 
         {workflows && workflows.length === 0 && (
-          <div className="empty-state">
-            {!onboardingDismissed && canWrite && (
-              <div className="onboarding-welcome">
-                <Logo size={48} />
-                <h1>Welcome to Nodyra</h1>
+          <section className="wf-template-empty" aria-labelledby="workflow-empty-title">
+            <div className="wf-template-empty-head">
+              <span className="wf-template-empty-logo" aria-hidden="true">
+                <Logo size={34} />
+              </span>
+              <div>
+                <span className="mono-tag">Fresh workspace</span>
+                <h2 id="workflow-empty-title">Start with a workflow template</h2>
                 <p className="muted">
-                  Build Python-native workflow automations with a visual editor.
-                  Connect nodes, run Python code, and deploy to production — all
-                  from your own infrastructure.
+                  {canWrite
+                    ? "Pick a starter, draft one with AI, or open a blank canvas."
+                    : "There are no workflows in this workspace yet."}
                 </p>
-                <div className="onboarding-steps">
-                  <div className="onboarding-step">
-                    <span className="onboarding-step-num">1</span>
-                    <strong>Create a workflow</strong>
-                    <span>Start from scratch or pick a template below.</span>
-                  </div>
-                  <div className="onboarding-step">
-                    <span className="onboarding-step-num">2</span>
-                    <strong>Add and connect nodes</strong>
-                    <span>Drag Python functions, webhooks, and AI agents from the palette.</span>
-                  </div>
-                  <div className="onboarding-step">
-                    <span className="onboarding-step-num">3</span>
-                    <strong>Run and deploy</strong>
-                    <span>Test on the canvas, then publish a version for production.</span>
-                  </div>
-                </div>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => {
-                    safeSetItem("nodyra-onboarding-dismissed", "1");
-                    setOnboardingDismissed(true);
-                  }}
-                >
-                  Dismiss
-                </button>
               </div>
-            )}
-            <Logo size={onboardingDismissed || !canWrite ? 44 : 0} />
-            <h2>No workflows yet</h2>
-            <p className="muted">
-              {canWrite ? "Create your first automation and start wiring Python nodes together." : "There are no workflows in this workspace yet."}
-            </p>
+              {canWrite && (
+                <div className="wf-template-empty-actions">
+                  <button
+                    className="btn btn-primary"
+                    type="button"
+                    onClick={() => void createWithAi()}
+                    disabled={starterBusy !== null}
+                  >
+                    <Lightning size={15} weight="bold" aria-hidden="true" />
+                    {starterBusy === "ai" ? "Creating..." : "Create with AI"}
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => openCreate()}
+                    disabled={starterBusy !== null}
+                  >
+                    <Plus size={15} weight="bold" aria-hidden="true" />
+                    Blank workflow
+                  </button>
+                </div>
+              )}
+            </div>
+
             {canWrite ? (
-              <>
-                <button className="btn btn-primary" onClick={() => openCreate()}>
-                  New workflow
-                </button>
-                {templates.length > 0 && (
-                  <div className="template-strip">
-                    {templates.slice(0, 4).map((template) => (
+              <div className="wf-template-gallery" aria-label="Workflow templates">
+                {TEMPLATE_GALLERY.map((template) => {
+                  const graph = template.graph();
+                  return (
+                    <article className="wf-template-card" key={template.id}>
+                      <div className="wf-template-card-top">
+                        <span>Template</span>
+                        <span>{graph.nodes.length} nodes</span>
+                      </div>
+                      <h3>{template.name}</h3>
+                      <p>{template.description}</p>
                       <button
-                        key={template.id}
+                        className="btn btn-sm btn-ghost"
                         type="button"
-                        onClick={() => {
-                          openCreate(template.id);
-                          setQuery("");
-                        }}
+                        aria-label={`Use template: ${template.name}`}
+                        onClick={() => void createFromTemplate(template)}
+                        disabled={starterBusy !== null}
                       >
-                        {template.name}
+                        {starterBusy === template.id ? "Creating..." : "Use template"}
+                        <CaretRight size={14} weight="bold" aria-hidden="true" />
                       </button>
-                    ))}
-                  </div>
-                )}
-              </>
+                    </article>
+                  );
+                })}
+              </div>
             ) : (
-              <p className="muted">You have read-only access. Ask a workspace editor to create the first workflow.</p>
+              <p className="muted wf-template-readonly">
+                You have read-only access. Ask a workspace editor to create the first workflow.
+              </p>
             )}
-          </div>
+          </section>
         )}
 
         {workflows && workflows.length > 0 && (
