@@ -22,7 +22,17 @@ jobs:
       - run: uv run python scripts/check_rename.py
       # --timeout guards against a hung test wedging the whole run (see the
       # event-broker fix); 300s is generous for the subprocess-spawning tests.
-      - run: uv run pytest --timeout=300 --timeout-method=thread
+      - name: Pytest with retry reporting
+        run: |
+          set -o pipefail
+          uv run pytest --timeout=300 --timeout-method=thread \
+            --reruns 1 --reruns-delay 2 -rR \
+            --junitxml=pytest-results.xml 2>&1 | tee pytest-reruns.log
+      - name: Report pytest retries
+        if: always()
+        run: >-
+          uv run python scripts/report_flaky_tests.py
+          pytest-reruns.log --junit pytest-results.xml
 
   # Compatibility lane: exercise the engine, runtime subprocess, exporter,
   # environment API, and representative built-in nodes on the newest
@@ -38,16 +48,25 @@ jobs:
       - run: uv lock --check
       - run: uv sync --locked --all-packages
       - name: Python 3.14 compatibility suite
+        run: |
+          set -o pipefail
+          uv run pytest --timeout=300 --timeout-method=thread \
+            --reruns 1 --reruns-delay 2 -rR \
+            --junitxml=pytest-results-314.xml \
+            apps/api/tests/test_environments.py \
+            apps/api/tests/test_settings_endpoints.py \
+            apps/api/tests/test_sandbox_container_runtime.py \
+            packages/core/tests \
+            packages/exporter/tests \
+            packages/runtime/tests \
+            packages/nodes/tests/test_builtin_nodes.py \
+            packages/nodes/tests/test_node_requirements.py \
+            2>&1 | tee pytest-reruns-314.log
+      - name: Report pytest retries
+        if: always()
         run: >-
-          uv run pytest --timeout=300 --timeout-method=thread
-          apps/api/tests/test_environments.py
-          apps/api/tests/test_settings_endpoints.py
-          apps/api/tests/test_sandbox_container_runtime.py
-          packages/core/tests
-          packages/exporter/tests
-          packages/runtime/tests
-          packages/nodes/tests/test_builtin_nodes.py
-          packages/nodes/tests/test_node_requirements.py
+          uv run python scripts/report_flaky_tests.py
+          pytest-reruns-314.log --junit pytest-results-314.xml
 
   # Real-backend lane: runs the suite against Postgres + Redis so behaviour that
   # SQLite can't model is actually exercised:
@@ -125,18 +144,38 @@ jobs:
       #   * packages/runtime: spawns the `nodyra_runtime` subprocess and runs a
       #     real workflow graph through it end to end.
       - name: Postgres queue + real subprocess (required)
+        run: |
+          set -o pipefail
+          uv run pytest --timeout=300 --timeout-method=thread \
+            --reruns 1 --reruns-delay 2 -rR \
+            --junitxml=pytest-results-postgres-required.xml \
+            apps/api/tests/test_run_queue.py \
+            packages/runtime/tests \
+            2>&1 | tee pytest-reruns-postgres-required.log
+      - name: Report pytest retries — Postgres required lane
+        if: always()
         run: >-
-          uv run pytest --timeout=300 --timeout-method=thread
-          apps/api/tests/test_run_queue.py
-          packages/runtime/tests
+          uv run python scripts/report_flaky_tests.py
+          pytest-reruns-postgres-required.log
+          --junit pytest-results-postgres-required.xml
 
       # Full API suite on Postgres. Surfaces remaining cross-backend gaps
       # (orphan-row FK violations, async-dispatch ordering sensitivity).
       # Blocking — must pass before merge.
       - name: Full API suite on Postgres
         continue-on-error: false
+        run: |
+          set -o pipefail
+          uv run pytest --timeout=300 --timeout-method=thread \
+            --reruns 1 --reruns-delay 2 -rR \
+            --junitxml=pytest-results-postgres-api.xml \
+            apps/api/tests \
+            2>&1 | tee pytest-reruns-postgres-api.log
+      - name: Report pytest retries — Postgres API lane
+        if: always()
         run: >-
-          uv run pytest --timeout=300 --timeout-method=thread apps/api/tests
+          uv run python scripts/report_flaky_tests.py
+          pytest-reruns-postgres-api.log --junit pytest-results-postgres-api.xml
 
   # Security lane: dependency CVE audit, static security linting, and a scoped
   # type check of the security-critical modules.

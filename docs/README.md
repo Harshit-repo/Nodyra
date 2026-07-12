@@ -41,6 +41,8 @@
 
 - [Architecture](architecture.md) — components, execution model, schema,
   security boundaries.
+- [Continuous integration](ci.md) — CI lanes, flake retry reporting, and
+  expected maintainer response.
 - [ADRs](adr/) — architecture decision records.
 - [Status matrix](status-matrix.md) — shipped / beta / scaffolded / planned.
 
