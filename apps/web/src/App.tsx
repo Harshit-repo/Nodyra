@@ -16,6 +16,7 @@ import { PageErrorBoundary } from "./PageErrorBoundary";
 // in the codebase for continued iteration.
 // import { AppAssistant } from "./AppAssistant";
 import { ConfirmProvider } from "./ConfirmProvider";
+import { FirstRunWizard } from "./FirstRunWizard";
 import { LoginPage } from "./LoginPage";
 import { queryClient } from "./queries";
 import { ToastProvider } from "./ToastProvider";
@@ -213,6 +214,7 @@ export default function App() {
               {auth.license_notice}
             </div>
           )}
+          <FirstRunWizard auth={auth} />
           <Routes>
             <Route element={<HomeLayout />}>
               <Route path="/" element={<PageErrorBoundary><WorkflowsPage /></PageErrorBoundary>} />

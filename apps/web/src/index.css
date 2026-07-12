@@ -1910,6 +1910,115 @@ textarea:focus-visible,
   padding: 0 18px;
 }
 
+.first-run-modal {
+  max-width: 640px;
+}
+
+.first-run-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.first-run-head h2 {
+  margin: 7px 0 0;
+}
+
+.first-run-progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 18px 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.first-run-progress li {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink-3);
+  background: var(--bg);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.first-run-progress li span {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.first-run-progress li.is-active {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  color: var(--accent-2);
+  background: var(--accent-glow);
+}
+
+.first-run-progress li.is-active span {
+  background: var(--accent);
+  color: #06101e;
+}
+
+.first-run-step {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 13px;
+  align-items: start;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.first-run-step-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
+  border-radius: 10px;
+  color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.first-run-step h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.first-run-step p {
+  margin: 5px 0 12px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.first-run-step .btn {
+  margin-top: 0;
+}
+
+.first-run-actions {
+  justify-content: space-between;
+}
+
+.first-run-actions > div {
+  display: flex;
+  gap: 8px;
+}
+
 @media (max-width: 860px) {
   .wf-template-empty-head {
     grid-template-columns: 44px minmax(0, 1fr);
@@ -1929,6 +2038,17 @@ textarea:focus-visible,
   }
   .wf-template-gallery {
     grid-template-columns: 1fr;
+  }
+  .first-run-progress {
+    grid-template-columns: 1fr;
+  }
+  .first-run-step {
+    grid-template-columns: 1fr;
+  }
+  .first-run-actions,
+  .first-run-actions > div {
+    align-items: stretch;
+    flex-direction: column-reverse;
   }
 }
 
