@@ -22,6 +22,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
   value: "redis"
 - name: RUNTIME_MODE
   value: "production"
+- name: API_REPLICA_COUNT
+  value: {{ .Values.api.replicas | quote }}
+- name: WORKER_REPLICA_COUNT
+  value: {{ .Values.worker.replicas | quote }}
 - name: SECRET_KEY
   valueFrom:
     secretKeyRef:

@@ -52,14 +52,34 @@ async def test_runtime_mode_endpoint_reports_topology(client: AsyncClient) -> No
         "webhook_role",
         "artifact_backend",
         "runner_providers",
+        "replica_safe",
+        "replica_unsafe_reasons",
         "allow_insecure",
         "warnings",
     ):
         assert key in body
     assert isinstance(body["runner_providers"], list)
+    assert isinstance(body["replica_safe"], bool)
+    assert isinstance(body["replica_unsafe_reasons"], list)
     assert isinstance(body["warnings"], list)
     # The database dialect is derived from DATABASE_URL, not echoed verbatim.
     assert "://" not in body["database_dialect"]
+
+
+async def test_runtime_mode_flags_replica_unsafe_without_redis(
+    client: AsyncClient, monkeypatch
+) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "queue_backend", "none")
+    monkeypatch.setattr(app_settings, "api_replica_count", 2)
+    monkeypatch.setattr(app_settings, "auth_required", False)
+
+    resp = await client.get("/ops/runtime-mode")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["replica_safe"] is False
+    assert any("run event broker" in reason for reason in body["replica_unsafe_reasons"])
 
 
 async def test_queue_stats_empty(client: AsyncClient) -> None:

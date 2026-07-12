@@ -60,6 +60,14 @@ run for another worker.
 (`docker compose up -d --scale worker=3`, helm `worker.replicas`, or an agent
 runner join token from the UI): see [deployment/workers.md](deployment/workers.md).
 
+`GET /ops/runtime-mode` reports `replica_safe` and
+`replica_unsafe_reasons`. If Redis is disabled while the deployment is scaled
+or auth/multi-tenancy is enabled, those fields call out per-replica fallbacks
+such as run-event buffers, rate-limit counters, OAuth introspection cache, and
+secret-redaction cache invalidation. Helm sets `API_REPLICA_COUNT` and
+`WORKER_REPLICA_COUNT` automatically; set them yourself in other orchestrators
+when using multiple API or worker replicas.
+
 ## Kubernetes (Helm)
 
 ```sh
@@ -133,6 +141,7 @@ source of truth.
 | `QUEUE_DISPATCH_SHUTDOWN_TIMEOUT_SECONDS` | `5.0` | How long the dispatch loop waits for in-flight work on shutdown. |
 | `QUEUE_DRAIN` | `false` | When `true`, the dispatch loop stops leasing new entries but keeps requeueing expired leases. Use the `/ops/drain` endpoint to toggle at runtime — see below. |
 | `WORKER_LABELS` | unset | Worker-only comma-separated capability labels, for example `gpu=a100,mem=high`. Runs with `required_labels` only lease to workers whose labels contain every requested key/value pair. |
+| `API_REPLICA_COUNT` / `WORKER_REPLICA_COUNT` | `1` | Advisory replica counts used by `/ops/runtime-mode` to flag Redis-less per-replica fallbacks before scale-out. Helm sets these automatically. |
 
 #### Worker label routing
 

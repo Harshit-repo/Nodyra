@@ -42,6 +42,32 @@ class Settings(BaseSettings):
     # the in-process broker would strand WebSocket clients on the API replica)
     # and Postgres (SKIP LOCKED queue leasing). See dispatch_topology_errors().
     dispatch_role: Literal["inline", "worker", "control", "disabled"] = "inline"
+    # Advisory replica counts for runtime-mode diagnostics. Helm wires these
+    # from chart replica values; standalone deploys can also set common worker
+    # count env vars so /ops/runtime-mode can flag per-process fallbacks.
+    api_replica_count: int = Field(
+        default=1,
+        ge=1,
+        validation_alias=AliasChoices(
+            "API_REPLICA_COUNT",
+            "NODYRA_API_REPLICA_COUNT",
+            "NODYRA_API_REPLICAS",
+            "API_REPLICAS",
+            "WEB_CONCURRENCY",
+            "UVICORN_WORKERS",
+            "GUNICORN_WORKERS",
+        ),
+    )
+    worker_replica_count: int = Field(
+        default=1,
+        ge=1,
+        validation_alias=AliasChoices(
+            "WORKER_REPLICA_COUNT",
+            "NODYRA_WORKER_REPLICA_COUNT",
+            "NODYRA_WORKER_REPLICAS",
+            "WORKER_REPLICAS",
+        ),
+    )
     # ``ingress`` (default) is the production posture: this process serves the
     # public ``/webhook/{path}`` routes. ``inline`` is the same routing for a
     # minimal single-user setup. ``disabled`` unmounts the public webhook routes
@@ -480,6 +506,61 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.runtime_mode == "production"
 
+    def multi_replica_signals(self) -> list[str]:
+        """Signals that this process is part of, or configured for, scale-out."""
+        signals: list[str] = []
+        if self.api_replica_count > 1:
+            signals.append(f"api_replica_count={self.api_replica_count}")
+        if self.worker_replica_count > 1:
+            signals.append(f"worker_replica_count={self.worker_replica_count}")
+        if self.dispatch_role != "inline":
+            signals.append(f"dispatch_role={self.dispatch_role}")
+        if self.scheduler_role == "leader":
+            signals.append("scheduler_role=leader")
+        if self.auth_required:
+            signals.append("auth_required=True")
+        if self.multi_tenancy_enabled:
+            signals.append("multi_tenancy_enabled=True")
+        return signals
+
+    def replica_unsafe_reasons(self) -> list[str]:
+        """Per-replica fallbacks that need Redis before horizontal scaling.
+
+        These are advisory for local/single-process installs, but production
+        operators need them surfaced before a scale-out silently weakens rate
+        limits, event delivery, token-cache behaviour, or secret-cache
+        invalidation.
+        """
+        if self.queue_backend == "redis":
+            return []
+        signals = self.multi_replica_signals()
+        if not signals:
+            return []
+
+        reasons = [
+            "run event broker uses per-replica in-process buffers without Redis",
+            "secret redaction cache invalidation is local to each replica without Redis",
+        ]
+        if (
+            self.auth_rate_limit_enabled
+            or self.webhook_rate_limit_enabled
+            or self.workflow_run_rate_per_minute > 0
+            or self.mcp_server_enabled
+        ):
+            reasons.append(
+                "auth, webhook, MCP, and workflow-run rate limits use per-replica "
+                "counters without Redis"
+            )
+        if self.mcp_authorization_server_url or self.mcp_oauth_introspection_url:
+            reasons.append(
+                "MCP OAuth introspection cache is per-replica without Redis-backed "
+                "coordination"
+            )
+        return [f"{reason} ({'; '.join(signals)})" for reason in reasons]
+
+    def replica_safe(self) -> bool:
+        return not self.replica_unsafe_reasons()
+
     def dispatch_topology_errors(self) -> list[str]:
         """Hard misconfigurations for split dispatch topologies. Unlike
         ``runtime_warnings()`` these abort startup: a worker/disabled process
@@ -605,6 +686,8 @@ class Settings(BaseSettings):
                 "set queue_backend=redis so multiple workers share one durable "
                 "run queue."
             )
+        for reason in self.replica_unsafe_reasons():
+            warnings.append(f"replica_safe=False: {reason}. Set queue_backend=redis.")
         if self.webhook_role == "inline":
             warnings.append(
                 "RUNTIME_MODE=production with webhook_role=inline; inbound "

@@ -197,6 +197,7 @@ async def runtime_mode(
 
     providers = await session.scalars(select(RunnerPool.provider).distinct())
     runner_providers = sorted({p for p in providers if p})
+    replica_unsafe_reasons = settings.replica_unsafe_reasons()
 
     return RuntimeModeStatus(
         mode=settings.runtime_mode,
@@ -206,6 +207,8 @@ async def runtime_mode(
         webhook_role=settings.webhook_role,
         artifact_backend=settings.artifact_storage_backend,
         runner_providers=runner_providers,
+        replica_safe=not replica_unsafe_reasons,
+        replica_unsafe_reasons=replica_unsafe_reasons,
         allow_insecure=settings.runtime_allow_insecure,
         otel_enabled=settings.otel_enabled,
         warnings=settings.runtime_warnings(),

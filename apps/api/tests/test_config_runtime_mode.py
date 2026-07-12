@@ -76,6 +76,42 @@ def test_production_fully_configured_has_no_warnings():
     assert s.runtime_warnings() == []
 
 
+def test_replica_safe_when_redis_is_configured():
+    s = _settings(
+        runtime_mode="production",
+        database_url=_PG,
+        artifact_storage_backend="s3",
+        artifact_s3_bucket="prod-nodyra-artifacts",
+        queue_backend="redis",
+        api_replica_count=3,
+        auth_required=True,
+    )
+    assert s.replica_safe() is True
+    assert s.replica_unsafe_reasons() == []
+
+
+def test_no_redis_flags_replica_unsafe_scale_out_subsystems():
+    s = _settings(
+        runtime_mode="production",
+        database_url=_PG,
+        artifact_storage_backend="s3",
+        artifact_s3_bucket="prod-nodyra-artifacts",
+        queue_backend="none",
+        api_replica_count=2,
+        auth_required=True,
+        mcp_authorization_server_url="https://issuer.example.com",
+        mcp_oauth_introspection_url="https://issuer.example.com/introspect",
+    )
+    reasons = s.replica_unsafe_reasons()
+    assert s.replica_safe() is False
+    assert any("run event broker" in reason for reason in reasons)
+    assert any("rate limits" in reason for reason in reasons)
+    assert any("secret redaction cache" in reason for reason in reasons)
+    assert any("MCP OAuth introspection cache" in reason for reason in reasons)
+    assert any("api_replica_count=2" in reason for reason in reasons)
+    assert any("replica_safe=False" in warning for warning in s.runtime_warnings())
+
+
 def test_local_mode_never_warns_even_with_sqlite_and_local_artifacts():
     s = _settings(
         runtime_mode="local",

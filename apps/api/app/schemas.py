@@ -1264,6 +1264,8 @@ class RuntimeModeStatus(BaseModel):
     webhook_role: str
     artifact_backend: str
     runner_providers: list[str]
+    replica_safe: bool = True
+    replica_unsafe_reasons: list[str] = Field(default_factory=list)
     allow_insecure: bool
     otel_enabled: bool
     warnings: list[str]
