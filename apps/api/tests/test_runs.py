@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.config import settings
 from app.services.events import broker
@@ -207,6 +207,23 @@ async def test_run_level_error_is_surfaced_on_run_info(client: AsyncClient) -> N
     # ...but the run-level reason must be present and mention the cycle.
     assert run.get("error"), "RunInfo.error must be populated for run-level failures"
     assert "cycle" in run["error"].lower()
+
+    from app.db import get_session
+    from app.main import app as fastapi_app
+    from app.models import Run, RunEvent
+
+    override = fastapi_app.dependency_overrides[get_session]
+    async for session in override():
+        persisted = await session.get(Run, run_id)
+        assert persisted is not None
+        assert persisted.error
+        assert "cycle" in persisted.error.lower()
+        await session.execute(delete(RunEvent).where(RunEvent.run_id == run_id))
+        await session.commit()
+        break
+
+    retained = (await client.get(f"/runs/{run_id}")).json()
+    assert retained["error"] == run["error"]
 
 
 async def test_typed_outputs_persist_and_stream_as_envelopes(

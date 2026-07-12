@@ -278,6 +278,29 @@ def _extract_webhook_response(
     return None
 
 
+def _run_error_message(event: dict[str, Any]) -> str | None:
+    message = event.get("error") or event.get("message")
+    return str(message) if message else None
+
+
+def _extract_run_level_error(
+    *,
+    status: str,
+    node_run_records: dict[tuple[str, tuple], dict],
+    run_events: deque[dict[str, Any]],
+) -> str | None:
+    """Return the durable run-level failure reason, when no node owns it."""
+    if status != "error":
+        return None
+    if any(event.get("error") for event in node_run_records.values()):
+        return None
+    for item in reversed(run_events):
+        event = item.get("event")
+        if isinstance(event, dict) and event.get("type") == "run_error":
+            return _run_error_message(event)
+    return None
+
+
 async def persist_run_outcome(
     session_factory,
     *,
@@ -301,6 +324,11 @@ async def persist_run_outcome(
             if run is not None:
                 run.status = status
                 run.finished_at = None if status == "waiting" else datetime.now(UTC)
+                run.error = _extract_run_level_error(
+                    status=status,
+                    node_run_records=node_run_records,
+                    run_events=run_events,
+                )
                 # Clear checkpoint on terminal states (keep for "waiting").
                 if status != "waiting":
                     run.checkpoint = None

@@ -755,6 +755,7 @@ class Run(Base):
     queue_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

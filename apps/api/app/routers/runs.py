@@ -249,6 +249,8 @@ async def _run_level_error(
         return None
     if any(getattr(nr, "error", None) for nr in node_runs):
         return None
+    if run.error:
+        return run.error
     event = await session.scalar(
         select(RunEvent)
         .where(RunEvent.run_id == run.id, RunEvent.event_type == "run_error")
@@ -534,6 +536,7 @@ async def replay_workflow_run(
             "cancelled entries can be replayed.",
         )
     run.status = "queued"
+    run.error = None
     run.finished_at = None
     await session.commit()
     return RunReplayResponse(run_id=run_id, previous_status=previous)
