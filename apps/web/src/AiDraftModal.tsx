@@ -1,9 +1,14 @@
-import { useRef, useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 
 import type { AiFixStrategy, AiWorkflowDraftResponse, WorkflowGraph } from "./types";
 import { useModalA11y } from "./useModalA11y";
-import { GraphDiffView } from "./editor/WorkflowDiffView";
+
+const GraphDiffView = lazy(() =>
+  import("./editor/WorkflowDiffView").then((module) => ({
+    default: module.GraphDiffView,
+  })),
+);
 
 interface AiDraftModalProps {
   mode: "draft" | "fix";
@@ -206,12 +211,14 @@ export function AiDraftModal({
               <div className="modal-body" style={{ padding: 0 }}>
                 <div className="ai-diff-view" style={{ height: "55vh", minHeight: "400px" }}>
                   {preview && currentGraph && (
-                    <GraphDiffView
-                      baseGraph={currentGraph}
-                      compareGraph={preview.graph}
-                      rejectedNodeIds={rejectedNodeIds}
-                      onToggleReject={onToggleRejectNode}
-                    />
+                    <Suspense fallback={<div className="inspector-empty">Loading diff...</div>}>
+                      <GraphDiffView
+                        baseGraph={currentGraph}
+                        compareGraph={preview.graph}
+                        rejectedNodeIds={rejectedNodeIds}
+                        onToggleReject={onToggleRejectNode}
+                      />
+                    </Suspense>
                   )}
                 </div>
               </div>

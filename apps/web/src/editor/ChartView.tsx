@@ -31,7 +31,7 @@ function niceLabel(value: unknown): string {
 
 export function ChartView({ chart }: { chart: ChartRef }) {
   const [hover, setHover] = useState<Hover | null>(null);
-  const [mode, setMode] = useState<"simple" | "interactive">("interactive");
+  const [mode, setMode] = useState<"simple" | "interactive">("simple");
 
   const flatY = useMemo(
     () =>
