@@ -172,6 +172,7 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByText("Connect an AI agent")).toBeTruthy();
     expect(screen.getAllByText(/mcpServers/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Bearer <your-api-token>/)).toBeTruthy();
+    expect(screen.getAllByText(/\/mcp/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Bearer <paste-token-here>/).length).toBeGreaterThan(0);
   });
 });

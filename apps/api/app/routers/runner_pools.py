@@ -615,6 +615,10 @@ async def remove_docker_runner_ep(
         await docker_workers.remove_docker_runner(session, runner, client=client, force=force)
     except docker_workers.RunnerBusy as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except docker_workers.DaemonUnreachable as exc:
+        # Removing would orphan a live container (daemon down). Surface a
+        # retryable 502 — matching the spawn endpoint — not an opaque 500.
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

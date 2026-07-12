@@ -3,9 +3,10 @@ import contextlib
 import logging
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +30,47 @@ from app.tenancy import DEFAULT_ORG_ID, active_org_id
 
 router = APIRouter(tags=["artifacts"])
 logger = logging.getLogger(__name__)
+
+
+def _parse_byte_range(value: str, size: int) -> tuple[int, int] | None:
+    if size <= 0 or not value.startswith("bytes=") or "," in value:
+        return None
+    spec = value.removeprefix("bytes=").strip()
+    if "-" not in spec:
+        return None
+    start_raw, end_raw = spec.split("-", 1)
+    try:
+        if start_raw == "":
+            suffix = int(end_raw)
+            if suffix <= 0:
+                return None
+            start = max(0, size - suffix)
+            end = size - 1
+        else:
+            start = int(start_raw)
+            end = int(end_raw) if end_raw else size - 1
+    except ValueError:
+        return None
+    if start < 0 or end < start or start >= size:
+        return None
+    return start, min(end, size - 1)
+
+
+def _iter_file_range(path: Path, start: int, end: int):
+    with path.open("rb") as handle:
+        handle.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            chunk = handle.read(min(64 * 1024, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    fallback = filename.replace("\\", "_").replace('"', "_").replace("\r", "_").replace("\n", "_")
+    return f"{disposition}; filename=\"{fallback}\"; filename*=utf-8''{quote(filename)}"
 
 
 def _runless_artifact_visible(row: Artifact) -> bool:
@@ -119,9 +161,7 @@ async def list_artifacts(
     stmt = select(Artifact)
     count_stmt = select(func.count()).select_from(Artifact)
     if workflow_id:
-        stmt = stmt.join(Run, Artifact.run_id == Run.id).where(
-            Run.workflow_id == workflow_id
-        )
+        stmt = stmt.join(Run, Artifact.run_id == Run.id).where(Run.workflow_id == workflow_id)
         count_stmt = count_stmt.join(Run, Artifact.run_id == Run.id).where(
             Run.workflow_id == workflow_id
         )
@@ -137,9 +177,7 @@ async def list_artifacts(
         count_stmt = count_stmt.where(Artifact.name.ilike(pattern))
     total = int(await session.scalar(count_stmt) or 0)
     rows = (
-        await session.scalars(
-            stmt.order_by(Artifact.created_at.desc()).limit(limit).offset(offset)
-        )
+        await session.scalars(stmt.order_by(Artifact.created_at.desc()).limit(limit).offset(offset))
     ).all()
     return ArtifactListResponse(items=[_info(row) for row in rows], total=total)
 
@@ -154,6 +192,7 @@ async def get_artifact(
 @router.get("/artifacts/{artifact_id}/download")
 async def download_artifact(
     artifact_id: str,
+    request: Request,
     inline: bool = False,
     session: AsyncSession = Depends(get_session),
 ):
@@ -178,6 +217,27 @@ async def download_artifact(
     # forcing a download (used by the artifact preview in the editor).
     disposition = "inline" if inline else "attachment"
     if download.path is not None:
+        size = download.path.stat().st_size
+        range_header = request.headers.get("range")
+        if range_header:
+            byte_range = _parse_byte_range(range_header, size)
+            if byte_range is None:
+                return Response(
+                    status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                    headers={"Content-Range": f"bytes */{size}"},
+                )
+            start, end = byte_range
+            return StreamingResponse(
+                _iter_file_range(download.path, start, end),
+                status_code=status.HTTP_206_PARTIAL_CONTENT,
+                media_type=download.content_type,
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(end - start + 1),
+                    "Content-Range": f"bytes {start}-{end}/{size}",
+                    "Content-Disposition": _content_disposition(disposition, download.filename),
+                },
+            )
         return FileResponse(
             download.path,
             media_type=download.content_type,

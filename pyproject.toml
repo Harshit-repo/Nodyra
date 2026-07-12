@@ -10,6 +10,11 @@ package = false
 
 [tool.uv.workspace]
 members = ["apps/api", "packages/*"]
+# graphify (the codebase knowledge-graph tool) writes its output to
+# packages/graphify-out/, which matches the packages/* glob above but has no
+# pyproject.toml — that breaks every `uv run`/`uv sync` invocation with
+# "Workspace member `packages/graphify-out` is missing a `pyproject.toml`".
+exclude = ["packages/graphify-out"]
 
 [tool.uv.sources]
 nodyra-core = { workspace = true }

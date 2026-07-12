@@ -163,11 +163,13 @@ def test_bigquery_query_missing_module(store_ctx) -> None:
 # dbt_cloud_trigger_job
 # ---------------------------------------------------------------------------
 
-def _make_dbt_urlopen(responses: list[bytes]):
+def _make_dbt_urlopen(responses: list[bytes], seen_timeouts: list[int] | None = None):
     """Return a side_effect function for urllib.request.urlopen."""
     idx = {"i": 0}
 
-    def _urlopen(req):
+    def _urlopen(req, timeout=None):
+        if seen_timeouts is not None:
+            seen_timeouts.append(timeout)
         body = responses[idx["i"]]
         idx["i"] += 1
         mock = MagicMock()
@@ -218,6 +220,25 @@ def test_dbt_cloud_trigger_job_waits(monkeypatch) -> None:
 
     assert result["run_id"] == 99
     assert result["status"] == "Success"
+
+
+def test_dbt_cloud_trigger_job_passes_bounded_request_timeout() -> None:
+    trigger_resp = json.dumps({"data": {"id": 77}}).encode()
+    seen_timeouts: list[int] = []
+
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_make_dbt_urlopen([trigger_resp], seen_timeouts),
+    ):
+        dbt_cloud_trigger_job(
+            input=None,
+            credentials={"api_token": "tok", "account_id": "123"},
+            job_id="456",
+            timeout=120,
+            wait_for_completion=False,
+        )
+
+    assert seen_timeouts == [30]
 
 
 def test_dbt_cloud_trigger_job_requires_job_id() -> None:

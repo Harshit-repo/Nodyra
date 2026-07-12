@@ -225,6 +225,7 @@ def dbt_cloud_trigger_job(
     import json as _json
     import time as _time
     import urllib.error as _urlerr
+    import urllib.parse as _urlparse
     import urllib.request as _urlreq
 
     if not job_id:
@@ -243,12 +244,18 @@ def dbt_cloud_trigger_job(
         "Authorization": f"Token {api_token}",
         "Content-Type": "application/json",
     }
+    request_timeout = max(1, min(30, int(timeout or 600)))
 
     def _api(method: str, path: str, body: dict | None = None) -> dict:
         data = _json.dumps(body).encode() if body else None
-        req = _urlreq.Request(f"{base}{path}", data=data, headers=headers, method=method)
+        url = f"{base}{path}"
+        parsed = _urlparse.urlparse(url)
+        if parsed.scheme != "https" or parsed.netloc != "cloud.getdbt.com":
+            raise ValueError("dbt_cloud_trigger_job: refused unexpected dbt Cloud API URL")
+        req = _urlreq.Request(url, data=data, headers=headers, method=method)
         try:
-            with _urlreq.urlopen(req) as resp:
+            # B310 reviewed: url is locked to dbt Cloud HTTPS immediately above.
+            with _urlreq.urlopen(req, timeout=request_timeout) as resp:  # nosec B310
                 return _json.loads(resp.read())
         except _urlerr.HTTPError as exc:
             raise RuntimeError(f"dbt Cloud API error {exc.code}: {exc.read().decode()}") from exc

@@ -50,9 +50,7 @@ class Organization(Base):
     # Phase E: this org's KEK (data-encryption-key wrapper), itself wrapped by
     # the master KEK or an external KMS. NULL until the org-KEK migration runs.
     wrapped_org_kek: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Membership(Base):
@@ -61,9 +59,7 @@ class Membership(Base):
     different orgs); ``User.role`` remains the fallback while the flag is off."""
 
     __tablename__ = "memberships"
-    __table_args__ = (
-        UniqueConstraint("org_id", "user_id", name="uq_membership_org_user"),
-    )
+    __table_args__ = (UniqueConstraint("org_id", "user_id", name="uq_membership_org_user"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
@@ -74,11 +70,13 @@ class Membership(Base):
     )
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
     custom_role_id: Mapped[str | None] = mapped_column(
-        String(32), ForeignKey("custom_roles.id", ondelete="SET NULL"), index=True, nullable=True, default=None
+        String(32),
+        ForeignKey("custom_roles.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        default=None,
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     custom_role: Mapped["CustomRole | None"] = relationship(
         "CustomRole", foreign_keys=[custom_role_id], lazy="joined"
     )
@@ -93,9 +91,7 @@ class CustomRole(Base):
     """
 
     __tablename__ = "custom_roles"
-    __table_args__ = (
-        UniqueConstraint("org_id", "name", name="uq_custom_roles_org_name"),
-    )
+    __table_args__ = (UniqueConstraint("org_id", "name", name="uq_custom_roles_org_name"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
@@ -103,9 +99,7 @@ class CustomRole(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     permissions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class OrgSettings(Base):
@@ -128,9 +122,7 @@ class OrgSettings(Base):
     executions_per_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_map_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_loop_iterations: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    max_inflight_subworkflows: Mapped[int | None] = mapped_column(
-        Integer, nullable=True
-    )
+    max_inflight_subworkflows: Mapped[int | None] = mapped_column(Integer, nullable=True)
     storage_quota_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -148,9 +140,7 @@ class RunMeter(Base):
     """
 
     __tablename__ = "run_meters"
-    __table_args__ = (
-        UniqueConstraint("org_id", "day", name="uq_run_meters_org_day"),
-    )
+    __table_args__ = (UniqueConstraint("org_id", "day", name="uq_run_meters_org_day"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
@@ -208,14 +198,10 @@ class Environment(Base):
     runner_pool_id: Mapped[str | None] = mapped_column(
         ForeignKey("runner_pools.id", ondelete="SET NULL"), index=True, nullable=True
     )
-    worker_rss_estimate_bytes: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True
-    )
+    worker_rss_estimate_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     backend: Mapped[str] = mapped_column(String(20), default="venv", nullable=False)
     backend_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -258,15 +244,9 @@ class EnvironmentBuildJob(Base):
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     requested_by_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -303,9 +283,7 @@ class RunnerPool(Base):
     provider_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     max_concurrent_runs: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
     aws_secret_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -330,7 +308,9 @@ class Runner(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"),
-        index=True, nullable=False, server_default="default",
+        index=True,
+        nullable=False,
+        server_default="default",
     )
     pool_id: Mapped[str] = mapped_column(
         ForeignKey("runner_pools.id", ondelete="CASCADE"), index=True, nullable=False
@@ -339,9 +319,7 @@ class Runner(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="offline")
     token_hash: Mapped[str] = mapped_column(Text, nullable=False, default="")
     capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    last_seen_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     current_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_concurrent_runs: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     cached_env_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
@@ -352,9 +330,7 @@ class Runner(Base):
     token_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -392,12 +368,8 @@ class RunBatch(Base):
     failed_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     cancelled_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     parameters: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Folder(Base):
@@ -412,9 +384,7 @@ class Folder(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     color: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -445,9 +415,7 @@ class GithubSyncConfig(Base):
     webhook_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     encrypted_webhook_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     encrypted_webhook_secret_dek: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -455,6 +423,7 @@ class GithubSyncConfig(Base):
     def decrypted_webhook_secret(self, org_kek: bytes | None = None) -> str | None:
         """Return the plaintext webhook secret, trying encrypted store first."""
         from app.services.crypto import decrypt_credential
+
         if self.encrypted_webhook_secret is not None:
             data = decrypt_credential(
                 self.encrypted_webhook_secret,
@@ -491,13 +460,9 @@ class GithubSyncJob(Base):
         String(20), nullable=False, default="pending"
     )  # pending | processing | done | failed
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    next_retry_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Workflow(Base):
@@ -516,7 +481,9 @@ class Workflow(Base):
         # ALM-2: SET NULL so deleting an environment leaves the workflow on the
         # default env (the runner already treats a NULL env_id as the default)
         # rather than blocking the delete or orphaning a dead reference.
-        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True, index=True
+        ForeignKey("environments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     default_runner_pool_id: Mapped[str | None] = mapped_column(
         ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True, index=True
@@ -538,7 +505,10 @@ class Workflow(Base):
         # ``1`` on SQLite). A bare ``sa_text("1")`` is rejected by Postgres:
         # "column is of type boolean but default expression is of type integer"
         # — matches migration 0023's ``server_default=sa.text("true")``.
-        Boolean, default=True, nullable=False, server_default=true()
+        Boolean,
+        default=True,
+        nullable=False,
+        server_default=true(),
     )
     # inherit | sandboxed | standard — see sandbox_policy.resolve_execution_mode.
     execution_mode: Mapped[str] = mapped_column(
@@ -552,9 +522,7 @@ class Workflow(Base):
     )
     # Per-workflow wall-clock cap (seconds) for a single run. NULL falls back
     # to ``settings.workflow_run_timeout_seconds``; 0 means no cap.
-    run_timeout_seconds: Mapped[float | None] = mapped_column(
-        Float, nullable=True
-    )
+    run_timeout_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     mcp_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default=false()
     )
@@ -568,9 +536,7 @@ class Workflow(Base):
     github_sync_conflict_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     # Generated test cases (see POST /workflows/{id}/generate-tests)
     tests: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -613,15 +579,11 @@ class User(Base):
         Boolean, nullable=False, default=False, server_default=false()
     )
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="admin")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # C1: revocation cutoff (float epoch seconds). Session tokens whose ``iat``
     # predates this instant are rejected, invalidating every session minted
     # before a logout-all / admin lockout. NULL means "no sessions revoked".
-    sessions_valid_after: Mapped[float | None] = mapped_column(
-        Float, nullable=True, default=None
-    )
+    sessions_valid_after: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     sso_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -644,18 +606,13 @@ class ApiToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     token_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
     scopes: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
-    expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    revoked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
 
 class Credential(Base):
     """An encrypted secret (API key, auth header, ...) referenced by nodes."""
@@ -686,12 +643,8 @@ class Credential(Base):
     # Per-credential DEK (data-encryption key) wrapped by the master KEK.
     # NULL on legacy rows — crypto.decrypt_data falls back to KEK-direct decryption.
     encrypted_dek: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -720,20 +673,14 @@ class AuditEvent(Base):
     actor_email: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     actor_type: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class PinnedData(Base):
     """A frozen output value for a single node within a workflow."""
 
     __tablename__ = "pinned_data"
-    __table_args__ = (
-        UniqueConstraint(
-            "workflow_id", "node_id", name="uq_pinned_workflow_node"
-        ),
-    )
+    __table_args__ = (UniqueConstraint("workflow_id", "node_id", name="uq_pinned_workflow_node"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
@@ -749,9 +696,7 @@ class PinnedData(Base):
     )
     node_id: Mapped[str] = mapped_column(String(120), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -810,15 +755,9 @@ class Run(Base):
     queue_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
-    trigger_type: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="manual"
-    )
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     node_runs: Mapped[list["NodeRun"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
@@ -869,9 +808,7 @@ class NodeRun(Base):
     run: Mapped[Run] = relationship(back_populates="node_runs")
 
     # Composite index for fast per-run, per-node lookup during replay/retry.
-    __table_args__ = (
-        Index("ix_node_runs_run_id_node_id", "run_id", "node_id"),
-    )
+    __table_args__ = (Index("ix_node_runs_run_id_node_id", "run_id", "node_id"),)
 
 
 class RunEvent(Base):
@@ -923,9 +860,7 @@ class RunApproval(Base):
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    resolved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
@@ -945,7 +880,9 @@ class Artifact(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"),
-        index=True, nullable=False, server_default="default",
+        index=True,
+        nullable=False,
+        server_default="default",
     )
     run_id: Mapped[str | None] = mapped_column(
         ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=True
@@ -958,19 +895,13 @@ class Artifact(Base):
     )
     size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    storage_backend: Mapped[str] = mapped_column(
-        String(40), default="local", nullable=False
-    )
+    storage_backend: Mapped[str] = mapped_column(String(40), default="local", nullable=False)
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
-    artifact_metadata: Mapped[dict] = mapped_column(
-        "metadata", JSON, default=dict, nullable=False
-    )
+    artifact_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
     preview: Mapped[dict | list | str | int | float | bool | None] = mapped_column(
         JSON, nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     run: Mapped[Run] = relationship(back_populates="artifacts")
 
@@ -1013,12 +944,8 @@ class CodeModule(Base):
     # Python attribute differs from column name (``metadata`` is reserved by
     # SQLAlchemy's Declarative API) — use the same naming pattern as
     # Artifact.artifact_metadata → "metadata".
-    module_metadata: Mapped[dict] = mapped_column(
-        "metadata", JSON, default=dict, nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    module_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -1051,14 +978,10 @@ class Deployment(Base):
     # Schedule — set ``schedule_cron`` for full cron, or interval/every for the
     # simple mode. Either may be empty when the deployment is run-now-only.
     schedule_cron: Mapped[str] = mapped_column(String(120), default="", nullable=False)
-    schedule_interval: Mapped[str] = mapped_column(
-        String(20), default="hours", nullable=False
-    )
+    schedule_interval: Mapped[str] = mapped_column(String(20), default="hours", nullable=False)
     schedule_every: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     schedule_tz: Mapped[str] = mapped_column(String(64), default="", nullable=False)
-    default_parameters: Mapped[dict] = mapped_column(
-        JSON, default=dict, nullable=False
-    )
+    default_parameters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # DB-1: SET NULL so deleting an environment doesn't error on a referencing
     # deployment (the runner treats a NULL env_id as the global/default env),
@@ -1078,12 +1001,8 @@ class Deployment(Base):
         ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
     )
     error_alerts: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    last_fired: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    last_fired: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -1118,15 +1037,9 @@ class ProviderTriggerSubscription(Base):
     callback_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
     config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     error: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_event_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -1163,9 +1076,7 @@ class ScheduleState(Base):
         nullable=False,
         server_default="default",
     )
-    last_fired: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    last_fired: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class WorkflowVersion(Base):
@@ -1186,9 +1097,7 @@ class WorkflowVersion(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     graph: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     workflow: Mapped[Workflow] = relationship(back_populates="versions")
 
@@ -1228,9 +1137,7 @@ class WorkflowRevision(Base):
     patch: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     actor_email: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     workflow: Mapped[Workflow] = relationship(back_populates="revisions")
 
@@ -1251,22 +1158,14 @@ class SystemSetting(Base):
     max_concurrent_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
     runner_idle_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
     run_retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=14)
-    run_retention_max_per_workflow: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )
-    max_output_bytes: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=256 * 1024
-    )
+    run_retention_max_per_workflow: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_output_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=256 * 1024)
     max_artifact_bytes: Mapped[int] = mapped_column(
         Integer, nullable=False, default=50 * 1024 * 1024
     )
-    max_artifacts_per_run: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=100
-    )
+    max_artifacts_per_run: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     app_timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="")
-    worker_rss_soft_budget_bytes: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0
-    )
+    worker_rss_soft_budget_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     # Signed Ed25519 license key (see app/services/licensing.py). NULL → resolve
     # from settings.license_key / env, else Community edition.
     license_key: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1343,9 +1242,11 @@ class RunQueueEntry(Base):
     # that leases this entry can parent its spans on the enqueueing request's
     # trace. None whenever tracing is disabled.
     trace_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    # Dispatch-worker capability requirements copied from Run.required_labels.
+    # Unlabeled rows are eligible for any worker; labeled rows require every
+    # key/value pair to be present in the worker's WORKER_LABELS map.
+    required_labels: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -1392,17 +1293,11 @@ class MCPConnection(Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
-    transport: Mapped[str] = mapped_column(
-        Text, nullable=False, default="streamable-http"
-    )
-    auth_type: Mapped[str] = mapped_column(
-        Text, nullable=False, default="none"
-    )
+    transport: Mapped[str] = mapped_column(Text, nullable=False, default="streamable-http")
+    auth_type: Mapped[str] = mapped_column(Text, nullable=False, default="none")
     auth_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     # SQLite-compatible default: `'{}'::jsonb` is Postgres-only.
-    headers: Mapped[dict] = mapped_column(
-        JSON, nullable=False, default=dict
-    )
+    headers: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     # Call-time policy: a disabled connection rejects every call; a non-null
     # allowed_tools list restricts calls to exactly those tool names.
     enabled: Mapped[bool] = mapped_column(
@@ -1410,12 +1305,8 @@ class MCPConnection(Base):
     )
     allowed_tools: Mapped[list | None] = mapped_column(JSON, nullable=True)
     tool_cache: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    last_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -1441,15 +1332,9 @@ class SSOConfig(Base):
     idp_certificate: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Common
     email_domain: Mapped[str | None] = mapped_column(Text, nullable=True)
-    attribute_map: Mapped[dict] = mapped_column(
-        JSON, nullable=False, default=dict
-    )
-    jit_provisioning: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    attribute_map: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    jit_provisioning: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

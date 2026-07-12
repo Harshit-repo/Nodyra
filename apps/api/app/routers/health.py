@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -9,6 +10,8 @@ from app.db import engine
 from app.redis_client import redis_client
 from app.services.sandbox_pool import pool as sandbox_pool
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/health", tags=["health"])
 
 
@@ -18,9 +21,17 @@ async def live() -> dict:
     return {"status": "ok"}
 
 
-@router.get("/ready")
-async def ready() -> JSONResponse:
-    """Readiness probe — checks PostgreSQL and Redis connectivity."""
+async def readiness_checks() -> tuple[bool, dict[str, str]]:
+    """Shared readiness probe: PostgreSQL + Redis + sandbox state.
+
+    Used by the API's ``GET /health/ready`` route and by the standalone
+    worker's HTTP listener (``worker_health_port`` / helm ``worker.healthPort``)
+    so both planes report readiness with identical semantics.
+
+    Failure detail is logged, never returned: these endpoints are auth-exempt
+    (K8s/compose probes can't authenticate), and raw driver errors can embed
+    DSNs, hostnames, or credentials that must not leak to anonymous callers.
+    """
     checks: dict[str, str] = {}
     healthy = True
 
@@ -29,9 +40,10 @@ async def ready() -> JSONResponse:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         healthy = False
-        checks["database"] = f"error: {exc}"
+        logger.exception("readiness: database check failed")
+        checks["database"] = "error: unreachable"
 
     # H7: Redis is only a hard dependency when it actually backs the run queue
     # or a split dispatch topology. A single-process deployment
@@ -45,17 +57,19 @@ async def ready() -> JSONResponse:
             async with asyncio.timeout(5):
                 await redis_client.ping()
             checks["redis"] = "ok"
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             healthy = False
-            checks["redis"] = f"error: {exc}"
+            logger.exception("readiness: redis check failed")
+            checks["redis"] = "error: unreachable"
     else:
         checks["redis"] = "not required"
 
-    # Sandbox state is informational in "auto" (subprocess fallback is fine)
-    # but a hard readiness failure in "required" — runs would error at
-    # dispatch time, so refuse traffic instead.
+    # Sandbox state is process-local. Enforce it only where this process owns
+    # local execution; split API/control replicas rely on worker readiness.
     if settings.execution_sandbox != "off":
-        if sandbox_pool.enabled:
+        if settings.dispatch_role not in {"inline", "worker"}:
+            checks["sandbox"] = "delegated to workers"
+        elif sandbox_pool.enabled:
             checks["sandbox"] = sandbox_pool.describe()
         elif settings.execution_sandbox == "required":
             healthy = False
@@ -63,5 +77,12 @@ async def ready() -> JSONResponse:
         else:
             checks["sandbox"] = "inactive (subprocess fallback)"
 
+    return healthy, checks
+
+
+@router.get("/ready")
+async def ready() -> JSONResponse:
+    """Readiness probe — checks PostgreSQL and Redis connectivity."""
+    healthy, checks = await readiness_checks()
     body = {"status": "ok" if healthy else "degraded", "checks": checks}
     return JSONResponse(body, status_code=200 if healthy else 503)

@@ -27,6 +27,7 @@ dependencies = [
     "httpx>=0.27",
     "jsonschema>=4.21",
     "packaging>=24",
+    "boto3>=1.34",
     # Sandboxed execution + docker runner pools (container spawning)
     "docker>=7.0",
     # A5: OpenTelemetry tracing (API/worker processes only — never user envs)

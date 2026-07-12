@@ -90,8 +90,9 @@ async def test_remote_executor_delegates_to_dispatcher():
         async def assign_run(self, run_id, pool_id, env_payload, graph, cache,
                              targets, workflow_modules, on_event,
                              pause_on_approval=False, agent_action_resume=None,
-                             subworkflow_meta=None):
+                             subworkflow_meta=None, sandbox_required=False):
             calls["assign"] = (run_id, pool_id, env_payload)
+            calls["sandbox_required"] = sandbox_required
             return "success"
 
         async def cancel_remote_run(self, run_id, runner_id):

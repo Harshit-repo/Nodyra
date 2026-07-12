@@ -486,13 +486,20 @@ def _post_stream(
     Mirrors :func:`_expect_json`'s error surfacing for non-2xx responses before
     consuming the event stream. Text deltas are forwarded live via
     ``nodyra.emit_chunk`` so the editor canvas shows tokens as they're produced.
+
+    ``url`` is provider-controlled (Anthropic/Azure ``base_url``/``azure_endpoint``
+    or an OpenAI-compatible ``base_url``) — it can be caller-supplied via
+    credentials, so it goes through ``safe_request`` for per-hop redirect
+    re-validation and DNS-rebinding protection (SEC-B), not a raw ``requests.post``.
     """
-    response = requests.post(
+    response = safe_request(
+        "POST",
         url,
         headers=headers,
         json={**payload, "stream": True},
         timeout=timeout,
         stream=True,
+        context=f"{service} chat stream",
     )
     try:
         status = int(getattr(response, "status_code", 200) or 200)
@@ -564,11 +571,13 @@ def _call_llm(
             )
         else:
             body = _expect_json(
-                requests.post(
+                safe_request(
+                    "POST",
                     anthropic_url,
                     headers=anthropic_headers,
                     json=payload,
                     timeout=timeout,
+                    context="anthropic chat",
                 ),
                 "anthropic",
             )
@@ -607,7 +616,14 @@ def _call_llm(
             )
         else:
             body = _expect_json(
-                requests.post(url, headers=azure_headers, json=payload, timeout=timeout),
+                safe_request(
+                    "POST",
+                    url,
+                    headers=azure_headers,
+                    json=payload,
+                    timeout=timeout,
+                    context="azure_openai chat",
+                ),
                 "azure_openai",
             )
             out = _normalize_openai(body)
@@ -660,7 +676,14 @@ def _call_llm(
             )
         else:
             body = _expect_json(
-                requests.post(chat_url, headers=headers, json=payload, timeout=timeout),
+                safe_request(
+                    "POST",
+                    chat_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout,
+                    context=f"{provider_key} chat",
+                ),
                 provider_key,
             )
             out = _normalize_openai(body)
@@ -788,7 +811,8 @@ def _call_embeddings(
         if not api_key:
             raise ValueError("ai_batch_embeddings: credentials.api_key is required")
         body = _expect_json(
-            requests.post(
+            safe_request(
+                "POST",
                 creds.get("base_url") or "https://api.cohere.ai/v1/embed",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
@@ -797,6 +821,7 @@ def _call_embeddings(
                     "texts": texts,
                 },
                 timeout=timeout,
+                context="cohere embeddings",
             ),
             "cohere",
         )
@@ -811,11 +836,13 @@ def _call_embeddings(
     elif not api_key:
         raise ValueError("ai_batch_embeddings: credentials.api_key is required")
     body = _expect_json(
-        requests.post(
+        safe_request(
+            "POST",
             f"{base_url.rstrip('/')}/embeddings",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={"model": model or "text-embedding-3-small", "input": texts},
             timeout=timeout,
+            context=f"{provider_key} embeddings",
         ),
         provider_key,
     )
@@ -1480,7 +1507,8 @@ def ai_vector_retriever(
     if not api_key or not index_host:
         raise ValueError("ai_vector_retriever: Pinecone api_key and index_host are required")
     body = _expect_json(
-        requests.post(
+        safe_request(
+            "POST",
             _hosted_https_url(index_host, "/query", context="pinecone"),
             headers={"Api-Key": api_key, "Content-Type": "application/json"},
             json={
@@ -1490,6 +1518,7 @@ def ai_vector_retriever(
                 "includeMetadata": bool(include_metadata),
             },
             timeout=max(1, min(300, int(timeout_seconds or DEFAULT_TIMEOUT))),
+            context="pinecone query",
         ),
         "pinecone",
     )
@@ -2014,11 +2043,13 @@ def ai_vision_analyze(
         ],
     }
     body = _expect_json(
-        requests.post(
+        safe_request(
+            "POST",
             _with_chat_completions(creds.get("base_url") or "https://api.openai.com/v1"),
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json=payload,
             timeout=max(1, min(300, int(timeout_seconds or DEFAULT_TIMEOUT))),
+            context="vision analyze",
         ),
         "openai",
     )

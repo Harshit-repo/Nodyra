@@ -317,11 +317,15 @@ async def persist_run_outcome(
                     "run_id": run_id,
                     "node_id": node_id,
                     "status": event.get("status", "unknown"),
-                    "output": _cap_output(
-                        maybe_offload_output(
-                            event.get("outputs"), run_id=run_id, node_id=node_id,
-                        ),
-                        output_cap,
+                    # Cap FIRST, then offload the bounded survivor. Offloading
+                    # first would spill the full (uncapped) output to disk and
+                    # leave only a tiny marker for the cap to see — defeating the
+                    # output cap and letting an arbitrarily large payload hit the
+                    # store. Capping first bounds what the offload store persists.
+                    "output": maybe_offload_output(
+                        _cap_output(event.get("outputs"), output_cap),
+                        run_id=run_id,
+                        node_id=node_id,
                     ),
                     "error": event.get("error"),
                     "logs": _cap_logs(event.get("logs"), output_cap),

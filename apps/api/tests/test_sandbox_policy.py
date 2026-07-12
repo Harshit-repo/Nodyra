@@ -152,6 +152,13 @@ async def test_health_ready_reports_sandbox_state(monkeypatch):
     assert resp.status_code == 503
     assert _body(resp)["checks"]["sandbox"] == "error: required but inactive"
 
+    monkeypatch.setattr(settings, "dispatch_role", "control")
+    resp = await health.ready()
+    assert resp.status_code == 200
+    assert _body(resp)["checks"]["sandbox"] == "delegated to workers"
+
+    monkeypatch.setattr(settings, "dispatch_role", "inline")
+
     class _ActivePool:
         enabled = True
 

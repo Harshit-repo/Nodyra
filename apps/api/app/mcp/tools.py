@@ -43,6 +43,7 @@ from app.models import (
 )
 from app.routers.workflows import STRUCTURAL_NODE_TYPES
 from app.services.audit import log_audit
+from app.services.data_ref import resolve_ref
 from app.services.environment_builds import (
     enqueue_environment_build,
     notify_environment_build_workers,
@@ -50,7 +51,6 @@ from app.services.environment_builds import (
 from app.services.github_sync import enqueue_github_push
 from app.services.github_sync_jobs import notify_sync_workers
 from app.services.graph_utils import first_trigger_node
-from app.services.output_store import resolved_output
 from app.services.runner import cancel_run as _runner_cancel_run
 from app.services.runner import start_run
 from app.services.sandbox_policy import (
@@ -594,7 +594,7 @@ async def _get_run(session: AsyncSession, user: User | None, args: dict) -> Any:
                 "status": nr.status,
                 "error": nr.error,
                 # Resolve offloaded-output markers before transport (OS-1).
-                "output": _truncated(resolved_output(nr.output)),
+                "output": _truncated(resolve_ref(nr.output)),
             }
             for nr in run.node_runs
         ],
@@ -2845,7 +2845,7 @@ async def _get_node_run(session: AsyncSession, user: User | None, args: dict) ->
                 "started_at": row.started_at,
                 "finished_at": row.finished_at,
                 # Resolve offloaded-output markers before transport (OS-1).
-                "output": _truncated(resolved_output(row.output)),
+                "output": _truncated(resolve_ref(row.output)),
                 "error": row.error,
                 "logs": _truncated(row.logs),
                 "debug": _truncated(row.debug),

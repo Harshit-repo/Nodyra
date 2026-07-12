@@ -86,11 +86,14 @@ class _FakeGithubTransport:
 
 
 def _github_headers(raw: bytes, *, delivery: str = "delivery-1") -> dict[str, str]:
-    signature = "sha256=" + hmac.new(
-        b"secret",
-        raw,
-        hashlib.sha256,
-    ).hexdigest()
+    signature = (
+        "sha256="
+        + hmac.new(
+            b"secret",
+            raw,
+            hashlib.sha256,
+        ).hexdigest()
+    )
     return {
         "Content-Type": "application/json",
         "X-GitHub-Event": "push",
@@ -100,9 +103,7 @@ def _github_headers(raw: bytes, *, delivery: str = "delivery-1") -> dict[str, st
 
 
 async def test_webhook_triggers_active_workflow(client: AsyncClient) -> None:
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Hooked"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Hooked"})).json()["id"]
     await client.put(
         f"/workflows/{workflow_id}",
         json={"graph": _webhook_graph("orders"), "active": True},
@@ -125,9 +126,7 @@ async def test_webhook_with_no_active_workflow(client: AsyncClient) -> None:
 
 
 async def test_inactive_workflow_is_not_triggered(client: AsyncClient) -> None:
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Off"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Off"})).json()["id"]
     await client.put(
         f"/workflows/{workflow_id}",
         json={"graph": _webhook_graph("idle")},
@@ -404,9 +403,7 @@ def _param_webhook_graph(path: str, method: str = "GET") -> dict:
 
 async def _publish(client: AsyncClient, name: str, graph: dict) -> str:
     workflow_id = (await client.post("/workflows", json={"name": name})).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
     return workflow_id
 
@@ -445,9 +442,7 @@ async def test_github_provider_trigger_lifecycle_and_dispatch(
     transport = _FakeGithubTransport()
     monkeypatch.setattr(github_triggers, "_transport", lambda _credentials: transport)
 
-    workflow_id = (
-        await client.post("/workflows", json={"name": "GitHub Hook"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "GitHub Hook"})).json()["id"]
     await client.put(
         f"/workflows/{workflow_id}",
         json={"graph": _github_trigger_graph(), "active": True},
@@ -470,29 +465,20 @@ async def test_github_provider_trigger_lifecycle_and_dispatch(
     assert transport.calls[0][0] == "POST"
     assert transport.calls[0][1] == "/repos/octocat/hello-world/hooks"
 
-    provider_rows = (
-        await client.get(f"/workflows/{workflow_id}/provider-triggers")
-    ).json()
+    provider_rows = (await client.get(f"/workflows/{workflow_id}/provider-triggers")).json()
     assert len(provider_rows) == 1
     assert provider_rows[0]["status"] == "active"
     assert provider_rows[0]["provider"] == "github"
     assert provider_rows[0]["trigger_key"] == "github.repository.webhook"
-    assert provider_rows[0]["callback_url"].endswith(
-        f"/provider-webhook/{subscription_id}"
-    )
-    assert (
-        provider_rows[0]["config"]["provider_params"]["webhook_secret"]
-        == "[redacted]"
-    )
+    assert provider_rows[0]["callback_url"].endswith(f"/provider-webhook/{subscription_id}")
+    assert provider_rows[0]["config"]["provider_params"]["webhook_secret"] == "[redacted]"
     workflows = (await client.get("/workflows")).json()["items"]
     summary = next(item for item in workflows if item["id"] == workflow_id)
     assert summary["provider_trigger_counts"]["active"] == 1
     assert summary["provider_trigger_counts"]["error"] == 0
     audit_events = (await client.get("/audit")).json()["items"]
     provider_audit = [
-        event
-        for event in audit_events
-        if event["target_type"] == "provider_trigger_subscription"
+        event for event in audit_events if event["target_type"] == "provider_trigger_subscription"
     ]
     assert any(
         event["action"] == "activate" and event["target_id"] == subscription_id
@@ -523,9 +509,7 @@ async def test_github_provider_trigger_lifecycle_and_dispatch(
     assert output["repository"]["full_name"] == "octocat/hello-world"
     timeline = (await client.get(f"/runs/{run_ids[0]}/timeline")).json()
     provider_events = [
-        event
-        for event in timeline["events"]
-        if event["type"] == "provider_trigger_received"
+        event for event in timeline["events"] if event["type"] == "provider_trigger_received"
     ]
     assert provider_events
     provider_data = provider_events[0]["data"]
@@ -543,9 +527,7 @@ async def test_github_provider_trigger_lifecycle_and_dispatch(
     )
     assert duplicate.status_code == 200
     assert duplicate.json()["runs"] == []
-    provider_rows = (
-        await client.get(f"/workflows/{workflow_id}/provider-triggers")
-    ).json()
+    provider_rows = (await client.get(f"/workflows/{workflow_id}/provider-triggers")).json()
     last_delivery = provider_rows[0]["config"]["last_delivery"]
     assert last_delivery["response_status"] == 200
     assert isinstance(last_delivery["latency_ms"], int)
@@ -560,13 +542,9 @@ async def test_github_provider_trigger_lifecycle_and_dispatch(
         assert subscription is not None
         assert subscription.status == "deleted"
 
-    assert (
-        await client.get(f"/workflows/{workflow_id}/provider-triggers")
-    ).json() == []
+    assert (await client.get(f"/workflows/{workflow_id}/provider-triggers")).json() == []
     deleted_rows = (
-        await client.get(
-            f"/workflows/{workflow_id}/provider-triggers?include_deleted=true"
-        )
+        await client.get(f"/workflows/{workflow_id}/provider-triggers?include_deleted=true")
     ).json()
     assert deleted_rows[0]["status"] == "deleted"
     workflows = (await client.get("/workflows")).json()["items"]
@@ -575,9 +553,7 @@ async def test_github_provider_trigger_lifecycle_and_dispatch(
     assert summary["provider_trigger_counts"]["deleted"] == 1
     audit_events = (await client.get("/audit")).json()["items"]
     provider_audit = [
-        event
-        for event in audit_events
-        if event["target_type"] == "provider_trigger_subscription"
+        event for event in audit_events if event["target_type"] == "provider_trigger_subscription"
     ]
     assert any(
         event["action"] == "deactivate" and event["target_id"] == subscription_id
@@ -589,9 +565,7 @@ async def test_github_provider_trigger_lifecycle_and_dispatch(
 
 
 async def test_schedule_tick_fires_when_due(client: AsyncClient) -> None:
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Scheduled"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Scheduled"})).json()["id"]
     graph = {
         "nodes": [
             {
@@ -603,9 +577,7 @@ async def test_schedule_tick_fires_when_due(client: AsyncClient) -> None:
         ],
         "edges": [],
     }
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     await triggers._tick()  # first sighting starts the clock, no run
@@ -615,9 +587,7 @@ async def test_schedule_tick_fires_when_due(client: AsyncClient) -> None:
     async with triggers.SessionLocal() as session:
         state = (
             await session.scalars(
-                select(ScheduleState).where(
-                    ScheduleState.workflow_id == workflow_id
-                )
+                select(ScheduleState).where(ScheduleState.workflow_id == workflow_id)
             )
         ).one()
         state.last_fired = datetime.now(UTC) - timedelta(hours=1)
@@ -631,9 +601,7 @@ async def test_schedule_tick_fires_when_due(client: AsyncClient) -> None:
 
 
 async def test_schedule_tick_honours_cron(client: AsyncClient) -> None:
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Cron"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Cron"})).json()["id"]
     graph = {
         "nodes": [
             {
@@ -645,9 +613,7 @@ async def test_schedule_tick_honours_cron(client: AsyncClient) -> None:
         ],
         "edges": [],
     }
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     await triggers._tick()  # start the clock
@@ -656,9 +622,7 @@ async def test_schedule_tick_honours_cron(client: AsyncClient) -> None:
     async with triggers.SessionLocal() as session:
         state = (
             await session.scalars(
-                select(ScheduleState).where(
-                    ScheduleState.workflow_id == workflow_id
-                )
+                select(ScheduleState).where(ScheduleState.workflow_id == workflow_id)
             )
         ).one()
         state.last_fired = datetime.now(UTC) - timedelta(minutes=5)
@@ -693,9 +657,7 @@ def _webhook_graph_with_auth(path: str, auth_params: dict) -> dict:
 async def test_webhook_basic_auth_rejects_missing_credentials(
     client: AsyncClient,
 ) -> None:
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Basic"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Basic"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "secured",
         {
@@ -704,9 +666,7 @@ async def test_webhook_basic_auth_rejects_missing_credentials(
             "auth_password": "wonderland",
         },
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     response = await client.post("/webhook/secured", json={})
@@ -718,9 +678,7 @@ async def test_webhook_basic_auth_accepts_valid_credentials(
 ) -> None:
     import base64
 
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Basic2"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Basic2"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "secured2",
         {
@@ -729,9 +687,7 @@ async def test_webhook_basic_auth_accepts_valid_credentials(
             "auth_password": "wonderland",
         },
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     token = base64.b64encode(b"alice:wonderland").decode("ascii")
@@ -746,9 +702,7 @@ async def test_webhook_basic_auth_accepts_valid_credentials(
 
 
 async def test_webhook_header_auth_checks_value(client: AsyncClient) -> None:
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Header"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Header"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "header-auth",
         {
@@ -757,9 +711,7 @@ async def test_webhook_header_auth_checks_value(client: AsyncClient) -> None:
             "auth_header_value": "supersecret",
         },
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     wrong = await client.post(
@@ -778,9 +730,7 @@ async def test_webhook_header_auth_checks_value(client: AsyncClient) -> None:
 
 
 async def test_webhook_query_auth_checks_value(client: AsyncClient) -> None:
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Query"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Query"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "query-auth",
         {
@@ -789,31 +739,23 @@ async def test_webhook_query_auth_checks_value(client: AsyncClient) -> None:
             "auth_query_value": "tokentokentoken",
         },
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     wrong = await client.post("/webhook/query-auth?token=wrong", json={})
     assert wrong.status_code == 401
-    ok = await client.post(
-        "/webhook/query-auth?token=tokentokentoken", json={}
-    )
+    ok = await client.post("/webhook/query-auth?token=tokentokentoken", json={})
     assert ok.status_code == 200
     assert len(ok.json()["runs"]) == 1
 
 
 async def test_webhook_bearer_auth_checks_token(client: AsyncClient) -> None:
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Bearer"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Bearer"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "bearer-auth",
         {"auth_type": "bearer", "auth_bearer_token": "tok-abc-123"},
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     wrong = await client.post(
@@ -849,15 +791,9 @@ async def test_webhook_jwt_auth_verifies_hs256_and_exp(client: AsyncClient) -> N
     import time
 
     secret = "jwt-shared-secret"
-    workflow_id = (
-        await client.post("/workflows", json={"name": "JWT"})
-    ).json()["id"]
-    graph = _webhook_graph_with_auth(
-        "jwt-auth", {"auth_type": "jwt", "auth_jwt_secret": secret}
-    )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "JWT"})).json()["id"]
+    graph = _webhook_graph_with_auth("jwt-auth", {"auth_type": "jwt", "auth_jwt_secret": secret})
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     good = _make_hs256_jwt({"sub": "abc", "exp": int(time.time()) + 3600}, secret)
@@ -886,9 +822,7 @@ async def test_webhook_hmac_verification_checks_signature(
     import hmac
 
     secret = "whsec_test"
-    workflow_id = (
-        await client.post("/workflows", json={"name": "HMAC"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "HMAC"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "hmac-hook",
         {
@@ -900,9 +834,7 @@ async def test_webhook_hmac_verification_checks_signature(
             "hmac_prefix": "sha256=",
         },
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     body = b'{"order": 42}'
@@ -924,9 +856,7 @@ async def test_webhook_hmac_verification_checks_signature(
 
 
 def _signed_headers(body: bytes, secret: str) -> dict[str, str]:
-    return {
-        "x-signature": hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    }
+    return {"x-signature": hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()}
 
 
 def test_hmac_rejects_stale_timestamp() -> None:
@@ -943,10 +873,7 @@ def test_hmac_rejects_stale_timestamp() -> None:
     headers = _signed_headers(body, secret)
     headers["x-timestamp"] = str(int(time.time()) - 3600)
     assert (
-        triggers._webhook_hmac_passes(
-            node_params, {"hmac_secret": secret}, headers, body
-        )
-        is False
+        triggers._webhook_hmac_passes(node_params, {"hmac_secret": secret}, headers, body) is False
     )
 
 
@@ -964,10 +891,7 @@ def test_hmac_accepts_fresh_timestamp() -> None:
     headers = _signed_headers(body, secret)
     headers["x-timestamp"] = str(int(time.time()))
     assert (
-        triggers._webhook_hmac_passes(
-            node_params, {"hmac_secret": secret}, headers, body
-        )
-        is True
+        triggers._webhook_hmac_passes(node_params, {"hmac_secret": secret}, headers, body) is True
     )
 
 
@@ -998,15 +922,9 @@ async def test_webhook_ip_allowlist_rejects_outside_caller(
 
     The test transport's socket peer is 127.0.0.1, which is outside 10.0.0.0/8.
     """
-    workflow_id = (
-        await client.post("/workflows", json={"name": "IPDeny"})
-    ).json()["id"]
-    graph = _webhook_graph_with_auth(
-        "ip-deny", {"ip_allowlist": "10.0.0.0/8"}
-    )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "IPDeny"})).json()["id"]
+    graph = _webhook_graph_with_auth("ip-deny", {"ip_allowlist": "10.0.0.0/8"})
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     resp = await client.post("/webhook/ip-deny", json={})
@@ -1017,15 +935,9 @@ async def test_webhook_ip_allowlist_accepts_listed_caller(
     client: AsyncClient,
 ) -> None:
     """A caller whose IP is inside the allowlist runs the workflow."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "IPAllow"})
-    ).json()["id"]
-    graph = _webhook_graph_with_auth(
-        "ip-allow", {"ip_allowlist": "127.0.0.0/8, 10.0.0.0/8"}
-    )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "IPAllow"})).json()["id"]
+    graph = _webhook_graph_with_auth("ip-allow", {"ip_allowlist": "127.0.0.0/8, 10.0.0.0/8"})
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     resp = await client.post("/webhook/ip-allow", json={"ok": 1})
@@ -1042,15 +954,11 @@ async def test_webhook_ip_allowlist_honours_xff_only_when_trusted(
     peer (127.0.0.1) decides — outside 203.0.113.0/24 → 403. With trust_proxy
     on, the forwarded client IP is honoured → 200.
     """
-    untrusted_wf = (
-        await client.post("/workflows", json={"name": "XFFUntrusted"})
-    ).json()["id"]
+    untrusted_wf = (await client.post("/workflows", json={"name": "XFFUntrusted"})).json()["id"]
     await client.put(
         f"/workflows/{untrusted_wf}",
         json={
-            "graph": _webhook_graph_with_auth(
-                "xff-untrusted", {"ip_allowlist": "203.0.113.0/24"}
-            ),
+            "graph": _webhook_graph_with_auth("xff-untrusted", {"ip_allowlist": "203.0.113.0/24"}),
             "active": True,
         },
     )
@@ -1062,9 +970,7 @@ async def test_webhook_ip_allowlist_honours_xff_only_when_trusted(
     )
     assert spoofed.status_code == 403
 
-    trusted_wf = (
-        await client.post("/workflows", json={"name": "XFFTrusted"})
-    ).json()["id"]
+    trusted_wf = (await client.post("/workflows", json={"name": "XFFTrusted"})).json()["id"]
     await client.put(
         f"/workflows/{trusted_wf}",
         json={
@@ -1093,16 +999,12 @@ async def test_webhook_dedup_acks_repeat_without_second_run(
     A distinct key runs normally; a repeat is idempotently dropped (200, no
     run) rather than rejected (401).
     """
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Dedup"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Dedup"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "dedup-hook",
         {"dedup": "on", "dedup_key": "{{ $json.body['id'] }}"},
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     first = await client.post("/webhook/dedup-hook", json={"id": "evt-1"})
@@ -1120,17 +1022,12 @@ async def test_webhook_dedup_acks_repeat_without_second_run(
 
 async def test_webhook_response_data_no_body(client: AsyncClient) -> None:
     """response_data='No Body' returns the configured code and an empty body."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "NoBody"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "NoBody"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "no-body",
-        {"response_mode": "On Received", "response_data": "No Body",
-         "response_code": 202},
+        {"response_mode": "On Received", "response_data": "No Body", "response_code": 202},
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     resp = await client.post("/webhook/no-body", json={"x": 1})
@@ -1142,16 +1039,12 @@ async def test_webhook_response_data_all_entries_echoes_body(
     client: AsyncClient,
 ) -> None:
     """response_data='All Entries' echoes the received body verbatim."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "AllEntries"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "AllEntries"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "all-entries",
         {"response_mode": "On Received", "response_data": "All Entries"},
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     body = [{"id": "A1"}, {"id": "B7"}]
@@ -1164,21 +1057,15 @@ async def test_webhook_response_data_first_entry_json(
     client: AsyncClient,
 ) -> None:
     """response_data='First Entry JSON' returns the first item of the body."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "FirstEntry"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "FirstEntry"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "first-entry",
         {"response_mode": "On Received", "response_data": "First Entry JSON"},
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
-    resp = await client.post(
-        "/webhook/first-entry", json=[{"id": "A1"}, {"id": "B7"}]
-    )
+    resp = await client.post("/webhook/first-entry", json=[{"id": "A1"}, {"id": "B7"}])
     assert resp.status_code == 200
     assert resp.json() == {"id": "A1"}
 
@@ -1187,9 +1074,7 @@ async def test_webhook_response_data_custom_body_and_headers(
     client: AsyncClient,
 ) -> None:
     """response_data='Custom' evaluates response_body + response_headers."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Custom"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Custom"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "custom-resp",
         {
@@ -1200,9 +1085,7 @@ async def test_webhook_response_data_custom_body_and_headers(
             "response_code": 201,
         },
     )
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     resp = await client.post("/webhook/custom-resp", json={"name": "alice"})
@@ -1220,15 +1103,11 @@ async def test_webhook_raw_body_captured_as_artifact(
     ref), so a binary upload never bloats the DB. The artifact is persisted
     and downloadable, and the bytes round-trip exactly.
     """
-    workflow_id = (
-        await client.post("/workflows", json={"name": "RawBody"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "RawBody"})).json()["id"]
     graph = _webhook_graph_with_auth("raw-cap", {"raw_body": "on"})
     # Surface the captured ref on the downstream node's output.
     graph["nodes"][1]["params"]["code"] = "output = input.get('raw_body')"
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     body = b"\x89PNG\r\n\x1a\n not-real-png-bytes \x00\x01\x02"
@@ -1288,13 +1167,9 @@ async def test_webhook_respond_node_returns_recorded_response(
     client: AsyncClient,
 ) -> None:
     """Respond Node mode returns whatever respond_to_webhook recorded."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "RespondNode"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "RespondNode"})).json()["id"]
     graph = _respond_node_graph("respond-hook", "Respond Node")
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     resp = await client.post("/webhook/respond-hook", json={"hello": "world"})
@@ -1306,14 +1181,10 @@ async def test_webhook_last_node_returns_final_output(
     client: AsyncClient,
 ) -> None:
     """Last Node mode waits and returns the final node's output."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "LastNode"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "LastNode"})).json()["id"]
     graph = _webhook_graph_with_auth("last-node", {"response_mode": "Last Node"})
     graph["nodes"][1]["params"]["code"] = "output = {'ok': True, 'n': 7}"
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     resp = await client.post("/webhook/last-node", json={})
@@ -1323,14 +1194,10 @@ async def test_webhook_last_node_returns_final_output(
 
 async def test_webhook_last_node_error_returns_500(client: AsyncClient) -> None:
     """A failing run in a synchronous webhook mode returns 500."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "LastNodeErr"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "LastNodeErr"})).json()["id"]
     graph = _webhook_graph_with_auth("last-err", {"response_mode": "Last Node"})
     graph["nodes"][1]["params"]["code"] = "output = input['missing_key']"
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     resp = await client.post("/webhook/last-err", json={})
@@ -1373,17 +1240,14 @@ def test_is_due_different_timezones_fire_at_different_utc() -> None:
     last = datetime(2026, 5, 26, 12, 0, tzinfo=UTC)  # 08:00 NY / 22:00 Sydney
     now = datetime(2026, 5, 26, 14, 0, tzinfo=UTC)  # past 13:00 NY only
 
-    sydney_due = triggers._is_due(
-        {"cron": "0 9 * * *", "tz": "Australia/Sydney"}, last, now
-    )
-    ny_due = triggers._is_due(
-        {"cron": "0 9 * * *", "tz": "America/New_York"}, last, now
-    )
+    sydney_due = triggers._is_due({"cron": "0 9 * * *", "tz": "Australia/Sydney"}, last, now)
+    ny_due = triggers._is_due({"cron": "0 9 * * *", "tz": "America/New_York"}, last, now)
     assert ny_due is True
     assert sydney_due is False
 
 
 # --- Task 8: webhook ingress role split --------------------------------------
+
 
 def test_webhook_role_defaults_to_ingress() -> None:
     """The production-grade ingress posture is the default."""
@@ -1394,9 +1258,7 @@ def test_webhook_role_defaults_to_ingress() -> None:
 
 async def test_webhook_role_default_serves_production_path(client: AsyncClient) -> None:
     """Default role — production /webhook/* is mounted and fires active workflows."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Probe"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Probe"})).json()["id"]
     await client.put(
         f"/workflows/{workflow_id}",
         json={"graph": _webhook_graph("probe-role"), "active": True},
@@ -1465,6 +1327,25 @@ async def test_webhook_test_url_allowed_after_start_listen(
     assert resp.status_code == 200
 
 
+async def test_webhook_test_url_supports_nested_paths(
+    client: AsyncClient,
+) -> None:
+    """Editor listen/capture endpoints support the same nested paths as production."""
+    path = "beta-qa-20260705-021741/order-intake"
+    await client.post(f"/webhook-test/{path}/listen")
+
+    resp = await client.post(f"/webhook-test/{path}", json={"order": 42})
+    assert resp.status_code == 200
+    assert resp.json()["path"] == path
+
+    captured = (await client.get(f"/webhook-test/{path}/last")).json()
+    assert captured["body"] == {"order": 42}
+
+    await client.delete(f"/webhook-test/{path}/listen")
+    resp = await client.post(f"/webhook-test/{path}", json={"order": 43})
+    assert resp.status_code == 404
+
+
 async def test_webhook_test_url_blocked_after_stop_listen(
     client: AsyncClient,
 ) -> None:
@@ -1495,9 +1376,7 @@ async def test_webhook_test_url_enforces_auth_when_listening(
     has authentication configured."""
     import base64
 
-    workflow_id = (
-        await client.post("/workflows", json={"name": "AuthedTest"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "AuthedTest"})).json()["id"]
     graph = _webhook_graph_with_auth(
         "test-auth-path",
         {
@@ -1582,12 +1461,8 @@ async def test_webhook_credential_basic_auth_rejects_missing_credentials(
 
     # 2. Publish a workflow that uses it.
     graph = _webhook_graph_with_credential_ref("cred-secured", cred_id, "basic")
-    workflow_id = (
-        await client.post("/workflows", json={"name": "CredBasic"})
-    ).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "CredBasic"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     # 3. Hit the production URL without auth → 401.
@@ -1622,12 +1497,8 @@ async def test_webhook_credential_basic_auth_accepts_valid_credentials(
     cred_id = cred["id"]
 
     graph = _webhook_graph_with_credential_ref("cred-secured2", cred_id, "basic")
-    workflow_id = (
-        await client.post("/workflows", json={"name": "CredBasic2"})
-    ).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "CredBasic2"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     # Without credentials → 401.
@@ -1667,9 +1538,7 @@ async def test_webhook_credential_basic_auth_test_url_rejects_no_credentials(
     cred_id = cred["id"]
 
     graph = _webhook_graph_with_credential_ref("cred-test-auth", cred_id, "basic")
-    workflow_id = (
-        await client.post("/workflows", json={"name": "CredTest"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "CredTest"})).json()["id"]
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
     await client.post("/webhook-test/cred-test-auth/listen")
@@ -1687,12 +1556,8 @@ async def test_webhook_auth_disabled_allows_unauthenticated_access(
 ) -> None:
     """When auth_type is 'none', unauthenticated requests are accepted."""
     graph = _webhook_graph_with_auth("open-hook", {"auth_type": "none"})
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Open"})
-    ).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "Open"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     resp = await client.post("/webhook/open-hook", json={"hello": "world"})
@@ -1707,12 +1572,8 @@ async def test_webhook_401_includes_www_authenticate_header(
         "www-auth-check",
         {"auth_type": "basic", "auth_username": "u", "auth_password": "p"},
     )
-    workflow_id = (
-        await client.post("/workflows", json={"name": "WwwAuth"})
-    ).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "WwwAuth"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     # Production URL
@@ -1737,12 +1598,8 @@ async def test_webhook_rejects_wrong_credentials_with_401(
         "wrong-creds",
         {"auth_type": "basic", "auth_username": "admin", "auth_password": "correct"},
     )
-    workflow_id = (
-        await client.post("/workflows", json={"name": "WrongCreds"})
-    ).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "WrongCreds"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     token = base64.b64encode(b"admin:wrongpassword").decode("ascii")
@@ -1763,9 +1620,7 @@ async def test_webhook_test_url_does_not_dispatch_on_auth_failure(
         "no-dispatch",
         {"auth_type": "basic", "auth_username": "u", "auth_password": "p"},
     )
-    workflow_id = (
-        await client.post("/workflows", json={"name": "NoDispatch"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "NoDispatch"})).json()["id"]
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
     await client.post("/webhook-test/no-dispatch/listen")
@@ -1775,8 +1630,7 @@ async def test_webhook_test_url_does_not_dispatch_on_auth_failure(
     # The captured payload is redacted — no auth header leaks.
     captured = (await client.get("/webhook-test/no-dispatch/last")).json()
     auth_in_headers = any(
-        h.lower() == "authorization"
-        for h in (captured.get("headers") or {}).keys()
+        h.lower() == "authorization" for h in (captured.get("headers") or {}).keys()
     )
     if auth_in_headers:
         auth_val = captured["headers"].get(
@@ -1791,12 +1645,8 @@ async def test_webhook_trailing_slash_matches_same_as_no_slash(
     """Trailing slashes are normalized so ``/webhook/orders/`` and
     ``/webhook/orders`` both match the same node."""
     graph = _webhook_graph("orders")
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Slash"})
-    ).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "Slash"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     resp = await client.post("/webhook/orders/", json={"n": 1})
@@ -1809,12 +1659,8 @@ async def test_webhook_double_slash_is_normalised(
 ) -> None:
     """Double slashes are collapsed to a single slash."""
     graph = _webhook_graph("a/b")
-    workflow_id = (
-        await client.post("/workflows", json={"name": "DblSlash"})
-    ).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "DblSlash"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     # ``//`` is collapsed to ``/``, so ``a//b`` matches the ``a/b`` template.
@@ -1833,12 +1679,8 @@ async def test_webhook_query_string_does_not_bypass_auth(
         "qs-auth",
         {"auth_type": "basic", "auth_username": "admin", "auth_password": "pw"},
     )
-    workflow_id = (
-        await client.post("/workflows", json={"name": "QsAuth"})
-    ).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "QsAuth"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     # No auth header, even with query params → 401.
@@ -1851,12 +1693,8 @@ async def test_webhook_inactive_workflow_returns_404(
 ) -> None:
     """An inactive workflow's production webhook returns 404."""
     graph = _webhook_graph("inactive-hook")
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Inactive"})
-    ).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "Inactive"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
     await client.put(f"/workflows/{workflow_id}", json={"active": False})
 
@@ -1870,12 +1708,8 @@ async def test_webhook_invalid_json_body_returns_clean_error(
     """A malformed body is captured as text, not rejected — webhooks must be
     tolerant of any payload format. The dispatch still succeeds."""
     graph = _webhook_graph("tolerant")
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Tolerant"})
-    ).json()["id"]
-    await client.put(
-        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
-    )
+    workflow_id = (await client.post("/workflows", json={"name": "Tolerant"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     resp = await client.post(
@@ -1903,4 +1737,3 @@ async def test_webhook_unsupported_method_returns_ok(
     DELETE/OPTIONS). An OPTIONS request returns 204 without dispatch."""
     resp = await client.options("/webhook/any-path")
     assert resp.status_code == 204
-

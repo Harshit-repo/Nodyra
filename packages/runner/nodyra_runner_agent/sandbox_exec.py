@@ -102,7 +102,13 @@ SANDBOX_NETWORK = "nodyra-agent-sandbox"
 
 def _ensure_network(client, name: str = SANDBOX_NETWORK) -> str:
     """Get-or-create the dedicated sandbox bridge network. Tolerates a
-    concurrent create by re-checking after a failed create."""
+    concurrent create by re-checking after a failed create.
+
+    Fails closed: if the dedicated network can neither be found nor created,
+    raise rather than silently falling back to the default ``bridge`` — that
+    bridge permits inter-container traffic and would defeat the isolation this
+    network exists to provide.
+    """
     try:
         client.networks.get(name)
         return name
@@ -110,11 +116,14 @@ def _ensure_network(client, name: str = SANDBOX_NETWORK) -> str:
         pass
     try:
         client.networks.create(name, driver="bridge")
-    except Exception:  # noqa: BLE001 — possibly a concurrent create
+    except Exception as exc:  # noqa: BLE001 — possibly a concurrent create
         try:
             client.networks.get(name)
-        except Exception:  # noqa: BLE001 — fall back to default bridge
-            return "bridge"
+        except Exception:  # noqa: BLE001
+            raise RuntimeError(
+                f"cannot provision the isolated sandbox network {name!r}; "
+                "refusing to run on the shared default bridge"
+            ) from exc
     return name
 
 
@@ -230,6 +239,12 @@ async def run_workflow_sandboxed(
         return "error"
     network = await loop.run_in_executor(None, _ensure_network, client)
     spawn_kwargs["network"] = network
+    # On a custom bridge, ``host.docker.internal`` does not resolve on Linux by
+    # default — map it to the host gateway so a sandbox run can reach an API
+    # advertised at host.docker.internal (the local-daemon default in
+    # _resolve_api_url) to upload artifacts. Harmless on Docker Desktop, where
+    # the name already resolves.
+    spawn_kwargs["extra_hosts"] = {"host.docker.internal": "host-gateway"}
 
     run_msg: dict[str, Any] = {
         "type": "run",

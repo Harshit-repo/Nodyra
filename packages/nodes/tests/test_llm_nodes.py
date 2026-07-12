@@ -116,7 +116,8 @@ def test_ai_chat_streams_when_emitter_active(monkeypatch) -> None:
     def emitter(delta: str, *, channel: str = "output") -> None:
         chunks.append(delta)
 
-    def fake_post(url: str, **kwargs):
+    def fake_request(method: str, url: str, **kwargs):
+        assert method == "POST"
         assert kwargs["json"].get("stream") is True
         assert kwargs.get("stream") is True
         return StreamingFakeResponse(
@@ -127,7 +128,7 @@ def test_ai_chat_streams_when_emitter_active(monkeypatch) -> None:
             ]
         )
 
-    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr(requests, "request", fake_request)
 
     token = node_emitter.set(emitter)
     try:
@@ -147,14 +148,15 @@ def test_ai_chat_streams_when_emitter_active(monkeypatch) -> None:
 
 def test_ai_chat_does_not_stream_without_emitter(monkeypatch) -> None:
     # No emitter installed → classic non-streaming request (no stream flag).
-    def fake_post(url: str, **kwargs):
+    def fake_request(method: str, url: str, **kwargs):
+        assert method == "POST"
         assert "stream" not in kwargs["json"]
         return FakeResponse(
             {"model": "gpt-x", "choices": [
                 {"message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}]}
         )
 
-    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr(requests, "request", fake_request)
     out = ai_chat(
         {"x": 1},
         credentials={"provider": "openai", "api_key": "sk-test"},
@@ -239,7 +241,8 @@ def test_prompt_template_renders_jinja_context() -> None:
 def test_ai_chat_normalizes_openai_response(monkeypatch) -> None:
     calls: list[dict] = []
 
-    def fake_post(url: str, **kwargs):
+    def fake_request(method: str, url: str, **kwargs):
+        assert method == "POST"
         calls.append({"url": url, "kwargs": kwargs})
         return FakeResponse(
             {
@@ -254,7 +257,7 @@ def test_ai_chat_normalizes_openai_response(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr(requests, "request", fake_request)
 
     out = ai_chat(
         {"topic": "ops"},
@@ -278,7 +281,8 @@ def test_ai_chat_normalizes_openai_response(monkeypatch) -> None:
 def test_ai_chat_openrouter_uses_first_class_provider(monkeypatch) -> None:
     calls: list[dict] = []
 
-    def fake_post(url: str, **kwargs):
+    def fake_request(method: str, url: str, **kwargs):
+        assert method == "POST"
         calls.append({"url": url, "kwargs": kwargs})
         return FakeResponse(
             {
@@ -292,7 +296,7 @@ def test_ai_chat_openrouter_uses_first_class_provider(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr(requests, "request", fake_request)
 
     out = ai_chat(
         "hello",
@@ -314,7 +318,8 @@ def test_ai_chat_openrouter_uses_first_class_provider(monkeypatch) -> None:
 
 
 def test_structured_output_validates_schema(monkeypatch) -> None:
-    def fake_post(url: str, **kwargs):  # noqa: ARG001
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        assert method == "POST"
         return FakeResponse(
             {
                 "model": "gpt-test",
@@ -330,7 +335,7 @@ def test_structured_output_validates_schema(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr(requests, "request", fake_request)
 
     out = ai_structured_output(
         {"name": "Ada"},
@@ -351,7 +356,8 @@ def test_text_chunker_uses_overlap() -> None:
 
 
 def test_batch_embeddings_returns_dataset_for_dataset_input(monkeypatch, tmp_path) -> None:
-    def fake_post(url: str, **kwargs):  # noqa: ARG001
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        assert method == "POST"
         texts = kwargs["json"]["input"]
         return FakeResponse(
             {
@@ -363,7 +369,7 @@ def test_batch_embeddings_returns_dataset_for_dataset_input(monkeypatch, tmp_pat
             }
         )
 
-    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr(requests, "request", fake_request)
     store = LocalArtifactStore(tmp_path, run_id="llm-test")
     a = artifact_store.set(store)
     n = current_node_id.set("embed")
@@ -387,7 +393,8 @@ def test_batch_embeddings_returns_dataset_for_dataset_input(monkeypatch, tmp_pat
 def test_chat_model_and_tool_box_supply_agent_inputs(monkeypatch) -> None:
     calls: list[dict] = []
 
-    def fake_post(url: str, **kwargs):
+    def fake_request(method: str, url: str, **kwargs):
+        assert method == "POST"
         calls.append({"url": url, "kwargs": kwargs})
         return FakeResponse(
             {
@@ -404,7 +411,7 @@ def test_chat_model_and_tool_box_supply_agent_inputs(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr(requests, "request", fake_request)
     model_config = ai_chat_model(
         credentials={"provider": "openai", "api_key": "sk-test"},
         provider="openai",
@@ -500,6 +507,82 @@ def test_ai_vector_retriever_blocks_private_pinecone_host(monkeypatch) -> None:
         assert "private" in str(exc)
     else:
         raise AssertionError("private Pinecone host should be blocked")
+
+
+def test_ai_chat_openai_compatible_blocks_private_base_url(monkeypatch) -> None:
+    """SEC-B regression: a credential-supplied ``base_url`` pointing at a
+    private/loopback host must be blocked before any request is made. Before
+    the fix, ``_call_llm``'s openai_compatible branch used a raw
+    ``requests.post`` with no SSRF re-validation."""
+
+    def fake_request(*args, **kwargs):
+        raise AssertionError("private target should be blocked before requests")
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    try:
+        ai_chat(
+            "hi",
+            credentials={
+                "provider": "openai_compatible",
+                "base_url": "http://127.0.0.1:9999/v1",
+                "api_key": "sk-test",
+            },
+            provider="openai_compatible",
+        )
+    except ValueError as exc:
+        assert "private" in str(exc)
+    else:
+        raise AssertionError("private base_url should be blocked")
+
+
+def test_ai_chat_azure_blocks_private_endpoint(monkeypatch) -> None:
+    """SEC-B regression: an Azure ``azure_endpoint``/``base_url`` pointing at a
+    private/loopback host must be blocked before any request is made."""
+
+    def fake_request(*args, **kwargs):
+        raise AssertionError("private target should be blocked before requests")
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    try:
+        ai_chat(
+            "hi",
+            credentials={
+                "provider": "azure_openai",
+                "azure_endpoint": "http://169.254.169.254",
+                "api_key": "sk-test",
+                "deployment": "gpt-test",
+            },
+            provider="azure_openai",
+        )
+    except ValueError as exc:
+        assert "private" in str(exc)
+    else:
+        raise AssertionError("private azure_endpoint should be blocked")
+
+
+def test_batch_embeddings_blocks_private_base_url(monkeypatch) -> None:
+    """SEC-B regression: an embeddings credential ``base_url`` pointing at a
+    private/loopback host must be blocked before any request is made."""
+
+    def fake_request(*args, **kwargs):
+        raise AssertionError("private target should be blocked before requests")
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    try:
+        ai_batch_embeddings(
+            ["hello"],
+            credentials={
+                "provider": "openai",
+                "base_url": "http://10.0.0.5/v1",
+                "api_key": "sk-test",
+            },
+            provider="openai",
+            model="text-embedding-test",
+        )
+    except ValueError as exc:
+        assert "private" in str(exc)
+    else:
+        raise AssertionError("private embeddings base_url should be blocked")
 
 
 def test_ai_chat_model_param_uses_dynamic_loader() -> None:

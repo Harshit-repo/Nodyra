@@ -19,11 +19,11 @@ export async function authenticateOwner(page: Page): Promise<void> {
     await page.getByPlaceholder("Full name").fill("E2E Owner");
     await page.getByPlaceholder("Company").fill("E2E Co");
     await page.getByPlaceholder("you@example.com").fill(EMAIL);
-    await page.getByPlaceholder("password (min 8 chars)").fill(PASSWORD);
+    await page.getByRole("textbox", { name: "Password" }).fill(PASSWORD);
     await createOwner.click();
   } else {
     await page.getByPlaceholder("you@example.com").fill(EMAIL);
-    await page.getByPlaceholder("password (min 8 chars)").fill(PASSWORD);
+    await page.getByRole("textbox", { name: "Password" }).fill(PASSWORD);
     await signIn.click();
   }
 

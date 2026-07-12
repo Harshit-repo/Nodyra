@@ -459,13 +459,31 @@ def test_rag_node_registered() -> None:
 # Sub-Agent adapter tests
 # ---------------------------------------------------------------------------
 
+# TEST-1: both `apps/api/tests/` and this directory are packages literally
+# named `tests`. A dotted absolute import (`packages.nodes.tests....`) only
+# resolves when the repo root is on sys.path (breaks running pytest from
+# packages/nodes); a package-relative import (`.ai_v2_test_helpers`) resolves
+# against whichever `tests` package pytest's import-mode=importlib registered
+# first in sys.modules, which silently picks the WRONG one when apps/ and
+# packages/ are collected in the same session (the standard full-suite run).
+# Loading by explicit file path sidesteps both failure modes.
+import importlib.util as _importlib_util  # noqa: E402
+from pathlib import Path  # noqa: E402
+
 from nodyra.ai_runtime import ChatResponse, ToolCall  # noqa: E402
 from nodyra_nodes.ai_v2.agent_tools import (  # noqa: E402
     SubAgentAdapter,
     SubAgentToolAdapter,
     subagent_tool_adapters,
 )
-from packages.nodes.tests.ai_v2_test_helpers import DummyTool, ScriptedChatModel  # noqa: E402
+
+_helpers_spec = _importlib_util.spec_from_file_location(
+    "_ai_v2_test_helpers", Path(__file__).parent / "ai_v2_test_helpers.py"
+)
+_ai_v2_test_helpers = _importlib_util.module_from_spec(_helpers_spec)
+_helpers_spec.loader.exec_module(_ai_v2_test_helpers)
+DummyTool = _ai_v2_test_helpers.DummyTool
+ScriptedChatModel = _ai_v2_test_helpers.ScriptedChatModel
 
 
 def _subagent(model, tools=(), **kw):

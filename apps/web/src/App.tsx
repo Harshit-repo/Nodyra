@@ -3,7 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 const AUTH_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
 const AUTH_MAX_RETRIES = AUTH_RETRY_DELAYS_MS.length;
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Link, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { api, apiLogout, getUser, onUnauthorized, setUser } from "./api";
 import { AuthRuntimeProvider } from "./AuthRuntime";
@@ -233,6 +233,7 @@ export default function App() {
               <Route path="/settings/kms" element={<PageErrorBoundary><KMSSettingsPage /></PageErrorBoundary>} />
               <Route path="/settings/sso" element={<PageErrorBoundary><SSOSettingsPage /></PageErrorBoundary>} />
               <Route path="/settings" element={<PageErrorBoundary><SettingsPage /></PageErrorBoundary>} />
+              <Route path="/workflows" element={<Navigate to="/" replace />} />
               <Route path="*" element={<PageErrorBoundary><NotFound /></PageErrorBoundary>} />
             </Route>
             <Route

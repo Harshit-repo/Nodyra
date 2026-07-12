@@ -617,6 +617,29 @@ def test_unsafe_classifier_flags_new_fs_and_network_nodes():
         assert kinds[f"extra-{index}"] == "network_egress"
 
 
+def test_unsafe_classifier_flags_docker_nodes():
+    """SEC-A regression: docker_run_container executes an arbitrary image and
+    must be unconditionally gated like Code/execute_command; docker_stop/list
+    reach the shared host's Docker daemon and must also be flagged so a
+    deployment can't silently ship container control with no approval gate."""
+    from app.services.unsafe_nodes import classify
+
+    graph = {
+        "nodes": [
+            {"id": "run", "type": "docker_run_container", "params": {"image": "python:3.12"}},
+            {"id": "stop", "type": "docker_stop_container", "params": {"container_id": "x"}},
+            {"id": "list", "type": "docker_list_containers", "params": {}},
+            {"id": "safe", "type": "manual_trigger", "params": {}},
+        ],
+        "edges": [],
+    }
+    findings = {f["node_id"]: f for f in classify(graph)}
+    assert findings["run"]["kind"] == "execute_command"
+    assert findings["stop"]["kind"] == "docker_daemon"
+    assert findings["list"]["kind"] == "docker_daemon"
+    assert "safe" not in findings
+
+
 # ---------------------------------------------------------------------------
 # R-9: OAuth credential must be stamped to the org that started the flow
 # ---------------------------------------------------------------------------

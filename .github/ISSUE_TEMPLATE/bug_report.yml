@@ -1,0 +1,65 @@
+name: Bug report
+description: Something in Nodyra isn't working as documented
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please search existing
+        issues first. **Do not include credentials, license keys, or secrets.**
+        For security vulnerabilities, follow [SECURITY.md](../../SECURITY.md)
+        instead of opening a public issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create a workflow with ...
+        2. Run ...
+        3. See error ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Nodyra version / commit
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment type
+      options:
+        - Docker Compose
+        - Local dev (uvicorn + vite)
+        - Kubernetes / Helm
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: posture
+    attributes:
+      label: Execution posture
+      options:
+        - Trusted single-tenant (default)
+        - Sandboxed (EXECUTION_SANDBOX=auto|required)
+        - Multi-tenant
+        - Not sure
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: API/worker logs, browser console errors. Redact secrets.
+      render: shell
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "OS, Python version, Node version, browser, DB (Postgres/SQLite)"

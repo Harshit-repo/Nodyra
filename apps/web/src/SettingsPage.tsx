@@ -846,7 +846,7 @@ function McpAccessPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const mcpEndpoint = `${window.location.origin}/api/mcp`;
+  const mcpEndpoint = `${window.location.origin}/mcp`;
   const mcpHeaderSnippet = `Authorization: Bearer <paste-token-here>`;
   const mcpJsonConfig = JSON.stringify(
     {
@@ -1273,7 +1273,7 @@ function McpAccessPanel() {
 
 function McpServerPanel() {
   const [copied, setCopied] = useState(false);
-  const endpoint = `${window.location.origin}/api/mcp`;
+  const endpoint = `${window.location.origin}/mcp`;
 
   async function copyEndpoint(): Promise<void> {
     try {
@@ -1329,7 +1329,7 @@ function McpAgentQuickstart() {
     "nodyra": {
       "type": "http",
       "url": "${window.location.origin}/mcp",
-      "headers": { "Authorization": "Bearer <your-api-token>" }
+      "headers": { "Authorization": "Bearer <paste-token-here>" }
     }
   }
 }`;
@@ -1348,7 +1348,7 @@ function McpAgentQuickstart() {
     <SettingsCard
       id="mcp-agent-quickstart"
       title="Connect an AI agent"
-      description="Claude, Cursor, or any MCP client can build and run workflows on this instance."
+      description="Use a scoped MCP access token with Claude, Cursor, or any streamable HTTP MCP client."
       icon={Plug}
     >
       <div className="nodyra-mcp-snippet">

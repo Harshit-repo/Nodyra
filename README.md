@@ -405,6 +405,7 @@ Core API settings are environment variables loaded by `apps/api/app/config.py`.
 | `REDIS_URL` | Redis URL for broker/cache use | managed Redis |
 | `QUEUE_BACKEND` | `redis` for multi-process topologies | `redis` |
 | `DISPATCH_ROLE` | `inline` / `worker` / `disabled` execution role | `disabled` on API, `worker` on workers |
+| `WORKER_LABELS` | Optional worker capability labels such as `gpu=a100,mem=high` | set on specialized workers |
 | `CORS_ORIGINS` | Allowed web origins | public web URL |
 | `PUBLIC_API_URL` | Public API origin for provider webhook callbacks | public HTTPS API URL |
 | `AUTH_REQUIRED` | Require login | `true` |
@@ -614,6 +615,18 @@ Planned or designed areas:
 
 ## License
 
-No license file is currently included. Add a license before distributing this
-repository outside your organization. Contributions are governed separately by
-the CLA process described in `CONTRIBUTING.md`.
+Nodyra is **fair-code** licensed:
+
+- The core is distributed under the
+  [Nodyra Sustainable Use License](LICENSE) — free to use, modify, and
+  self-host for internal business and personal purposes. Offering Nodyra to
+  third parties as a hosted or managed service requires a commercial agreement.
+- Enterprise-gated features (multi-tenancy, SSO/SAML/OIDC, SCIM, audit-log
+  export, external KMS, license enforcement) are covered by the
+  [Nodyra Enterprise License](LICENSE.enterprise) and require a valid license
+  key.
+- The Nodyra name and logo are trademarks — see [TRADEMARK.md](TRADEMARK.md).
+
+Contributions require a signed [CLA](CONTRIBUTOR_LICENSE_AGREEMENT.md); see
+[CONTRIBUTING.md](CONTRIBUTING.md). For the reasoning behind this model, see
+[docs/licensing-and-monetization-report.md](docs/licensing-and-monetization-report.md).

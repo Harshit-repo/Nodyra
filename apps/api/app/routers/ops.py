@@ -18,7 +18,9 @@ from app.schemas import (
     DeadLetterEntry,
     DeadLetterListResponse,
     DeadLetterReplayResponse,
+    DispatcherCapacity,
     DrainRequest,
+    QueueCapacity,
     QueueStats,
     RuntimeModeStatus,
 )
@@ -152,6 +154,7 @@ async def ops_health(
     # --- Pools ------------------------------------------------------------
     try:
         from app.services.runtime_pool import pool as _rt_pool
+
         if _rt_pool:
             health["runtime_pool"] = {
                 "available": _rt_pool.available_global_slots(),
@@ -182,9 +185,7 @@ async def system_status(
     }
 
 
-@router.get(
-    "/ops/runtime-mode", response_model=RuntimeModeStatus, dependencies=[_viewer_dep]
-)
+@router.get("/ops/runtime-mode", response_model=RuntimeModeStatus, dependencies=[_viewer_dep])
 async def runtime_mode(
     session: AsyncSession = Depends(get_session),
 ) -> RuntimeModeStatus:
@@ -222,6 +223,71 @@ async def queue_stats(
     """
     data = await run_queue.stats(session)
     return QueueStats(**data)
+
+
+@router.get(
+    "/ops/capacity",
+    response_model=QueueCapacity,
+    dependencies=[_viewer_dep],
+)
+async def queue_capacity(
+    session: AsyncSession = Depends(get_session),
+) -> QueueCapacity:
+    """Worker capacity planner data for the ops dashboard."""
+    from app.services.dispatcher_health import live_dispatchers
+
+    queue = await run_queue.stats(session)
+    dispatchers_raw = await live_dispatchers()
+    dispatchers = [DispatcherCapacity(**row) for row in dispatchers_raw]
+
+    local_available = sum(
+        int(d.available_slots or 0)
+        for d in dispatchers
+        if "local" in d.providers or "docker" in d.providers
+    )
+    local_max = sum(
+        int(d.max_slots or 0)
+        for d in dispatchers
+        if "local" in d.providers or "docker" in d.providers
+    )
+
+    label_rows = (
+        await session.execute(
+            select(
+                RunQueueEntry.required_labels,
+                RunQueueEntry.runner_pool_id,
+                RunnerPool.provider,
+            )
+            .outerjoin(RunnerPool, RunnerPool.id == RunQueueEntry.runner_pool_id)
+            .where(
+                RunQueueEntry.status == "queued",
+                RunQueueEntry.required_labels.is_not(None),
+            )
+            .execution_options(skip_org_filter=True)
+        )
+    ).all()
+    blocked = 0
+    for required_labels, _runner_pool_id, provider in label_rows:
+        target_provider = str(provider or "local")
+        if target_provider not in {"local", "docker"}:
+            continue
+        satisfiable = any(
+            target_provider in dispatcher.providers
+            and run_queue.labels_satisfied(required_labels, dispatcher.labels)
+            for dispatcher in dispatchers
+        )
+        if not satisfiable:
+            blocked += 1
+
+    return QueueCapacity(
+        queued=int(queue.get("queued", 0)),
+        leased=int(queue.get("leased", 0)),
+        running=int(queue.get("running", 0)),
+        local_available_slots=local_available,
+        local_max_slots=local_max,
+        dispatchers=dispatchers,
+        label_blocked_queued=blocked,
+    )
 
 
 @router.get("/ops/drain", dependencies=[_viewer_dep])
@@ -287,6 +353,7 @@ async def pool_resize(payload: dict) -> dict:
     target = int(payload.get("max_slots", settings.max_concurrent_runs))
     target = max(1, min(target, 128))  # hard cap at 128
     from app.services.runtime_pool import pool as _rt_pool
+
     new_max = await _rt_pool.resize(target)
     return {"max_slots": new_max}
 
@@ -303,6 +370,7 @@ async def list_replicas() -> list[dict]:
     have likely crashed or been scaled down.
     """
     from app.services.replica_health import list_replicas as _list
+
     return await _list()
 
 
@@ -372,9 +440,7 @@ async def replay_dead_letter(
     by single-run replay, so attempt history is preserved.
     """
     rows = (
-        await session.scalars(
-            select(RunQueueEntry).where(RunQueueEntry.status == "dead_lettered")
-        )
+        await session.scalars(select(RunQueueEntry).where(RunQueueEntry.status == "dead_lettered"))
     ).all()
     replayed: list[str] = []
     skipped: list[str] = []
@@ -406,6 +472,7 @@ async def metrics(session: AsyncSession = Depends(get_session)) -> Response:
     extra_metrics = ""
     try:
         from app.services.metrics import get_metrics_text
+
         extra_metrics = get_metrics_text()
     except Exception:  # noqa: BLE001
         pass

@@ -131,6 +131,38 @@ def _now(now: datetime | None) -> datetime:
     return now or datetime.now(UTC)
 
 
+def normalize_required_labels(value: dict | None) -> dict[str, str] | None:
+    """Normalize run/worker label requirements to string key-value pairs."""
+    if not value:
+        return None
+    labels: dict[str, str] = {}
+    for raw_key, raw_value in value.items():
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        labels[key] = (
+            "true"
+            if raw_value is True
+            else "false"
+            if raw_value is False
+            else str(raw_value).strip()
+        )
+    return labels or None
+
+
+def labels_satisfied(
+    required: dict | None,
+    available: dict[str, str] | None,
+) -> bool:
+    required_labels = normalize_required_labels(required)
+    if not required_labels:
+        return True
+    available_labels = normalize_required_labels(available)
+    if not available_labels:
+        return False
+    return all(available_labels.get(key) == value for key, value in required_labels.items())
+
+
 def _as_aware(value: datetime) -> datetime:
     """SQLite round-trips ``DateTime`` as naive; treat stored times as UTC so
     comparisons against timezone-aware ``now`` don't raise."""
@@ -165,6 +197,7 @@ async def enqueue(
     available_at: datetime | None = None,
     trace_context: dict | None = None,
     replay_seed: dict | None = None,
+    required_labels: dict | None = None,
 ) -> RunQueueEntry:
     """Add a run to the queue, or reset an existing entry for the same run.
 
@@ -186,6 +219,7 @@ async def enqueue(
         existing.last_error = None
         existing.available_at = available_at or _now(None)
         existing.trace_context = trace_context
+        existing.required_labels = normalize_required_labels(required_labels)
         if replay_seed is not None:
             existing.replay_seed = replay_seed
         return existing
@@ -202,6 +236,7 @@ async def enqueue(
         available_at=available_at or _now(None),
         trace_context=trace_context,
         replay_seed=replay_seed,
+        required_labels=normalize_required_labels(required_labels),
     )
     session.add(entry)
     await session.flush()
@@ -286,6 +321,7 @@ async def lease(
     now: datetime | None = None,
     providers: frozenset[str] | None = None,
     exclude_local: bool = False,
+    worker_labels: dict[str, str] | None = None,
 ) -> RunQueueEntry | None:
     """Claim the next eligible queued entry for ``worker_id``.
 
@@ -299,6 +335,10 @@ async def lease(
     """
     moment = _now(now)
 
+    # Scan a bounded ordered window so a worker that cannot satisfy a labeled
+    # run does not head-of-line block unlabeled work behind it.
+    candidate_limit = 100
+
     def _base_stmt():
         stmt = (
             select(RunQueueEntry)
@@ -310,7 +350,7 @@ async def lease(
                 RunQueueEntry.priority.desc(),
                 RunQueueEntry.available_at.asc(),
             )
-            .limit(1)
+            .limit(candidate_limit)
             .execution_options(skip_org_filter=True)
         )
         # Provider capability filter (program A1): a standalone worker can run
@@ -345,16 +385,23 @@ async def lease(
             stmt = stmt.with_for_update(skip_locked=True)
         return stmt
 
+    async def _first_matching(stmt) -> RunQueueEntry | None:  # noqa: ANN001
+        rows = (await session.scalars(stmt)).all()
+        for candidate in rows:
+            if labels_satisfied(candidate.required_labels, worker_labels):
+                return candidate
+        return None
+
     entry: RunQueueEntry | None = None
     if settings.multi_tenancy_enabled:
         # Try the fairest few orgs in order; a miss means a peer worker
         # drained that org between the pre-pass and the lock attempt.
         for org_id in (await _org_fair_order(session, moment))[:5]:
-            entry = await session.scalar(_base_stmt().where(RunQueueEntry.org_id == org_id))
+            entry = await _first_matching(_base_stmt().where(RunQueueEntry.org_id == org_id))
             if entry is not None:
                 break
     else:
-        entry = await session.scalar(_base_stmt())
+        entry = await _first_matching(_base_stmt())
     if entry is None:
         return None
 
@@ -773,6 +820,7 @@ async def run_queue_dispatch_loop() -> None:
         providers = frozenset({"agent", "kubernetes"})
     else:
         providers = None
+    worker_labels = settings.worker_label_map
 
     # Cross-process wakeup via Redis pub/sub; falls back to polling silently.
     subscriber_task = asyncio.create_task(_redis_queue_subscriber())
@@ -793,7 +841,13 @@ async def run_queue_dispatch_loop() -> None:
                 # A6: advertise that this process is leasing its providers, so
                 # the Runner Pools health endpoint can tell a pool whose runs
                 # nothing dispatches from one that's simply at capacity.
-                await dispatcher_health.record_heartbeat(role)
+                await dispatcher_health.record_heartbeat(
+                    role,
+                    worker_id=worker,
+                    labels=worker_labels,
+                    available_slots=runtime_pool.available_global_slots(),
+                    max_slots=runtime_pool.current_max_slots(),
+                )
 
                 async with SessionLocal() as session:
                     requeued = await requeue_expired_leases(session)
@@ -814,6 +868,7 @@ async def run_queue_dispatch_loop() -> None:
                 # Update Prometheus gauges from queue stats each tick.
                 try:
                     from app.services.metrics import queue_depth, queue_leased
+
                     async with SessionLocal() as session:
                         s = await stats(session)
                     queue_depth.set(float(s.get("queued", 0)))
@@ -841,6 +896,7 @@ async def run_queue_dispatch_loop() -> None:
                             worker_id=worker,
                             providers=providers,
                             exclude_local=exclude_local,
+                            worker_labels=worker_labels,
                         )
                         if entry is None:
                             await session.rollback()

@@ -20,6 +20,20 @@ const python =
     ? path.join(repoRoot, ".venv", "Scripts", "python.exe")
     : path.join(repoRoot, ".venv", "bin", "python");
 
+const licenseInfo = spawnSync(
+  python,
+  [
+    "-c",
+    "import json; from tests._license_keys import TEST_PUBLIC_KEY_PEM, enterprise_key; print(json.dumps({'public_key': TEST_PUBLIC_KEY_PEM, 'license_key': enterprise_key()}))",
+  ],
+  { cwd: apiDir, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+);
+if (licenseInfo.status !== 0) {
+  console.error("failed to mint e2e license");
+  process.exit(licenseInfo.status ?? 1);
+}
+const e2eLicense = JSON.parse(licenseInfo.stdout);
+
 const env = {
   ...process.env,
   DATABASE_URL: "sqlite+aiosqlite:///./e2e.db",
@@ -32,6 +46,10 @@ const env = {
   // in-process transport, so e2e needs no Redis. ("" would crash the eager
   // redis.from_url parse in app/redis_client.py.)
   REDIS_URL: "redis://localhost:6390/0",
+  // Match the Python test harness: browser e2e exercises Enterprise-only
+  // surfaces such as dedicated runner pools against a throwaway signed key.
+  LICENSE_PUBLIC_KEY: e2eLicense.public_key,
+  NODYRA_LICENSE_KEY: e2eLicense.license_key,
 };
 
 // Migrate-then-start: the API does not create its own schema.

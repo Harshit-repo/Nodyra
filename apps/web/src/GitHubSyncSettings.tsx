@@ -12,8 +12,12 @@ import {
 import { useToast } from "./ToastProvider";
 import type { GithubRepoValidation } from "./types";
 
-export function GitHubSyncSettings() {
-  const { data: config, isLoading } = useGithubSyncConfig();
+interface GitHubSyncSettingsProps {
+  enabled?: boolean;
+}
+
+export function GitHubSyncSettings({ enabled = true }: GitHubSyncSettingsProps) {
+  const { data: config, isLoading } = useGithubSyncConfig({ enabled });
   const upsert = useUpsertGithubSyncConfigMutation();
   const remove = useDeleteGithubSyncConfigMutation();
   const validateRepo = useValidateGithubRepoMutation();
@@ -27,6 +31,7 @@ export function GitHubSyncSettings() {
   const [secret, setSecret] = useState<string | null>(null);
   const [validation, setValidation] = useState<GithubRepoValidation | null>(null);
 
+  if (!enabled) return null;
   if (isLoading) return <div className="settings-loading">Loading…</div>;
 
   async function handleConnect(e: React.FormEvent) {

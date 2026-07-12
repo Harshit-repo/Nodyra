@@ -38,7 +38,9 @@ enable the corresponding features, ONLY:
 
 When you do not hold a valid, current license key, you have no right to use,
 enable, or benefit from the Enterprise Software, and any feature it gates must
-remain disabled.
+remain disabled. Notwithstanding the foregoing, you may view the source code
+of the Enterprise Software solely for evaluation, audit, and security-review
+purposes; possession of the source code grants no other rights.
 
 ## 3. Restrictions
 
@@ -56,7 +58,9 @@ You may NOT, in whole or in part:
       Enterprise Software to any third party, or provide it as a hosted or
       managed service;
   (e) use the Enterprise Software to develop a competing product, or extract
-      its private signing keys.
+      or attempt to derive its private signing keys;
+  (f) share, publish, sublicense, or transfer a license key, or use a license
+      key issued to another person or entity.
 
 Any of the above is both a breach of this license and an infringement of the
 Licensor's copyright.
@@ -71,8 +75,8 @@ intellectual property rights.
 
 This license is effective for the term of your license key and terminates
 automatically if you breach it or upon expiry of the key. On termination you
-must cease all use of the Enterprise features. Sections 3, 4, 6, and 7 survive
-termination.
+must cease all use of the Enterprise features. Sections 3, 4, 6, 7, 8, and 9
+survive termination.
 
 ## 6. No warranty
 
@@ -87,13 +91,19 @@ indirect, incidental, special, consequential, or punitive damages, or any loss
 of profits or revenue, arising out of or related to this license or the
 Enterprise Software.
 
-## 8. Contact
+## 8. Severability
+
+If any provision of this license is held to be unenforceable or invalid, that
+provision will be enforced to the maximum extent permissible, and the
+remaining provisions will remain in full force and effect.
+
+## 9. Entire agreement
+
+This license, together with the order form or invoice covering your license
+key, is the entire agreement between you and the Licensor regarding the
+Enterprise Software, and supersedes all prior or contemporaneous
+understandings on the subject.
+
+## 10. Contact
 
 For commercial licensing, pricing, or questions: sharma.har97@gmail.com
-
-----------------------------------------------------------------------------
-NOTE FOR THE LICENSOR: have an attorney review this before publishing. This is
-a starting point, not legal advice. Keep the list in Section 1 in sync with the
-files you actually gate (and consider moving them under an `ee/` directory so
-the boundary is unambiguous).
-----------------------------------------------------------------------------

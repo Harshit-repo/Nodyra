@@ -25,6 +25,7 @@ from app.db import SessionLocal
 from app.models import AuditEvent, NodeRun, Run, RunApproval, RunEvent, RunQueueEntry
 from app.services.artifacts import delete_artifacts_for_run_ids
 from app.services.live_settings import get_live_settings
+from app.services.output_store import delete_outputs_for_run_ids
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,10 @@ async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
         if not ids:
             return 0
         await delete_artifacts_for_run_ids(session, ids)
+        # Phase 3.1: reclaim offloaded-output files (data/outputs/<run_id>/) —
+        # these live on disk independent of the NodeRun rows deleted below, so
+        # without this every offloaded run would leave an orphaned directory.
+        delete_outputs_for_run_ids(ids)
         await session.execute(delete(RunApproval).where(RunApproval.run_id.in_(ids)))
         await session.execute(delete(RunEvent).where(RunEvent.run_id.in_(ids)))
         await session.execute(delete(NodeRun).where(NodeRun.run_id.in_(ids)))

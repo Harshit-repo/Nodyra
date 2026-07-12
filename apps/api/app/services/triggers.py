@@ -576,6 +576,7 @@ async def _await_run_terminal(run_id: str, timeout: float) -> str | None:
 async def _last_node_output(session, run_id: str) -> object:
     """Return the output of the last node to finish in ``run_id``."""
     from app.models import NodeRun
+    from app.services.data_ref import resolve_ref
 
     row = await session.scalar(
         select(NodeRun.output)
@@ -583,6 +584,9 @@ async def _last_node_output(session, run_id: str) -> object:
         .order_by(NodeRun.finished_at.desc().nullslast())
         .limit(1)
     )
+    # A large output is stored as an offload marker; resolve it so the webhook
+    # response is the real value, not ``{"__output_ref": ...}`` (OS-1).
+    row = resolve_ref(row)
     if isinstance(row, dict):
         # Single-output nodes expose ``main``; fall back to the whole dict.
         return row.get("main", row)

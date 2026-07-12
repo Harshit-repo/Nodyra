@@ -21,6 +21,10 @@ claude mcp add --transport http nodyra http://localhost:8000/mcp \
   --header "Authorization: Bearer ndpat_YOUR_TOKEN"
 ```
 
+Use the same `/mcp` path on the bundled web origin, for example
+`https://nodyra.example.com/mcp`; the shipped Vite, nginx, and Helm ingress
+configurations proxy that path to the API.
+
 **Claude Desktop / Cursor / any streamable-HTTP client**: add to the MCP config:
 
 ```json

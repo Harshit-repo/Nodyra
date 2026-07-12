@@ -649,7 +649,7 @@ async def workflow_events(websocket: WebSocket, workflow_id: str) -> None:
     finally:
         with contextlib.suppress(Exception):
             org_scope.__exit__(None, None, None)
-        with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+        with contextlib.suppress(Exception):
             await websocket.close()
 
 

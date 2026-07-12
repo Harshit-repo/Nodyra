@@ -11,8 +11,9 @@ This module is consumed by the deployments router: when a deployment becomes
 
 Each finding is ``{node_id, type, kind, reason}``. ``kind`` is one of:
 ``code``, ``execute_command``, ``ssh``, ``filesystem``, ``http_private_ip``,
-``sql_with_expressions``, ``network_egress``. The router treats every finding
-equally (kind is informational/UI-only), so new kinds slot in without touching it.
+``sql_with_expressions``, ``network_egress``, ``docker_daemon``. The router
+treats every finding equally (kind is informational/UI-only), so new kinds
+slot in without touching it.
 """
 
 from __future__ import annotations
@@ -38,6 +39,12 @@ UNCONDITIONAL_UNSAFE: dict[str, str] = {
     # ``enable_external_access=false`` latch as defence-in-depth.)
     "duckdb_sql": "code",
     "polars_transform": "code",
+    # SEC-A: runs an arbitrary image with an arbitrary command against the
+    # Docker daemon — same blast radius as Code/execute_command (the node's
+    # own docstring warns it is single-tenant-only). Unlike list/stop, this one
+    # can execute attacker-controlled code, so it goes under the unconditional
+    # gate rather than the network_egress "daemon access" finding below.
+    "docker_run_container": "execute_command",
 }
 
 # Node type ids whose params get conditionally inspected.
@@ -100,6 +107,15 @@ NETWORK_EGRESS_NODE_TYPES: frozenset[str] = frozenset(
         "mysql_query",               # legacy DB connection to arbitrary host
     }
 )
+# SEC-A: nodes that reach the host's Docker daemon rather than a caller-
+# supplied network host. docker_list_containers leaks other tenants'
+# container names/images/ports on a shared host; docker_stop_container lets
+# one tenant DoS another tenant's containers. docker_run_container is
+# arbitrary code execution and is gated under UNCONDITIONAL_UNSAFE instead.
+DOCKER_DAEMON_NODE_TYPES: frozenset[str] = frozenset(
+    {"docker_list_containers", "docker_stop_container"}
+)
+
 # Legacy S3 nodes use AWS's fixed endpoint by default, but become arbitrary
 # egress when endpoint_url is supplied for S3-compatible storage.
 OPTIONAL_ENDPOINT_EGRESS_NODE_TYPES: frozenset[str] = frozenset(
@@ -304,6 +320,20 @@ def classify(graph: dict | WorkflowGraph) -> list[dict[str, str]]:
                     "reason": (
                         f"node type '{nt}' opens a raw network connection to a "
                         "caller-supplied host (SSRF / internal recon)"
+                    ),
+                }
+            )
+
+        if nt in DOCKER_DAEMON_NODE_TYPES:
+            findings.append(
+                {
+                    "node_id": nid,
+                    "type": nt,
+                    "kind": "docker_daemon",
+                    "reason": (
+                        f"node type '{nt}' reaches the host Docker daemon — on a "
+                        "shared host this can observe or disrupt other tenants' "
+                        "containers"
                     ),
                 }
             )

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useOnboardingTour } from "./useOnboardingTour";
 import type { TourStep } from "./useOnboardingTour";
+import "./OnboardingTour.css";
 
 interface TargetRect {
   top: number;

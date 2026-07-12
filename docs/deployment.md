@@ -32,7 +32,7 @@ compose Postgres URL.
 ## docker-compose
 
 `deploy/docker-compose.yml` brings up the full stack — Postgres, Redis, the
-API as a control plane (running migrations on startup, `DISPATCH_ROLE=disabled`,
+API as a control plane (running migrations on startup, `DISPATCH_ROLE=control`,
 leader-elected scheduler), a dispatch worker (`DISPATCH_ROLE=worker`, executes
 runs), and the web dev server. Open <http://localhost:5173> after the API is
 healthy.
@@ -42,17 +42,23 @@ healthy.
 | Role | Process | Leases queue entries | Needs |
 |------|---------|----------------------|-------|
 | `inline` (default) | API | all (local + agent + docker + kubernetes) | SQLite or Postgres |
+| `control` | API | agent + kubernetes only (their WebSockets terminate here) | Postgres + Redis |
 | `disabled` | API | none — enqueues only | Postgres + Redis |
 | `worker` | `python -m app.worker_main` | local + docker | Postgres + Redis |
 
-Recommended production shape: N API replicas with `DISPATCH_ROLE=disabled` +
-`SCHEDULER_ROLE=leader`, M workers, one shared Postgres + Redis. Caveat:
-agent/kubernetes runner pools need their WebSocket-terminating API replica to
-dispatch them — keep one replica with `DISPATCH_ROLE=inline` if you use those
-pools. Workers drain gracefully on SIGTERM (stop leasing, wait
+Recommended production shape: N API replicas with `DISPATCH_ROLE=control` +
+`SCHEDULER_ROLE=leader`, M workers, one shared Postgres + Redis (`control`
+keeps the split — workers still run all local/docker execution — while also
+dispatching agent/kubernetes runner pools, whose WebSockets terminate on the
+API; use `disabled` only when you run no such pools). Workers drain
+gracefully on SIGTERM (stop leasing, wait
 `QUEUE_DISPATCH_SHUTDOWN_TIMEOUT_SECONDS`, then cancel); a worker lost
 mid-run is recovered by lease expiry, which requeues the entry and resets the
 run for another worker.
+
+**Scaling workers** — add execution capacity with one command
+(`docker compose up -d --scale worker=3`, helm `worker.replicas`, or an agent
+runner join token from the UI): see [deployment/workers.md](deployment/workers.md).
 
 ## Kubernetes (Helm)
 
@@ -67,8 +73,9 @@ helm install nodyra deploy/helm/nodyra \
 
 The chart deploys the API (control plane), web, and the dispatch worker.
 Postgres and Redis are expected to be installed separately. Enable the bundled Ingress
-with `--set ingress.enabled=true` — it routes `/api` and `/ws` to the API
-and everything else to the web app.
+with `--set ingress.enabled=true` — it routes `/api`, `/ws`, `/mcp`, and the
+MCP protected-resource metadata path to the API, and everything else to the
+web app.
 
 ## Configuration flags
 
@@ -125,6 +132,22 @@ source of truth.
 | `QUEUE_MAX_DISPATCHES_PER_TICK` | `25` | Upper bound on leases granted per tick. |
 | `QUEUE_DISPATCH_SHUTDOWN_TIMEOUT_SECONDS` | `5.0` | How long the dispatch loop waits for in-flight work on shutdown. |
 | `QUEUE_DRAIN` | `false` | When `true`, the dispatch loop stops leasing new entries but keeps requeueing expired leases. Use the `/ops/drain` endpoint to toggle at runtime — see below. |
+| `WORKER_LABELS` | unset | Worker-only comma-separated capability labels, for example `gpu=a100,mem=high`. Runs with `required_labels` only lease to workers whose labels contain every requested key/value pair. |
+
+#### Worker label routing
+
+Set `WORKER_LABELS` on specialized worker pools to keep hardware- or
+dependency-specific runs off general workers. Examples:
+
+```sh
+WORKER_LABELS=gpu=a100,mem=high python -m app.worker_main
+docker compose -f deploy/docker-compose.yml up -d --scale worker=2
+helm upgrade nodyra deploy/helm/nodyra --set worker.labels=gpu=a100
+```
+
+The dispatch loop advertises each worker's labels and slot counts. The
+Executions page's Ops dashboard and `GET /ops/capacity` show available local
+worker slots, live dispatchers, and queued runs blocked by unsatisfied labels.
 
 #### Graceful drain
 
@@ -198,6 +221,11 @@ Migration policy:
 - `GET /metrics` — Prometheus text format.
 - `GET /runs` (paginated, filterable) and the **Executions** page in the UI
   show every run across the system with per-node logs, timing, and outputs.
+- `deploy/observability/prometheus-alerts.yml` — starter alerts for API
+  scrape failures, HTTP 5xx rate, queue backlog, dead letters, missing worker
+  capacity, and long-running executions.
+- `deploy/observability/grafana-dashboard.json` — starter dashboard for queue
+  depth, active runs, HTTP throughput, and run-duration percentiles.
 
 ### Distributed tracing (OpenTelemetry)
 

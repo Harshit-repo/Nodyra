@@ -108,12 +108,13 @@ changes to where signed agreements must be sent. Those process changes apply to
 future submissions only and do not reduce licenses already granted for prior
 Contributions.
 
-Notices for this Agreement should be sent to: [CLA_CONTACT_EMAIL].
+Notices for this Agreement should be sent to: sharma.har97@gmail.com.
 
 ## 11. Governing Law
 
-This Agreement is governed by the laws of [GOVERNING_LAW_JURISDICTION], without
-regard to conflict of laws rules.
+This Agreement is governed by the laws of India, without regard to conflict of
+laws rules. The courts at [CITY, India — e.g. New Delhi] have exclusive
+jurisdiction over disputes arising out of this Agreement.
 
 ## 12. Signature
 

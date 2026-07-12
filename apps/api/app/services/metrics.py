@@ -225,6 +225,15 @@ node_executions_total = _Counter(
     "Total node executions across all runs.",
 )
 
+output_store_events_total = _Counter(
+    "nodyra_output_store_events_total",
+    "Large-output offload store events, labeled by event=write_failed|read_failed. "
+    "Offloading is best-effort (falls back to inline storage / the raw marker on "
+    "failure), so these never fail a run — but a sustained rate means the output "
+    "store is degraded and large outputs are silently bloating the DB or losing "
+    "their resolved value.",
+)
+
 
 def _render_all() -> str:
     metrics = [
@@ -236,6 +245,7 @@ def _render_all() -> str:
         queue_depth,
         queue_leased,
         node_executions_total,
+        output_store_events_total,
     ]
     return "\n\n".join(m.render() for m in metrics) + "\n"
 

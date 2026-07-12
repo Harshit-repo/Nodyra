@@ -111,10 +111,14 @@ async def resume_waiting_run_from_approval(
                 ).order_by(NodeRun.finished_at.desc())
             )
         ).all()
+        from app.services.data_ref import resolve_ref
+
         for node_run in node_runs:
             if node_run.node_id == agent_node_id:
                 continue
-            output = node_run.output
+            # Restore an offloaded-output marker before seeding the resume cache
+            # (mirrors the sibling path below; OS-1).
+            output = resolve_ref(node_run.output)
             if not isinstance(output, dict):
                 continue
             if _contains_unrestorable_object(output):
@@ -206,11 +210,11 @@ async def build_durable_execution_state(
             )
         ).all()
 
-        from app.services.output_store import maybe_load_output
+        from app.services.data_ref import resolve_ref
 
         cache: dict[str, dict] = {}
         for nr in node_runs:
-            output = maybe_load_output(nr.output)
+            output = resolve_ref(nr.output)
             if not isinstance(output, dict) or not output:
                 continue
             # Don't seed outputs containing unrestorable objects (artifact

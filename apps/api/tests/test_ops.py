@@ -90,13 +90,9 @@ async def test_queue_stats_reflects_queue_entries(client: AsyncClient) -> None:
     async for session in override():
         await _seed_parents(session, "wf", ["r1", "r2", "r3"])
         session.add(RunQueueEntry(run_id="r1", workflow_id="wf", status="queued"))
+        session.add(RunQueueEntry(run_id="r2", workflow_id="wf", status="leased", attempts=1))
         session.add(
-            RunQueueEntry(run_id="r2", workflow_id="wf", status="leased", attempts=1)
-        )
-        session.add(
-            RunQueueEntry(
-                run_id="r3", workflow_id="wf", status="dead_lettered", attempts=3
-            )
+            RunQueueEntry(run_id="r3", workflow_id="wf", status="dead_lettered", attempts=3)
         )
         await session.commit()
         break
@@ -111,10 +107,62 @@ async def test_queue_stats_reflects_queue_entries(client: AsyncClient) -> None:
     assert body["oldest_queued_age_seconds"] >= 0
 
 
+async def test_queue_capacity_reports_dispatchers_and_label_blocking(
+    client: AsyncClient,
+) -> None:
+    from app.db import get_session
+    from app.main import app as fastapi_app
+    from app.models import RunQueueEntry
+    from app.services import dispatcher_health
+
+    dispatcher_health.reset_local()
+    await dispatcher_health.record_heartbeat(
+        "worker",
+        worker_id="worker-a",
+        labels={"gpu": "a100"},
+        available_slots=2,
+        max_slots=4,
+    )
+
+    override = fastapi_app.dependency_overrides[get_session]
+    async for session in override():
+        await _seed_parents(session, "wf-cap", ["cap-1", "cap-2"])
+        session.add(
+            RunQueueEntry(
+                run_id="cap-1",
+                workflow_id="wf-cap",
+                status="queued",
+                required_labels={"gpu": "a100"},
+            )
+        )
+        session.add(
+            RunQueueEntry(
+                run_id="cap-2",
+                workflow_id="wf-cap",
+                status="queued",
+                required_labels={"gpu": "h100"},
+            )
+        )
+        await session.commit()
+        break
+
+    try:
+        resp = await client.get("/ops/capacity")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["queued"] == 2
+        assert body["local_available_slots"] == 2
+        assert body["local_max_slots"] == 4
+        assert body["label_blocked_queued"] == 1
+        assert body["dispatchers"][0]["labels"] == {"gpu": "a100"}
+    finally:
+        dispatcher_health.reset_local()
+
+
 async def test_drain_status_default_false(client: AsyncClient) -> None:
-    resp = await client.get('/ops/drain')
+    resp = await client.get("/ops/drain")
     assert resp.status_code == 200
-    assert resp.json() == {'draining': False}
+    assert resp.json() == {"draining": False}
 
 
 async def test_ops_monitoring_requires_auth_when_auth_enabled(
@@ -126,24 +174,31 @@ async def test_ops_monitoring_requires_auth_when_auth_enabled(
     from app.config import settings as _settings
 
     monkeypatch.setattr(_settings, "auth_required", True)
-    for path in ("/system/status", "/ops/runtime-mode", "/ops/queue", "/ops/drain"):
+    for path in (
+        "/system/status",
+        "/ops/runtime-mode",
+        "/ops/queue",
+        "/ops/capacity",
+        "/ops/drain",
+    ):
         response = await client.get(path)
         assert response.status_code == 401, path
 
 
 async def test_drain_toggle_round_trips(client: AsyncClient) -> None:
     from app.config import settings as app_settings
+
     try:
-        resp = await client.post('/ops/drain', json={'draining': True})
+        resp = await client.post("/ops/drain", json={"draining": True})
         assert resp.status_code == 200
-        assert resp.json() == {'draining': True}
+        assert resp.json() == {"draining": True}
         assert app_settings.queue_drain is True
 
-        resp = await client.get('/ops/drain')
-        assert resp.json() == {'draining': True}
+        resp = await client.get("/ops/drain")
+        assert resp.json() == {"draining": True}
 
-        resp = await client.post('/ops/drain', json={'draining': False})
-        assert resp.json() == {'draining': False}
+        resp = await client.post("/ops/drain", json={"draining": False})
+        assert resp.json() == {"draining": False}
         assert app_settings.queue_drain is False
     finally:
         app_settings.queue_drain = False

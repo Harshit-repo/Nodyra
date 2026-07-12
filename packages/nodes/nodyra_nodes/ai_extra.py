@@ -21,7 +21,7 @@ from nodyra.artifacts import is_artifact_ref, write_bytes
 from nodyra.artifacts import read_bytes as read_artifact_bytes
 from nodyra.sdk import node
 from nodyra_nodes._creds import cred_multi, cred_single
-from nodyra_nodes.http_security import assert_public_http_url
+from nodyra_nodes.http_security import assert_public_http_url, safe_request
 
 _HTTP_TIMEOUT = 60  # AI calls can be slow; pad past the default 30 s
 
@@ -491,11 +491,13 @@ def pinecone_upsert(
     vector = {"id": vector_id, "values": values}
     if metadata:
         vector["metadata"] = metadata
-    response = requests.post(
+    response = safe_request(
+        "POST",
         _pinecone_url(index_host, "/vectors/upsert"),
         headers={"Api-Key": api_key, "Content-Type": "application/json"},
         json={"vectors": [vector], "namespace": namespace or "default"},
         timeout=_HTTP_TIMEOUT,
+        context="pinecone upsert",
     )
     return _expect_ok(response, "pinecone")
 
@@ -564,7 +566,8 @@ def pinecone_query(
         )
     if not isinstance(vector, list) or not vector:
         raise ValueError("pinecone_query: vector must be a non-empty array")
-    response = requests.post(
+    response = safe_request(
+        "POST",
         _pinecone_url(index_host, "/query"),
         headers={"Api-Key": api_key, "Content-Type": "application/json"},
         json={
@@ -574,6 +577,7 @@ def pinecone_query(
             "includeMetadata": bool(include_metadata),
         },
         timeout=_HTTP_TIMEOUT,
+        context="pinecone query",
     )
     return _expect_ok(response, "pinecone")
 

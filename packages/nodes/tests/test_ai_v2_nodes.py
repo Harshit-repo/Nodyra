@@ -281,6 +281,51 @@ def test_chat_model_azure_returns_adapter() -> None:
     assert config["completion_price_per_1m_tokens"] == 10.0
 
 
+def test_chat_model_azure_blocks_private_endpoint() -> None:
+    """SEC-B regression: ai_v2's Azure adapter used a raw ``requests.post``
+    with no SSRF re-validation. A private/loopback ``azure_endpoint`` must be
+    blocked before any request is attempted."""
+    fn = registry.get("ai_chat_model_azure").func
+    adapter = fn(
+        credentials={
+            "api_key": "az-key",
+            "azure_endpoint": "http://169.254.169.254",
+            "deployment": "gpt-4o-mini",
+        },
+        model="gpt-4o-mini",
+    )
+    with pytest.raises(Exception) as exc_info:
+        adapter.complete(ChatRequest(model="x", messages=[AIMessage(role=MessageRole.user, content="hi")]))
+    assert "private" in str(exc_info.value).lower()
+
+
+def test_chat_model_openai_compatible_blocks_private_base_url() -> None:
+    """SEC-B regression: ai_v2's OpenAI-compatible adapter used a raw
+    ``requests.post`` for a credential-supplied ``base_url``."""
+    fn = registry.get("ai_chat_model_openai").func
+    adapter = fn(
+        credentials={"provider": "openai_compatible", "base_url": "http://127.0.0.1:9999/v1"},
+        provider="openai_compatible",
+        model="local-model",
+    )
+    with pytest.raises(Exception) as exc_info:
+        adapter.complete(ChatRequest(model="x", messages=[AIMessage(role=MessageRole.user, content="hi")]))
+    assert "private" in str(exc_info.value).lower()
+
+
+def test_chat_model_anthropic_blocks_private_base_url() -> None:
+    """SEC-B regression: ai_v2's Anthropic adapter used a raw
+    ``requests.post`` for a credential-supplied ``base_url``."""
+    fn = registry.get("ai_chat_model_anthropic").func
+    adapter = fn(
+        credentials={"api_key": "sk-ant", "base_url": "http://10.0.0.5/v1/messages"},
+        model="claude-3-5-haiku-latest",
+    )
+    with pytest.raises(Exception) as exc_info:
+        adapter.complete(ChatRequest(model="x", messages=[AIMessage(role=MessageRole.user, content="hi")]))
+    assert "private" in str(exc_info.value).lower()
+
+
 # ---------------------------------------------------------------------------
 # Embedding supplier
 # ---------------------------------------------------------------------------

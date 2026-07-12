@@ -71,6 +71,97 @@ async def test_remove_docker_runner_busy_409(client):
     assert resp.status_code == 409
 
 
+async def test_remove_docker_runner_daemon_down_502(client, monkeypatch):
+    """P2 (Sonnet re-review NEW-1): removing a non-busy docker runner while its
+    daemon is unreachable must surface a retryable 502 — not an opaque 500 —
+    and must NOT delete the row (that would orphan the live container)."""
+    from app.models import Runner
+    from app.services import docker_workers
+    from app.services import runner as runner_module
+
+    def _boom(_cfg):
+        raise docker_workers.DaemonUnreachable("daemon down")
+
+    monkeypatch.setattr(docker_workers, "_docker_client", _boom)
+
+    pool_id = await _make_agent_pool(client)
+    async with runner_module.SessionLocal() as db:
+        r = Runner(
+            pool_id=pool_id, name="orphan-risk", status="offline", current_runs=0,
+            capabilities={"docker_managed": True, "container_name": "nodyra-worker-y"},
+        )
+        db.add(r)
+        await db.commit()
+        runner_id = r.id
+
+    resp = await client.delete(f"/runner-pools/{pool_id}/docker-runners/{runner_id}")
+    assert resp.status_code == 502, resp.text
+
+    # Row survived — the container was not orphaned.
+    async with runner_module.SessionLocal() as db:
+        assert await db.get(Runner, runner_id) is not None
+
+
+async def test_runner_hello_cannot_forge_protected_capabilities(client):
+    """A plain (never-provisioned) runner must not be able to self-assign the
+    server-authoritative ``sandbox``/``docker_managed`` flags via runner_hello —
+    otherwise it could route itself sandbox-required runs it can't isolate."""
+    from app.models import Runner
+    from app.services import runner as runner_module
+    from app.services.remote_dispatch import RemoteDispatcher, _AgentConnection
+
+    pool_id = await _make_agent_pool(client)
+    async with runner_module.SessionLocal() as db:
+        r = Runner(pool_id=pool_id, name="plain", status="offline",
+                   capabilities={"region": "eu"})
+        db.add(r)
+        await db.commit()
+        runner_id = r.id
+
+    dispatcher = RemoteDispatcher()
+    conn = _AgentConnection(runner_id=runner_id, ws=object())
+    await dispatcher._handle_agent_message(
+        conn,
+        {"type": "runner_hello",
+         "capabilities": {"sandbox": True, "docker_managed": True, "region": "eu"}},
+    )
+
+    async with runner_module.SessionLocal() as db:
+        caps = (await db.get(Runner, runner_id)).capabilities
+    assert "sandbox" not in caps
+    assert "docker_managed" not in caps
+    assert caps.get("region") == "eu"  # non-protected labels still accepted
+
+
+async def test_runner_hello_preserves_provisioned_capabilities(client):
+    """The mirror of the forging test: a runner the server DID provision with
+    ``sandbox`` keeps it even when the agent's hello omits it (the wipe bug)."""
+    from app.models import Runner
+    from app.services import runner as runner_module
+    from app.services.remote_dispatch import RemoteDispatcher, _AgentConnection
+
+    pool_id = await _make_agent_pool(client)
+    async with runner_module.SessionLocal() as db:
+        r = Runner(pool_id=pool_id, name="managed", status="offline",
+                   capabilities={"sandbox": True, "docker_managed": True,
+                                 "container_name": "nodyra-worker-z"})
+        db.add(r)
+        await db.commit()
+        runner_id = r.id
+
+    dispatcher = RemoteDispatcher()
+    conn = _AgentConnection(runner_id=runner_id, ws=object())
+    await dispatcher._handle_agent_message(
+        conn, {"type": "runner_hello", "capabilities": {"max_concurrent": 2}}
+    )
+
+    async with runner_module.SessionLocal() as db:
+        caps = (await db.get(Runner, runner_id)).capabilities
+    assert caps.get("sandbox") is True
+    assert caps.get("docker_managed") is True
+    assert caps.get("container_name") == "nodyra-worker-z"
+
+
 async def test_autoscale_config_validation_bounds(client):
     pool_id = await _make_agent_pool(client)
     bad = {"provider_config": {"docker_autoscale": {"min_runners": 5, "max_runners": 2}}}

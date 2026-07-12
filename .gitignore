@@ -47,6 +47,11 @@ apps/api/tools/*.exe
 
 # Playwright e2e artifacts
 apps/web/test-results/
+
+# graphify codebase knowledge-graph output — generated, not committed (and
+# packages/graphify-out/ has no pyproject.toml, which breaks `uv` if tracked
+# under the packages/* workspace glob; see pyproject.toml workspace.exclude)
+graphify-out/
 apps/web/playwright-report/
 
 # Ad-hoc dev screenshots / Claude Code screen captures (not project assets)

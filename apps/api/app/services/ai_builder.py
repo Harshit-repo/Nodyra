@@ -53,15 +53,76 @@ def allowed_node_types() -> frozenset[str]:
     )
 
 
-def node_catalog_for_prompt(max_chars: int = 12000) -> str:
-    """Compact ``type - name`` catalog injected into the builder prompt."""
+def _manifest_by_id() -> dict[str, Any]:
+    """Map every registered node id to its live manifest."""
+    return {manifest.id: manifest for manifest in _registered_manifests()}
+
+
+def _param_signature(param: Any) -> str:
+    """Compact ``name:type`` signature for one param, with a ``*`` suffix when
+    required and a short ``[choices]`` hint so the model can pick a valid
+    value instead of guessing. Credential-backed params show ``credential``
+    as their type since the server attaches the real value (AIB-1)."""
+    kind = "credential" if param.credential is not None else (param.type or "string")
+    sig = f"{param.name}:{kind}"
+    if param.required:
+        sig += "*"
+    if param.choices:
+        preview = ",".join(str(c) for c in param.choices[:6])
+        if len(param.choices) > 6:
+            preview += ",…"
+        sig += f"[{preview}]"
+    return sig
+
+
+def _manifest_catalog_line(manifest: Any) -> str:
+    """One-line ``id - name (params...) in[...] out[...]`` signature.
+
+    Ports are only shown when they deviate from the single ``input``/``main``
+    default that the overwhelming majority of nodes use — keeps common lines
+    short and spends the char budget on the less-obvious multi-port nodes
+    (suppliers, tools, triggers).
+    """
+    line = f"{manifest.id} - {manifest.name}"
+    if manifest.params:
+        line += f" ({', '.join(_param_signature(p) for p in manifest.params)})"
+    input_names = [p.name for p in manifest.inputs]
+    output_names = [p.name for p in manifest.outputs]
+    if input_names not in ([], ["input"]):
+        line += f" in[{','.join(input_names)}]"
+    if output_names not in ([], ["main"]):
+        line += f" out[{','.join(output_names)}]"
+    return line
+
+
+def node_catalog_for_prompt(max_chars: int = 100_000) -> str:
+    """Manifest-derived node catalog injected into the builder prompt.
+
+    Each line is ``id - name (param:type*[choices], ...) in[...] out[...]`` —
+    enough for the model to correctly configure any node, not just recognize
+    its name. Before this, only the ~64 hand-curated ``_NODE_REGISTRY``
+    entries carried param details; the rest of the 512-node catalog was
+    name-only and the model had to guess params for ~87% of it (AIB-1).
+
+    The default budget (100k chars) comfortably covers the full catalog with
+    every param signature (~80k chars / ~20k tokens for all ~510 allowed
+    nodes as of this writing) — well within a modern chat model's context
+    window, so breadth is no longer traded off against depth. The truncation
+    loop below stays as a safety cap against unbounded future node-count
+    growth, not as everyday behavior.
+
+    Ordering is unchanged from the name-only version: ``_NODE_REGISTRY``'s
+    curated "common" nodes come first (its dict order is a hand-tuned
+    relevance ranking), then the remaining manifests id-sorted, with the same
+    char-budget truncation loop as before.
+    """
     allowed = allowed_node_types()
     priority = {node_id: index for index, node_id in enumerate(_NODE_REGISTRY)}
     manifests = sorted(
         (manifest for manifest in _registered_manifests() if manifest.id in allowed),
         key=lambda manifest: (priority.get(manifest.id, len(priority)), manifest.id),
     )
-    lines = [f"{manifest.id} - {manifest.name}" for manifest in manifests]
+    lines = [_manifest_catalog_line(manifest) for manifest in manifests]
     out: list[str] = []
     used = 0
     for line in lines:
@@ -1311,6 +1372,18 @@ async def explain_workflow(graph: dict) -> dict:
     return _fallback_explain(nodes, edges, node_map, sources)
 
 
+def _manifest_description(node_type: str) -> str:
+    """Live manifest description for ``node_type``, or a placeholder.
+
+    ``_NODE_REGISTRY`` entries never carry a ``description`` field, so the old
+    ``_NODE_REGISTRY.get(ntype, {}).get("description", ...)`` lookup always
+    fell through to the placeholder for every node. Manifests already have a
+    real description for all 512 node types — use that instead.
+    """
+    manifest = _manifest_by_id().get(node_type)
+    return (manifest.description if manifest and manifest.description else "No description")
+
+
 def _build_explain_prompt(nodes: list, edges: list, node_map: dict) -> str:
     node_descriptions = []
     for n in nodes:
@@ -1318,10 +1391,7 @@ def _build_explain_prompt(nodes: list, edges: list, node_map: dict) -> str:
             continue
         nid = n.get("id", "")
         ntype = n.get("type", "")
-        ninfo = _NODE_REGISTRY.get(ntype, {})
-        node_descriptions.append(
-            f"  - {nid} ({ntype}): {ninfo.get('description', 'No description')}"
-        )
+        node_descriptions.append(f"  - {nid} ({ntype}): {_manifest_description(ntype)}")
     edge_descriptions = []
     for e in edges:
         if not isinstance(e, dict):
@@ -1351,8 +1421,8 @@ def _fallback_explain(
         if not isinstance(n, dict):
             continue
         ntype = n.get("type", "")
-        ninfo = _NODE_REGISTRY.get(ntype, {})
-        name = n.get("name") or ninfo.get("name") or ntype
+        manifest = _manifest_by_id().get(ntype)
+        name = n.get("name") or (manifest.name if manifest else "") or ntype
         if "trigger" in ntype:
             trigger_nodes.append(name)
         else:
@@ -1385,7 +1455,7 @@ def _fallback_explain(
             {
                 "id": n.get("id", ""),
                 "type": n.get("type", ""),
-                "purpose": _NODE_REGISTRY.get(n.get("type", ""), {}).get("description", "Unknown"),
+                "purpose": _manifest_description(n.get("type", "")),
             }
             for n in nodes
             if isinstance(n, dict)
@@ -1426,7 +1496,7 @@ async def _refine_workflow(
     try:
         context = {
             "current_graph": current_graph,
-            "node_registry": {k: v for k, v in _NODE_REGISTRY.items()},
+            "node_catalog": node_catalog_for_prompt(),
             "target_node_ids": target_node_ids,
         }
         system_msg, user_msg = _build_refine_prompt(prompt, context, conversation_history)
@@ -1475,7 +1545,7 @@ def _build_refine_prompt(prompt: str, context: dict, history: list[dict]) -> tup
     system_msg = (
         "You modify specific parts of workflow graphs. Only change what the user asks.\n\n"
         f"CURRENT GRAPH: {json.dumps(sanitized_graph)}\n\n"
-        f"AVAILABLE NODE TYPES: {json.dumps(list(context['node_registry'].keys()))}\n\n"
+        f"AVAILABLE NODE TYPES (id - name (params) in[..] out[..]):\n{context['node_catalog']}\n\n"
         f"TARGET NODE IDS (only modify these if provided): {json.dumps(context['target_node_ids'])}\n\n"
         f"CONVERSATION HISTORY: {json.dumps(safe_history)}\n\n"
         "Return JSON: {graph: {nodes, edges}, explanation, change_summary, "

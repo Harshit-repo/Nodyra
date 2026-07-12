@@ -13,6 +13,20 @@ spec:
     - host: {{ .Values.ingress.host }}
       http:
         paths:
+          - path: /mcp
+            pathType: Exact
+            backend:
+              service:
+                name: {{ .Release.Name }}-api
+                port:
+                  number: {{ .Values.api.port }}
+          - path: /.well-known/oauth-protected-resource/mcp
+            pathType: Exact
+            backend:
+              service:
+                name: {{ .Release.Name }}-api
+                port:
+                  number: {{ .Values.api.port }}
           - path: /api
             pathType: Prefix
             backend:

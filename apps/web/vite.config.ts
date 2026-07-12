@@ -21,6 +21,14 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
+      "/mcp": {
+        target: apiTarget,
+        changeOrigin: true,
+      },
+      "/.well-known/oauth-protected-resource/mcp": {
+        target: apiTarget,
+        changeOrigin: true,
+      },
       "/ws": {
         target: apiTarget,
         ws: true,

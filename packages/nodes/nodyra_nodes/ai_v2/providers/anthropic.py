@@ -24,6 +24,7 @@ from nodyra.ai_runtime import (
     ToolCall,
     ToolSchema,
 )
+from nodyra_nodes.http_security import safe_request
 
 _ANTHROPIC_BASE = "https://api.anthropic.com/v1/messages"
 _DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
@@ -233,7 +234,8 @@ class AnthropicChatAdapter(ChatModelAdapter):
         if request.tools:
             payload["tools"] = _tools_to_anthropic(request.tools)
 
-        resp = requests.post(
+        resp = safe_request(
+            "POST",
             self._base_url,
             headers={
                 "x-api-key": self._api_key,
@@ -242,6 +244,7 @@ class AnthropicChatAdapter(ChatModelAdapter):
             },
             json=payload,
             timeout=timeout,
+            context="anthropic chat (v2)",
         )
         body = _expect_json(resp, "anthropic")
         return _with_cost_estimate(

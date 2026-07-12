@@ -15,6 +15,7 @@ import {
 } from "./queries";
 import { useToast } from "./ToastProvider";
 import type { OrgMemberInfo } from "./types";
+import { useWorkspaceAccessContext } from "./WorkspaceAccess";
 
 const MEMBER_ROLES = ["viewer", "editor", "admin", "owner"];
 
@@ -56,27 +57,30 @@ export function OrganizationPage() {
   const currentUser = getUser();
   const { notify } = useToast();
   const confirm = useConfirm();
-  const orgId = getOrgId() ?? "default";
+  const workspace = useWorkspaceAccessContext();
+  const multiTenancyEnabled = workspace.multiTenancyEnabled;
+  const orgId = multiTenancyEnabled ? (getOrgId() ?? "default") : null;
 
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("viewer");
   const [busy, setBusy] = useState(false);
   const [draftQuotas, setDraftQuotas] = useState<Record<string, string>>({});
-  const orgsQuery = useMyOrgs();
-  const membersQuery = useOrgMembers();
-  const settingsQuery = useOrgSettings(orgId);
-  const usageQuery = useOrgUsage(orgId);
+  const orgsQuery = useMyOrgs({ enabled: multiTenancyEnabled });
+  const membersQuery = useOrgMembers({ enabled: multiTenancyEnabled });
+  const settingsQuery = useOrgSettings(orgId, { enabled: multiTenancyEnabled });
+  const usageQuery = useOrgUsage(orgId, 14, { enabled: multiTenancyEnabled });
   const addMemberMutation = useAddOrgMemberMutation();
   const updateMemberMutation = useUpdateOrgMemberMutation();
   const removeMemberMutation = useRemoveOrgMemberMutation();
   const updateSettingsMutation = useUpdateOrgSettingsMutation();
   const org = useMemo(
     () =>
+      workspace.current ??
       orgsQuery.data?.find((item) => item.id === orgId) ??
       orgsQuery.data?.find((item) => item.id === "default") ??
       null,
-    [orgId, orgsQuery.data],
+    [orgId, orgsQuery.data, workspace.current],
   );
   const members = membersQuery.data ?? null;
   const settings = settingsQuery.data ?? null;
@@ -87,10 +91,20 @@ export function OrganizationPage() {
   const isOwner = myRole === "owner";
 
   useEffect(() => {
+    if (!multiTenancyEnabled) {
+      setError("");
+      return;
+    }
     if (orgsQuery.isError) setError(errorMessage(orgsQuery.error));
     else if (membersQuery.isError) setError(errorMessage(membersQuery.error));
     else setError("");
-  }, [membersQuery.error, membersQuery.isError, orgsQuery.error, orgsQuery.isError]);
+  }, [
+    membersQuery.error,
+    membersQuery.isError,
+    multiTenancyEnabled,
+    orgsQuery.error,
+    orgsQuery.isError,
+  ]);
 
   useEffect(() => {
     if (settings) setDraftQuotas({});
@@ -136,7 +150,7 @@ export function OrganizationPage() {
   }
 
   async function saveQuotas(): Promise<void> {
-    if (!settings) return;
+    if (!settings || !orgId) return;
     const body: Record<string, number> = {};
     for (const [key, raw] of Object.entries(draftQuotas)) {
       const trimmed = raw.trim();
@@ -164,16 +178,36 @@ export function OrganizationPage() {
         <div className="home-bar">
           <div>
             <h1>
-              {org ? org.name : "Organization"}
+              {multiTenancyEnabled ? (org ? org.name : "Workspace") : "Workspace"}
               {members && <span className="home-count">{members.length}</span>}
             </h1>
-            <p className="muted">
-              Members, roles, and resource quotas for this organization
-              {org ? ` (${org.slug})` : ""}.
-            </p>
+            {multiTenancyEnabled ? (
+              <p className="muted">
+                Members, roles, and resource quotas for this organization
+                {org ? ` (${org.slug})` : ""}.
+              </p>
+            ) : (
+              <p className="muted">
+                Workspace administration is unavailable on this single-tenant
+                installation.
+              </p>
+            )}
           </div>
         </div>
 
+        {!multiTenancyEnabled && (
+          <section className="empty-state">
+            <h2>Workspace management is not enabled</h2>
+            <p className="muted">
+              This single-tenant installation uses instance-level settings and access
+              controls. Enable multi-tenancy to manage workspace members, quotas, and
+              GitHub sync here.
+            </p>
+          </section>
+        )}
+
+        {multiTenancyEnabled && (
+          <>
         {error && <p className="error-text">{error}</p>}
 
         {canManage && (
@@ -318,7 +352,9 @@ export function OrganizationPage() {
           </section>
         )}
 
-        <GitHubSyncSettings />
+        <GitHubSyncSettings enabled={multiTenancyEnabled} />
+          </>
+        )}
       </main>
     </div>
   );

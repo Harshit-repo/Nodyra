@@ -13,10 +13,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.services.metrics import output_store_events_total
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +32,31 @@ _OUTPUT_DIR_NAME: str = "outputs"
 
 _REF_MARKER: str = "__output_ref"
 
-# Keys are constructed as "<run_id>/<node_id>" where both are hex UUIDs
-# (32 chars, [0-9a-f]).  Anything else is a tampered ref marker.
-_KEY_RE = re.compile(r"^[0-9a-fA-F]{32}/[0-9a-fA-F]{32}$")
+# Keys are constructed as "<run_id>/<node_id>":
+#   - run_id is always a 32-char hex UUID (``uuid4().hex``, assigned by the API).
+#   - node_id is a workflow-assigned identifier, e.g. "n_ab12_3" or "producer" —
+#     NOT a UUID. The original check required BOTH segments to be hex UUIDs,
+#     which no real node_id ever satisfies, so ``_write_output`` raised on every
+#     offload and ``maybe_offload_output`` silently kept every output inline —
+#     the whole offload feature was dead code (OS-1). We now validate run_id as
+#     a UUID and node_id as a bounded identifier, still forbidding path
+#     separators and "."/".." segments so a tampered marker can't escape the
+#     output root on read.
+_RUN_ID_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+_NODE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 
 def _validate_key(key: str) -> bool:
-    """Reject keys that don't match the expected hex-UUID format."""
-    return bool(_KEY_RE.match(key))
+    """Reject keys that are malformed or could escape the output root."""
+    parts = key.split("/")
+    if len(parts) != 2:
+        return False
+    run_id, node_id = parts
+    if not _RUN_ID_RE.match(run_id):
+        return False
+    if node_id in (".", "..") or not _NODE_ID_RE.match(node_id):
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +96,12 @@ def maybe_offload_output(
     try:
         _write_output(key, raw)
     except Exception:  # noqa: BLE001 — offloading is best-effort
-        logger.debug("output_store: write failed key=%s — keeping inline", key)
+        # Best-effort: the run still succeeds with the output inline, but a
+        # sustained rate here means the output store is degraded (disk full,
+        # permissions, bad backend config) and every large output is silently
+        # bloating node_runs.output instead of spilling to disk (P1 §Phase 1.2).
+        output_store_events_total.inc(event="write_failed")
+        logger.warning("output_store: write failed key=%s — keeping inline", key)
         return outputs
 
     return {_REF_MARKER: key}
@@ -109,8 +133,34 @@ def maybe_load_output(outputs: dict[str, Any] | None) -> dict[str, Any] | None:
         raw = _read_output(key)
         return json.loads(raw)
     except Exception:  # noqa: BLE001
-        logger.debug("output_store: read failed key=%s — returning marker", key)
+        # The caller receives the raw marker back — degraded, but visible
+        # (better than raising and failing the read entirely).
+        output_store_events_total.inc(event="read_failed")
+        logger.warning("output_store: read failed key=%s — returning marker", key)
         return outputs
+
+
+def delete_outputs_for_run_ids(run_ids: list[str]) -> None:
+    """Delete every offloaded output file for the given runs (Phase 3.1 GC).
+
+    Offloaded outputs live under ``<output_root>/<run_id>/`` — one directory
+    per run, independent of the ``NodeRun`` DB rows. Deleting ``NodeRun`` rows
+    (retention pruning) does not touch these files, so without this call
+    every offloaded run leaves an orphaned directory on disk forever. Only
+    ``run_id``s that already passed :func:`_validate_key`'s hex-UUID check
+    when writing can match a real directory; anything else is a no-op.
+    """
+    root = _output_root()
+    for run_id in run_ids:
+        if not _RUN_ID_RE.match(run_id):
+            continue  # never a real offload directory — skip rather than risk a bad path
+        run_dir = root / run_id
+        try:
+            shutil.rmtree(run_dir, ignore_errors=False)
+        except FileNotFoundError:
+            pass  # nothing was ever offloaded for this run
+        except OSError:
+            logger.warning("output_store: failed to remove run dir %s", run_dir)
 
 
 # ---------------------------------------------------------------------------

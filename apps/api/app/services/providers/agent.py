@@ -253,10 +253,12 @@ async def handle_agent_message(
                 # lose its ``docker_managed``/``sandbox``/``container_name`` flags
                 # the instant it connects (breaking autoscale accounting, sandbox
                 # label routing, and the dispatch guard). They also must not be
-                # forgeable: an agent can't claim ``sandbox`` it wasn't
-                # provisioned for, so server values win on conflict.
+                # forgeable: strip any agent-supplied value unconditionally, then
+                # restore only what the server itself provisioned. A plain runner
+                # that never got ``sandbox`` therefore cannot self-assign it.
                 existing = runner.capabilities or {}
                 for _key in ("docker_managed", "sandbox", "container_name"):
+                    caps.pop(_key, None)
                     if _key in existing:
                         caps[_key] = existing[_key]
                 runner.capabilities = caps

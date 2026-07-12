@@ -23,6 +23,7 @@ from nodyra.ai_runtime import (
     ToolCall,
     ToolSchema,
 )
+from nodyra_nodes.http_security import safe_request
 
 _OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 _OPENAI_BASE = "https://api.openai.com/v1"
@@ -331,11 +332,13 @@ class OpenAIChatAdapter(ChatModelAdapter):
             payload["tools"] = _tools_to_openai(request.tools)
             payload["tool_choice"] = "auto"
 
-        resp = requests.post(
+        resp = safe_request(
+            "POST",
             _with_chat_completions(base_url),
             headers=headers,
             json=payload,
             timeout=max(1, min(300, effective_timeout)),
+            context=f"{provider} chat (v2)",
         )
         _raise_if_tools_unsupported(
             resp, service=provider, model=model, has_tools=bool(request.tools)
@@ -459,11 +462,13 @@ class AzureOpenAIChatAdapter(ChatModelAdapter):
             payload["tools"] = _tools_to_openai(request.tools)
             payload["tool_choice"] = "auto"
 
-        resp = requests.post(
+        resp = safe_request(
+            "POST",
             url,
             headers={"api-key": self._api_key, "Content-Type": "application/json"},
             json=payload,
             timeout=timeout,
+            context="azure_openai chat (v2)",
         )
         _raise_if_tools_unsupported(
             resp,

@@ -135,6 +135,7 @@ async def test_router_redirects_when_backend_returns_signed_url(
     _workflow_id, artifact_id = await _make_dataset_run(client)
 
     from app.db import get_session as _get_session
+
     override = client._transport.app.dependency_overrides[_get_session]
 
     # Repoint that row's backend to our recorder and register the recorder.
@@ -147,9 +148,7 @@ async def test_router_redirects_when_backend_returns_signed_url(
         break
 
     try:
-        resp = await client.get(
-            f"/artifacts/{artifact_id}/download", follow_redirects=False
-        )
+        resp = await client.get(f"/artifacts/{artifact_id}/download", follow_redirects=False)
         assert resp.status_code == 307
         assert "signed.example.test" in resp.headers["location"]
         assert fake.signed and fake.signed[0][0] == artifact_id
@@ -167,6 +166,37 @@ async def test_signed_url_endpoint_returns_null_for_local_backend(
     assert resp.json() == {"url": None, "expires_in": None}
 
 
+async def test_download_artifact_supports_byte_ranges(client: AsyncClient) -> None:
+    _workflow_id, artifact_id = await _make_dataset_run(client)
+
+    full = await client.get(f"/artifacts/{artifact_id}/download")
+    assert full.status_code == 200
+    assert len(full.content) > 8
+
+    partial = await client.get(
+        f"/artifacts/{artifact_id}/download",
+        headers={"Range": "bytes=0-7"},
+    )
+    assert partial.status_code == 206
+    assert partial.headers["accept-ranges"] == "bytes"
+    assert partial.headers["content-range"] == f"bytes 0-7/{len(full.content)}"
+    assert partial.content == full.content[:8]
+
+
+async def test_download_artifact_rejects_invalid_byte_range(client: AsyncClient) -> None:
+    _workflow_id, artifact_id = await _make_dataset_run(client)
+
+    full = await client.get(f"/artifacts/{artifact_id}/download")
+    assert full.status_code == 200
+
+    partial = await client.get(
+        f"/artifacts/{artifact_id}/download",
+        headers={"Range": f"bytes={len(full.content)}-"},
+    )
+    assert partial.status_code == 416
+    assert partial.headers["content-range"] == f"bytes */{len(full.content)}"
+
+
 def test_s3_backend_requires_bucket_setting(monkeypatch) -> None:
     monkeypatch.setattr(settings, "artifact_s3_bucket", "")
     import pytest
@@ -175,8 +205,6 @@ def test_s3_backend_requires_bucket_setting(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="ARTIFACT_S3_BUCKET"):
         S3Backend()
-
-
 
 
 # --- S3 write-path: persist_artifact_refs rehomes local bytes to backend ---
@@ -191,19 +219,28 @@ async def test_persist_artifact_refs_rehomes_to_configured_backend(
     from app.services.artifact_backends import register_backend, reset_backends_for_tests
 
     tmp_path = _P(settings.artifacts_dir)
-    monkeypatch.setattr(settings, 'artifact_storage_backend', 'memory')
+    monkeypatch.setattr(settings, "artifact_storage_backend", "memory")
     reset_backends_for_tests()
 
     uploads: list[tuple[str, str]] = []
 
     class _RehomeBackend:
-        name = 'memory'
+        name = "memory"
 
-        def delete(self, artifacts): pass
-        def open_download(self, artifact): raise FileNotFoundError
-        def signed_url(self, artifact, *, expires_in=300): return None
-        def stats(self): return {'backend': self.name}
-        def delete_run(self, run_id): pass
+        def delete(self, artifacts):
+            pass
+
+        def open_download(self, artifact):
+            raise FileNotFoundError
+
+        def signed_url(self, artifact, *, expires_in=300):
+            return None
+
+        def stats(self):
+            return {"backend": self.name}
+
+        def delete_run(self, run_id):
+            pass
 
         def upload_from_local(self, artifact, local_path):
             uploads.append((artifact.id, str(local_path)))
@@ -211,35 +248,35 @@ async def test_persist_artifact_refs_rehomes_to_configured_backend(
     register_backend(_RehomeBackend())
 
     # Stage the local scratch file the worker would have written.
-    run_id = 'r-rehome'
-    node_dir = tmp_path / 'runs' / run_id / 'n1'
+    run_id = "r-rehome"
+    node_dir = tmp_path / "runs" / run_id / "n1"
     node_dir.mkdir(parents=True)
-    storage_key = f'runs/{run_id}/n1/aid-payload.bin'
+    storage_key = f"runs/{run_id}/n1/aid-payload.bin"
     local_path = tmp_path / storage_key
-    local_path.write_bytes(b'payload-bytes')
+    local_path.write_bytes(b"payload-bytes")
 
     ref = {
-        '__nodyra_artifact__': True,
-        'artifact_id': 'aid',
-        'run_id': run_id,
-        'node_id': 'n1',
-        'name': 'payload.bin',
-        'kind': 'binary',
-        'content_type': 'application/octet-stream',
-        'size_bytes': 13,
-        'storage_backend': 'local',
-        'storage_key': storage_key,
+        "__nodyra_artifact__": True,
+        "artifact_id": "aid",
+        "run_id": run_id,
+        "node_id": "n1",
+        "name": "payload.bin",
+        "kind": "binary",
+        "content_type": "application/octet-stream",
+        "size_bytes": 13,
+        "storage_backend": "local",
+        "storage_key": storage_key,
     }
     await artifacts_svc.persist_artifact_refs(run_id, [ref])
 
-    assert uploads == [('aid', str(local_path))]
-    assert not local_path.exists(), 'local scratch should be reclaimed after upload'
+    assert uploads == [("aid", str(local_path))]
+    assert not local_path.exists(), "local scratch should be reclaimed after upload"
 
     # Row was stored with the new backend.
     async with artifacts_svc.SessionLocal() as session:
-        row = await session.get(Artifact, 'aid')
+        row = await session.get(Artifact, "aid")
         assert row is not None
-        assert row.storage_backend == 'memory'
+        assert row.storage_backend == "memory"
 
     reset_backends_for_tests()
 
@@ -253,45 +290,55 @@ async def test_persist_artifact_refs_keeps_local_when_upload_fails(
     from app.services.artifact_backends import register_backend, reset_backends_for_tests
 
     tmp_path = _P(settings.artifacts_dir)
-    monkeypatch.setattr(settings, 'artifact_storage_backend', 'memory')
+    monkeypatch.setattr(settings, "artifact_storage_backend", "memory")
     reset_backends_for_tests()
 
     class _FailingBackend:
-        name = 'memory'
+        name = "memory"
 
-        def delete(self, artifacts): pass
-        def open_download(self, artifact): raise FileNotFoundError
-        def signed_url(self, artifact, *, expires_in=300): return None
-        def stats(self): return {'backend': self.name}
-        def delete_run(self, run_id): pass
+        def delete(self, artifacts):
+            pass
+
+        def open_download(self, artifact):
+            raise FileNotFoundError
+
+        def signed_url(self, artifact, *, expires_in=300):
+            return None
+
+        def stats(self):
+            return {"backend": self.name}
+
+        def delete_run(self, run_id):
+            pass
+
         def upload_from_local(self, artifact, local_path):
-            raise RuntimeError('boom')
+            raise RuntimeError("boom")
 
     register_backend(_FailingBackend())
 
-    run_id = 'r-fail'
-    storage_key = f'runs/{run_id}/n1/aid-payload.bin'
+    run_id = "r-fail"
+    storage_key = f"runs/{run_id}/n1/aid-payload.bin"
     local_path = tmp_path / storage_key
     local_path.parent.mkdir(parents=True)
-    local_path.write_bytes(b'x')
+    local_path.write_bytes(b"x")
 
     ref = {
-        '__nodyra_artifact__': True,
-        'artifact_id': 'aid-fail',
-        'run_id': run_id,
-        'node_id': 'n1',
-        'name': 'payload.bin',
-        'storage_backend': 'local',
-        'storage_key': storage_key,
-        'size_bytes': 1,
+        "__nodyra_artifact__": True,
+        "artifact_id": "aid-fail",
+        "run_id": run_id,
+        "node_id": "n1",
+        "name": "payload.bin",
+        "storage_backend": "local",
+        "storage_key": storage_key,
+        "size_bytes": 1,
     }
     await artifacts_svc.persist_artifact_refs(run_id, [ref])
 
-    assert local_path.exists(), 'local bytes must be kept when upload fails'
+    assert local_path.exists(), "local bytes must be kept when upload fails"
     async with artifacts_svc.SessionLocal() as session:
-        row = await session.get(Artifact, 'aid-fail')
+        row = await session.get(Artifact, "aid-fail")
         assert row is not None
-        assert row.storage_backend == 'local'
+        assert row.storage_backend == "local"
 
     reset_backends_for_tests()
 
@@ -353,9 +400,7 @@ async def _make_dataset_run(client: AsyncClient) -> tuple[str, str]:
         ],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
     results = {node["node_id"]: node for node in run["node_runs"]}
     dataset_ref = results["ds"]["output"]["main"]
@@ -503,4 +548,3 @@ async def test_dataset_ref_survives_small_output_cap(client: AsyncClient) -> Non
     )
     assert resp.status_code == 200
     assert resp.json()["rows"] == [{"n": 3}]
-

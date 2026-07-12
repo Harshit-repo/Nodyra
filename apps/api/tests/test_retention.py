@@ -141,6 +141,51 @@ async def test_output_cap_truncates_oversize_payloads(client: AsyncClient) -> No
         settings.max_output_bytes = previous
 
 
+async def test_prune_deletes_offloaded_output_files(client: AsyncClient, monkeypatch, tmp_path) -> None:
+    """Phase 3.1 regression: offloaded outputs live in ``data/outputs/<run_id>/``,
+    independent of the NodeRun DB rows. Pruning a run must also delete its
+    offload directory, or every offloaded run leaks disk space forever."""
+    from app.services import output_store
+
+    monkeypatch.setattr(output_store, "_INLINE_THRESHOLD_BYTES", 16)
+    monkeypatch.setattr(output_store, "_output_root", lambda: tmp_path)
+
+    workflow_id = (await client.post("/workflows", json={"name": "OffloadPrune"})).json()["id"]
+    graph = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "big",
+                "type": "code",
+                "params": {"code": "output = list(range(300))"},
+                "position": {"x": 200, "y": 0},
+            },
+        ],
+        "edges": [
+            {"id": "e0", "source": "t", "source_output": "main", "target": "big", "target_input": "input"},
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
+    run_dir = tmp_path / run_id
+    assert run_dir.exists() and any(run_dir.iterdir()), "offload should have written a file"
+
+    previous = settings.run_retention_days
+    settings.run_retention_days = 7
+    try:
+        async with retention.SessionLocal() as session:
+            run = await session.get(Run, run_id)
+            run.started_at = datetime.now(UTC) - timedelta(days=10)
+            await session.commit()
+
+        aged_out, _capped_out = await retention.prune_old_runs()
+        assert aged_out == 1
+        assert not run_dir.exists(), "prune must remove the offload directory with the run"
+    finally:
+        settings.run_retention_days = previous
+
+
 async def test_prune_handles_empty_db(client: AsyncClient) -> None:
     # Sanity: no rows → no crash, both counts zero. Uses ``client`` so the
     # conftest patches ``retention.SessionLocal`` onto the per-test DB.

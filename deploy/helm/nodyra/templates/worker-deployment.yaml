@@ -29,6 +29,8 @@ spec:
             {{- include "nodyra.env" . | nindent 12 }}
             - name: DISPATCH_ROLE
               value: "worker"
+            - name: WORKER_LABELS
+              value: {{ .Values.worker.labels | quote }}
             {{- if gt (int (.Values.worker.healthPort | default 0)) 0 }}
             - name: WORKER_HEALTH_PORT
               value: {{ .Values.worker.healthPort | quote }}

@@ -28,12 +28,7 @@ router = APIRouter(prefix="/mcp-connections", tags=["mcp-connections"])
 
 
 def _org() -> str:
-    oid = active_org_id()
-    if oid is None:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "No organization context"
-        )
-    return oid
+    return active_org_id() or "default"
 
 
 def _validated_allowed_tools(value: Any) -> list[str] | None:

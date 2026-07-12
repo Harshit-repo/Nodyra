@@ -122,6 +122,7 @@ async def _check_webhook_body_size(request: Request) -> None:
         chunks.append(chunk)
     request._body = b"".join(chunks)  # noqa: SLF001 - cache for downstream
 
+
 # Listen sessions. Registered by the editor's "Listen for test event" button;
 # the test URL handler rejects requests when no session is active so Postman
 # can't hit the URL outside of an editor session. Sessions live in Redis when
@@ -177,9 +178,7 @@ async def _start_listening(path: str, org_id: str) -> None:
     redis = _listen_redis()
     if redis is not None:
         try:
-            await redis.set(
-                _LISTEN_KEY_PREFIX + path, org_id, ex=WEBHOOK_LISTEN_TTL_SECONDS
-            )
+            await redis.set(_LISTEN_KEY_PREFIX + path, org_id, ex=WEBHOOK_LISTEN_TTL_SECONDS)
             return
         except Exception:  # noqa: BLE001
             pass
@@ -247,9 +246,7 @@ def _shaped_response(shape: dict) -> Response:
             headers=headers,
             media_type=content_type,
         )
-    return JSONResponse(
-        content=body, status_code=status_code, headers=headers
-    )
+    return JSONResponse(content=body, status_code=status_code, headers=headers)
 
 
 def _evict_stale(now: float) -> None:
@@ -299,15 +296,17 @@ async def _payload(request: Request) -> tuple[dict, bytes]:
 # Headers that carry credentials — never store them in the capture buffer.
 # Matching is case-insensitive; values are replaced with the literal string
 # below so the editor preview still shows that *something* was sent.
-_REDACTED_HEADER_NAMES = frozenset({
-    "authorization",
-    "cookie",
-    "set-cookie",
-    "proxy-authorization",
-    "x-api-key",
-    "x-auth-token",
-    "x-csrf-token",
-})
+_REDACTED_HEADER_NAMES = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "proxy-authorization",
+        "x-api-key",
+        "x-auth-token",
+        "x-csrf-token",
+    }
+)
 _REDACTED_VALUE = "[redacted]"
 
 
@@ -323,7 +322,68 @@ def _redacted_payload(payload: dict) -> dict:
     return safe
 
 
-@router.api_route("/webhook-test/{path}", methods=_METHODS)
+# The editor-facing endpoints below carry their own auth dependency: the
+# "/webhook-test" prefix is exempt from the global auth/CSRF middleware (the
+# capture URL itself must accept unauthenticated external requests), so
+# without a route-level check anyone could open the listen gate or read
+# captured payloads — defeating the gate's purpose.
+_EDITOR_SESSION = [Depends(require_permission("workflow:run"))]
+
+
+@router.get("/webhook-test/{path:path}/last", dependencies=_EDITOR_SESSION)
+async def last_webhook(path: str) -> dict | None:
+    """Return the most recent request captured for this webhook path.
+
+    Polled by the editor while listening — renew the listen session on each
+    poll so it stays open exactly as long as the editor tab does, instead of
+    hard-expiring mid-session after the initial TTL.
+    """
+    path = _normalize_webhook_path(path)
+    org_id = active_org_id() or DEFAULT_ORG_ID
+    if await _listening_org(path) == org_id:
+        await _start_listening(path, org_id)
+    _evict_stale(time.monotonic())
+    entry = _captured.get(_capture_key(org_id, path))
+    return entry[1] if entry is not None else None
+
+
+@router.delete("/webhook-test/{path:path}/last", status_code=204, dependencies=_EDITOR_SESSION)
+async def clear_webhook(path: str) -> None:
+    """Drop the last captured request so a fresh ``Listen`` can wait for new ones."""
+    path = _normalize_webhook_path(path)
+    org_id = active_org_id() or DEFAULT_ORG_ID
+    _captured.pop(_capture_key(org_id, path), None)
+
+
+@router.post("/webhook-test/{path:path}/listen", status_code=200, dependencies=_EDITOR_SESSION)
+async def start_listen_session(path: str) -> dict:
+    """Register an active listen session so the test URL accepts incoming requests.
+
+    Called by the editor when the user clicks 'Listen for test event'. The
+    session expires automatically after ``WEBHOOK_LISTEN_TTL_SECONDS`` (10 min)
+    without editor polls (see ``last_webhook``) so a closed browser tab never
+    leaves the test URL permanently open.
+    """
+    path = _normalize_webhook_path(path)
+    org_id = active_org_id() or DEFAULT_ORG_ID
+    owner = await _listening_org(path)
+    if owner is not None and owner != org_id:
+        raise HTTPException(
+            status_code=409,
+            detail="This webhook test path is currently being used by another workspace.",
+        )
+    await _start_listening(path, org_id)
+    return {"listening": True, "ttl_seconds": WEBHOOK_LISTEN_TTL_SECONDS}
+
+
+@router.delete("/webhook-test/{path:path}/listen", status_code=204, dependencies=_EDITOR_SESSION)
+async def stop_listen_session(path: str) -> None:
+    """Clear the listen session; the test URL returns 404 until re-opened."""
+    path = _normalize_webhook_path(path)
+    await _stop_listening(path, active_org_id() or DEFAULT_ORG_ID)
+
+
+@router.api_route("/webhook-test/{path:path}", methods=_METHODS)
 async def capture_webhook(path: str, request: Request) -> dict:
     """Editor test URL — only active while a listen session is registered.
 
@@ -372,12 +432,19 @@ async def capture_webhook(path: str, request: Request) -> dict:
         )
     logger.info(
         "webhook test path=%s matched=%s runs=%d req_id=%s client_ip=%s",
-        path, result.any_match, len(result.run_ids), req_id, client_ip or "-",
+        path,
+        result.any_match,
+        len(result.run_ids),
+        req_id,
+        client_ip or "-",
     )
     if result.reject_status is not None:
         logger.warning(
             "webhook auth rejected test path=%s status=%d client_ip=%s req_id=%s",
-            path, result.reject_status, client_ip or "-", req_id,
+            path,
+            result.reject_status,
+            client_ip or "-",
+            req_id,
         )
         raise _reject_response(result.reject_status)
     return {
@@ -387,63 +454,6 @@ async def capture_webhook(path: str, request: Request) -> dict:
         "runs": result.run_ids,
         "x_request_id": req_id,
     }
-
-
-# The editor-facing endpoints below carry their own auth dependency: the
-# "/webhook-test" prefix is exempt from the global auth/CSRF middleware (the
-# capture URL itself must accept unauthenticated external requests), so
-# without a route-level check anyone could open the listen gate or read
-# captured payloads — defeating the gate's purpose.
-_EDITOR_SESSION = [Depends(require_permission("workflow:run"))]
-
-
-@router.get("/webhook-test/{path}/last", dependencies=_EDITOR_SESSION)
-async def last_webhook(path: str) -> dict | None:
-    """Return the most recent request captured for this webhook path.
-
-    Polled by the editor while listening — renew the listen session on each
-    poll so it stays open exactly as long as the editor tab does, instead of
-    hard-expiring mid-session after the initial TTL.
-    """
-    org_id = active_org_id() or DEFAULT_ORG_ID
-    if await _listening_org(path) == org_id:
-        await _start_listening(path, org_id)
-    _evict_stale(time.monotonic())
-    entry = _captured.get(_capture_key(org_id, path))
-    return entry[1] if entry is not None else None
-
-
-@router.delete("/webhook-test/{path}/last", status_code=204, dependencies=_EDITOR_SESSION)
-async def clear_webhook(path: str) -> None:
-    """Drop the last captured request so a fresh ``Listen`` can wait for new ones."""
-    org_id = active_org_id() or DEFAULT_ORG_ID
-    _captured.pop(_capture_key(org_id, path), None)
-
-
-@router.post("/webhook-test/{path}/listen", status_code=200, dependencies=_EDITOR_SESSION)
-async def start_listen_session(path: str) -> dict:
-    """Register an active listen session so the test URL accepts incoming requests.
-
-    Called by the editor when the user clicks 'Listen for test event'. The
-    session expires automatically after ``WEBHOOK_LISTEN_TTL_SECONDS`` (10 min)
-    without editor polls (see ``last_webhook``) so a closed browser tab never
-    leaves the test URL permanently open.
-    """
-    org_id = active_org_id() or DEFAULT_ORG_ID
-    owner = await _listening_org(path)
-    if owner is not None and owner != org_id:
-        raise HTTPException(
-            status_code=409,
-            detail="This webhook test path is currently being used by another workspace.",
-        )
-    await _start_listening(path, org_id)
-    return {"listening": True, "ttl_seconds": WEBHOOK_LISTEN_TTL_SECONDS}
-
-
-@router.delete("/webhook-test/{path}/listen", status_code=204, dependencies=_EDITOR_SESSION)
-async def stop_listen_session(path: str) -> None:
-    """Clear the listen session; the test URL returns 404 until re-opened."""
-    await _stop_listening(path, active_org_id() or DEFAULT_ORG_ID)
 
 
 async def _enforce_webhook_rate_limit(
@@ -464,7 +474,8 @@ async def _enforce_webhook_rate_limit(
 
     ip = get_client_ip(request)
     allowed = await rate_limit.allow(
-        "webhook", f"{path}:{ip}",
+        "webhook",
+        f"{path}:{ip}",
         limit=limit if limit is not None else settings.webhook_rate_limit_per_minute,
     )
     if not allowed:
@@ -532,13 +543,9 @@ async def github_sync_webhook(
 
         # Match changed files to workflows via file path
         workflows = (
-            await typed_session.scalars(
-                _select(Workflow).where(Workflow.org_id == org_id)
-            )
+            await typed_session.scalars(_select(Workflow).where(Workflow.org_id == org_id))
         ).all()
-        slug_to_workflow = {
-            workflow_file_path(cfg.base_path, wf): wf for wf in workflows
-        }
+        slug_to_workflow = {workflow_file_path(cfg.base_path, wf): wf for wf in workflows}
 
         enqueued = 0
         for path in changed_paths:
@@ -594,12 +601,18 @@ async def trigger_webhook(path: str, request: Request) -> dict:
 
     with run_as_system():
         result = await dispatch_webhook(
-            path, payload, raw_body=raw_body,
+            path,
+            payload,
+            raw_body=raw_body,
             client_ip=client_ip,
         )
         logger.info(
             "webhook prod path=%s matched=%s runs=%d req_id=%s client_ip=%s",
-            path, result.any_match, len(result.run_ids), req_id, client_ip or "-",
+            path,
+            result.any_match,
+            len(result.run_ids),
+            req_id,
+            client_ip or "-",
         )
         if result.reject_status is not None:
             # Path matched at least one workflow, but every candidate was
@@ -607,7 +620,10 @@ async def trigger_webhook(path: str, request: Request) -> dict:
             # (auth/HMAC). Distinct from an unknown-path 404.
             logger.warning(
                 "webhook auth rejected prod path=%s status=%d client_ip=%s req_id=%s",
-                path, result.reject_status, client_ip or "-", req_id,
+                path,
+                result.reject_status,
+                client_ip or "-",
+                req_id,
             )
             raise _reject_response(result.reject_status)
         if not result.any_match:
@@ -623,8 +639,10 @@ async def trigger_webhook(path: str, request: Request) -> dict:
             if shape.get("status") == 504:
                 logger.warning(
                     "webhook sync timeout run_id=%s path=%s timeout=%d req_id=%s",
-                    result.sync["run_id"], path,
-                    settings.webhook_response_timeout_seconds, req_id,
+                    result.sync["run_id"],
+                    path,
+                    settings.webhook_response_timeout_seconds,
+                    req_id,
                 )
             return _shaped_response(shape)
     if result.response is not None:

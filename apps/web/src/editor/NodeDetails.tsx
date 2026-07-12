@@ -1,7 +1,7 @@
 import { Eye, EyeSlash, Info, MagnifyingGlass, Plus, PushPin, WarningCircle, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, errorMessage, uploadArtifact } from "../api";
+import { api, encodeWebhookPath, errorMessage, uploadArtifact } from "../api";
 import { formatBytes } from "./artifactValues";
 import { categoryColor } from "../categories";
 import {
@@ -3711,6 +3711,7 @@ export function WebhookPanel({
 }) {
   const slug = path.trim() || "nodyra";
   const origin = window.location.origin;
+  const encodedSlug = encodeWebhookPath(slug);
   const authType = String(params?.auth_type ?? "none").toLowerCase();
   const noAuth = authType === "none";
   const [received, setReceived] = useState(false);
@@ -3804,12 +3805,12 @@ export function WebhookPanel({
         <p className="field-desc">Test URL — captures requests while you build.</p>
         <div className="ndv-webhook-url-row">
           <span className="ndv-url-badge ndv-url-badge--test">Editor only</span>
-          <UrlRow url={`${origin}/api/webhook-test/${slug}`} />
+          <UrlRow url={`${origin}/api/webhook-test/${encodedSlug}`} />
         </div>
         <p className="field-desc">Production URL — runs this workflow when it is active.</p>
         <div className="ndv-webhook-url-row">
           <span className="ndv-url-badge ndv-url-badge--prod">Production</span>
-          <UrlRow url={`${origin}/api/webhook/${slug}`} />
+          <UrlRow url={`${origin}/api/webhook/${encodedSlug}`} />
         </div>
         {noAuth && (
           <p className="production-warning" style={{ marginTop: 10, borderRadius: 4 }}>
@@ -3827,7 +3828,7 @@ export function WebhookPanel({
               <div className="ndv-webhook-orb-ring" />
               <div className="ndv-webhook-orb-core" />
             </div>
-            <p className="ndv-webhook-listen-label">Listening for a test event…</p>
+            <p className="ndv-webhook-listen-label">Waiting for test event</p>
             <button type="button" className="ndv-webhook-stop" onClick={stop}>
               <span className="ndv-webhook-stop-sq" />
               Stop listening

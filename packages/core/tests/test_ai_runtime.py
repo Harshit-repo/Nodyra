@@ -282,7 +282,7 @@ class TestOpenAIChatAdapter:
             messages=[AIMessage.user("Hello!")],
             model="gpt-4.1-mini",
         )
-        with patch("requests.post", return_value=_mock_response(_OPENAI_SUCCESS_BODY)):
+        with patch("requests.request", return_value=_mock_response(_OPENAI_SUCCESS_BODY)):
             resp = adapter.complete(req)
 
         assert resp.text == "Hello from OpenAI!"
@@ -308,7 +308,7 @@ class TestOpenAIChatAdapter:
             model="gpt-4.1-mini",
             tools=[tool],
         )
-        with patch("requests.post", return_value=_mock_response(_OPENAI_TOOL_BODY)):
+        with patch("requests.request", return_value=_mock_response(_OPENAI_TOOL_BODY)):
             resp = adapter.complete(req)
 
         assert len(resp.tool_calls) == 1
@@ -322,7 +322,7 @@ class TestOpenAIChatAdapter:
         adapter = OpenAIChatAdapter(api_key="sk-test", model="gpt-4.1-mini")
         req = ChatRequest(messages=[AIMessage.user("Hi")], model="gpt-4.1-mini")
         with patch(
-            "requests.post",
+            "requests.request",
             return_value=_mock_response({"error": {"message": "Unauthorized"}}, 401),
         ):
             with pytest.raises(RuntimeError, match="401"):
@@ -358,15 +358,20 @@ class TestOpenAIChatAdapter:
         assert restored._model == "gpt-4o"
         assert restored._organization == "org-1"
 
-    def test_ollama_uses_local_base(self):
+    def test_ollama_uses_local_base(self, monkeypatch):
         from nodyra_nodes.ai_v2.providers.openai import OpenAIChatAdapter
 
+        # SEC-B: ollama's default base_url is localhost — a private/loopback
+        # host that safe_request now blocks unless the deployment opts in via
+        # NODYRA_ALLOW_PRIVATE_EGRESS (the documented self-hosted-model path).
+        monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "1")
         adapter = OpenAIChatAdapter(model="llama3.2", provider="ollama")
         req = ChatRequest(messages=[AIMessage.user("Hi")], model="llama3.2")
-        with patch("requests.post", return_value=_mock_response(_OPENAI_SUCCESS_BODY)) as mock_post:
+        with patch("requests.request", return_value=_mock_response(_OPENAI_SUCCESS_BODY)) as mock_post:
             adapter.complete(req)
 
-        url = mock_post.call_args[0][0]
+        # safe_request calls request_fn(method, url, ...) — url is the 2nd positional arg.
+        url = mock_post.call_args[0][1]
         assert "localhost:11434" in url
 
     def test_openrouter_requires_api_key(self):
@@ -394,12 +399,12 @@ class TestAzureOpenAIChatAdapter:
         )
         req = ChatRequest(messages=[AIMessage.user("Hi Azure")], model="gpt-4o")
         with patch(
-            "requests.post", return_value=_mock_response(_OPENAI_SUCCESS_BODY)
+            "requests.request", return_value=_mock_response(_OPENAI_SUCCESS_BODY)
         ) as mock_post:
             resp = adapter.complete(req)
 
         assert resp.provider == "azure_openai"
-        url = mock_post.call_args[0][0]
+        url = mock_post.call_args[0][1]
         assert "deployments/gpt-4o" in url
         assert "api-version" in url
 
@@ -471,7 +476,7 @@ class TestAnthropicChatAdapter:
             model="claude-3-5-haiku-latest",
         )
         with patch(
-            "requests.post", return_value=_mock_response(_ANTHROPIC_SUCCESS_BODY)
+            "requests.request", return_value=_mock_response(_ANTHROPIC_SUCCESS_BODY)
         ):
             resp = adapter.complete(req)
 
@@ -493,7 +498,7 @@ class TestAnthropicChatAdapter:
             model="claude-3-5-haiku-latest",
         )
         with patch(
-            "requests.post", return_value=_mock_response(_ANTHROPIC_SUCCESS_BODY)
+            "requests.request", return_value=_mock_response(_ANTHROPIC_SUCCESS_BODY)
         ) as mock_post:
             adapter.complete(req)
 
@@ -521,7 +526,7 @@ class TestAnthropicChatAdapter:
             ],
         )
         with patch(
-            "requests.post", return_value=_mock_response(_ANTHROPIC_TOOL_BODY)
+            "requests.request", return_value=_mock_response(_ANTHROPIC_TOOL_BODY)
         ):
             resp = adapter.complete(req)
 
@@ -547,7 +552,7 @@ class TestAnthropicChatAdapter:
             model="claude-3-5-haiku-latest",
         )
         with patch(
-            "requests.post", return_value=_mock_response(_ANTHROPIC_SUCCESS_BODY)
+            "requests.request", return_value=_mock_response(_ANTHROPIC_SUCCESS_BODY)
         ) as mock_post:
             adapter.complete(req)
 
@@ -673,7 +678,7 @@ class TestEmbeddingAdapters:
             "data": [{"index": 0, "embedding": [0.1, 0.2]}],
             "usage": {"prompt_tokens": 1_000, "total_tokens": 1_000},
         }
-        with patch("requests.post", return_value=_mock_response(body)):
+        with patch("requests.request", return_value=_mock_response(body)):
             resp = adapter.embed(
                 EmbeddingRequest(
                     texts=["hello"],

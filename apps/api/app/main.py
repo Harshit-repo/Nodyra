@@ -7,9 +7,10 @@ from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from starlette.requests import ClientDisconnect
 
 from app import tracing
 from app.config import settings
@@ -568,14 +569,17 @@ async def _body_size_limit(request: Request, call_next):
         try:
             chunks: list[bytes] = []
             total = 0
-            async for chunk in request.stream():
-                total += len(chunk)
-                if total > limit:
-                    return JSONResponse(
-                        status_code=413,
-                        content={"detail": "Request body too large"},
-                    )
-                chunks.append(chunk)
+            try:
+                async for chunk in request.stream():
+                    total += len(chunk)
+                    if total > limit:
+                        return JSONResponse(
+                            status_code=413,
+                            content={"detail": "Request body too large"},
+                        )
+                    chunks.append(chunk)
+            except ClientDisconnect:
+                return Response(status_code=499)
             request._body = b"".join(chunks)  # noqa: SLF001 - Starlette body cache
         finally:
             _chunked_body_readers -= 1

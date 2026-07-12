@@ -312,6 +312,28 @@ class TestLoadConnWithSecret:
 # ---------------------------------------------------------------------------
 
 
+async def test_list_connections_uses_default_org_in_single_tenant(client):
+    registered = (
+        await client.post(
+            "/auth/register",
+            json={
+                "name": "Owner",
+                "company": "Nodyra",
+                "email": "mcp-owner@nodyra.test",
+                "password": "supersecret",
+            },
+        )
+    ).json()
+
+    response = await client.get(
+        "/mcp-connections",
+        headers={"Authorization": f"Bearer {registered['token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 @pytest.mark.skip(reason="Requires full DB + auth setup; run manually")
 class TestMCPConnectionsAPI:
     """Full integration tests that require auth setup."""

@@ -97,6 +97,24 @@ class TestExplainWorkflow:
         assert isinstance(result["nodes_summary"], list)
         assert len(result["nodes_summary"]) == 3
 
+    async def test_fallback_explain_uses_real_manifest_descriptions(self):
+        """Regression: ``_NODE_REGISTRY`` entries never carried a
+        ``description`` field, so the old lookup always fell through to the
+        "Unknown" placeholder for every node's ``purpose`` — even well-known
+        types like webhook_trigger/ai_chat/slack. Purposes must now be the
+        real manifest description."""
+        with patch(
+            "app.services.ai_builder._call_llm_simple",
+            new=AsyncMock(side_effect=RuntimeError("No LLM")),
+        ):
+            result = await explain_workflow(_SAMPLE_GRAPH)
+
+        purposes = {item["type"]: item["purpose"] for item in result["nodes_summary"]}
+        for node_type, purpose in purposes.items():
+            assert purpose not in ("Unknown", "No description"), (
+                f"{node_type} purpose should be the real manifest description, got {purpose!r}"
+            )
+
     async def test_explain_workflow_single_node_no_edges(self):
         """A workflow with one node and no edges still produces output."""
         graph = {
@@ -168,6 +186,29 @@ class TestRefineFallback:
         # The regex picks up #critical
         channel = result.graph.nodes[0].params.get("channel", "")
         assert channel == "#critical"
+
+
+class TestRefinePromptCatalog:
+    """AIB-1 regression: the refine LLM prompt used to list only the ~64
+    hand-curated ``_NODE_REGISTRY`` node types, so refine mode couldn't add
+    any of the other ~450 registered nodes. It must now see the full
+    manifest-derived catalog, with param signatures."""
+
+    def test_refine_prompt_includes_full_catalog_with_params(self):
+        from app.services.ai_builder import _build_refine_prompt, node_catalog_for_prompt
+
+        context = {
+            "current_graph": {"nodes": [], "edges": []},
+            "node_catalog": node_catalog_for_prompt(),
+            "target_node_ids": [],
+        }
+        system_msg, _user_msg = _build_refine_prompt("test", context, [])
+
+        # A node NOT in the old hardcoded _NODE_REGISTRY must now be visible.
+        assert "telegram" not in _NODE_REGISTRY
+        assert "telegram" in system_msg
+        # Param signatures (not just bare names) must be present.
+        assert "url:string" in system_msg or "url:" in system_msg
 
 
 # ── Feature 3: generate_tests ────────────────────────────────────────────────

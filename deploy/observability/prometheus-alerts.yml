@@ -1,0 +1,68 @@
+groups:
+  - name: nodyra-api
+    rules:
+      - alert: NodyraApiScrapeDown
+        expr: up{job=~"nodyra-api|nodyra-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nodyra scrape target is down"
+          description: "Prometheus cannot scrape {{ $labels.job }} on {{ $labels.instance }}."
+
+      - alert: NodyraHighHttpErrorRate
+        expr: |
+          sum(rate(nodyra_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(nodyra_http_requests_total[5m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nodyra HTTP 5xx rate is above 5%"
+          description: "Investigate API logs, database connectivity, and worker dispatch failures."
+
+  - name: nodyra-queue
+    rules:
+      - alert: NodyraQueueBacklog
+        expr: nodyra_queue_depth{status="queued"} > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nodyra queue backlog is growing"
+          description: "Queued runs have stayed above 50 for more than 10 minutes."
+
+      - alert: NodyraDeadLettersPresent
+        expr: nodyra_queue_depth{status="dead_lettered"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nodyra has dead-lettered runs"
+          description: "Use the Ops dead-letter view to inspect and replay or retire stuck runs."
+
+      - alert: NodyraNoActiveWorkersWithBacklog
+        expr: |
+          nodyra_queue_depth{status="queued"} > 0
+            and absent(nodyra_active_runs)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nodyra has queued runs but no active worker metric"
+          description: "Check worker replicas, dispatch role, Redis, and Postgres connectivity."
+
+  - name: nodyra-runs
+    rules:
+      - alert: NodyraLongRunningExecutions
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(nodyra_run_duration_seconds_bucket[15m])) by (le)
+          ) > 1800
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nodyra p95 run duration exceeds 30 minutes"
+          description: "Review recent slow workflows and worker resource pressure."

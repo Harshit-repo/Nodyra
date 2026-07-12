@@ -47,6 +47,7 @@ export const queryKeys = {
 
   runtimeMode: ["ops", "runtime-mode"] as const,
   queueStats: ["ops", "queue"] as const,
+  queueCapacity: ["ops", "capacity"] as const,
 
   myOrgs: ["orgs", "mine"] as const,
   orgMembers: ["orgs", "current", "members"] as const,

@@ -310,10 +310,13 @@ async def _wait_for_run(
         if run and run.status in ("success", "error", "failed", "cancelled"):
             node_results: dict[str, dict[str, Any]] = {}
             combined_error: str | None = None
+            from app.services.data_ref import resolve_ref
+
             for nr in (run.node_runs or []):
                 node_results[nr.node_id] = {
                     "status": nr.status,
-                    "output": nr.output or {},
+                    # Resolve offloaded-output markers to the real value (OS-1).
+                    "output": resolve_ref(nr.output) or {},
                     "error": nr.error or "",
                 }
                 if nr.status == "error" and not combined_error:

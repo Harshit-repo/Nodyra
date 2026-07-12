@@ -98,10 +98,21 @@ class _FakeContainers:
         return self._container
 
 
+class _FakeNetworks:
+    """Get-or-create that succeeds — the dedicated sandbox bridge exists."""
+
+    def get(self, name):
+        return object()
+
+    def create(self, name, driver=None):  # pragma: no cover - not reached
+        return object()
+
+
 class _FakeClient:
     def __init__(self, sock):
         self.images = _FakeImages()
         self.containers = _FakeContainers(sock)
+        self.networks = _FakeNetworks()
 
 
 async def test_run_sandboxed_drives_protocol_to_result(monkeypatch):
@@ -139,6 +150,13 @@ async def test_run_sandboxed_drives_protocol_to_result(monkeypatch):
     # Hardened floor applied on spawn.
     assert client.containers.run_kwargs["cap_drop"] == ["ALL"]
     assert client.containers.run_kwargs["read_only"] is True
+    # Placed on the dedicated isolated bridge, never the default one (P1-7).
+    assert client.containers.run_kwargs["network"] == "nodyra-agent-sandbox"
+    # host.docker.internal is mapped so artifact upload works on a custom
+    # Linux bridge (the local-daemon API-URL default).
+    assert client.containers.run_kwargs["extra_hosts"] == {
+        "host.docker.internal": "host-gateway"
+    }
 
 
 async def test_run_sandboxed_surfaces_runtime_error(monkeypatch):
@@ -175,3 +193,42 @@ def test_image_dockerfile_includes_runtime_and_find_links():
     assert "pandas==2.0.0" in df
     assert "--find-links https://api/wheels/" in df
     assert "USER sbx" in df
+
+
+class _FakeNotFound(Exception):
+    pass
+
+
+def test_ensure_network_returns_existing():
+    class _Nets:
+        def get(self, name):
+            return object()
+
+        def create(self, name, driver=None):  # pragma: no cover - not reached
+            raise AssertionError("must not create when network exists")
+
+    class _Client:
+        networks = _Nets()
+
+    assert sandbox_exec._ensure_network(_Client(), "nodyra-agent-sandbox") == \
+        "nodyra-agent-sandbox"
+
+
+def test_ensure_network_fails_closed_never_default_bridge():
+    """P3 (Sonnet re-review): if the dedicated network can't be found or made,
+    _ensure_network must raise — never silently fall back to the shared default
+    bridge (which permits inter-container traffic the sandbox exists to block)."""
+    import pytest
+
+    class _Nets:
+        def get(self, name):
+            raise _FakeNotFound("not found")
+
+        def create(self, name, driver=None):
+            raise RuntimeError("create denied")
+
+    class _Client:
+        networks = _Nets()
+
+    with pytest.raises(RuntimeError, match="isolated sandbox network"):
+        sandbox_exec._ensure_network(_Client(), "nodyra-agent-sandbox")

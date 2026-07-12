@@ -1,9 +1,10 @@
 # Contributing To Nodyra
 
-Nodyra is not ready for public distribution yet, and the repository does not
-currently include a software license. Do not submit code, documentation, design,
-or other copyrightable material unless the maintainers have confirmed that your
-contribution can be accepted.
+Thanks for your interest in improving Nodyra! The core is distributed under the
+fair-code [Nodyra Sustainable Use License](LICENSE); enterprise-gated features
+are covered by [LICENSE.enterprise](LICENSE.enterprise). Please read both — and
+this guide — before submitting code, documentation, design, or other
+copyrightable material.
 
 ## Contributor License Agreement
 

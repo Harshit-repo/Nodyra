@@ -6,6 +6,7 @@ import { Link, useBlocker, useParams } from "react-router-dom";
 
 import {
   api,
+  encodeWebhookPath,
   getOrgId,
   getToken,
   type RunStreamHandle,
@@ -65,6 +66,7 @@ import type {
   AiWorkflowDraftResponse,
   Environment,
   GraphNode,
+  RunInfo,
   RunEvent,
   RunnerPoolInfo,
   WorkflowEvent,
@@ -99,6 +101,14 @@ interface PublishSummary {
   triggerSummary: string;
   triggerChanged: boolean;
   environmentChanged: boolean;
+}
+
+const RUN_RECONCILE_INTERVAL_MS = 2_000;
+const RUN_RECONCILE_MAX_ATTEMPTS = 90;
+const TERMINAL_RUN_STATUSES = new Set(["success", "error", "cancelled", "waiting"]);
+
+function isTerminalRunStatus(status: string): boolean {
+  return TERMINAL_RUN_STATUSES.has(status);
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -364,6 +374,8 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const queryClient = useQueryClient();
   const wsRef = useRef<RunStreamHandle | null>(null);
   const workflowWsRef = useRef<RunStreamHandle | null>(null);
+  const runReconcileTimerRef = useRef<number | null>(null);
+  const runReconcileTokenRef = useRef(0);
   const webhookTimerRef = useRef<number | null>(null);
   const listenPathRef = useRef<string | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
@@ -811,8 +823,57 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
     setWebhookListen(null);
   }
 
+  function clearRunReconciliation(): void {
+    runReconcileTokenRef.current += 1;
+    if (runReconcileTimerRef.current !== null) {
+      window.clearTimeout(runReconcileTimerRef.current);
+      runReconcileTimerRef.current = null;
+    }
+  }
+
+  function reconcileTerminalRun(run: RunInfo): void {
+    applyRunInfo(run);
+    setWaitingRunId(run.status === "waiting" ? run.id : null);
+    wsRef.current?.close();
+    wsRef.current = null;
+  }
+
+  function startRunReconciliation(runId: string): void {
+    clearRunReconciliation();
+    const token = runReconcileTokenRef.current;
+
+    const tick = async (attempt: number): Promise<void> => {
+      try {
+        const run = await api.getRun(runId);
+        if (runReconcileTokenRef.current !== token) return;
+        if (isTerminalRunStatus(run.status)) {
+          runReconcileTimerRef.current = null;
+          reconcileTerminalRun(run);
+          return;
+        }
+      } catch {
+        // Live websocket events remain the primary path; polling is best-effort.
+      }
+      if (runReconcileTokenRef.current !== token) return;
+      if (attempt >= RUN_RECONCILE_MAX_ATTEMPTS) {
+        runReconcileTimerRef.current = null;
+        return;
+      }
+      runReconcileTimerRef.current = window.setTimeout(
+        () => { void tick(attempt + 1); },
+        RUN_RECONCILE_INTERVAL_MS,
+      );
+    };
+
+    runReconcileTimerRef.current = window.setTimeout(
+      () => { void tick(0); },
+      RUN_RECONCILE_INTERVAL_MS,
+    );
+  }
+
   useEffect(
     () => () => {
+      clearRunReconciliation();
       wsRef.current?.close();
       stopWebhookListen();
     },
@@ -1243,6 +1304,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
     wsRef.current = null;
     setWaitingRunId(null);
     startRun(runId, targets, cache);
+    startRunReconciliation(runId);
     wsRef.current = subscribeToRunEvents(runId, {
       onMessage: (data) => {
         const payload = data as RunEvent;
@@ -1290,6 +1352,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
     wsRef.current = null;
     setWaitingRunId(null);
     startRun(runId);
+    startRunReconciliation(runId);
   }
 
   function applyChatRunEvent(event: RunEvent): void {
@@ -1303,7 +1366,8 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   ): Promise<void> {
     if (!id || webhookListen) return;
     const path = String(node.params.path ?? "").trim() || "nodyra";
-    const url = `${window.location.origin}/api/webhook-test/${path}`;
+    const encodedPath = encodeWebhookPath(path);
+    const url = `${window.location.origin}/api/webhook-test/${encodedPath}`;
     const runTargets =
       targets?.length === 1 && targets[0] === node.id ? undefined : targets;
 

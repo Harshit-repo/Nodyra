@@ -12,6 +12,7 @@ from nodyra.ai_runtime import (
     EmbeddingResponse,
     ModelUsage,
 )
+from nodyra_nodes.http_security import safe_request
 
 _OPENAI_BASE = "https://api.openai.com/v1"
 _COHERE_BASE = "https://api.cohere.ai/v1"
@@ -76,11 +77,13 @@ class OpenAIEmbeddingAdapter(EmbeddingModelAdapter):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        resp = requests.post(
+        resp = safe_request(
+            "POST",
             f"{base_url.rstrip('/')}/embeddings",
             headers=headers,
             json={"model": request.model or self._model, "input": request.texts},
             timeout=max(1, min(300, request.timeout_seconds or 60)),
+            context=f"{self._provider} embeddings (v2)",
         )
         body = _expect_json(resp, self._provider)
         data = body.get("data") if isinstance(body.get("data"), list) else []
@@ -144,7 +147,8 @@ class CohereEmbeddingAdapter(EmbeddingModelAdapter):
         self._input_type = input_type or "search_document"
 
     def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
-        resp = requests.post(
+        resp = safe_request(
+            "POST",
             f"{self._base_url.rstrip('/')}/embed",
             headers={
                 "Authorization": f"Bearer {self._api_key}",
@@ -156,6 +160,7 @@ class CohereEmbeddingAdapter(EmbeddingModelAdapter):
                 "input_type": self._input_type,
             },
             timeout=max(1, min(300, request.timeout_seconds or 60)),
+            context="cohere embeddings (v2)",
         )
         body = _expect_json(resp, "cohere")
         embeddings = [

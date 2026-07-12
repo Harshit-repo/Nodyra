@@ -5,10 +5,13 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: nodyra
-      POSTGRES_PASSWORD: nodyra
+      # Override in deploy/.env for any host that is not a private dev box.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nodyra}
       POSTGRES_DB: nodyra
     ports:
-      - "5432:5432"
+      # Loopback-only: host tools (psql) can connect, the network cannot.
+      # Services on the compose network reach postgres:5432 directly.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +23,8 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      # Loopback-only: an unauthenticated Redis must never face the network.
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -39,6 +43,22 @@ services:
     volumes:
       - miniodata:/data
 
+  minio-init:
+    image: minio/mc:latest
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nodyra}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}
+      ARTIFACT_S3_BUCKET: ${ARTIFACT_S3_BUCKET:-nodyra-artifacts}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1;
+        do sleep 2; done;
+        mc mb --ignore-existing "local/$$ARTIFACT_S3_BUCKET"
+    depends_on:
+      - minio
+
   api:
     build:
       context: ..
@@ -53,7 +73,7 @@ services:
       # Production posture so runtime_warnings() actually surface via
       # /ops/runtime-mode (default SECRET_KEY, local artifacts, etc.).
       RUNTIME_MODE: production
-      DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@postgres:5432/nodyra
+      DATABASE_URL: postgresql+asyncpg://nodyra:${POSTGRES_PASSWORD:-nodyra}@postgres:5432/nodyra
       REDIS_URL: redis://redis:6379/0
       QUEUE_BACKEND: redis
       # Control plane: runs are enqueued here and executed by the worker
@@ -72,6 +92,13 @@ services:
       SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
       ENVS_DIR: /app/envs
       ARTIFACTS_DIR: /app/artifacts
+      ARTIFACT_STORAGE_BACKEND: ${ARTIFACT_STORAGE_BACKEND:-s3}
+      ARTIFACT_S3_BUCKET: ${ARTIFACT_S3_BUCKET:-nodyra-artifacts}
+      ARTIFACT_S3_REGION: ${ARTIFACT_S3_REGION:-us-east-1}
+      ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-nodyra}}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}}
+      AWS_EC2_METADATA_DISABLED: "true"
       # DATA_DIR: /app/data
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
       AUTH_ALLOW_REGISTRATION: ${AUTH_ALLOW_REGISTRATION:-false}
@@ -106,6 +133,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
   worker:
     build:
@@ -114,13 +143,21 @@ services:
     command: ["python", "-m", "app.worker_main"]
     environment:
       RUNTIME_MODE: production
-      DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@postgres:5432/nodyra
+      DATABASE_URL: postgresql+asyncpg://nodyra:${POSTGRES_PASSWORD:-nodyra}@postgres:5432/nodyra
       REDIS_URL: redis://redis:6379/0
       QUEUE_BACKEND: redis
       DISPATCH_ROLE: worker
+      WORKER_LABELS: ${WORKER_LABELS:-}
       USE_SUBPROCESS_RUNNER: "true"
       ENVS_DIR: /app/envs
       ARTIFACTS_DIR: /app/artifacts
+      ARTIFACT_STORAGE_BACKEND: ${ARTIFACT_STORAGE_BACKEND:-s3}
+      ARTIFACT_S3_BUCKET: ${ARTIFACT_S3_BUCKET:-nodyra-artifacts}
+      ARTIFACT_S3_REGION: ${ARTIFACT_S3_REGION:-us-east-1}
+      ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-nodyra}}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}}
+      AWS_EC2_METADATA_DISABLED: "true"
       # DATA_DIR: /app/data
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       SECRET_KEY: ${NODYRA_SECRET_KEY:-${NOODLE_SECRET_KEY:?SECRET_KEY is required for production}}
@@ -155,6 +192,8 @@ services:
         condition: service_healthy
       api:
         condition: service_started
+      minio-init:
+        condition: service_completed_successfully
 
   web:
     build:

@@ -207,6 +207,34 @@ async def test_chunked_request_body_is_bounded(client: AsyncClient, monkeypatch)
     assert response.status_code == 413
 
 
+async def test_chunked_request_client_disconnect_is_not_logged_as_500():
+    """A browser navigation abort while the middleware reads the body is noise."""
+    from types import SimpleNamespace
+
+    from starlette.requests import ClientDisconnect
+
+    import app.main as main_module
+
+    class DisconnectingRequest:
+        headers: dict[str, str] = {}
+        url = SimpleNamespace(path="/workflows")
+
+        async def stream(self):
+            yield b"partial"
+            raise ClientDisconnect()
+
+    async def call_next(_request):
+        raise AssertionError("Disconnected requests must not reach the router")
+
+    response = await main_module._body_size_limit(
+        DisconnectingRequest(),
+        call_next,
+    )
+
+    assert response.status_code == 499
+    assert main_module._chunked_body_readers == 0
+
+
 async def test_webhook_test_capture_dispatches_in_listening_org(
     client: AsyncClient, monkeypatch
 ):

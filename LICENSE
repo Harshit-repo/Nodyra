@@ -33,14 +33,38 @@ to the limitations and conditions below.
 
 You may use or modify the software only for your own internal business
 purposes or for non-commercial or personal use. You may distribute the
-software or provide it to others only if you do so free of charge and for a
+software or provide it to others only if you do so free of charge for a
 permitted purpose, and only if you keep this license with the software.
+
+For clarity:
+
+- "Internal business purposes" means use of the software by you or your
+  company's own personnel in support of your or your company's own business
+  operations, on instances that you or your company host and control.
+- Consulting, support, and systems-integration services around the software
+  are permitted: you may charge for your own services in configuring,
+  extending, or operating the software on a client's behalf, provided the
+  client hosts and controls its own instance under its own license to the
+  software, and you charge for your services rather than for the software
+  itself.
+- You may not charge, directly or indirectly, for the software itself, for
+  access to it, or for a product, subscription, bundle, or service whose value
+  derives in substantial part from the software's functionality. Distributing
+  the software "free of charge" alongside, or as an inducement for, a paid
+  offering is not free of charge for the purposes of this license.
+- You may not white-label, rebrand, embed, or bundle the software or any
+  substantial part of it into a product or service that you sell, license,
+  or provide to third parties, whether for a fee or otherwise, without a
+  separate commercial license from the Licensor.
 
 You may NOT provide the software to third parties as a hosted or managed
 service where the service gives users access to any substantial set of the
 features or functionality of the software, whether for a fee or free of
-charge. In other words, you may not offer the software (or a derivative of it)
-to others as a "Software-as-a-Service", hosting, or similar managed offering.
+charge, and whether provided directly or indirectly — including through
+affiliates, resellers, white-label arrangements, or by exposing the software's
+functionality through your own application, interface, or API. In other words,
+you may not offer the software (or a derivative of it) to others as a
+"Software-as-a-Service", hosting, platform, or similar managed offering.
 
 You may not move, change, disable, defeat, circumvent, or otherwise interfere
 with the license-key checks or any other licensing, copyright, or notice
@@ -77,6 +101,12 @@ prominent notice stating that you have modified the software.
 
 These terms do not imply any licenses other than those expressly granted in
 these terms.
+
+## Severability
+
+If any provision of these terms is held to be unenforceable or invalid, that
+provision will be enforced to the maximum extent permissible, and the
+remaining provisions will remain in full force and effect.
 
 ## Termination
 
@@ -116,10 +146,3 @@ these terms.
 "Use" means anything you do with the software requiring one of your licenses.
 
 "Trademark" means trademarks, service marks, and similar rights.
-
-----------------------------------------------------------------------------
-NOTE FOR THE LICENSOR (remove before publishing if desired): confirm the exact
-legal licensor name above, and have an attorney review the "hosted or managed
-service" limitation and the Enterprise carve-out before going public. This
-text is provided as a starting point and is not legal advice.
-----------------------------------------------------------------------------
