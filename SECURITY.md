@@ -37,6 +37,13 @@ quotas/fairness, and per-org sandbox pools.
   process (the same trust boundary as the Code node).
 - Artifact storage keys are server-generated and path-traversal checked.
 
+## Pen-test checklist
+
+Before a production release or a material security change, run the checks in
+[`docs/security-pentest-checklist.md`](docs/security-pentest-checklist.md). The
+checklist maps each abuse area to the automated test lane that should catch a
+regression.
+
 ## Reporting a vulnerability
 
 Please report security issues privately rather than opening a public issue.
