@@ -27,6 +27,15 @@ jobs:
           set -o pipefail
           uv run pytest --timeout=300 --timeout-method=thread \
             --reruns 1 --reruns-delay 2 -rR \
+            --cov=app.services.queue \
+            --cov=app.services.runner \
+            --cov=app.services.run_persistence \
+            --cov=app.services.redaction \
+            --cov=app.security \
+            --cov=nodyra.engine \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage-critical.xml \
+            --cov-fail-under=70 \
             --junitxml=pytest-results.xml 2>&1 | tee pytest-reruns.log
       - name: Report pytest retries
         if: always()
