@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { api, setUser } from "./api";
+import { api, setUser, type RuntimeModeStatus } from "./api";
 import { ConfirmProvider } from "./ConfirmProvider";
 import { SettingsPage } from "./SettingsPage";
 import type { AuthState, LicenseInfo, SystemSettings, UserInfo } from "./types";
@@ -40,6 +40,23 @@ function renderSettings() {
       </ConfirmProvider>
     </QueryClientProvider>,
   );
+}
+
+function runtimeReady(): RuntimeModeStatus {
+  return {
+    mode: "production",
+    database_dialect: "postgresql",
+    queue_backend: "redis",
+    scheduler_role: "leader",
+    webhook_role: "ingress",
+    artifact_backend: "s3",
+    runner_providers: [],
+    replica_safe: true,
+    replica_unsafe_reasons: [],
+    allow_insecure: false,
+    otel_enabled: true,
+    warnings: [],
+  };
 }
 
 afterEach(() => {
@@ -101,6 +118,7 @@ describe("SettingsPage", () => {
     ]);
     vi.spyOn(api, "getSystemSettings").mockResolvedValue(settings);
     vi.spyOn(api, "getLicense").mockResolvedValue(license);
+    vi.spyOn(api, "getRuntimeMode").mockResolvedValue(runtimeReady());
     vi.spyOn(api, "sandboxStatus").mockResolvedValue({
       mode: "off",
       active: false,
@@ -145,6 +163,7 @@ describe("SettingsPage", () => {
       limits: {},
       notice: null,
     });
+    vi.spyOn(api, "getRuntimeMode").mockResolvedValue(runtimeReady());
     vi.spyOn(api, "sandboxStatus").mockResolvedValue({
       mode: "off",
       active: false,
@@ -157,6 +176,7 @@ describe("SettingsPage", () => {
     renderSettings();
 
     expect(await screen.findByRole("heading", { name: "Instance settings" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Readiness" })).toBeTruthy();
     expect(await screen.findByText("Sandboxed execution is off")).toBeTruthy();
     expect(await screen.findByRole("heading", { name: "Plan & license" })).toBeTruthy();
   });

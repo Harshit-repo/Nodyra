@@ -1064,6 +1064,7 @@ export const api = {
     `/auth/sso/start?org_slug=${encodeURIComponent(orgSlug)}`,
 
   // --- Ops dashboard --------------------------------------------------------
+  getRuntimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),
   runtimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),
   queueStats: () => request<QueueStats>("/ops/queue"),
   queueCapacity: () => request<QueueCapacity>("/ops/capacity"),
@@ -1275,7 +1276,10 @@ export interface RuntimeModeStatus {
   webhook_role: string;
   artifact_backend: string;
   runner_providers: string[];
+  replica_safe: boolean;
+  replica_unsafe_reasons: string[];
   allow_insecure: boolean;
+  otel_enabled: boolean;
   warnings: string[];
 }
 

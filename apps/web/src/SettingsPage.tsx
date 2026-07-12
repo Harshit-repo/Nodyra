@@ -27,6 +27,7 @@ import { Link, useBlocker } from "react-router-dom";
 
 import { api, errorMessage, type SandboxStatus } from "./api";
 import { useConfirm } from "./ConfirmProvider";
+import { ReadinessPanel } from "./ReadinessPanel";
 import { useWorkspaceAccessContext } from "./WorkspaceAccess";
 import {
   discardDirtyInstanceSettings,
@@ -146,6 +147,7 @@ const SETTINGS_NAV = [
   { id: "account", label: "Account", icon: IdentificationCard },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "mcp-access", label: "MCP access", icon: Key },
+  { id: "readiness", label: "Readiness", icon: WarningCircle },
   { id: "instance", label: "Instance", icon: GearSix },
   { id: "sandbox", label: "Sandbox", icon: LockKey },
   { id: "license", label: "Plan & license", icon: CreditCard },
@@ -1472,7 +1474,7 @@ export function SettingsPage() {
   const canWorkspaceManage = workspace.multiTenancyEnabled && (workspaceRole === "admin" || workspaceRole === "owner");
   const canAudit = workspace.multiTenancyEnabled ? canWorkspaceManage : canAdmin;
   const visibleNavigation = SETTINGS_NAV.filter(
-    (item) => canAdmin || !["instance", "sandbox", "license"].includes(item.id),
+    (item) => canAdmin || !["readiness", "instance", "sandbox", "license"].includes(item.id),
   );
   const [activeSection, setActiveSection] = useState(() => {
     const hash = window.location.hash.slice(1);
@@ -1573,6 +1575,7 @@ export function SettingsPage() {
             <McpAgentQuickstart />
             <McpAccessPanel />
             <McpServerPanel />
+            {canAdmin && <ReadinessPanel />}
             {canAdmin && <WorkspaceSettingsPanel />}
             {canAdmin && <SandboxStatusPanel />}
             {canAdmin && <LicensePanel />}

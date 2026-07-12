@@ -110,7 +110,10 @@ describe("ExecutionsPage replay from node", () => {
       webhook_role: "enabled",
       artifact_backend: "local",
       runner_providers: [],
+      replica_safe: true,
+      replica_unsafe_reasons: [],
       allow_insecure: false,
+      otel_enabled: false,
       warnings: [],
     });
     apiMocks.queueStats.mockResolvedValue({
