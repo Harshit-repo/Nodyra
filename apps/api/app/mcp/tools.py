@@ -2351,6 +2351,8 @@ async def _create_environment(session: AsyncSession, user: User | None, args: di
             runner_pool_id=args.get("runner_pool_id"),
             backend=str(args.get("backend") or "venv"),
             backend_config=args.get("backend_config") or {},
+            interpreter=str(args.get("interpreter") or "cpython"),
+            runtime_flags=args.get("runtime_flags") or {},
         )
         if body.backend not in {"venv", "conda", "pixi"}:
             raise McpToolError("backend must be one of: venv, conda, pixi")
@@ -2375,6 +2377,8 @@ async def _create_environment(session: AsyncSession, user: User | None, args: di
         runner_pool_id=body.runner_pool_id,
         backend=body.backend,
         backend_config=body.backend_config,
+        interpreter=body.interpreter,
+        runtime_flags=dict(body.runtime_flags),
         status="pending",
     )
     session.add(env)
@@ -3732,7 +3736,11 @@ STATIC_TOOLS: list[McpTool] = [
         name="create_environment",
         description=(
             "Create a Python execution environment and start building it. Use when a "
-            "workflow needs packages that are not appropriate for the current env."
+            "workflow needs packages that are not appropriate for the current env. "
+            "Optionally select an accelerated interpreter: 'cpython-ft' (free-threaded, "
+            "3.13/3.14, venv backend only) or 'pypy' (3.10/3.11, venv backend only), and "
+            "opt into per-worker runtime_flags ({'jit': bool, 'lazy_imports': bool}, "
+            "CPython-only; jit is rejected for pypy since PyPy always JIT-compiles)."
         ),
         input_schema={
             "type": "object",
@@ -3746,6 +3754,18 @@ STATIC_TOOLS: list[McpTool] = [
                 "runner_pool_size": {"type": "integer", "minimum": 0},
                 "runner_pool_max": {"type": ["integer", "null"], "minimum": 1},
                 "runner_pool_id": {"type": ["string", "null"]},
+                "interpreter": {
+                    "type": "string",
+                    "enum": ["cpython", "cpython-ft", "pypy"],
+                    "description": (
+                        "Interpreter implementation. cpython-ft (free-threaded) and pypy "
+                        "require backend=venv and a minor-only python_version."
+                    ),
+                },
+                "runtime_flags": {
+                    "type": "object",
+                    "description": "Optional {'jit': bool, 'lazy_imports': bool} spawn-time flags.",
+                },
             },
             "required": ["name"],
         },

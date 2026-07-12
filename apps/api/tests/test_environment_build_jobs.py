@@ -4,6 +4,7 @@ from httpx import AsyncClient
 
 import app.services.environment_builds as environment_builds
 from app.models import Environment, EnvironmentBuildJob
+from app.services.environment_builds import _environment_hash, _snapshot_kwargs
 
 
 async def test_environment_create_enqueues_build_job(client: AsyncClient) -> None:
@@ -31,6 +32,40 @@ async def test_environment_create_enqueues_build_job(client: AsyncClient) -> Non
         )
     ).json()
     assert detail["id"] == created["build_job_id"]
+    assert detail["interpreter"] == "cpython"
+
+
+async def test_environment_hash_differs_by_interpreter() -> None:
+    base = Environment(
+        name="a",
+        python_version="3.14",
+        packages=["pandas"],
+        backend="venv",
+        backend_config={},
+        interpreter="cpython",
+    )
+    ft = Environment(
+        name="a",
+        python_version="3.14",
+        packages=["pandas"],
+        backend="venv",
+        backend_config={},
+        interpreter="cpython-ft",
+    )
+    assert _environment_hash(base) != _environment_hash(ft)
+
+
+async def test_snapshot_kwargs_carries_interpreter() -> None:
+    env = Environment(
+        name="a",
+        python_version="3.13",
+        packages=[],
+        backend="venv",
+        backend_config={},
+        interpreter="pypy",
+    )
+    snapshot = _snapshot_kwargs(env)
+    assert snapshot["interpreter"] == "pypy"
 
 
 async def test_package_update_supersedes_stale_queued_build(client: AsyncClient) -> None:

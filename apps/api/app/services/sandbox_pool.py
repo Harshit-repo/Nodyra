@@ -99,7 +99,10 @@ class SandboxWorker:
         await loop.run_in_executor(None, ensure_docker_image, client, tag, env_payload)
         name = f"nodyra-sbx-{uuid.uuid4().hex[:12]}"
         spawn_kwargs = hardening_kwargs(
-            runtime=runtime, network=network, overrides=overrides
+            runtime=runtime,
+            network=network,
+            overrides=overrides,
+            runtime_flags=env_payload.get("runtime_flags"),
         )
         container = await loop.run_in_executor(
             None,

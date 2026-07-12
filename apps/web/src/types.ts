@@ -446,6 +446,8 @@ export interface Environment {
   worker_rss_estimate_bytes: number | null;
   backend: string;
   backend_config: Record<string, unknown>;
+  interpreter: string;
+  runtime_flags: Record<string, boolean>;
   build_job_id?: string | null;
   build_job_status?: string | null;
   created_at: string;
@@ -463,6 +465,7 @@ export interface EnvironmentBuildJob {
   packages_hash: string;
   python_version: string;
   backend: string;
+  interpreter: string;
   last_error: string | null;
   requested_by_email: string | null;
   lease_owner: string | null;

@@ -35,14 +35,18 @@ Protocol — every streamed event includes the originating ``request_id``:
         {"type": "result", "status": "success" | "error"}
         {"type": "error",  "error": "..."}      (on unrecoverable failure)
 
-The very first line every process writes is ``{"type": "ready"}`` — the host
-must wait for it before dispatching requests.
+The very first line every process writes is
+``{"type": "ready", "startup_ms": <int>}`` — the host must wait for it before
+dispatching requests. ``startup_ms`` is the elapsed time from process start to
+the ready event (interpreter boot + nodyra_nodes import); older workers that
+predate this field simply omit it, so hosts must read it with ``.get()``.
 """
 
 import asyncio
 import json
 import os
 import sys
+import time
 import uuid
 from typing import Any
 
@@ -69,6 +73,12 @@ from nodyra.serialization import deserialize_value, serialize_value
 # callback, which fires *inside* an executing node — so we hold a
 # reference to the original stream that bypasses the proxy.
 _PROTOCOL_OUT = sys.stdout
+
+# Wall-clock start of this process (as close to interpreter boot as this
+# module can observe) — reported as ``startup_ms`` in the "ready" event so
+# operators can see the cold-start cost of warm-pool scale-up and sandboxed
+# per-run container spawns.
+_PROC_START = time.monotonic()
 
 _pending_callbacks: dict[str, asyncio.Future] = {}
 
@@ -299,7 +309,7 @@ def _needs_host_callbacks(message: dict[str, Any]) -> bool:
 
 
 async def run_forever() -> None:
-    _emit({"type": "ready"})
+    _emit({"type": "ready", "startup_ms": int((time.monotonic() - _PROC_START) * 1000)})
     while True:
         line = await _read_line()
         if line is None:

@@ -1,5 +1,6 @@
 """Pydantic request/response schemas for the API."""
 
+import re
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -8,6 +9,69 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 from nodyra.models import WorkflowGraph
 
 SUPPORTED_PYTHON_VERSIONS = ("3.12", "3.13", "3.14")
+# Interpreter → supported minor versions. cpython-ft (free-threaded) exists
+# from 3.13; PyPy tracks its own version stream. Non-cpython interpreters are
+# venv/uv-only: conda and pixi resolve their own interpreter builds and do not
+# understand uv's "3.14t" / "pypy@3.11" request syntax.
+SUPPORTED_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    "cpython": SUPPORTED_PYTHON_VERSIONS,
+    "cpython-ft": ("3.13", "3.14"),
+    "pypy": ("3.10", "3.11"),
+}
+# Allowlisted runtime flag keys (all boolean). "jit" → PYTHON_JIT=1,
+# "lazy_imports" → PYTHON_LAZY_IMPORTS=1 on spawned workers.
+SUPPORTED_RUNTIME_FLAGS = ("jit", "lazy_imports")
+
+
+def _validate_runtime_flags(flags: dict) -> None:
+    """Shared validation for `EnvironmentCreate.runtime_flags` and
+    `EnvironmentUpdate.runtime_flags`: every key must be an allowlisted flag
+    name and every value a bool. Kept as a module function so both schemas
+    validate identically instead of drifting.
+    """
+    supported = ", ".join(SUPPORTED_RUNTIME_FLAGS)
+    for key, value in flags.items():
+        if key not in SUPPORTED_RUNTIME_FLAGS:
+            raise ValueError(f"unsupported runtime flag {key!r}; supported flags: {supported}")
+        if not isinstance(value, bool):
+            raise ValueError(f"runtime flag {key!r} must be a boolean")
+
+
+# Dotted module name, e.g. "my_pkg.transforms" — matches accelerate.py's own
+# validation of the same shape so both layers stay in sync.
+_MYPYC_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
+def _validate_backend_config(cfg: dict, interpreter: str | None) -> None:
+    """Shared validation for `EnvironmentCreate.backend_config` and
+    `EnvironmentUpdate.backend_config`'s optional ``accelerate`` key
+    (mypyc opt-in compilation of installed node package modules).
+
+    Validation only runs when ``accelerate`` is present — backend_config is
+    otherwise a free-form dict for backend-specific settings (index_urls etc.)
+    and this function must not reject those.
+    """
+    if "accelerate" not in cfg:
+        return
+    accelerate = cfg["accelerate"]
+    if not isinstance(accelerate, dict):
+        raise ValueError("backend_config.accelerate must be an object")
+    if "mypyc_modules" not in accelerate:
+        return
+    modules = accelerate["mypyc_modules"]
+    if not isinstance(modules, list) or not (1 <= len(modules) <= 50):
+        raise ValueError("backend_config.accelerate.mypyc_modules must be a list of 1-50 items")
+    for module in modules:
+        if not isinstance(module, str) or not _MYPYC_MODULE_RE.match(module):
+            raise ValueError(
+                f"backend_config.accelerate.mypyc_modules contains an invalid module "
+                f"name: {module!r}"
+            )
+    if interpreter == "pypy":
+        raise ValueError(
+            "mypyc acceleration is CPython-only (mypyc emits CPython C-API "
+            "extensions); it is not supported for interpreter='pypy'"
+        )
 
 
 def normalize_label_map(value: dict[str, Any] | None) -> dict[str, str] | None:
@@ -224,21 +288,40 @@ class EnvironmentCreate(BaseModel):
     runner_pool_id: str | None = None
     backend: Literal["venv", "conda", "pixi"] = "venv"
     backend_config: dict = Field(default_factory=dict)
+    interpreter: Literal["cpython", "cpython-ft", "pypy"] = "cpython"
+    runtime_flags: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_python_version(self) -> "EnvironmentCreate":
         parts = self.python_version.split(".")
         minor_version = ".".join(parts[:2])
+        supported_for_interpreter = SUPPORTED_INTERPRETERS[self.interpreter]
         if (
             len(parts) not in (2, 3)
             or not all(part.isdigit() for part in parts)
-            or minor_version not in SUPPORTED_PYTHON_VERSIONS
+            or minor_version not in supported_for_interpreter
         ):
-            supported = ", ".join(SUPPORTED_PYTHON_VERSIONS)
+            supported = ", ".join(supported_for_interpreter)
             raise ValueError(
-                f"unsupported Python version {self.python_version!r}; "
-                f"supported versions: {supported}"
+                f"unsupported Python version {self.python_version!r} for interpreter "
+                f"{self.interpreter!r}; supported versions: {supported}"
             )
+        if self.interpreter != "cpython":
+            # uv's free-threaded/PyPy request syntax ("3.14t", "pypy@3.11") is
+            # minor-only; there is no patch pin to append.
+            if len(parts) != 2:
+                raise ValueError(
+                    "free-threaded CPython and PyPy environments must use a minor "
+                    "version (e.g. '3.14'), not a patch pin"
+                )
+            if self.backend != "venv":
+                raise ValueError(
+                    "free-threaded CPython and PyPy environments require the venv backend"
+                )
+        _validate_runtime_flags(self.runtime_flags)
+        if self.interpreter == "pypy" and self.runtime_flags.get("jit"):
+            raise ValueError("the 'jit' flag is CPython-only; PyPy always JIT-compiles")
+        _validate_backend_config(self.backend_config, self.interpreter)
         return self
 
 
@@ -251,6 +334,20 @@ class EnvironmentUpdate(BaseModel):
     runner_pool_id: str | None = Field(default=None)
     runner_pool_set: bool = Field(default=False)
     backend_config: dict | None = None
+    # interpreter is deliberately absent: create-only, like python_version.
+    runtime_flags: dict | None = None
+
+    @model_validator(mode="after")
+    def validate_runtime_flags(self) -> "EnvironmentUpdate":
+        if self.runtime_flags is not None:
+            _validate_runtime_flags(self.runtime_flags)
+        if self.backend_config is not None:
+            # interpreter is unknown at this layer (create-only field, not part
+            # of the update body); the pypy-rejection half of
+            # _validate_backend_config is re-checked in update_environment
+            # once the env row's real interpreter is loaded.
+            _validate_backend_config(self.backend_config, None)
+        return self
 
 
 class PackageRequest(BaseModel):
@@ -290,6 +387,7 @@ class EnvironmentBuildJobInfo(BaseModel):
     packages_hash: str = ""
     python_version: str = ""
     backend: str = ""
+    interpreter: str = ""
     last_error: str | None = None
     requested_by_email: str | None = None
     lease_owner: str | None = None
@@ -320,6 +418,8 @@ class EnvironmentInfo(BaseModel):
     worker_rss_estimate_bytes: int | None = None
     backend: str = "venv"
     backend_config: dict = Field(default_factory=dict)
+    interpreter: str = "cpython"
+    runtime_flags: dict = Field(default_factory=dict)
     build_job_id: str | None = None
     build_job_status: str | None = None
     created_at: datetime

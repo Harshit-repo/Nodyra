@@ -86,6 +86,7 @@ def _environment_hash(env: Environment) -> str:
         "python_version": env.python_version,
         "backend": env.backend,
         "backend_config": env.backend_config or {},
+        "interpreter": env.interpreter,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -98,6 +99,7 @@ def _snapshot_kwargs(env: Environment) -> dict[str, Any]:
         "python_version": str(env.python_version or ""),
         "backend": str(env.backend or ""),
         "backend_config": dict(env.backend_config or {}),
+        "interpreter": str(env.interpreter or "cpython"),
     }
 
 

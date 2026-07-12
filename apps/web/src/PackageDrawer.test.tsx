@@ -22,6 +22,8 @@ const env: Environment = {
   worker_rss_estimate_bytes: null,
   backend: "venv",
   backend_config: {},
+  interpreter: "cpython",
+  runtime_flags: {},
   created_at: "",
   updated_at: "",
 };

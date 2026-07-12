@@ -33,6 +33,22 @@ type BackendTab = "venv" | "conda" | "pixi";
 
 export const SUPPORTED_PYTHON_VERSIONS = ["3.12", "3.13", "3.14"] as const;
 
+// Interpreter → supported minor versions. Fallback default only — the
+// source of truth is `SUPPORTED_INTERPRETERS` in apps/api/app/schemas.py;
+// `/environments/backends` (api.listBackends) serves the live version and
+// is preferred whenever it's available.
+export const SUPPORTED_INTERPRETERS: Record<string, string[]> = {
+  cpython: [...SUPPORTED_PYTHON_VERSIONS],
+  "cpython-ft": ["3.13", "3.14"],
+  pypy: ["3.10", "3.11"],
+};
+
+const INTERPRETER_LABELS: Record<string, string> = {
+  cpython: "CPython (default)",
+  "cpython-ft": "CPython free-threaded — experimental",
+  pypy: "PyPy — experimental",
+};
+
 const BUILD_POLL_TIMEOUT_MS = 20 * 60 * 1000;
 
 const DESCRIPTION_HELP =
@@ -320,6 +336,9 @@ function CreateEnvModal({
   const [name, setName] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
+  const [interpreter, setInterpreter] = useState("cpython");
+  const [interpreterOptions, setInterpreterOptions] =
+    useState<Record<string, string[]>>(SUPPORTED_INTERPRETERS);
   const [python, setPython] = useState("3.12");
   const [description, setDescription] = useState("");
   const [poolId, setPoolId] = useState<string | null>(null);
@@ -333,7 +352,48 @@ function CreateEnvModal({
   const [backendTab, setBackendTab] = useState<BackendTab>("venv");
   const [channelInput, setChannelInput] = useState("conda-forge");
   const [indexUrlInput, setIndexUrlInput] = useState("");
+  const [jit, setJit] = useState(false);
+  const [lazyImports, setLazyImports] = useState(false);
   const createEnvironment = useCreateEnvironmentMutation();
+
+  // Live interpreter/version matrix from the API; the module-level constant
+  // above (mirroring schemas.SUPPORTED_INTERPRETERS) is only the fallback
+  // default used before this resolves or if the request fails.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { api } = await import("./api");
+        const data = await api.listBackends();
+        if (!cancelled && data.supported_interpreters) {
+          setInterpreterOptions(data.supported_interpreters);
+        }
+      } catch {
+        // keep the fallback default
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Non-cpython interpreters are venv/uv-only (uv's "3.14t"/"pypy@3.11"
+  // request syntax); conda/pixi resolve their own interpreter builds and
+  // don't understand it. Switching interpreter also re-picks a valid
+  // python version for the new interpreter's supported list.
+  function onInterpreterChange(next: string) {
+    setInterpreter(next);
+    if (next !== "cpython") {
+      setBackendTab("venv");
+    }
+    const versions = interpreterOptions[next] ?? [];
+    if (versions.length > 0 && !versions.includes(python)) {
+      setPython(versions[0]);
+    }
+    if (next === "pypy") {
+      setJit(false); // the 'jit' flag is CPython-only; PyPy always JIT-compiles
+    }
+  }
 
   async function submit() {
     if (!name.trim() || busy) return;
@@ -349,6 +409,9 @@ function CreateEnvModal({
           : backendTab === "venv" && indexUrlList.length > 0
           ? { index_urls: indexUrlList }
           : {};
+      const runtime_flags: Record<string, boolean> = {};
+      if (jit) runtime_flags.jit = true;
+      if (lazyImports) runtime_flags.lazy_imports = true;
       await createEnvironment.mutateAsync({
         name: name.trim(),
         python_version: python,
@@ -356,6 +419,8 @@ function CreateEnvModal({
         runner_pool_id: poolId,
         backend: backendTab,
         backend_config,
+        interpreter,
+        runtime_flags,
         ...pool,
       });
       onCreated();
@@ -384,6 +449,12 @@ function CreateEnvModal({
               key={b}
               type="button"
               className={`backend-tab${backendTab === b ? " backend-tab--active" : ""}`}
+              disabled={interpreter !== "cpython" && b !== "venv"}
+              title={
+                interpreter !== "cpython" && b !== "venv"
+                  ? "Free-threaded CPython and PyPy environments require the venv backend"
+                  : undefined
+              }
               onClick={() => setBackendTab(b)}
             >
               {b === "venv" ? "uv + venv" : b}
@@ -402,16 +473,51 @@ function CreateEnvModal({
           onKeyDown={(e) => e.key === "Enter" && void submit()}
         />
 
+        <label className="field-label">Interpreter</label>
+        <select
+          className="field-input"
+          value={interpreter}
+          onChange={(e) => onInterpreterChange(e.target.value)}
+        >
+          {Object.keys(interpreterOptions).map((key) => (
+            <option key={key} value={key}>
+              {INTERPRETER_LABELS[key] ?? key}
+            </option>
+          ))}
+        </select>
+
         <label className="field-label">Python version</label>
         <select
           className="field-input"
           value={python}
           onChange={(e) => setPython(e.target.value)}
         >
-          {SUPPORTED_PYTHON_VERSIONS.map((version) => (
+          {(interpreterOptions[interpreter] ?? SUPPORTED_PYTHON_VERSIONS).map((version) => (
             <option key={version} value={version}>Python {version}</option>
           ))}
         </select>
+
+        <label className="field-label">Acceleration</label>
+        <label className="field-checkbox">
+          <input
+            type="checkbox"
+            checked={jit}
+            disabled={interpreter === "pypy"}
+            onChange={(e) => setJit(e.target.checked)}
+          />
+          Enable CPython JIT (PYTHON_JIT=1)
+        </label>
+        <label className="field-checkbox">
+          <input
+            type="checkbox"
+            checked={lazyImports}
+            onChange={(e) => setLazyImports(e.target.checked)}
+          />
+          Lazy imports (Python 3.15+, experimental)
+        </label>
+        <p className="field-hint muted">
+          Applies to newly started workers; running workers are unaffected until recycled.
+        </p>
 
         <label className="field-label">
           Description <InfoTip text={DESCRIPTION_HELP} />
@@ -536,6 +642,8 @@ function EditEnvModal({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [jit, setJit] = useState(Boolean(env.runtime_flags?.jit));
+  const [lazyImports, setLazyImports] = useState(Boolean(env.runtime_flags?.lazy_imports));
   const updateEnvironment = useUpdateEnvironmentMutation();
 
   async function save() {
@@ -544,6 +652,9 @@ function EditEnvModal({
     setError("");
     try {
       const pool = packPool(mode, fixedSize, elasticMin, elasticMax, spawnMax);
+      const runtime_flags: Record<string, boolean> = {};
+      if (jit) runtime_flags.jit = true;
+      if (lazyImports) runtime_flags.lazy_imports = true;
       await updateEnvironment.mutateAsync({
         id: env.id,
         body: {
@@ -551,6 +662,7 @@ function EditEnvModal({
           description: description.trim(),
           runner_pool_id: poolId,
           runner_pool_set: true,
+          runtime_flags,
           ...pool,
         },
       });
@@ -611,6 +723,28 @@ function EditEnvModal({
           rssEstimate={env.worker_rss_estimate_bytes}
           rssSoftBudget={rssSoftBudget}
         />
+
+        <label className="field-label">Acceleration</label>
+        <label className="field-checkbox">
+          <input
+            type="checkbox"
+            checked={jit}
+            disabled={env.interpreter === "pypy"}
+            onChange={(e) => setJit(e.target.checked)}
+          />
+          Enable CPython JIT (PYTHON_JIT=1)
+        </label>
+        <label className="field-checkbox">
+          <input
+            type="checkbox"
+            checked={lazyImports}
+            onChange={(e) => setLazyImports(e.target.checked)}
+          />
+          Lazy imports (Python 3.15+, experimental)
+        </label>
+        <p className="field-hint muted">
+          Applies to newly started workers; running workers are unaffected until recycled.
+        </p>
 
         <p className="muted">
           Pool changes apply when the API restarts (or this env's pool is
@@ -704,7 +838,11 @@ function EnvCard({
         </div>
       </div>
       <div className="env-meta">
-        Python {env.python_version} · {poolLabel(env)} ·{" "}
+        Python {env.python_version}
+        {env.interpreter === "cpython-ft" && " · free-threaded"}
+        {env.interpreter === "pypy" && " · PyPy"}
+        {env.runtime_flags?.jit && " · JIT"}
+        {" "}· {poolLabel(env)} ·{" "}
         <span title="Where runs of this environment execute">
           {env.runner_pool_id
             ? `→ ${env.runner_pool_name ?? "runner pool"}`

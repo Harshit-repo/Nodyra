@@ -72,8 +72,22 @@ _OVERRIDABLE = ("mem_limit", "nano_cpus", "pids_limit", "tmpfs", "network", "uli
 
 
 def hardening_kwargs(
-    *, runtime: str, network: str, overrides: dict | None = None
+    *,
+    runtime: str,
+    network: str,
+    overrides: dict | None = None,
+    runtime_flags: dict | None = None,
 ) -> dict[str, Any]:
+    environment: dict[str, str] = {"HOME": "/tmp"}
+    # PYTHON_JIT / PYTHON_LAZY_IMPORTS: the same two spawn-time env vars the
+    # subprocess pool injects (runtime_pool._resolve_env_runtime_flags).
+    # Interpreter selection (cpython-ft/pypy) is NOT threaded through here —
+    # sandbox images are built from standard CPython base images
+    # (container_runtime.ensure_docker_image), so only these two flags apply.
+    if (runtime_flags or {}).get("jit"):
+        environment["PYTHON_JIT"] = "1"
+    if (runtime_flags or {}).get("lazy_imports"):
+        environment["PYTHON_LAZY_IMPORTS"] = "1"
     kw: dict[str, Any] = {
         "cap_drop": ["ALL"],
         "security_opt": ["no-new-privileges:true"],
@@ -92,7 +106,7 @@ def hardening_kwargs(
             {"name": "nproc", "soft": 256, "hard": 512},
         ],
         # rootfs is read-only; /tmp is the only writable surface.
-        "environment": {"HOME": "/tmp"},
+        "environment": environment,
     }
     for key, value in (overrides or {}).items():
         if key in _OVERRIDABLE:

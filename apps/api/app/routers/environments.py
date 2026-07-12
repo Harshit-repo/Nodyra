@@ -7,7 +7,9 @@ import nodyra_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.db import get_session
 from app.models import Environment, EnvironmentBuildJob, RunnerPool, User, Workflow
 from app.schemas import (
+    SUPPORTED_INTERPRETERS,
     SUPPORTED_PYTHON_VERSIONS,
+    SUPPORTED_RUNTIME_FLAGS,
     EnvironmentBuildJobInfo,
     EnvironmentCreate,
     EnvironmentInfo,
@@ -73,6 +75,8 @@ def _to_info(
         worker_rss_estimate_bytes=env.worker_rss_estimate_bytes,
         backend=env.backend,
         backend_config=dict(env.backend_config or {}),
+        interpreter=env.interpreter,
+        runtime_flags=dict(env.runtime_flags or {}),
         build_job_id=build_job.id if build_job else None,
         build_job_status=build_job.status if build_job else None,
         created_at=env.created_at,
@@ -177,6 +181,8 @@ async def create_environment(
         runner_pool_id=body.runner_pool_id,
         backend=body.backend,
         backend_config=body.backend_config,
+        interpreter=body.interpreter,
+        runtime_flags=dict(body.runtime_flags),
         status="pending",
     )
     session.add(env)
@@ -233,8 +239,18 @@ async def update_environment(
         env.runner_pool_id = body.runner_pool_id
     needs_rebuild = False
     if body.backend_config is not None:
+        from app.schemas import _validate_backend_config
+
+        try:
+            _validate_backend_config(body.backend_config, env.interpreter)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
         env.backend_config = body.backend_config
         needs_rebuild = True
+    if body.runtime_flags is not None:
+        # Spawn-time only: no rebuild needed, flags take effect for the next
+        # worker the pool spawns for this environment.
+        env.runtime_flags = dict(body.runtime_flags)
     await log_audit(session, "update", "environment", env.id, env.name,
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
@@ -291,6 +307,8 @@ async def list_backends(
     return {
         "platform": sys.platform,
         "supported_python_versions": list(SUPPORTED_PYTHON_VERSIONS),
+        "supported_interpreters": {k: list(v) for k, v in SUPPORTED_INTERPRETERS.items()},
+        "supported_runtime_flags": list(SUPPORTED_RUNTIME_FLAGS),
         "venv": {
             "available": uv_path is not None,
             "version": None,

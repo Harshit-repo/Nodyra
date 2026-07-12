@@ -110,6 +110,9 @@ operations dashboard and a first-class admin restart control.
 - Per-node retry, retry backoff, jitter, timeout, and "always output data"
   support.
 - Warm subprocess runtime per environment.
+- Opt-in Python accelerators per environment: CPython JIT, lazy imports,
+  free-threaded CPython, PyPy, and mypyc-compiled node modules — see
+  [docs/accelerators.md](docs/accelerators.md).
 - Elastic per-environment runner pools with min/max worker sizing.
 - Global top-level run concurrency cap.
 - Sub-workflows with production-safe draft/published graph selection.

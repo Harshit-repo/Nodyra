@@ -201,6 +201,15 @@ class Environment(Base):
     worker_rss_estimate_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     backend: Mapped[str] = mapped_column(String(20), default="venv", nullable=False)
     backend_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    # Interpreter implementation for this environment. "cpython" (default),
+    # "cpython-ft" (free-threaded, PEP 703 builds: 3.13t/3.14t), or "pypy".
+    # Create-only, like python_version: changing implementations in place would
+    # invalidate every installed wheel, so a new environment is the safe unit.
+    interpreter: Mapped[str] = mapped_column(String(20), default="cpython", nullable=False)
+    # Per-worker interpreter tuning applied at subprocess spawn (not at build):
+    # {"jit": bool, "lazy_imports": bool}. Mutable without a rebuild — flags
+    # take effect for the next spawned worker, same semantics as pool sizing.
+    runtime_flags: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -228,6 +237,7 @@ class EnvironmentBuildJob(Base):
     python_version: Mapped[str] = mapped_column(String(16), nullable=False, default="")
     backend: Mapped[str] = mapped_column(String(20), nullable=False, default="")
     backend_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    interpreter: Mapped[str] = mapped_column(String(20), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)

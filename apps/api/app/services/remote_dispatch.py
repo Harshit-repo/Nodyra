@@ -383,7 +383,11 @@ class RemoteDispatcher:
 
 
 def build_env_payload(
-    env_id: str, python_version: str, packages: list[str], nodyra_version: str = "0.0.1"
+    env_id: str,
+    python_version: str,
+    packages: list[str],
+    nodyra_version: str = "0.0.1",
+    runtime_flags: dict | None = None,
 ) -> dict:
     packages_hash = hashlib.sha256(
         json.dumps(sorted(packages)).encode()
@@ -394,6 +398,11 @@ def build_env_payload(
         "packages": packages,
         "packages_hash": packages_hash,
         "nodyra_version": nodyra_version,
+        # Spawn-time accelerator flags (jit/lazy_imports). Sandbox containers
+        # run standard CPython base images, so only the two env-var flags make
+        # it through here — interpreter selection (cpython-ft/pypy) is not
+        # supported for sandboxed runs (see docs/accelerators.md).
+        "runtime_flags": dict(runtime_flags or {}),
     }
 
 

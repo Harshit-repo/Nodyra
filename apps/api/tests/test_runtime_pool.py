@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass, field
 
 import pytest
+from httpx import AsyncClient
 
 from app.config import settings
 from app.services.runtime_pool import RuntimePool, _EnvPool, _RssBudget
@@ -203,3 +204,167 @@ async def test_rss_budget_blocks_until_headroom_frees() -> None:
     # 700 + 700 > 1000, so second must wait for first to release.
     assert order == ["first-in", "first-out", "second-in"]
     assert budget.committed_bytes == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: per-environment runtime flags (PYTHON_JIT / PYTHON_LAZY_IMPORTS)
+# ---------------------------------------------------------------------------
+
+
+async def test_resolve_env_runtime_flags_reads_configured_flags(client: AsyncClient) -> None:
+    """A DB row with runtime_flags={"jit": True} resolves to {"jit": True}."""
+    from app.services.runtime_pool import _resolve_env_runtime_flags
+
+    created = (
+        await client.post(
+            "/environments",
+            json={"name": "Flagged pool env", "runtime_flags": {"jit": True}},
+        )
+    ).json()
+
+    flags = await _resolve_env_runtime_flags(created["id"])
+    assert flags == {"jit": True}
+
+
+async def test_resolve_env_runtime_flags_empty_dict_for_no_flags(client: AsyncClient) -> None:
+    from app.services.runtime_pool import _resolve_env_runtime_flags
+
+    created = (await client.post("/environments", json={"name": "Unflagged"})).json()
+    flags = await _resolve_env_runtime_flags(created["id"])
+    assert flags == {}
+
+
+async def test_resolve_env_runtime_flags_none_env_id_returns_empty() -> None:
+    from app.services.runtime_pool import _resolve_env_runtime_flags
+
+    assert await _resolve_env_runtime_flags(None) == {}
+
+
+async def test_resolve_env_runtime_flags_missing_env_returns_empty(client: AsyncClient) -> None:
+    from app.services.runtime_pool import _resolve_env_runtime_flags
+
+    assert await _resolve_env_runtime_flags("does-not-exist") == {}
+
+
+async def test_resolve_env_runtime_flags_db_error_returns_empty(monkeypatch) -> None:
+    """A DB failure degrades to {} — flags are accelerators, never a reason to
+    fail a dispatch."""
+    from app.services import runtime_pool as rp_module
+
+    class _BoomSession:
+        async def __aenter__(self):
+            raise RuntimeError("db unavailable")
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(rp_module, "SessionLocal", lambda: _BoomSession())
+    assert await rp_module._resolve_env_runtime_flags("some-env") == {}
+
+
+class _FakeReadable:
+    """Stand-in for a subprocess stdout/stderr stream in ``_RuntimeProcess.spawn``."""
+
+    def __init__(self, first_line: bytes = b"") -> None:
+        self._lines = [first_line] if first_line else []
+
+    async def readline(self) -> bytes:
+        if self._lines:
+            return self._lines.pop(0)
+        return b""
+
+
+class _FakeSpawnedProcess:
+    """Stand-in for ``asyncio.subprocess.Process`` capturing the env kwarg."""
+
+    def __init__(self, env: dict) -> None:
+        self.env = env
+        self.stdin = _FakeReadable()
+        self.stdout = _FakeReadable(b'{"type": "ready"}\n')
+        self.stderr = None
+
+    def kill(self) -> None:
+        pass
+
+    async def wait(self) -> None:
+        return None
+
+
+async def test_spawn_injects_jit_env_var_from_runtime_flags(monkeypatch) -> None:
+    """Env row's runtime_flags={"jit": True} reaches the spawned subprocess's
+    env as PYTHON_JIT=='1', with no PYTHON_LAZY_IMPORTS."""
+    import app.services.runtime_pool as rp_module
+
+    captured: dict = {}
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured.update(kwargs.get("env") or {})
+        return _FakeSpawnedProcess(kwargs.get("env") or {})
+
+    async def fake_python_for_env(env_id):
+        return "/usr/bin/python3"
+
+    async def fake_resolve_flags(env_id):
+        return {"jit": True}
+
+    monkeypatch.setattr(rp_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(rp_module, "_python_for_env", fake_python_for_env)
+    monkeypatch.setattr(rp_module, "_resolve_env_runtime_flags", fake_resolve_flags)
+
+    await rp_module._RuntimeProcess.spawn("some-env")
+
+    assert captured.get("PYTHON_JIT") == "1"
+    assert "PYTHON_LAZY_IMPORTS" not in captured
+
+
+async def test_spawn_no_flags_sets_no_accelerator_env_vars(monkeypatch) -> None:
+    import app.services.runtime_pool as rp_module
+
+    captured: dict = {}
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured.update(kwargs.get("env") or {})
+        return _FakeSpawnedProcess(kwargs.get("env") or {})
+
+    async def fake_python_for_env(env_id):
+        return "/usr/bin/python3"
+
+    async def fake_resolve_flags(env_id):
+        return {}
+
+    monkeypatch.setattr(rp_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(rp_module, "_python_for_env", fake_python_for_env)
+    monkeypatch.setattr(rp_module, "_resolve_env_runtime_flags", fake_resolve_flags)
+
+    await rp_module._RuntimeProcess.spawn("some-env")
+
+    assert "PYTHON_JIT" not in captured
+    assert "PYTHON_LAZY_IMPORTS" not in captured
+
+
+async def test_spawn_does_not_leak_host_python_jit_when_flag_absent(monkeypatch) -> None:
+    """The host API process's own PYTHON_JIT must never leak into a worker;
+    only the per-env flag (resolved from the DB) is a source of truth."""
+    import app.services.runtime_pool as rp_module
+
+    monkeypatch.setenv("PYTHON_JIT", "1")  # host process opts in; workers must not inherit it
+
+    captured: dict = {}
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured.update(kwargs.get("env") or {})
+        return _FakeSpawnedProcess(kwargs.get("env") or {})
+
+    async def fake_python_for_env(env_id):
+        return "/usr/bin/python3"
+
+    async def fake_resolve_flags(env_id):
+        return {}
+
+    monkeypatch.setattr(rp_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(rp_module, "_python_for_env", fake_python_for_env)
+    monkeypatch.setattr(rp_module, "_resolve_env_runtime_flags", fake_resolve_flags)
+
+    await rp_module._RuntimeProcess.spawn("some-env")
+
+    assert "PYTHON_JIT" not in captured

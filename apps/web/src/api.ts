@@ -511,6 +511,9 @@ export const api = {
   listBackends: () =>
     request<{
       platform: string;
+      supported_python_versions?: string[];
+      supported_interpreters?: Record<string, string[]>;
+      supported_runtime_flags?: string[];
       venv: { available: boolean; version: string | null; managed: boolean };
       conda: { available: boolean; version: string | null; managed: boolean };
       pixi: { available: boolean; version: string | null; managed: boolean };
@@ -526,6 +529,8 @@ export const api = {
     runner_pool_id?: string | null;
     backend?: string;
     backend_config?: Record<string, unknown>;
+    interpreter?: string;
+    runtime_flags?: Record<string, boolean>;
   }) =>
     request<Environment>("/environments", {
       method: "POST",
@@ -540,6 +545,7 @@ export const api = {
       runner_pool_max?: number | null;
       runner_pool_id?: string | null;
       runner_pool_set?: boolean;
+      runtime_flags?: Record<string, boolean>;
     },
   ) =>
     request<Environment>(`/environments/${id}`, {

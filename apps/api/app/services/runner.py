@@ -331,7 +331,9 @@ async def _build_env_payload_for_run(env_id: str | None) -> dict:
         env = await session.get(Environment, env_id)
         if env is None:
             return build_env_payload(env_id, "3.12", [])
-        return build_env_payload(env_id, env.python_version, env.packages)
+        return build_env_payload(
+            env_id, env.python_version, env.packages, runtime_flags=env.runtime_flags
+        )
 
 
 async def start_run(

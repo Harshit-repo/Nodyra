@@ -54,6 +54,8 @@ async def test_runtime_subprocess_executes_a_graph() -> None:
         ready_line = await asyncio.wait_for(process.stdout.readline(), timeout=10)
         ready = json.loads(ready_line)
         assert ready["type"] == "ready"
+        assert isinstance(ready["startup_ms"], int)
+        assert ready["startup_ms"] >= 0
 
         request = {
             "type": "run",

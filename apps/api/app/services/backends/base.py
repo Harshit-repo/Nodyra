@@ -32,12 +32,17 @@ def local_nodyra_packages() -> list[str]:
     ]
 
 
-async def _run(*args: str) -> tuple[int, str]:
-    """Run a subprocess, return (returncode, combined stdout+stderr)."""
+async def _run(*args: str, cwd: str | None = None) -> tuple[int, str]:
+    """Run a subprocess, return (returncode, combined stdout+stderr).
+
+    ``cwd`` matters for tools that write output relative to the working
+    directory (mypyc places compiled extensions relative to its cwd).
+    """
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        cwd=cwd,
     )
     out, _ = await proc.communicate()
     return proc.returncode or 0, out.decode("utf-8", "replace")

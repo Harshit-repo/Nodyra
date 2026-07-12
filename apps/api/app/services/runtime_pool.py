@@ -101,6 +101,26 @@ async def _resolve_env_rss_estimate(env_id: str | None) -> int:
         return 0
 
 
+async def _resolve_env_runtime_flags(env_id: str | None) -> dict[str, bool]:
+    """Per-environment runtime flags ({"jit": bool, "lazy_imports": bool}).
+
+    Read fresh on every worker spawn (spawns are rare and already pay a DB
+    round-trip via ensure_environment_ready), so a PATCH takes effect for the
+    next worker without an API restart. Any failure degrades to {} — flags are
+    accelerators, never a reason to fail a dispatch.
+    """
+    if env_id is None:
+        return {}
+    try:
+        async with SessionLocal() as session:
+            env = await session.get(Environment, env_id)
+            if env is None:
+                return {}
+            return {k: bool(v) for k, v in (env.runtime_flags or {}).items() if v}
+    except Exception:  # noqa: BLE001 - degrade gracefully if the DB is unavailable
+        return {}
+
+
 async def _rss_soft_budget_bytes() -> int:
     """Current soft RSS budget (bytes). 0 disables RSS gating.
 
@@ -307,6 +327,14 @@ class _RuntimeProcess:
     async def spawn(cls, env_id: str | None) -> "_RuntimeProcess":
         python = await _python_for_env(env_id)
         env = _worker_env()
+        flags = await _resolve_env_runtime_flags(env_id)
+        # PYTHON_JIT / PYTHON_LAZY_IMPORTS are read by CPython at startup; unknown
+        # or unsupported vars are ignored by the interpreter, so passing them to an
+        # interpreter without the feature is harmless by design.
+        if flags.get("jit"):
+            env["PYTHON_JIT"] = "1"
+        if flags.get("lazy_imports"):
+            env["PYTHON_LAZY_IMPORTS"] = "1"
         process = await asyncio.create_subprocess_exec(
             python,
             "-u",
@@ -334,6 +362,10 @@ class _RuntimeProcess:
         ready = json.loads(line)
         if ready.get("type") != "ready":
             raise RuntimeError(f"unexpected first event: {ready}")
+        # .get() — old workers without the field must keep working (rolling deploys).
+        logger.info(
+            "runtime worker ready env=%s startup_ms=%s", env_id, ready.get("startup_ms")
+        )
         wp = cls(process, env_id)
         wp._start_stderr_consumer()
         return wp
