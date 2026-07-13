@@ -25,6 +25,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 import re
 import tarfile
 from collections.abc import Awaitable, Callable
@@ -51,6 +52,22 @@ _PKG_SPEC_RE = re.compile(
 _PY_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,2}$")
 
 _NODYRA_RUNTIME_PACKAGES = ("nodyra-runtime", "nodyra-core", "nodyra-nodes")
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+SANDBOX_HEARTBEAT_INTERVAL_SECONDS = _positive_float_env(
+    "NODYRA_SANDBOX_HEARTBEAT_INTERVAL_SECONDS", 15.0
+)
+SANDBOX_HEARTBEAT_TIMEOUT_SECONDS = _positive_float_env(
+    "NODYRA_SANDBOX_HEARTBEAT_TIMEOUT_SECONDS", 60.0
+)
 
 
 def _validate_packages(packages: list[str]) -> list[str]:
@@ -228,6 +245,9 @@ async def run_workflow_sandboxed(
         memory_mb=overrides.get("memory_mb", 1024),
         pids=overrides.get("pids", 256),
     )
+    spawn_kwargs.setdefault("environment", {})[
+        "NODYRA_RUNTIME_HEARTBEAT_SECONDS"
+    ] = str(SANDBOX_HEARTBEAT_INTERVAL_SECONDS)
 
     loop = asyncio.get_running_loop()
     try:
@@ -311,13 +331,29 @@ async def run_workflow_sandboxed(
             ),
         )
         sock = getattr(raw, "_sock", raw)
-        await loop.run_in_executor(None, sock.settimeout, 3600.0)
+        await loop.run_in_executor(
+            None, sock.settimeout, SANDBOX_HEARTBEAT_TIMEOUT_SECONDS
+        )
 
         demux = _Demuxer()
         buf = b""
         sent_run = False
         while True:
-            chunk = await loop.run_in_executor(None, sock.recv, 4096)
+            try:
+                chunk = await loop.run_in_executor(None, sock.recv, 4096)
+            except TimeoutError:
+                await on_event(
+                    {
+                        "type": "run_error",
+                        "error": (
+                            "sandbox heartbeat timed out after "
+                            f"{SANDBOX_HEARTBEAT_TIMEOUT_SECONDS:g}s without "
+                            "runtime output"
+                        ),
+                    }
+                )
+                status = "error"
+                break
             if not chunk:
                 break
             buf += demux.feed(chunk)
@@ -345,6 +381,8 @@ async def run_workflow_sandboxed(
                     status = str(event.get("status", "success"))
                     done = True
                     break
+                elif etype == "heartbeat":
+                    continue
                 elif etype == "error":
                     await on_event({"type": "run_error", "error": event.get("error", "")})
                     status = "error"

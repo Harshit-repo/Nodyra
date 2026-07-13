@@ -8,6 +8,7 @@ from decimal import Decimal
 import pytest
 
 from nodyra.serialization import serialize_value
+from nodyra_runtime import server
 from nodyra_runtime.server import _needs_host_callbacks
 
 GRAPH = {
@@ -118,6 +119,35 @@ LOOP_GRAPH = {
 def test_loop_graph_does_not_need_host_callbacks():
     msg = {"type": "run", "graph": LOOP_GRAPH}
     assert _needs_host_callbacks(msg) is False
+
+
+async def test_runtime_emits_heartbeats_while_run_is_active(monkeypatch) -> None:
+    events: list[dict] = []
+
+    class _Result:
+        status = "success"
+
+    async def _execute(*_args, **_kwargs):
+        await asyncio.sleep(0.03)
+        return _Result()
+
+    monkeypatch.setattr(server, "execute", _execute)
+    monkeypatch.setattr(server, "_RUNTIME_HEARTBEAT_SECONDS", 0.005)
+    monkeypatch.setattr(server, "_emit", events.append)
+
+    await server._handle_run(
+        {
+            "type": "run",
+            "request_id": "heartbeat",
+            "run_id": "run-heartbeat",
+            "graph": GRAPH,
+            "cache": None,
+            "targets": None,
+        }
+    )
+
+    assert any(event.get("type") == "heartbeat" for event in events)
+    assert events[-1]["type"] == "result"
 
 
 async def test_runtime_subprocess_runs_a_loop() -> None:

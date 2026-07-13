@@ -47,14 +47,15 @@ class _FakeSocket:
     def __init__(self, script: list[dict]):
         self._frames = [self._frame(json.dumps(m) + "\n") for m in script]
         self.sent = b""
+        self.timeout = None
 
     @staticmethod
     def _frame(text: str) -> bytes:
         payload = text.encode()
         return b"\x01\x00\x00\x00" + len(payload).to_bytes(4, "big") + payload
 
-    def settimeout(self, _t):
-        pass
+    def settimeout(self, timeout):
+        self.timeout = timeout
 
     def recv(self, _n):
         if self._frames:
@@ -63,6 +64,13 @@ class _FakeSocket:
 
     def sendall(self, data):
         self.sent += data
+
+
+class _TimeoutSocket(_FakeSocket):
+    def recv(self, _n):
+        if self._frames:
+            return self._frames.pop(0)
+        raise TimeoutError("idle")
 
 
 class _FakeContainer:
@@ -157,6 +165,37 @@ async def test_run_sandboxed_drives_protocol_to_result(monkeypatch):
     assert client.containers.run_kwargs["extra_hosts"] == {
         "host.docker.internal": "host-gateway"
     }
+    assert client.containers.run_kwargs["environment"][
+        "NODYRA_RUNTIME_HEARTBEAT_SECONDS"
+    ] == str(sandbox_exec.SANDBOX_HEARTBEAT_INTERVAL_SECONDS)
+
+
+async def test_run_sandboxed_fails_when_runtime_heartbeats_stop(monkeypatch):
+    sock = _TimeoutSocket([{"type": "ready"}])
+    client = _FakeClient(sock)
+    monkeypatch.setattr(sandbox_exec, "_client", lambda: client)
+    monkeypatch.setattr(sandbox_exec, "SANDBOX_HEARTBEAT_TIMEOUT_SECONDS", 0.01)
+    events = []
+
+    async def _on_event(e):
+        events.append(e)
+
+    status = await sandbox_exec.run_workflow_sandboxed(
+        run_id="run-timeout",
+        graph={"nodes": [], "edges": []},
+        cache=None,
+        targets=None,
+        workflow_modules=[],
+        on_event=_on_event,
+        env_payload={"id": "e1", "packages_hash": "h1"},
+    )
+
+    assert status == "error"
+    assert sock.timeout == 0.01
+    assert any(
+        e.get("type") == "run_error" and "heartbeat timed out" in e.get("error", "")
+        for e in events
+    )
 
 
 async def test_run_sandboxed_surfaces_runtime_error(monkeypatch):

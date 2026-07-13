@@ -11,6 +11,7 @@ Protocol — every streamed event includes the originating ``request_id``:
          "cache": {...} | null, "targets": [...] | null}
 
     Streamed during the run:
+        {"type": "heartbeat", "run_id": "...", "monotonic_ms": 123}
         {"type": "node_started",  "node_id": "..."}
         {"type": "node_finished", "node_id": "...", "status": "...",
          "outputs": {...}, "error": null}
@@ -43,6 +44,7 @@ predate this field simply omit it, so hosts must read it with ``.get()``.
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -105,6 +107,18 @@ def _runtime_default_timeouts() -> dict[str, float]:
 
 _RUNTIME_DEFAULT_TIMEOUTS = _runtime_default_timeouts()
 
+
+def _runtime_heartbeat_seconds() -> float:
+    raw = os.environ.get("NODYRA_RUNTIME_HEARTBEAT_SECONDS", "15")
+    try:
+        value = float(raw)
+    except ValueError:
+        return 15.0
+    return value if value > 0 else 15.0
+
+
+_RUNTIME_HEARTBEAT_SECONDS = _runtime_heartbeat_seconds()
+
 # This warm runner process is already per-environment; one isolator with the
 # default (None) pool key is correct.
 _PROCESS_ISOLATOR = PooledProcessIsolator()
@@ -146,6 +160,18 @@ async def _run_subworkflow_via_host(call: SubworkflowCall) -> Any:
 async def _handle_run(request: dict[str, Any]) -> None:
     request_id = request.get("request_id", "")
     run_id = str(request.get("run_id") or request_id)
+
+    async def emit_heartbeats() -> None:
+        while True:
+            await asyncio.sleep(_RUNTIME_HEARTBEAT_SECONDS)
+            _emit(
+                {
+                    "request_id": request_id,
+                    "run_id": run_id,
+                    "type": "heartbeat",
+                    "monotonic_ms": int(time.monotonic() * 1000),
+                }
+            )
 
     async def on_event(event: dict) -> None:
         _emit({"request_id": request_id, **event})
@@ -211,6 +237,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
                 key_prefix=artifact_key_prefix,
             )
         )
+    heartbeat_task = asyncio.create_task(emit_heartbeats())
     try:
         graph = WorkflowGraph.model_validate(request["graph"])
         raw_agent_resume = request.get("agent_action_resume") or {}
@@ -251,6 +278,9 @@ async def _handle_run(request: dict[str, Any]) -> None:
             }
         )
     finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
         if artifact_token is not None:
             artifact_store.reset(artifact_token)
         org_run_limits.reset(limits_token)
