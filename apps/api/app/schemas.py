@@ -483,6 +483,35 @@ class RunCreated(BaseModel):
         return self.run_id
 
 
+class NodeTestRequest(BaseModel):
+    """Ephemeral single-node execution request.
+
+    ``cache`` uses the same node-output envelope shape as ``RunRequest.cache``:
+    ``{"upstream_node_id": {"port": value}}``. ``inputs`` is an editor
+    convenience map keyed by the target node's input port; the router projects
+    those values onto the target node's direct upstream edge outputs.
+    """
+
+    inputs: dict[str, Any] | None = None
+    cache: dict[str, dict[str, Any]] | None = None
+    use_pinned: bool = True
+    use_draft: bool = True
+
+
+class NodeTestResponse(BaseModel):
+    workflow_id: str
+    node_id: str
+    status: str
+    output: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    logs: list[str] = Field(default_factory=list)
+    debug: dict[str, Any] = Field(default_factory=dict)
+    started_at: float | None = None
+    finished_at: float | None = None
+    duration_ms: int | None = None
+    cached_node_ids: list[str] = Field(default_factory=list)
+
+
 class RunCancelResponse(BaseModel):
     run_id: str
     status: str

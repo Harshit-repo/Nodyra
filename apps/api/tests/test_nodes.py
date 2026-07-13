@@ -170,3 +170,102 @@ async def test_dynamic_options_rejects_out_of_scope_credential(client: AsyncClie
 async def test_dynamic_options_unknown_loader_404(client: AsyncClient) -> None:
     resp = await client.get("/nodes/dynamic-options/nope")
     assert resp.status_code == 404
+
+
+NODE_TEST_GRAPH = {
+    "nodes": [
+        {
+            "id": "t",
+            "type": "manual_trigger",
+            "params": {"data": {"n": 0}},
+            "position": {"x": 0, "y": 0},
+        },
+        {
+            "id": "c",
+            "type": "code",
+            "params": {"code": "output = input['n'] + 1"},
+            "position": {"x": 250, "y": 0},
+        },
+    ],
+    "edges": [
+        {
+            "id": "e1",
+            "source": "t",
+            "source_output": "main",
+            "target": "c",
+            "target_input": "input",
+        }
+    ],
+}
+
+
+async def test_node_test_runs_target_with_supplied_input(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Node Test"})).json()[
+        "id"
+    ]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": NODE_TEST_GRAPH})
+
+    resp = await client.post(
+        f"/workflows/{workflow_id}/nodes/c/test",
+        json={"inputs": {"input": {"n": 41}}, "use_pinned": False},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["workflow_id"] == workflow_id
+    assert body["node_id"] == "c"
+    assert body["status"] == "success"
+    assert body["output"] == {"main": 42}
+    assert body["cached_node_ids"] == ["t"]
+    assert (await client.get(f"/workflows/{workflow_id}/runs")).json()["total"] == 0
+
+
+async def test_node_test_uses_pinned_upstream_output(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Pinned Node Test"})).json()[
+        "id"
+    ]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": NODE_TEST_GRAPH})
+    await client.put(
+        f"/workflows/{workflow_id}/pinned/t",
+        json={"payload": {"main": {"n": 99}}},
+    )
+
+    resp = await client.post(f"/workflows/{workflow_id}/nodes/c/test", json={})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["output"] == {"main": 100}
+    assert body["cached_node_ids"] == ["t"]
+    assert (await client.get(f"/workflows/{workflow_id}/runs")).json()["total"] == 0
+
+
+async def test_node_test_rejects_missing_upstream_input(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Missing Node Test"})
+    ).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": NODE_TEST_GRAPH})
+
+    resp = await client.post(
+        f"/workflows/{workflow_id}/nodes/c/test",
+        json={"use_pinned": False},
+    )
+
+    assert resp.status_code == 400
+    assert "Missing cached upstream output" in resp.json()["detail"]
+
+
+async def test_node_test_requires_workflow_run_permission(
+    client: AsyncClient,
+) -> None:
+    from app.config import settings as app_settings
+
+    app_settings.auth_required = True
+    try:
+        resp = await client.post(
+            "/workflows/missing/nodes/c/test",
+            json={"inputs": {"input": {"n": 1}}},
+        )
+        assert resp.status_code == 401
+    finally:
+        app_settings.auth_required = False

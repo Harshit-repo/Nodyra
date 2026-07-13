@@ -2,6 +2,8 @@ import asyncio
 import contextlib
 import logging
 import re
+from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, WebSocket, status
 from jsonschema.exceptions import SchemaError
@@ -20,6 +22,7 @@ from app.db import SessionLocal, get_session
 from app.models import (
     Environment,
     Folder,
+    PinnedData,
     ProviderTriggerSubscription,
     Run,
     RunnerPool,
@@ -31,6 +34,8 @@ from app.models import (
 from app.schemas import (
     AiWorkflowDraftRequest,
     AiWorkflowDraftResponse,
+    NodeTestRequest,
+    NodeTestResponse,
     PageResponse,
     ProviderTriggerStatusCounts,
     ProviderTriggerSubscriptionInfo,
@@ -49,12 +54,16 @@ from app.security import (
     require_permission,
     resolve_org_for,
 )
+from app.services import runner as runner_service
 from app.services.ai_builder import build_workflow_draft
+from app.services.artifacts import make_artifact_store
 from app.services.audit import log_audit
 from app.services.events import workflow_broker
 from app.services.github_sync import enqueue_github_push
 from app.services.github_sync_jobs import notify_sync_workers
 from app.services.provider_triggers import sync_workflow_provider_triggers
+from app.services.runtime_pool import _org_run_limits_for
+from app.services.runtime_pool import pool as runtime_pool
 from app.services.sandbox_policy import (
     VALID_EXECUTION_MODES,
     validate_sandbox_resources,
@@ -70,8 +79,12 @@ from app.services.workflow_events import (
     record_workflow_revision,
 )
 from app.tenancy import current_org_id, run_as_org
+from nodyra.context import artifact_store, org_run_limits
+from nodyra.engine import execute
 from nodyra.models import WorkflowGraph
+from nodyra.sdk import register_module_functions, unregister_module
 from nodyra.sdk import registry as node_registry
+from nodyra.serialization import deserialize_value, serialize_value
 
 logger = logging.getLogger("nodyra")
 
@@ -156,6 +169,62 @@ def _draft_graph(workflow: Workflow) -> dict:
     if workflow.draft_graph is not None:
         return workflow.draft_graph
     return _latest(workflow).graph or EMPTY_GRAPH
+
+
+def _select_graph(workflow: Workflow, *, use_draft: bool) -> dict:
+    if use_draft:
+        return _draft_graph(workflow)
+    return _latest(workflow).graph or EMPTY_GRAPH
+
+
+def _node_exists(graph: WorkflowGraph, node_id: str) -> bool:
+    return any(node.id == node_id for node in graph.nodes)
+
+
+def _overlay_direct_inputs(
+    graph: WorkflowGraph,
+    node_id: str,
+    cache: dict[str, dict[str, Any]],
+    inputs: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    if not inputs:
+        return cache
+
+    incoming = [edge for edge in graph.edges if edge.target == node_id]
+    available_ports = {edge.target_input for edge in incoming}
+    unknown_ports = sorted(set(inputs) - available_ports)
+    if unknown_ports:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Input override has no direct upstream edge for port(s): "
+            + ", ".join(unknown_ports),
+        )
+
+    next_cache = {node: dict(outputs) for node, outputs in cache.items()}
+    for edge in incoming:
+        if edge.target_input not in inputs:
+            continue
+        upstream_outputs = dict(next_cache.get(edge.source) or {})
+        upstream_outputs[edge.source_output] = inputs[edge.target_input]
+        next_cache[edge.source] = upstream_outputs
+    return next_cache
+
+
+def _missing_direct_upstream(
+    graph: WorkflowGraph,
+    node_id: str,
+    cache: dict[str, dict[str, Any]],
+) -> list[str]:
+    missing: list[str] = []
+    for edge in graph.edges:
+        if edge.target != node_id:
+            continue
+        upstream_outputs = cache.get(edge.source)
+        if not isinstance(upstream_outputs, dict) or edge.source_output not in upstream_outputs:
+            missing.append(
+                f"{edge.target_input} <- {edge.source}.{edge.source_output}"
+            )
+    return missing
 
 
 def _schedule_deployment_fields(graph: dict) -> dict[str, object] | None:
@@ -1250,6 +1319,123 @@ async def delete_workflow(
         origin="ui",
         operation="delete",
         actor=actor,
+    )
+
+
+@router.post(
+    "/{workflow_id}/nodes/{node_id}/test",
+    response_model=NodeTestResponse,
+    dependencies=[Depends(require_permission("workflow:run"))],
+)
+async def test_workflow_node(
+    workflow_id: str,
+    node_id: str,
+    body: NodeTestRequest | None = Body(default=None),
+    session: AsyncSession = Depends(get_session),
+) -> NodeTestResponse:
+    """Run one workflow node against supplied/pinned upstream outputs.
+
+    This is intentionally ephemeral: no Run, NodeRun, RunEvent, or Artifact DB
+    rows are created. Upstream nodes may appear in the engine plan only as
+    cached values, so their functions are not invoked.
+    """
+
+    body = body or NodeTestRequest()
+    workflow = await _load(session, workflow_id)
+    graph_dict = _select_graph(workflow, use_draft=body.use_draft)
+    graph = WorkflowGraph.model_validate(graph_dict)
+    if not _node_exists(graph, node_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+
+    cache: dict[str, dict[str, Any]] = {}
+    if body.use_pinned:
+        pinned_rows = await session.scalars(
+            select(PinnedData).where(PinnedData.workflow_id == workflow_id)
+        )
+        cache.update({row.node_id: dict(row.payload) for row in pinned_rows.all()})
+    if body.cache:
+        cache.update({key: dict(value) for key, value in body.cache.items()})
+    cache = _overlay_direct_inputs(graph, node_id, cache, body.inputs)
+
+    missing = _missing_direct_upstream(graph, node_id, cache)
+    if missing:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Missing cached upstream output(s) for single-node test: "
+            + ", ".join(missing),
+        )
+
+    ephemeral_run_id = f"node-test-{uuid4().hex}"
+    prep = await runner_service._prepare_run_context(
+        ephemeral_run_id,
+        workflow_id,
+        graph_dict,
+        cache or None,
+        workflow.org_id,
+    )
+
+    loaded_module_ids: list[str] = []
+    artifact_token = artifact_store.set(
+        make_artifact_store(
+            ephemeral_run_id,
+            org_id=workflow.org_id,
+            max_bytes=prep.max_artifact_bytes,
+            max_count=prep.max_artifacts_per_run,
+        )
+    )
+    limits_token = org_run_limits.set(await _org_run_limits_for(workflow.org_id))
+    try:
+        for module in prep.workflow_modules:
+            if not module.get("contents", "").strip():
+                continue
+            register_module_functions(
+                module["id"],
+                module["contents"],
+                node_registry,
+                include_undecorated=bool(module.get("include_undecorated")),
+            )
+            loaded_module_ids.append(module["id"])
+
+        prepared_graph = WorkflowGraph.model_validate(prep.graph_dict)
+        async with runtime_pool.global_slot():
+            result = await execute(
+                prepared_graph,
+                node_registry,
+                cache=deserialize_value(prep.cache or {}),
+                targets=[node_id],
+                default_timeouts=runner_service._engine_default_timeouts(),
+                max_node_output_bytes=prep.output_cap,
+                process_isolator=runner_service.process_isolator,
+            )
+    finally:
+        org_run_limits.reset(limits_token)
+        artifact_store.reset(artifact_token)
+        for module_id in loaded_module_ids:
+            unregister_module(module_id, node_registry)
+
+    node_result = result.nodes.get(node_id)
+    if node_result is None:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Node test did not produce a target result",
+        )
+
+    duration_ms: int | None = None
+    if node_result.started_at is not None and node_result.finished_at is not None:
+        duration_ms = int((node_result.finished_at - node_result.started_at) * 1000)
+
+    return NodeTestResponse(
+        workflow_id=workflow_id,
+        node_id=node_id,
+        status=str(node_result.status),
+        output=serialize_value(node_result.outputs),
+        error=node_result.error,
+        logs=serialize_value(node_result.logs),
+        debug=serialize_value(node_result.debug),
+        started_at=node_result.started_at,
+        finished_at=node_result.finished_at,
+        duration_ms=duration_ms,
+        cached_node_ids=sorted(cache),
     )
 
 
