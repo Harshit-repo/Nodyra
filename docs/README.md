@@ -17,6 +17,8 @@
 - [Export modes](export-modes.md) — workflow → Python script / Docker bundle.
 - [GitOps](gitops.md) — two-way GitHub sync for workflow definitions.
 - [MCP reference](mcp.md) — full MCP server/tool documentation.
+- [Product proof-point demos](demos/proof-points.md) — Python-native,
+  MCP-native, and AI-inspectable smoke demos.
 
 ## Operating Nodyra
 
