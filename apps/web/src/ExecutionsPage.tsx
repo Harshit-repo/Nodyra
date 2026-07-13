@@ -75,10 +75,81 @@ function isFailureRunStatus(status: string | null | undefined): boolean {
   return status === "error" || status === "failed" || status === "timed_out";
 }
 
+type QueueHistoryPoint = {
+  ts: number;
+  queued: number;
+  inFlight: number;
+  deadLettered: number;
+};
+
+const QUEUE_HISTORY_LIMIT = 24;
+
+function QueueTrendChart({ points }: { points: QueueHistoryPoint[] }) {
+  if (points.length === 0) return null;
+  const series = [
+    { key: "queued", label: "Queued", className: "queued" },
+    { key: "inFlight", label: "In-flight", className: "inflight" },
+    { key: "deadLettered", label: "Dead-lettered", className: "dead" },
+  ] as const;
+  const chartPoints = points.length === 1 ? [points[0], points[0]] : points;
+  const width = 480;
+  const height = 128;
+  const padX = 12;
+  const padY = 12;
+  const maxValue = Math.max(
+    1,
+    ...chartPoints.flatMap((p) => [p.queued, p.inFlight, p.deadLettered]),
+  );
+  const toX = (idx: number) =>
+    padX + (idx / Math.max(1, chartPoints.length - 1)) * (width - padX * 2);
+  const toY = (value: number) =>
+    height - padY - (value / maxValue) * (height - padY * 2);
+  const pathFor = (key: (typeof series)[number]["key"]) =>
+    chartPoints
+      .map((point, idx) => `${idx === 0 ? "M" : "L"}${toX(idx).toFixed(1)},${toY(point[key]).toFixed(1)}`)
+      .join(" ");
+  const latest = points[points.length - 1];
+
+  return (
+    <div className="ops-queue-trend">
+      <div className="ops-trend-head">
+        <span>Queue trend</span>
+        <span className="muted">last {points.length} samples</span>
+      </div>
+      <svg
+        className="ops-trend-chart"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Queue depth, in-flight, and dead-lettered trend"
+      >
+        {[0, 0.5, 1].map((ratio) => {
+          const y = padY + ratio * (height - padY * 2);
+          return <line key={ratio} className="ops-trend-grid" x1={padX} y1={y} x2={width - padX} y2={y} />;
+        })}
+        {series.map((s) => (
+          <path
+            key={s.key}
+            className={`ops-trend-line ${s.className}`}
+            d={pathFor(s.key)}
+          />
+        ))}
+      </svg>
+      <div className="ops-trend-legend">
+        {series.map((s) => (
+          <span key={s.key} className={`ops-trend-key ${s.className}`}>
+            {s.label}: {latest[s.key]}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OpsDashboard() {
   const runtimeQuery = useRuntimeMode({ refetchInterval: 5000 });
   const queueQuery = useQueueStats({ refetchInterval: 5000 });
   const capacityQuery = useQueueCapacity({ refetchInterval: 5000 });
+  const [queueHistory, setQueueHistory] = useState<QueueHistoryPoint[]>([]);
   const runtime: RuntimeModeStatus | null = runtimeQuery.data ?? null;
   const queue: QueueStats | null = queueQuery.data ?? null;
   const capacity: QueueCapacity | null = capacityQuery.data ?? null;
@@ -90,6 +161,18 @@ function OpsDashboard() {
       : capacityQuery.isError && !capacityQuery.data
       ? errorMessage(capacityQuery.error)
       : "";
+  const inFlight = queue ? queue.leased + queue.running : 0;
+
+  useEffect(() => {
+    if (!queue) return;
+    const next: QueueHistoryPoint = {
+      ts: Date.now(),
+      queued: queue.queued,
+      inFlight,
+      deadLettered: queue.dead_lettered,
+    };
+    setQueueHistory((prev) => [...prev, next].slice(-QUEUE_HISTORY_LIMIT));
+  }, [inFlight, queue]);
 
   if (err && !runtime && !queue) {
     return <p className="error-text">Ops: {err}</p>;
@@ -98,7 +181,6 @@ function OpsDashboard() {
     return <p className="muted">Loading ops…</p>;
   }
 
-  const inFlight = queue.leased + queue.running;
   const oldestLabel = formatAge(queue.oldest_queued_age_seconds);
   const oldestWarn =
     queue.oldest_queued_age_seconds !== null &&
@@ -213,6 +295,7 @@ function OpsDashboard() {
           </div>
         </div>
       </div>
+      <QueueTrendChart points={queueHistory} />
       {runtime.warnings.length > 0 && (
         <ul className="ops-warnings">
           {runtime.warnings.map((w, i) => (

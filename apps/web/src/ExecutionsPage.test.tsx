@@ -228,6 +228,31 @@ describe("ExecutionsPage replay from node", () => {
     );
   });
 
+  it("renders live queue trend chart from ops queue stats", async () => {
+    apiMocks.queueStats.mockResolvedValue({
+      queued: 3,
+      leased: 1,
+      running: 2,
+      waiting: 0,
+      completed: 4,
+      failed: 1,
+      dead_lettered: 1,
+      cancelled: 0,
+      oldest_queued_age_seconds: 12,
+    });
+
+    renderExecutions();
+
+    expect(
+      await screen.findByLabelText(
+        "Queue depth, in-flight, and dead-lettered trend",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Queued: 3")).toBeInTheDocument();
+    expect(screen.getByText("In-flight: 3")).toBeInTheDocument();
+    expect(screen.getByText("Dead-lettered: 1")).toBeInTheDocument();
+  });
+
   it("compares a run graph to the last successful run on a different version", async () => {
     const greenRun: RunListItem = {
       ...runRow,
