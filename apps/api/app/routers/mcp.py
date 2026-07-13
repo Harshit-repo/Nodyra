@@ -45,6 +45,7 @@ from app.mcp.tools import (
     STATIC_TOOLS,
     McpToolError,
     call_workflow_tool,
+    count_workflow_tool_descriptors,
     get_tool,
     list_workflow_tool_descriptors,
     validate_tool_arguments,
@@ -211,10 +212,22 @@ async def _dispatch_single(
             offset = _cursor_offset(params.get("cursor"))
         except ValueError as exc:
             return jsonrpc_error(req_id, INVALID_PARAMS, str(exc))
-        tools = [tool.descriptor() for tool in STATIC_TOOLS]
-        tools.extend(await list_workflow_tool_descriptors(session))
-        payload: dict = {"tools": tools[offset:offset + TOOL_PAGE_SIZE]}
-        if offset + TOOL_PAGE_SIZE < len(tools):
+        static_tools = [tool.descriptor() for tool in STATIC_TOOLS]
+        static_count = len(static_tools)
+        tools = static_tools[offset:offset + TOOL_PAGE_SIZE]
+        remaining = TOOL_PAGE_SIZE - len(tools)
+        workflow_offset = max(0, offset - static_count)
+        if remaining > 0:
+            tools.extend(
+                await list_workflow_tool_descriptors(
+                    session,
+                    offset=workflow_offset,
+                    limit=remaining,
+                )
+            )
+        total = static_count + await count_workflow_tool_descriptors(session)
+        payload: dict = {"tools": tools}
+        if offset + TOOL_PAGE_SIZE < total:
             payload["nextCursor"] = _cursor(offset + TOOL_PAGE_SIZE)
         return jsonrpc_result(req_id, payload)
     if method == "tools/call":

@@ -4066,20 +4066,44 @@ def workflow_tool_name(workflow: Workflow) -> str:
     return f"workflow_{slug}_{workflow.id[:6]}"
 
 
-async def _mcp_enabled_workflows(session: AsyncSession) -> list[Workflow]:
+async def _mcp_enabled_workflows(
+    session: AsyncSession,
+    *,
+    offset: int = 0,
+    limit: int | None = None,
+) -> list[Workflow]:
     # No version eager-load: descriptors only need the mcp_* columns, and the
     # call path re-loads the chosen workflow (with versions) by id anyway.
-    rows = await session.scalars(
-        select(Workflow).where(Workflow.mcp_enabled.is_(True)).order_by(Workflow.updated_at.desc())
+    stmt = (
+        select(Workflow)
+        .where(Workflow.mcp_enabled.is_(True))
+        .order_by(Workflow.updated_at.desc())
     )
+    if offset > 0:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = await session.scalars(stmt)
     return list(rows.all())
 
 
-async def list_workflow_tool_descriptors(session: AsyncSession) -> list[dict]:
+async def count_workflow_tool_descriptors(session: AsyncSession) -> int:
+    total = await session.scalar(
+        select(func.count()).select_from(Workflow).where(Workflow.mcp_enabled.is_(True))
+    )
+    return int(total or 0)
+
+
+async def list_workflow_tool_descriptors(
+    session: AsyncSession,
+    *,
+    offset: int = 0,
+    limit: int | None = None,
+) -> list[dict]:
     out: list[dict] = []
     static_names = {t.name for t in STATIC_TOOLS}
     seen: set[str] = set()
-    for wf in await _mcp_enabled_workflows(session):
+    for wf in await _mcp_enabled_workflows(session, offset=offset, limit=limit):
         name = workflow_tool_name(wf)
         if name in static_names or name in seen:
             logger.warning(

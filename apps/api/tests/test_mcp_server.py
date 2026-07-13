@@ -182,6 +182,43 @@ async def test_tools_list_contains_static_tools(client: AsyncClient) -> None:
     assert descriptor["execution"]["taskSupport"] == "forbidden"
 
 
+async def test_mcp_tools_pagination_pages_dynamic_workflow_tools_without_full_materialization(
+    client: AsyncClient,
+    monkeypatch,
+) -> None:
+    import app.routers.mcp as mcp_router
+
+    calls: list[tuple[int, int | None]] = []
+
+    async def fake_count(_session) -> int:
+        return 1_000
+
+    async def fake_descriptors(_session, *, offset: int = 0, limit: int | None = None):
+        calls.append((offset, limit))
+        size = limit or 1_000
+        return [
+            {
+                "name": f"workflow_tool_{offset + i}",
+                "description": "dynamic",
+                "inputSchema": {"type": "object", "additionalProperties": True},
+            }
+            for i in range(size)
+        ]
+
+    monkeypatch.setattr(mcp_router, "count_workflow_tool_descriptors", fake_count)
+    monkeypatch.setattr(mcp_router, "list_workflow_tool_descriptors", fake_descriptors)
+    static_count = len(mcp_router.STATIC_TOOLS)
+    cursor = mcp_router._cursor(static_count + 250)
+
+    resp = await client.post("/mcp", json=rpc("tools/list", {"cursor": cursor}))
+    body = resp.json()["result"]
+
+    assert calls == [(250, mcp_router.TOOL_PAGE_SIZE)]
+    assert len(body["tools"]) == mcp_router.TOOL_PAGE_SIZE
+    assert body["tools"][0]["name"] == "workflow_tool_250"
+    assert "nextCursor" in body
+
+
 async def test_workflow_authoring_guide_tool(client: AsyncClient) -> None:
     data = _tool_payload(
         await client.post(
