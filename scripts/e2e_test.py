@@ -21,6 +21,14 @@ ISSUES: list[str] = []
 PASSED: list[str] = []
 
 
+def _configure_output() -> None:
+    """Keep Unicode status markers readable on Windows cp1252 consoles."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def issue(msg: str) -> None:
     ISSUES.append(msg)
     print(f"  ❌ ISSUE: {msg}")
@@ -473,4 +481,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    _configure_output()
     sys.exit(main())

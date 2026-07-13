@@ -16,8 +16,17 @@ import urllib.request
 
 BASE = os.environ.get("NODYRA_MCP_URL", "http://localhost:8000/mcp")
 TOKEN = os.environ.get("NODYRA_MCP_TOKEN", "")
+APPROVED = {"approved_by_user": True}
 
 _id = 0
+
+
+def _configure_output() -> None:
+    """Keep Unicode progress output readable on Windows cp1252 consoles."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
 
 
 def rpc(method: str, params: dict | None = None) -> dict:
@@ -81,17 +90,21 @@ def main() -> None:
         ],
     }
     print("validate_graph ->", call("validate_graph", {"graph": graph}))
-    print("set_workflow_graph ->", call("set_workflow_graph", {"workflow_id": wid, "graph": graph}))
+    print(
+        "set_workflow_graph ->",
+        call("set_workflow_graph", {"workflow_id": wid, "graph": graph, **APPROVED}),
+    )
 
     run = call("run_workflow", {"workflow_id": wid, "use_draft": True, "wait_seconds": 60})
     print("run_workflow ->", json.dumps(run))
 
-    pub = call("publish_workflow", {"workflow_id": wid, "notes": "MCP smoke test"})
+    pub = call("publish_workflow", {"workflow_id": wid, "notes": "MCP smoke test", **APPROVED})
     print("publish_workflow ->", json.dumps(pub))
     print(f"\nDONE. Workflow {wid} created, run status={run.get('status')}.")
 
 
 if __name__ == "__main__":
+    _configure_output()
     if not TOKEN and "--no-token" not in sys.argv:
         print("warning: NODYRA_MCP_TOKEN not set (ok only if AUTH_REQUIRED=false)", file=sys.stderr)
     main()
