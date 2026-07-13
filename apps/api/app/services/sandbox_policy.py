@@ -8,6 +8,8 @@ This is a *fail-closed* startup guard, the same treatment AUTH-1 gets: an unsafe
 combination aborts boot rather than degrading silently. "Make the safe path the
 only path" — a deployment that relies on an isolation boundary cannot be
 configured to bypass it.
+
+Decision rationale: docs/adr/0004-multi-tenant-sandbox-defaults.md.
 """
 
 from app.config import settings

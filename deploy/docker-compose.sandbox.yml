@@ -6,6 +6,7 @@
 # /var/run/docker.sock bind. The proxy exposes only the Docker API groups
 # needed to build environment images, manage the sandbox bridge network, and
 # create/start/stop/log/remove Nodyra-labeled run containers.
+# Decision rationale: docs/adr/0002-socket-proxy-sandbox.md.
 services:
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:v0.4.0

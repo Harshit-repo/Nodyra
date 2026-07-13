@@ -893,6 +893,8 @@ async def _run_one_node(
     except Exception:  # noqa: BLE001 — metrics are best-effort
         pass
 
+    # ADR-0005 keeps node execution on a bounded final-output contract until a
+    # real workload justifies durable streamed output events.
     if caught is None and outputs is not None:
         node_outputs[nid] = _freeze_outputs(outputs)
         if node_hooks:

@@ -330,6 +330,8 @@ async def persist_run_outcome(
             if run is not None:
                 run.status = status
                 run.finished_at = None if status == "waiting" else datetime.now(UTC)
+                # ADR-0003: keep run-owned failures on runs.error so event
+                # retention cannot erase the run summary.
                 run.error = _extract_run_level_error(
                     status=status,
                     node_run_records=node_run_records,

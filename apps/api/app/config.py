@@ -484,7 +484,7 @@ class Settings(BaseSettings):
         The same rule applies to execution isolation: multi-tenant instances
         default to required sandboxing and non-zero warm sandbox pools, while
         explicit env/kwarg choices are preserved and then evaluated by the
-        startup sandbox policy.
+        startup sandbox policy. See docs/adr/0004-multi-tenant-sandbox-defaults.md.
         """
         if not self.multi_tenancy_enabled:
             return self
