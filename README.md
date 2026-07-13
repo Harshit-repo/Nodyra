@@ -88,6 +88,10 @@ credential test-on-save; and an unsafe-node activation policy. See
 beta / scaffolded / planned breakdown. Known gaps include a first-class UI
 operations dashboard and a first-class admin restart control.
 
+Production operators should start with the task-oriented runbooks under
+`docs/deployment/`, including the
+[zero-downtime upgrade runbook](docs/deployment/upgrade.md).
+
 ## Key Capabilities
 
 ### Workflow Authoring

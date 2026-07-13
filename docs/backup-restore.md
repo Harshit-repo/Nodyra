@@ -37,8 +37,10 @@ docker compose -f deploy/docker-compose.yml up -d api worker web
 
 ## Upgrades
 
-Back up first, then pull the new image/source. Start the API so it runs
-`alembic upgrade head`, then start workers and web:
+Back up first, then follow the
+[zero-downtime upgrade runbook](deployment/upgrade.md). The short compose order
+is still: start the API so it runs `alembic upgrade head`, then start workers
+and web:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d api
