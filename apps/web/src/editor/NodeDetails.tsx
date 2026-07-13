@@ -1,4 +1,15 @@
-import { Eye, EyeSlash, Info, MagnifyingGlass, Plus, PushPin, WarningCircle, X } from "@phosphor-icons/react";
+import {
+  CircleNotch,
+  Eye,
+  EyeSlash,
+  Info,
+  MagnifyingGlass,
+  Play,
+  Plus,
+  PushPin,
+  WarningCircle,
+  X,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, encodeWebhookPath, errorMessage, uploadArtifact } from "../api";
@@ -4533,6 +4544,7 @@ export function NodeDetails({
   const runOutput = useEditor((s) => s.runOutputs[nodeId]);
   const runMeta = useEditor((s) => s.runMeta[nodeId]);
   const runOutputs = useEditor((s) => s.runOutputs);
+  const setNodeOutput = useEditor((s) => s.setNodeOutput);
   const edges = useEditor((s) => s.edges);
   const workflowId = useEditor((s) => s.workflowId);
   const pinned = useEditor((s) => s.pinned[nodeId]);
@@ -4551,8 +4563,16 @@ export function NodeDetails({
   const [pkgElapsed, setPkgElapsed] = useState(0);
   const [pkgDone, setPkgDone] = useState(false);
   const [pickerParam, setPickerParam] = useState<string | null>(null);
+  const [nodeTestBusy, setNodeTestBusy] = useState(false);
+  const [nodeTestError, setNodeTestError] = useState<string | null>(null);
   const { notify } = useToast();
-  useEffect(() => setMode("inspector"), [nodeId]);
+  const nodeTestRequestRef = useRef(0);
+  useEffect(() => {
+    nodeTestRequestRef.current += 1;
+    setMode("inspector");
+    setNodeTestBusy(false);
+    setNodeTestError(null);
+  }, [nodeId]);
   // Guards the imperative install poller (addMissingToEnv) — it can run for up
   // to PACKAGE_INSTALL_TIMEOUT_MS, well past an NDV close / node switch (FE-12).
   const aliveRef = useRef(true);
@@ -4596,6 +4616,7 @@ export function NodeDetails({
   }
 
   const { manifest, params, disabled } = node.data;
+  const targetNodeId = node.id;
   const hasBrandIcon = isBrandIconName(manifest.icon);
   const color = categoryColor(manifest.category);
 
@@ -4673,6 +4694,55 @@ export function NodeDetails({
     }
   }
   const hasIncomingInputs = Object.keys(incomingInputs).length > 0;
+  const nodeTestInputLabel =
+    manifest.inputs.length === 0
+      ? "no input required"
+      : hasIncomingInputs
+        ? "latest upstream input"
+        : "pinned upstream input";
+  const nodeTestDisabled = nodeTestBusy || !workflowId || disabled;
+  const nodeTestTitle = !workflowId
+    ? "Save this workflow before testing a node"
+    : disabled
+      ? "Enable this node before testing it"
+      : "Test this node";
+
+  async function testThisNode(): Promise<void> {
+    if (!workflowId || nodeTestBusy || disabled) return;
+    const requestId = ++nodeTestRequestRef.current;
+    setNodeTestBusy(true);
+    setNodeTestError(null);
+    try {
+      const result = await api.testNode(
+        workflowId,
+        targetNodeId,
+        hasIncomingInputs
+          ? { inputs: incomingInputs, use_pinned: true, use_draft: true }
+          : { use_pinned: true, use_draft: true },
+      );
+      setNodeOutput(targetNodeId, result.output, result.status, {
+        logs: result.logs,
+        error: result.error ?? null,
+        debug: result.debug,
+        durationMs: result.duration_ms ?? null,
+        startedAt: result.started_at ?? null,
+        finishedAt: result.finished_at ?? null,
+      });
+      if (result.error && nodeTestRequestRef.current === requestId) {
+        setNodeTestError(result.error);
+      }
+    } catch (err) {
+      const message = errorMessage(err);
+      if (nodeTestRequestRef.current === requestId) {
+        setNodeTestError(message);
+        notify(message, "error");
+      }
+    } finally {
+      if (nodeTestRequestRef.current === requestId) {
+        setNodeTestBusy(false);
+      }
+    }
+  }
 
   // Live evaluation context for the expression preview. The store already holds
   // each upstream node's most recent run output (that's what powers the Pick-
@@ -4934,6 +5004,39 @@ export function NodeDetails({
           </pre>
         </div>
       )}
+
+      <div className="inspector-section node-test-section">
+        <div className="inspector-section-head">
+          Test
+          {nodeTestBusy && (
+            <span className="run-pill status-run-running">running</span>
+          )}
+        </div>
+        <div className="node-test-actions">
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={nodeTestDisabled}
+            title={nodeTestTitle}
+            aria-label="Test this node"
+            onClick={() => void testThisNode()}
+          >
+            {nodeTestBusy ? (
+              <CircleNotch size={13} className="node-test-spin" aria-hidden="true" />
+            ) : (
+              <Play size={13} aria-hidden="true" />
+            )}
+            {nodeTestBusy ? "Testing" : "Test node"}
+          </button>
+          <span className="node-test-note">{nodeTestInputLabel}</span>
+        </div>
+        {nodeTestError && (
+          <div className="ndv-node-error node-test-error" role="alert">
+            <span>Node test error</span>
+            <pre>{nodeTestError}</pre>
+          </div>
+        )}
+      </div>
 
       {runStatus && (
         <div className="inspector-section run-section">

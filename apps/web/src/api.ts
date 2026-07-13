@@ -33,6 +33,8 @@ import type {
   MCPToolInfo,
   NodeManifest,
   NodeSource,
+  NodeTestRequest,
+  NodeTestResponse,
   PackageUsage,
   PinnedItem,
   CodeModule,
@@ -606,6 +608,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  testNode: (workflowId: string, nodeId: string, body: NodeTestRequest) =>
+    request<NodeTestResponse>(
+      `/workflows/${workflowId}/nodes/${encodeURIComponent(nodeId)}/test`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
   sendChatMessage: (
     workflowId: string,
     message: string,

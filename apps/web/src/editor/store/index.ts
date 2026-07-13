@@ -1072,6 +1072,7 @@ export interface EditorStore {
     nodeId: string,
     outputs: unknown | undefined,
     status?: string,
+    meta?: NodeRunMeta | null,
   ) => void;
 
   workflowId: string | null;
@@ -2919,18 +2920,33 @@ export const useEditor = create<EditorStore>((set, get) => ({
       agentToolCalls: {},
     }),
 
-  setNodeOutput: (nodeId, outputs, status) =>
+  setNodeOutput: (nodeId, outputs, status, meta) =>
     set((state) => {
       const nextOutputs = { ...state.runOutputs };
       const nextStatus = { ...state.runStatus };
+      const nextMeta = { ...state.runMeta };
+      let metaChanged = false;
       if (outputs === undefined) {
         delete nextOutputs[nodeId];
         delete nextStatus[nodeId];
+        if (nodeId in nextMeta) {
+          delete nextMeta[nodeId];
+          metaChanged = true;
+        }
       } else {
         nextOutputs[nodeId] = outputs;
         if (status !== undefined) nextStatus[nodeId] = status;
+        if (meta !== undefined) {
+          if (meta === null) {
+            delete nextMeta[nodeId];
+          } else {
+            nextMeta[nodeId] = meta;
+          }
+          metaChanged = true;
+        }
       }
-      return { runOutputs: nextOutputs, runStatus: nextStatus };
+      const nextState = { runOutputs: nextOutputs, runStatus: nextStatus };
+      return metaChanged ? { ...nextState, runMeta: nextMeta } : nextState;
     }),
 
   applyRunInfo: (run) => {

@@ -1355,6 +1355,9 @@ async def test_workflow_node(
         cache.update({row.node_id: dict(row.payload) for row in pinned_rows.all()})
     if body.cache:
         cache.update({key: dict(value) for key, value in body.cache.items()})
+    # Pins/cache seed upstream values only. The selected node must execute even
+    # when its previous output is pinned or supplied in an over-broad cache.
+    cache.pop(node_id, None)
     cache = _overlay_direct_inputs(graph, node_id, cache, body.inputs)
 
     missing = _missing_direct_upstream(graph, node_id, cache)

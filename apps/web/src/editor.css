@@ -6239,6 +6239,40 @@ body.is-resizing {
   border-top: 1px solid var(--line-2);
 }
 
+.node-test-section {
+  border-top: 1px solid var(--line-2);
+}
+.node-test-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.node-test-actions .btn {
+  min-height: 28px;
+}
+.node-test-note {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.node-test-error {
+  margin-top: 10px;
+}
+.node-test-spin {
+  animation: node-test-spin 760ms linear infinite;
+}
+@keyframes node-test-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .node-test-spin {
+    animation: none !important;
+  }
+}
+
 /* ----- Task 14: Ops dashboard ------------------------------------------- */
 .ops-dash { margin: 0 0 14px 0; }
 .ops-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }

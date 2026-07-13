@@ -229,6 +229,10 @@ async def test_node_test_uses_pinned_upstream_output(client: AsyncClient) -> Non
         f"/workflows/{workflow_id}/pinned/t",
         json={"payload": {"main": {"n": 99}}},
     )
+    await client.put(
+        f"/workflows/{workflow_id}/pinned/c",
+        json={"payload": {"main": "stale target output"}},
+    )
 
     resp = await client.post(f"/workflows/{workflow_id}/nodes/c/test", json={})
 

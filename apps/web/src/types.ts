@@ -277,6 +277,27 @@ export interface WorkflowGraph {
   edges: GraphEdge[];
 }
 
+export interface NodeTestRequest {
+  inputs?: Record<string, unknown>;
+  cache?: Record<string, Record<string, unknown>>;
+  use_pinned?: boolean;
+  use_draft?: boolean;
+}
+
+export interface NodeTestResponse {
+  workflow_id: string;
+  node_id: string;
+  status: string;
+  output: Record<string, unknown>;
+  error?: string | null;
+  logs: string[];
+  debug: Record<string, unknown>;
+  started_at?: number | null;
+  finished_at?: number | null;
+  duration_ms?: number | null;
+  cached_node_ids: string[];
+}
+
 export interface WorkflowVersionInfo {
   id: string;
   version: number;
