@@ -770,9 +770,16 @@ textarea:focus-visible,
 }
 
 .artifact-browser-row {
-  min-width: 880px;
+  min-width: 1040px;
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) 116px 96px 132px 170px 118px;
+  grid-template-columns:
+    minmax(220px, 1.35fr)
+    104px
+    minmax(220px, 1fr)
+    88px
+    122px
+    160px
+    118px;
   gap: 12px;
   align-items: center;
   padding: 11px 14px;
@@ -825,6 +832,85 @@ textarea:focus-visible,
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.artifact-browser-preview {
+  min-width: 0;
+}
+
+.artifact-browser-preview-muted {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.artifact-browser-preview-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.artifact-browser-preview-error button {
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.artifact-browser-thumbnail {
+  display: block;
+  width: 96px;
+  height: 64px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+}
+
+.artifact-browser-preview-table {
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  font-size: 10px;
+}
+
+.artifact-browser-preview-table-head,
+.artifact-browser-preview-table-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.artifact-browser-preview-table-head {
+  color: var(--ink-3);
+  background: var(--surface-3);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.artifact-browser-preview-table span {
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 6px;
+  border-left: 1px solid var(--line-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.artifact-browser-preview-table span:first-child {
+  border-left: 0;
+}
+
+.artifact-browser-preview-table-row {
+  border-top: 1px solid var(--line-2);
 }
 
 .artifact-browser-pagination {

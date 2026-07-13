@@ -3,13 +3,25 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
 import { api, errorMessage } from "./api";
-import { artifactDownloadUrl, formatBytes, type ArtifactRef } from "./editor/artifactValues";
+import {
+  artifactDownloadUrl,
+  artifactInlineUrl,
+  artifactMediaKind,
+  formatBytes,
+  type ArtifactRef,
+} from "./editor/artifactValues";
 import { SkeletonRows } from "./Skeleton";
 import type { ArtifactInfo } from "./types";
 
 const PAGE_SIZE = 50;
+const PREVIEW_ROWS = 5;
+const PREVIEW_COLUMNS = 4;
 
 const KIND_OPTIONS = ["table", "binary", "image", "report", "dataset"] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 function formatCreatedAt(value: string): string {
   const date = new Date(value);
@@ -41,6 +53,150 @@ function shortId(value: string | null | undefined): string {
 function shortChecksum(value: string | null | undefined): string | null {
   if (!value) return null;
   return value.length > 16 ? `${value.slice(0, 12)}...` : value;
+}
+
+function isCsvArtifact(artifact: ArtifactInfo): boolean {
+  const contentType = artifact.content_type.toLowerCase();
+  const name = artifact.name.toLowerCase();
+  return (
+    artifact.kind === "table" ||
+    contentType.includes("csv") ||
+    name.endsWith(".csv")
+  );
+}
+
+function isQueryableDataset(artifact: ArtifactInfo): boolean {
+  const contentType = artifact.content_type.toLowerCase();
+  const name = artifact.name.toLowerCase();
+  return (
+    artifact.kind === "dataset" ||
+    contentType.includes("parquet") ||
+    name.endsWith(".parquet")
+  );
+}
+
+function previewRows(preview: unknown): Record<string, unknown>[] {
+  if (Array.isArray(preview)) {
+    return preview.filter(isRecord);
+  }
+  if (isRecord(preview)) {
+    for (const key of ["rows", "records", "preview", "data", "items"]) {
+      const rows = preview[key];
+      if (Array.isArray(rows)) return rows.filter(isRecord);
+    }
+  }
+  return [];
+}
+
+function formatCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function ArtifactTablePreview({
+  rows,
+  caption,
+}: {
+  rows: Record<string, unknown>[];
+  caption: string;
+}) {
+  const visibleRows = rows.slice(0, PREVIEW_ROWS);
+  const columns = Array.from(
+    new Set(visibleRows.flatMap((row) => Object.keys(row))),
+  ).slice(0, PREVIEW_COLUMNS);
+  if (visibleRows.length === 0 || columns.length === 0) {
+    return <span className="artifact-browser-preview-muted">No preview rows</span>;
+  }
+  return (
+    <div className="artifact-browser-preview-table" role="table" aria-label={caption}>
+      <div className="artifact-browser-preview-table-head" role="row">
+        {columns.map((column) => (
+          <span role="columnheader" key={column} title={column}>
+            {column}
+          </span>
+        ))}
+      </div>
+      {visibleRows.map((row, index) => (
+        <div className="artifact-browser-preview-table-row" role="row" key={index}>
+          {columns.map((column) => (
+            <span role="cell" key={column} title={formatCell(row[column])}>
+              {formatCell(row[column])}
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DatasetArtifactPreview({ artifact }: { artifact: ArtifactInfo }) {
+  const [reloadToken, setReloadToken] = useState(0);
+  const query = useQuery({
+    queryKey: ["artifact-preview", artifact.id, reloadToken],
+    queryFn: () =>
+      api.queryDataset(
+        artifact.id,
+        `SELECT * FROM dataset LIMIT ${PREVIEW_ROWS + 1} OFFSET 0`,
+        PREVIEW_ROWS,
+      ),
+    enabled: isQueryableDataset(artifact),
+    staleTime: 60_000,
+  });
+
+  if (query.isLoading) {
+    return <span className="artifact-browser-preview-muted">Loading table...</span>;
+  }
+  if (query.isError) {
+    return (
+      <span className="artifact-browser-preview-error">
+        {errorMessage(query.error)}
+        <button type="button" onClick={() => setReloadToken((value) => value + 1)}>
+          Retry
+        </button>
+      </span>
+    );
+  }
+  return (
+    <ArtifactTablePreview
+      rows={query.data?.rows ?? []}
+      caption={`${artifact.name} dataset preview`}
+    />
+  );
+}
+
+function ArtifactPreview({ artifact }: { artifact: ArtifactInfo }) {
+  const ref = artifactRef(artifact);
+  if (artifactMediaKind(ref) === "image") {
+    return (
+      <img
+        className="artifact-browser-thumbnail"
+        src={artifactInlineUrl(ref)}
+        alt={`${artifact.name} thumbnail`}
+        loading="lazy"
+      />
+    );
+  }
+
+  if (isCsvArtifact(artifact)) {
+    return (
+      <ArtifactTablePreview
+        rows={previewRows(artifact.preview)}
+        caption={`${artifact.name} CSV preview`}
+      />
+    );
+  }
+
+  if (isQueryableDataset(artifact)) {
+    return <DatasetArtifactPreview artifact={artifact} />;
+  }
+
+  return <span className="artifact-browser-preview-muted">No preview</span>;
 }
 
 export function ArtifactsPage() {
@@ -142,6 +298,7 @@ export function ArtifactsPage() {
               <div className="artifact-browser-row artifact-browser-row-head" role="row">
                 <span>Name</span>
                 <span>Kind</span>
+                <span>Preview</span>
                 <span>Size</span>
                 <span>Run</span>
                 <span>Created</span>
@@ -159,6 +316,9 @@ export function ArtifactsPage() {
                   </span>
                   <span>
                     <span className="artifact-browser-kind-chip">{artifact.kind}</span>
+                  </span>
+                  <span className="artifact-browser-preview">
+                    <ArtifactPreview artifact={artifact} />
                   </span>
                   <span>{formatBytes(artifact.size_bytes)}</span>
                   <span>
