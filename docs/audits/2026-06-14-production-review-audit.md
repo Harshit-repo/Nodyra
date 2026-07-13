@@ -2,7 +2,7 @@
 
 > **Purpose:** Pre-mortem + extensive, resumable, file-by-file production code review.
 > Branch: `feat/arch-program-phase5`.
-> This supersedes nothing — it **builds on** `docs/production-review-2026-06-14.md`
+> This supersedes nothing — it **builds on** `docs/audits/2026-06-14-production-review.md`
 > (Sonnet pass, findings F-1…F-14) by (a) re-verifying every F-finding against
 > *current* code, and (b) reviewing the freshest, never-audited surface: the
 > uncommitted node changes and the new untracked node modules.

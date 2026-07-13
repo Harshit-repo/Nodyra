@@ -20,6 +20,8 @@
 
 ## Operating Nodyra
 
+- [Operations guide](operations/README.md) — install, configure, scale, secure,
+  observe, back up, upgrade, and troubleshoot production deployments.
 - [Deployment](deployment.md) — local, Docker Compose, Helm; config flags;
   production checklist.
 - [Backup, restore & upgrades](backup-restore.md).

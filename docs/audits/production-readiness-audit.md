@@ -257,7 +257,7 @@ next `⏳ pending` row.
 | packages/core/nodyra/serialization.py | ✅ | clean (no pickle; safe typed envelopes only) |
 | packages/nodes/nodyra_nodes/datasets.py | ✅ | DSQ-2 (duckdb_sql latch; polars_transform already AST-validated) |
 | **packages/nodes/nodyra_nodes/** (other node modules ~40) | ⏳ pending | sampled only |
-| **apps/web/src/** (deep correctness/UX/a11y) | ⏳ pending | see docs/frontend-audit.md (handoff) |
+| **apps/web/src/** (deep correctness/UX/a11y) | ⏳ pending | see docs/audits/frontend-audit.md (handoff) |
 | apps/api/alembic/ (env + 39 migrations) | ✅ | ALM-1, ALM-2; chain linear, up/down/up on PG+SQLite; `alembic check` clean on Postgres + CI gate |
 
 ---

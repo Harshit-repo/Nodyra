@@ -1,13 +1,13 @@
 # Frontend Production Audit (apps/web) — Handoff
 
 A resumable audit of the Nodyra web app (`apps/web`) ahead of release, mirroring
-the format of `docs/production-readiness-audit.md`. This file is the operating
+the format of `docs/audits/production-readiness-audit.md`. This file is the operating
 manual: a fresh agent should be able to pick up the next `⏳ pending` area and
 work without re-deriving context.
 
 **Goal:** ship the web client with no known correctness, security, accessibility,
 or performance regressions. The *backend* security/correctness audit is already
-done (see `docs/production-readiness-audit.md`); this is the **frontend** pass.
+done (see `docs/audits/production-readiness-audit.md`); this is the **frontend** pass.
 
 **Scope:** `apps/web/src/**`. The backend API surface is out of scope (audited
 separately). Focus on the React/TypeScript client: data flow, error/auth handling,
