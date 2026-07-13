@@ -63,7 +63,7 @@ async def _counts(session: AsyncSession) -> dict[str, int]:
             select(func.count()).select_from(Run).where(Run.status == "success")
         ),
         "runs_error": await count(
-            select(func.count()).select_from(Run).where(Run.status == "error")
+            select(func.count()).select_from(Run).where(Run.status.in_(("error", "timed_out")))
         ),
     }
 

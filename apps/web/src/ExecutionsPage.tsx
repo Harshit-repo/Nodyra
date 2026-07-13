@@ -71,6 +71,10 @@ function formatLabels(labels: Record<string, string> | null | undefined): string
     .join(", ");
 }
 
+function isFailureRunStatus(status: string | null | undefined): boolean {
+  return status === "error" || status === "failed" || status === "timed_out";
+}
+
 function OpsDashboard() {
   const runtimeQuery = useRuntimeMode({ refetchInterval: 5000 });
   const queueQuery = useQueueStats({ refetchInterval: 5000 });
@@ -534,6 +538,7 @@ export function ExecutionsPage() {
               { label: "Running", value: "running", cls: "chip-running" },
               { label: "Success", value: "success", cls: "chip-success" },
               { label: "Failed", value: "error", cls: "chip-failed" },
+              { label: "Timed out", value: "timed_out", cls: "chip-timeout" },
               { label: "Waiting", value: "waiting", cls: "chip-waiting" },
               { label: "Cancelled", value: "cancelled", cls: "chip-cancelled" },
             ].map((chip) => (
@@ -885,7 +890,7 @@ function RunDetailPanel({
               {actionPending === "rerun" ? "Starting…" : "↻ Re-run"}
             </button>
           )}
-          {run && (run.status === "error" || run.status === "failed") && (
+          {run && isFailureRunStatus(run.status) && (
             <button
               type="button"
               className="btn btn-sm"
@@ -896,7 +901,7 @@ function RunDetailPanel({
               {actionPending === "retry" ? "Starting…" : "↺ Retry from failure"}
             </button>
           )}
-          {run && (run.status === "error" || run.status === "failed") && (
+          {run && isFailureRunStatus(run.status) && (
             <a
               className="btn btn-sm"
               href={`/workflows/${run.workflow_id}?debug_run=${run.id}`}
@@ -905,7 +910,7 @@ function RunDetailPanel({
               🐞 Debug in editor
             </a>
           )}
-          {run && (run.status === "error" || run.status === "failed") && (
+          {run && isFailureRunStatus(run.status) && (
             <a
               className="btn btn-sm"
               href={`/workflows/${run.workflow_id}?ai=fix_failed&run_id=${run.id}`}
@@ -1023,7 +1028,7 @@ function RunDetailPanel({
                     : `${n.node_id}#${i}`
                 }
                 node={n}
-                canReplay={run.status === "error" || run.status === "failed"}
+                canReplay={isFailureRunStatus(run.status)}
                 disabled={actionPending !== null}
                 replayPending={
                   actionPending === "replay" && replayNodeId === n.node_id

@@ -246,6 +246,8 @@ async def _run_level_error(
     by reading the latest ``run_error`` event's message. Only queried for
     ``error`` runs whose node_runs carry no error, so the happy path is untouched.
     """
+    if run.status == "timed_out":
+        return run.error or "workflow run timed out"
     if run.status != "error":
         return None
     if any(getattr(nr, "error", None) for nr in node_runs):

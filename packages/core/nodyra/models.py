@@ -248,6 +248,7 @@ class RunStatus(StrEnum):
     waiting = "waiting"
     success = "success"
     error = "error"
+    timed_out = "timed_out"
 
 
 class NodeRunResult(BaseModel):

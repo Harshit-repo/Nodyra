@@ -302,7 +302,7 @@ async def _wait_for_run(
     timeout: float,
     cancel_event: asyncio.Event,
 ) -> dict:
-    """Poll run status until terminal (success/error/failed/cancelled) or timeout.
+    """Poll run status until terminal (success/error/timed_out/failed/cancelled) or timeout.
 
     Returns ``{"status": str, "node_results": dict, "error": str | None}``.
     ``node_results`` is a dict keyed by node_id whose values have the shape
@@ -315,7 +315,7 @@ async def _wait_for_run(
             return {"status": "cancelled", "node_results": {}, "error": None}
         async with SessionLocal() as session:
             run = await session.get(Run, run_id, options=[selectinload(Run.node_runs)])
-        if run and run.status in ("success", "error", "failed", "cancelled"):
+        if run and run.status in ("success", "error", "timed_out", "failed", "cancelled"):
             node_results: dict[str, dict[str, Any]] = {}
             combined_error: str | None = None
             from app.services.data_ref import resolve_ref

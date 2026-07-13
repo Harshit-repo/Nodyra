@@ -179,13 +179,18 @@ async def runner_fleet_health(
     run_rows = (
         await session.execute(
             select(Run.runner_pool_id, Run.status, func.count().label("n"))
-            .where(Run.finished_at >= cutoff, Run.status.in_(("success", "error")))
+            .where(
+                Run.finished_at >= cutoff,
+                Run.status.in_(("success", "error", "timed_out")),
+            )
             .group_by(Run.runner_pool_id, Run.status)
         )
     ).all()
     runs_by_pool: dict[str, dict[str, int]] = {}
     for pid, run_status, n in run_rows:
-        runs_by_pool.setdefault(pid, {})[run_status] = n
+        status_key = "error" if run_status == "timed_out" else run_status
+        pool_counts = runs_by_pool.setdefault(pid, {})
+        pool_counts[status_key] = pool_counts.get(status_key, 0) + n
 
     in_flight = (
         await session.scalar(select(func.count()).select_from(Run).where(Run.status == "running"))
@@ -1200,7 +1205,7 @@ async def runner_pool_run_history(
             select(Run.status, Run.finished_at, Run.started_at).where(
                 Run.runner_pool_id == pool_id,
                 Run.finished_at >= cutoff,
-                Run.status.in_(("success", "error")),
+                Run.status.in_(("success", "error", "timed_out")),
             )
         )
     ).all()
@@ -1223,7 +1228,8 @@ async def runner_pool_run_history(
             continue
         offset_secs = (finished_aware - cutoff).total_seconds()
         idx = min(int(offset_secs // bucket_secs), buckets - 1)
-        result[idx][run_status] = result[idx].get(run_status, 0) + 1
+        status_key = "error" if run_status == "timed_out" else run_status
+        result[idx][status_key] = result[idx].get(status_key, 0) + 1
         if started_at is not None:
             started_aware = _as_utc(started_at)
             if started_aware is not None:

@@ -6,7 +6,7 @@ import pytest
 
 from nodyra.context import cancel_event
 from nodyra.engine import execute
-from nodyra.models import GraphNode, WorkflowGraph
+from nodyra.models import GraphNode, RunStatus, WorkflowGraph
 from nodyra.sdk import NodeRegistry, node
 
 
@@ -35,5 +35,5 @@ async def test_run_deadline_bounds_running_node(registry):
     result = await execute(graph, registry, run_timeout_seconds=1.0)
     elapsed = time.monotonic() - start
     assert elapsed < 5.0
-    assert str(result.status) == "error"
+    assert result.status == RunStatus.timed_out
     assert "timed out" in (result.nodes["n1"].error or "")

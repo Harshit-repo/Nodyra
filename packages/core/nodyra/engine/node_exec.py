@@ -708,8 +708,10 @@ async def _run_one_node(
         graph_node.type, graph_node.timeout_seconds, default_timeouts
     )
     _deadline = run_deadline.get()
+    timeout_from_run_deadline = False
     if _deadline is not None:
         remaining = max(_deadline - time.monotonic(), 0.001)
+        timeout_from_run_deadline = timeout is None or remaining <= timeout
         timeout = remaining if timeout is None else min(timeout, remaining)
     attempts = (
         max(1, graph_node.retries + 1) if graph_node.retry_on_fail else 1
@@ -949,11 +951,17 @@ async def _run_one_node(
 
     if isinstance(caught, (TimeoutError, asyncio.TimeoutError)):
         error_msg = f"node timed out after {timeout}s"
+        timeout_status = (
+            RunStatus.timed_out
+            if timeout_from_run_deadline
+            else RunStatus.error
+        )
     else:
         error_msg = f"{type(caught).__name__}: {caught}"
         notes = getattr(caught, "__notes__", None) or ()
         if notes:
             error_msg = "\n\n".join((error_msg, *notes))
+        timeout_status = RunStatus.error
     continue_on_error = (
         graph_node.on_error == "continue" or graph_node.always_output_data
     )
@@ -968,7 +976,7 @@ async def _run_one_node(
             )
         )
     else:
-        run_status = RunStatus.error
+        run_status = timeout_status
         await finish(
             NodeRunResult(
                 node_id=nid, status=NodeStatus.error, error=error_msg,

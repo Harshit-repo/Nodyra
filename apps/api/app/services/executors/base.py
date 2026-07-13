@@ -42,7 +42,7 @@ class RunExecutionContext(TypedDict):
 
 @dataclass(frozen=True)
 class RunOutcome:
-    status: str  # success | error | waiting | cancelled
+    status: str  # success | error | timed_out | waiting | cancelled
 
 
 @runtime_checkable

@@ -29,7 +29,7 @@ async def reconcile_batch(session: AsyncSession, batch_id: str | None) -> RunBat
     ).all()
     counts = {str(status): int(count) for status, count in rows}
     batch.succeeded_runs = counts.get("success", 0)
-    batch.failed_runs = counts.get("error", 0)
+    batch.failed_runs = counts.get("error", 0) + counts.get("timed_out", 0)
     batch.cancelled_runs = counts.get("cancelled", 0)
     terminal = batch.succeeded_runs + batch.failed_runs + batch.cancelled_runs
 

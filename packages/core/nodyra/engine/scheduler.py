@@ -41,12 +41,13 @@ if TYPE_CHECKING:
 
 
 # Severity ranking for run-status aggregation: when parallel nodes finish with
-# different statuses, the run reports the *worst* one — error must never be
-# masked by a waiting (approval-paused) node that happens to finish later.
+# different statuses, the run reports the *worst* one — failure statuses must
+# never be masked by a waiting (approval-paused) node that finishes later.
 _STATUS_RANK: dict[RunStatus, int] = {
     RunStatus.success: 0,
     RunStatus.waiting: 1,
     RunStatus.error: 2,
+    RunStatus.timed_out: 2,
 }
 
 # Default per-node output cap (10 MiB).  A node that produces more than this
@@ -56,7 +57,7 @@ DEFAULT_MAX_NODE_OUTPUT_BYTES: int = 10 * 1024 * 1024
 
 
 def _worse_status(a: RunStatus, b: RunStatus) -> RunStatus:
-    """The more severe of two run statuses: error > waiting > success."""
+    """The more severe of two run statuses: failure > waiting > success."""
     return a if _STATUS_RANK[a] >= _STATUS_RANK[b] else b
 
 
@@ -281,7 +282,7 @@ async def _execute_nodes(
                     started_at=time.time(), finished_at=time.time(),
                 )
             )
-            return nid, RunStatus.error
+            return nid, RunStatus.timed_out
 
         # Per-type semaphore, acquired outside the global semaphore so a type-
         # saturated node type doesn't consume a global slot while waiting.

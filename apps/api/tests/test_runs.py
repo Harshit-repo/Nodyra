@@ -34,6 +34,32 @@ GRAPH = {
     ],
 }
 
+SLOW_TIMEOUT_GRAPH = {
+    "nodes": [
+        {
+            "id": "t",
+            "type": "manual_trigger",
+            "params": {"data": "start"},
+            "position": {"x": 0, "y": 0},
+        },
+        {
+            "id": "c",
+            "type": "code",
+            "params": {"code": "import time\ntime.sleep(0.05)\noutput = 'late'"},
+            "position": {"x": 250, "y": 0},
+        }
+    ],
+    "edges": [
+        {
+            "id": "t-c",
+            "source": "t",
+            "source_output": "main",
+            "target": "c",
+            "target_input": "input",
+        }
+    ],
+}
+
 
 async def _poll_until(fetch, predicate, *, timeout: float = 8.0, interval: float = 0.05):
     deadline = asyncio.get_running_loop().time() + timeout
@@ -63,6 +89,39 @@ async def test_run_executes_the_graph(client: AsyncClient) -> None:
     results = {n["node_id"]: n for n in run["node_runs"]}
     assert results["c"]["output"]["main"] == 6
     assert results["t"]["status"] == "success"
+
+
+async def test_run_timeout_persists_timed_out_status_and_queue_reason(
+    client: AsyncClient,
+) -> None:
+    from app.db import get_session
+    from app.main import app as fastapi_app
+    from app.models import RunQueueEntry
+
+    workflow_id = (await client.post("/workflows", json={"name": "Timeout"})).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": SLOW_TIMEOUT_GRAPH, "run_timeout_seconds": 0.01},
+    )
+
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
+    run = await _poll_until(
+        lambda: client.get(f"/runs/{run_id}"),
+        lambda resp: resp.json()["status"] in {"timed_out", "error"},
+        timeout=8,
+    )
+    body = run.json()
+
+    assert body["status"] == "timed_out", body["node_runs"]
+    assert "timed out" in body["error"]
+    assert any("timed out" in (node.get("error") or "") for node in body["node_runs"])
+
+    override = fastapi_app.dependency_overrides[get_session]
+    async for session in override():
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
+        assert entry.status == "failed"
+        assert "timed out" in (entry.last_error or "")
+        break
 
 
 LOOP_GRAPH = {

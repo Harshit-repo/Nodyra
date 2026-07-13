@@ -599,6 +599,8 @@ async def _get_run(session: AsyncSession, user: User | None, args: dict) -> Any:
             for nr in run.node_runs
         ],
     }
+    if run.status == "timed_out":
+        result["error"] = run.error or "workflow run timed out"
     if run.status == "error" and not result["nodes"]:
         run_err_evt = await session.scalar(
             select(RunEvent)
@@ -686,7 +688,9 @@ async def _get_workflow_stats(session: AsyncSession, user: User | None, args: di
             select(
                 func.count().label("total"),
                 func.sum(case((Run.status == "success", 1), else_=0)).label("success_count"),
-                func.sum(case((Run.status == "error", 1), else_=0)).label("error_count"),
+                func.sum(case((Run.status.in_(("error", "timed_out")), 1), else_=0)).label(
+                    "error_count"
+                ),
                 func.max(Run.started_at).label("last_run_at"),
             ).where(Run.workflow_id == workflow_id)
         )
@@ -3100,7 +3104,7 @@ STATIC_TOOLS: list[McpTool] = [
         name="list_runs",
         description=(
             "List recent runs, optionally filtered by workflow_id and/or status. "
-            "status values: running, queued, waiting, success, error, cancelled."
+            "status values: running, queued, waiting, success, error, timed_out, cancelled."
         ),
         input_schema={
             "type": "object",
@@ -3181,7 +3185,10 @@ STATIC_TOOLS: list[McpTool] = [
     ),
     McpTool(
         name="get_workflow_stats",
-        description="Aggregate stats for a workflow: total runs, success/error counts, last run time.",
+        description=(
+            "Aggregate stats for a workflow: total runs, success/error counts "
+            "(including timed_out), last run time."
+        ),
         input_schema={
             "type": "object",
             "properties": {"workflow_id": {"type": "string"}},

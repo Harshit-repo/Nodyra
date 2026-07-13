@@ -528,7 +528,7 @@ def _int_or(value: object, default: int) -> int:
         return default
 
 
-_TERMINAL_RUN_STATES = {"success", "error", "cancelled"}
+_TERMINAL_RUN_STATES = {"success", "error", "timed_out", "cancelled"}
 
 
 async def _await_run_terminal(run_id: str, timeout: float) -> str | None:

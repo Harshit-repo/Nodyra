@@ -1612,10 +1612,9 @@ async def _execute_run_impl(
                         process_isolator=process_isolator,
                         subworkflow_runner=resolve_subworkflow,
                         subworkflow_meta=sub_meta,
+                        run_timeout_seconds=_eff_timeout,
                     )
-                    result = await (
-                        asyncio.wait_for(coro, timeout=_eff_timeout) if _eff_timeout else coro
-                    )
+                    result = await coro
                 status = str(result.status)
             finally:
                 # Reset the MCP callback so it doesn't leak across runs.
@@ -1711,7 +1710,7 @@ async def _execute_run_impl(
     except Exception:  # noqa: BLE001 - artifact refs are best-effort
         logger.exception("run_id=%s failed to persist artifact refs", run_id)
 
-    if status == "error":
+    if status in ("error", "timed_out"):
         await run_alerts.dispatch_error_handlers(
             SessionLocal,
             start_run,

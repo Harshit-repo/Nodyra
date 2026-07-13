@@ -290,6 +290,12 @@ def _extract_run_level_error(
     run_events: deque[dict[str, Any]],
 ) -> str | None:
     """Return the durable run-level failure reason, when no node owns it."""
+    if status == "timed_out":
+        for event in node_run_records.values():
+            message = str(event.get("error") or "")
+            if "timed out" in message.lower():
+                return message
+        return "workflow run timed out"
     if status != "error":
         return None
     if any(event.get("error") for event in node_run_records.values()):
@@ -436,11 +442,16 @@ async def persist_run_outcome(
             elif status == "cancelled":
                 await run_queue.cancel(session, run_id=run_id)
             else:
+                failure_error = (
+                    run.error
+                    if run is not None and run.error
+                    else f"run finished with status={status}"
+                )
                 await run_queue.fail(
                     session,
                     run_id=run_id,
                     retryable=False,
-                    error=f"run finished with status={status}",
+                    error=failure_error,
                 )
             # C3: accumulate compute seconds + node_runs for terminal runs
             # ("waiting" resumes later and lands here again at the real end).
@@ -464,7 +475,13 @@ async def persist_run_outcome(
         try:
             async with session_factory() as _s:
                 _r = await _s.get(Run, run_id)
-                if _r is not None and _r.status not in ("success", "error", "cancelled", "waiting"):
+                if _r is not None and _r.status not in (
+                    "success",
+                    "error",
+                    "timed_out",
+                    "cancelled",
+                    "waiting",
+                ):
                     _r.status = status
                     _r.finished_at = datetime.now(UTC)
                     _r.checkpoint = None

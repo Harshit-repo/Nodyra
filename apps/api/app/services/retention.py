@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # Maximum IDs fetched and deleted per prune tick to avoid loading millions of
 # UUIDs into a Python list and risking a DB timeout on the bulk DELETE.
 _PRUNE_BATCH_SIZE = 10_000
-_TERMINAL_STATUSES = ("success", "error", "cancelled")
+_TERMINAL_STATUSES = ("success", "error", "timed_out", "cancelled")
 
 
 async def prune_workflow_artifacts(now: datetime | None = None) -> int:

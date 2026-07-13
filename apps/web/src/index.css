@@ -1824,6 +1824,7 @@ textarea:focus-visible,
 .home-status-chip.chip-running { --chip-tone: #3b9eff; }
 .home-status-chip.chip-success { --chip-tone: #10b981; }
 .home-status-chip.chip-failed { --chip-tone: #f0747a; }
+.home-status-chip.chip-timeout { --chip-tone: #f59e0b; }
 .home-status-chip.chip-waiting { --chip-tone: #f0ad4e; }
 .home-status-chip.chip-cancelled { --chip-tone: #8b8b8b; }
 
@@ -5457,6 +5458,10 @@ kbd {
 .status-run-error {
   background: #f0747a;
   color: #1e0608;
+}
+.status-run-timed_out {
+  background: #f59e0b;
+  color: #1d1202;
 }
 .status-run-skipped {
   background: var(--surface-3);
