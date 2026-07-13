@@ -181,11 +181,32 @@ async def test_enqueue_persists_required_labels(session) -> None:
         session,
         run_id="r-label",
         workflow_id="wf-label",
-        required_labels={" gpu ": " a100 ", " bare ": True},
+        required_labels={" gpu ": " a100 ", " bare ": True, " off ": False, " ": "drop"},
     )
     await session.commit()
 
-    assert entry.required_labels == {"gpu": "a100", "bare": "true"}
+    assert entry.required_labels == {"gpu": "a100", "bare": "true", "off": "false"}
+
+
+@pytest.mark.asyncio
+async def test_notify_queue_workers_sets_local_wakeup_when_redis_publish_fails(
+    monkeypatch,
+) -> None:
+    from app import redis_client as redis_module
+    from app.services import queue
+
+    class BrokenRedis:
+        async def publish(self, _channel: str, _message: str) -> None:
+            raise RuntimeError("redis down")
+
+    queue._wakeup = None
+    monkeypatch.setattr(redis_module, "redis_client", BrokenRedis())
+
+    await queue.notify_queue_workers()
+
+    wakeup = queue._get_wakeup()
+    assert wakeup.is_set()
+    wakeup.clear()
 
 
 @pytest.mark.asyncio
@@ -200,6 +221,34 @@ async def test_enqueue_is_idempotent_per_run(session) -> None:
     assert first.id == second.id
     rows = (await session.scalars(select(RunQueueEntry))).all()
     assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_enqueue_terminal_entry_accepts_replay_seed_override(session) -> None:
+    from app.services import queue
+
+    existing = RunQueueEntry(
+        run_id="r-terminal",
+        workflow_id="wf-old",
+        status="completed",
+        replay_seed={"cache": {"old": {"out": 1}}},
+    )
+    session.add(existing)
+    await session.commit()
+
+    revived = await queue.enqueue(
+        session,
+        run_id="r-terminal",
+        workflow_id="wf-new",
+        priority=4,
+        replay_seed={"cache": {"new": {"out": 2}}},
+    )
+    await session.commit()
+
+    assert revived.id == existing.id
+    assert revived.status == "queued"
+    assert revived.priority == 4
+    assert revived.replay_seed == {"cache": {"new": {"out": 2}}}
 
 
 @pytest.mark.asyncio
@@ -396,6 +445,47 @@ async def test_lease_returns_none_when_required_labels_unmatched(session) -> Non
 
 
 @pytest.mark.asyncio
+async def test_lease_uses_multi_tenant_fair_order_and_marks_capped_orgs(
+    session,
+    monkeypatch,
+) -> None:
+    from app.config import settings
+    from app.services import org_limits, queue
+
+    monkeypatch.setattr(settings, "multi_tenancy_enabled", True)
+    org_limits.invalidate_limits_cache()
+    old = datetime.now(UTC) - timedelta(seconds=5)
+    session.add(models.OrgSettings(org_id="org-c", max_concurrent_runs=1))
+    session.add_all(
+        [
+            RunQueueEntry(run_id="a-running", workflow_id="wf", org_id="org-a", status="running"),
+            RunQueueEntry(run_id="a-queued", workflow_id="wf", org_id="org-a", available_at=old),
+            RunQueueEntry(
+                run_id="b-queued",
+                workflow_id="wf",
+                org_id="org-b",
+                available_at=old + timedelta(milliseconds=1),
+            ),
+            RunQueueEntry(run_id="c-running", workflow_id="wf", org_id="org-c", status="running"),
+            RunQueueEntry(run_id="c-queued", workflow_id="wf", org_id="org-c", available_at=old),
+        ]
+    )
+    await session.commit()
+
+    leased = await queue.lease(session, worker_id="w1")
+    capped = await session.scalar(
+        select(RunQueueEntry)
+        .where(RunQueueEntry.run_id == "c-queued")
+        .execution_options(skip_org_filter=True)
+    )
+
+    assert leased is not None
+    assert leased.run_id == "b-queued"
+    assert capped.queue_reason == "org_quota_exceeded"
+    org_limits.invalidate_limits_cache()
+
+
+@pytest.mark.asyncio
 async def test_complete_marks_completed(session) -> None:
     from app.services import queue
 
@@ -409,6 +499,58 @@ async def test_complete_marks_completed(session) -> None:
 
     entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == "r1"))
     assert entry.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_missing_entry_transitions_return_false(session) -> None:
+    from app.services import queue
+
+    assert await queue.mark_running(session, run_id="missing") is False
+    assert await queue.heartbeat(session, run_id="missing") is False
+    assert await queue.complete(session, run_id="missing") is False
+    assert await queue.wait_for_approval(session, run_id="missing") is False
+    assert await queue.resume_waiting(session, run_id="missing", replay_seed={}) is None
+    assert await queue.cancel(session, run_id="missing") is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_approval_and_resume_waiting(session) -> None:
+    from app.services import queue
+
+    expires = datetime.now(UTC) + timedelta(seconds=30)
+    session.add(
+        RunQueueEntry(
+            run_id="approval-run",
+            workflow_id="wf",
+            status="leased",
+            leased_by="w1",
+            lease_expires_at=expires,
+        )
+    )
+    await session.commit()
+
+    assert await queue.wait_for_approval(session, run_id="approval-run") is True
+    waiting = await session.scalar(
+        select(RunQueueEntry).where(RunQueueEntry.run_id == "approval-run")
+    )
+    assert waiting.status == "waiting"
+    assert waiting.queue_reason == "agent_approval"
+    assert waiting.leased_by is None
+    assert waiting.lease_expires_at is None
+
+    moment = datetime.now(UTC)
+    resumed = await queue.resume_waiting(
+        session,
+        run_id="approval-run",
+        replay_seed={"targets": ["node-1"]},
+        now=moment,
+    )
+
+    assert resumed is not None
+    assert resumed.status == "queued"
+    assert resumed.queue_reason == "approval_resume"
+    assert resumed.available_at == moment
+    assert resumed.replay_seed == {"targets": ["node-1"]}
 
 
 @pytest.mark.asyncio
@@ -525,6 +667,38 @@ async def test_stats_reports_counts_and_oldest(session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_stats_breaks_down_by_org_when_multi_tenancy_enabled(
+    session,
+    monkeypatch,
+) -> None:
+    from app.config import settings
+    from app.services import queue
+
+    monkeypatch.setattr(settings, "multi_tenancy_enabled", True)
+    session.add_all(
+        [
+            RunQueueEntry(run_id="org-a-leased", workflow_id="wf", org_id="org-a", status="leased"),
+            RunQueueEntry(
+                run_id="org-a-parked",
+                workflow_id="wf",
+                org_id="org-a",
+                status="queued",
+                queue_reason="org_quota_exceeded",
+            ),
+            RunQueueEntry(run_id="org-b-running", workflow_id="wf", org_id="org-b", status="running"),
+        ]
+    )
+    await session.commit()
+
+    stats = await queue.stats(session)
+
+    assert stats["by_org"]["org-a"]["leased"] == 1
+    assert stats["by_org"]["org-a"]["queued"] == 1
+    assert stats["by_org"]["org-a"]["quota_parked"] == 1
+    assert stats["by_org"]["org-b"]["running"] == 1
+
+
+@pytest.mark.asyncio
 async def test_fail_retryable_dead_letters_when_attempts_exhausted(session) -> None:
     """Retryable failure with no attempts remaining is dead-lettered, not
     requeued — distinguishes "retry budget exhausted" from "non-retryable"."""
@@ -589,6 +763,37 @@ async def test_replay_resets_terminal_entry(session) -> None:
     # Replay marker is preserved so operators can see the chain.
     events = [r["event"] for r in replayed.attempts_log]
     assert "replay" in events
+
+
+@pytest.mark.asyncio
+async def test_replay_replaces_seed_with_cache_targets(session) -> None:
+    from app.services import queue
+
+    session.add(
+        RunQueueEntry(
+            run_id="r1",
+            workflow_id="wf",
+            status="failed",
+            attempts=2,
+            last_error="boom",
+            replay_seed={"cache": {"old": {"out": 1}}},
+        )
+    )
+    await session.commit()
+
+    replayed = await queue.replay(
+        session,
+        run_id="r1",
+        cache={"node-1": {"out": 2}},
+        targets=["node-2"],
+    )
+    await session.commit()
+
+    assert replayed is not None
+    assert replayed.replay_seed == {
+        "cache": {"node-1": {"out": 2}},
+        "targets": ["node-2"],
+    }
 
 
 @pytest.mark.asyncio

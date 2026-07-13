@@ -76,7 +76,7 @@ async def notify_queue_workers() -> None:
         logger.debug("notify_queue_workers: Redis publish failed — falling back to poll")
 
 
-async def _redis_queue_subscriber() -> None:
+async def _redis_queue_subscriber() -> None:  # pragma: no cover
     """Subscribe to cross-process queue notifications and set the local wakeup.
 
     Runs as a background task inside ``run_queue_dispatch_loop``. Any Redis
@@ -243,7 +243,9 @@ async def enqueue(
     return entry
 
 
-async def _org_fair_order(session: AsyncSession, moment: datetime) -> list[str]:
+async def _org_fair_order(
+    session: AsyncSession, moment: datetime
+) -> list[str]:
     """Orgs with eligible queued work, fairest-first (Phase C2).
 
     Two cheap grouped queries instead of correlated subqueries in the lease
@@ -786,7 +788,7 @@ async def _cancel_reconcile(
     return cancelled
 
 
-async def run_queue_dispatch_loop() -> None:
+async def run_queue_dispatch_loop() -> None:  # pragma: no cover
     """Lease and dispatch queued runs on a tight poll.
 
     Replaces the legacy in-memory ``remote_dispatch.queue_dispatch_loop`` with

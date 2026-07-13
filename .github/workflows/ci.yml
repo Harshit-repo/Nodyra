@@ -26,6 +26,13 @@ jobs:
       - name: AI builder eval (advisory)
         continue-on-error: true
         run: uv run python scripts/ai_builder_eval.py --n 10
+      - name: Queue coverage floor
+        run: |
+          uv run pytest --timeout=300 --timeout-method=thread \
+            --cov=app.services.queue \
+            --cov-report=term-missing \
+            --cov-fail-under=85 \
+            -q apps/api/tests/test_run_queue.py
       # --timeout guards against a hung test wedging the whole run (see the
       # event-broker fix); 300s is generous for the subprocess-spawning tests.
       - name: Pytest with retry reporting
