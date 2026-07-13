@@ -5631,6 +5631,44 @@ kbd {
 .exec-node-section .data-logs {
   color: var(--ink);
 }
+.exec-diff-panel {
+  margin: 12px 0;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.exec-diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-2);
+}
+.exec-diff-head strong,
+.exec-diff-head span {
+  display: block;
+}
+.exec-diff-head strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+.exec-diff-head span {
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.exec-diff-panel > .muted,
+.exec-diff-panel > .error-text {
+  margin: 12px;
+}
+.exec-diff-canvas {
+  height: 360px;
+  min-height: 260px;
+  background: var(--bg);
+}
 
 /* ---- Deployments page ---- */
 .deploy-list {

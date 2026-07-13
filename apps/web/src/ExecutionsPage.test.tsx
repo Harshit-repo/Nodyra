@@ -4,17 +4,20 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ExecutionsPage } from "./ExecutionsPage";
-import type { RunInfo, RunListItem, WorkflowSummary } from "./types";
+import type { RunInfo, RunListItem, WorkflowGraph, WorkflowSummary } from "./types";
 
 const apiMocks = vi.hoisted(() => ({
   listWorkflows: vi.fn(),
   listAllRuns: vi.fn(),
   runtimeMode: vi.fn(),
   queueStats: vi.fn(),
+  queueCapacity: vi.fn(),
   getRun: vi.fn(),
   runTimeline: vi.fn(),
   runApprovals: vi.fn(),
   replayRun: vi.fn(),
+  getVersionGraph: vi.fn(),
+  listBackends: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
@@ -22,6 +25,28 @@ vi.mock("./api", () => ({
   errorMessage: (error: unknown) =>
     error instanceof Error ? error.message : String(error),
   subscribeToRunEvents: vi.fn(() => ({ close: vi.fn() })),
+}));
+
+vi.mock("@xyflow/react", () => ({
+  ReactFlowProvider: ({
+    children,
+  }: {
+    children: import("react").ReactNode;
+  }) => <>{children}</>,
+}));
+
+vi.mock("./editor/WorkflowDiffView", () => ({
+  GraphDiffView: ({
+    baseGraph,
+    compareGraph,
+  }: {
+    baseGraph: { nodes: unknown[] };
+    compareGraph: { nodes: unknown[] };
+  }) => (
+    <div data-testid="graph-diff-view">
+      added changed {baseGraph.nodes.length}:{compareGraph.nodes.length}
+    </div>
+  ),
 }));
 
 function renderExecutions(initialPath = "/executions?run=run-old") {
@@ -56,6 +81,7 @@ const runRow: RunListItem = {
   workflow_id: "wf-1",
   workflow_name: "Failed pipeline",
   workflow_version: 3,
+  workflow_version_id: "version-error",
   mode: "queue",
   status: "error",
   trigger_type: "manual",
@@ -67,6 +93,7 @@ const oldRun: RunInfo = {
   id: "run-old",
   workflow_id: "wf-1",
   workflow_version: 3,
+  workflow_version_id: "version-error",
   mode: "queue",
   status: "error",
   trigger_type: "manual",
@@ -101,7 +128,9 @@ describe("ExecutionsPage replay from node", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMocks.listWorkflows.mockResolvedValue([workflow]);
-    apiMocks.listAllRuns.mockResolvedValue([runRow]);
+    apiMocks.listAllRuns.mockImplementation((filters?: { status?: string }) =>
+      Promise.resolve(filters?.status === "success" ? [] : [runRow]),
+    );
     apiMocks.runtimeMode.mockResolvedValue({
       mode: "production",
       database_dialect: "postgresql",
@@ -127,6 +156,15 @@ describe("ExecutionsPage replay from node", () => {
       cancelled: 0,
       oldest_queued_age_seconds: null,
     });
+    apiMocks.queueCapacity.mockResolvedValue({
+      dispatchers: [],
+      leased: 0,
+      running: 0,
+      local_max_slots: 0,
+      local_available_slots: 0,
+      queued: 0,
+      label_blocked_queued: 0,
+    });
     apiMocks.getRun.mockImplementation((runId: string) =>
       Promise.resolve(runId === "run-new" ? replayRun : oldRun),
     );
@@ -141,6 +179,8 @@ describe("ExecutionsPage replay from node", () => {
       previous_status: "failed",
       status: "queued",
     });
+    apiMocks.getVersionGraph.mockRejectedValue(new Error("not mocked"));
+    apiMocks.listBackends.mockResolvedValue({ platform: "windows" });
   });
 
   it("replays from the failed node and follows the queued replay run", async () => {
@@ -170,5 +210,105 @@ describe("ExecutionsPage replay from node", () => {
       "href",
       "/workflows/wf-1?ai=fix_failed&run_id=run-old",
     );
+  });
+
+  it("compares a run graph to the last successful run on a different version", async () => {
+    const greenRun: RunListItem = {
+      ...runRow,
+      id: "run-green",
+      status: "success",
+      workflow_version: 2,
+      workflow_version_id: "version-green",
+      started_at: "2026-07-03T09:50:00.000Z",
+      finished_at: "2026-07-03T09:50:02.000Z",
+    };
+    const greenGraph: WorkflowGraph = {
+      nodes: [
+        {
+          id: "fetch",
+          type: "http_request",
+          params: { url: "https://example.com/a" },
+          position: { x: 0, y: 0 },
+          disabled: false,
+          outputs_override: null,
+          on_error: "stop",
+          retry_on_fail: false,
+          retries: 1,
+          retry_wait_seconds: 0,
+          retry_backoff: false,
+          always_output_data: false,
+          timeout_seconds: null,
+        },
+      ],
+      edges: [],
+    };
+    const runGraph: WorkflowGraph = {
+      nodes: [
+        {
+          ...greenGraph.nodes[0],
+          params: { url: "https://example.com/b" },
+        },
+        {
+          id: "transform",
+          type: "code",
+          params: { code: "output = input" },
+          position: { x: 220, y: 0 },
+          disabled: false,
+          outputs_override: null,
+          on_error: "stop",
+          retry_on_fail: false,
+          retries: 1,
+          retry_wait_seconds: 0,
+          retry_backoff: false,
+          always_output_data: false,
+          timeout_seconds: null,
+        },
+      ],
+      edges: [
+        {
+          id: "e1",
+          source: "fetch",
+          source_output: "main",
+          target: "transform",
+          target_input: "input",
+        },
+      ],
+    };
+    apiMocks.listAllRuns.mockImplementation((filters?: { status?: string }) =>
+      Promise.resolve(filters?.status === "success" ? [greenRun] : [runRow]),
+    );
+    apiMocks.getVersionGraph.mockImplementation(
+      (_workflowId: string, versionId: string) =>
+        Promise.resolve({
+          graph: versionId === "version-green" ? greenGraph : runGraph,
+        }),
+    );
+
+    renderExecutions();
+
+    const compare = await screen.findByRole("button", {
+      name: "Compare to last green run",
+    });
+    await waitFor(() => expect(compare).not.toBeDisabled());
+    fireEvent.click(compare);
+
+    await waitFor(() =>
+      expect(apiMocks.getVersionGraph).toHaveBeenCalledWith(
+        "wf-1",
+        "version-green",
+      ),
+    );
+    await waitFor(() =>
+      expect(apiMocks.getVersionGraph).toHaveBeenCalledWith(
+        "wf-1",
+        "version-error",
+      ),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Run graph diff" }),
+    ).toBeTruthy();
+    expect(await screen.findByText(/Green v2 to run v3/)).toBeTruthy();
+    expect(document.body.textContent).toMatch(/added/i);
+    expect(document.body.textContent).toMatch(/changed/i);
   });
 });

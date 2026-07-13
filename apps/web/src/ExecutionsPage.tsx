@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
+import { ReactFlowProvider } from "@xyflow/react";
 import { MagnifyingGlass } from "@phosphor-icons/react";
 
 import { SkeletonRows } from "./Skeleton";
 
 import {
+  api,
   errorMessage,
   type QueueCapacity,
   type QueueStats,
@@ -27,8 +29,11 @@ import {
   useWorkflows,
 } from "./queries";
 import { RunApprovalsPanel } from "./RunApprovalsPanel";
+import { GraphDiffView } from "./editor/WorkflowDiffView";
 import type {
   NodeRunResult,
+  RunListItem,
+  WorkflowGraph,
 } from "./types";
 
 function relativeTime(iso: string): string {
@@ -663,11 +668,54 @@ function RunDetailPanel({
   const queryClient = useQueryClient();
   const runQuery = useRun(runId);
   const run = runQuery.data ?? null;
+  const successRunFilters = useMemo(
+    () => ({
+      workflow_id: run?.workflow_id,
+      status: "success",
+      limit: 50,
+    }),
+    [run?.workflow_id],
+  );
+  const successRunsQuery = useAllRuns(successRunFilters, {
+    enabled: Boolean(run?.workflow_id),
+    staleTime: 30_000,
+  });
+  const lastGreenRun = useMemo(() => {
+    if (!run?.workflow_version_id) return null;
+    return (
+      (successRunsQuery.data ?? []).find(
+        (candidate) =>
+          candidate.status === "success" &&
+          candidate.workflow_id === run.workflow_id &&
+          candidate.id !== run.id &&
+          Boolean(candidate.workflow_version_id) &&
+          candidate.workflow_version_id !== run.workflow_version_id,
+      ) ?? null
+    );
+  }, [
+    run?.id,
+    run?.workflow_id,
+    run?.workflow_version_id,
+    successRunsQuery.data,
+  ]);
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<
-    "rerun" | "retry" | "replay" | null
+    "rerun" | "retry" | "replay" | "diff" | null
   >(null);
   const [replayNodeId, setReplayNodeId] = useState<string | null>(null);
+  const [diffPanel, setDiffPanel] = useState<{
+    open: boolean;
+    error: string;
+    baseRun: RunListItem | null;
+    baseGraph: WorkflowGraph | null;
+    compareGraph: WorkflowGraph | null;
+  }>({
+    open: false,
+    error: "",
+    baseRun: null,
+    baseGraph: null,
+    compareGraph: null,
+  });
   const rerunMutation = useRerunRunMutation();
   const retryMutation = useRetryRunMutation();
   const replayMutation = useReplayRunMutation();
@@ -679,6 +727,13 @@ function RunDetailPanel({
     setActionPending(null);
     setReplayNodeId(null);
     setActionError("");
+    setDiffPanel({
+      open: false,
+      error: "",
+      baseRun: null,
+      baseGraph: null,
+      compareGraph: null,
+    });
   }, [runId]);
 
   async function rerun(): Promise<void> {
@@ -714,6 +769,41 @@ function RunDetailPanel({
       onJump(run_id);
     } catch (e) {
       setActionError(errorMessage(e));
+    } finally {
+      setActionPending(null);
+    }
+  }
+
+  async function compareToLastGreen(): Promise<void> {
+    if (!run?.workflow_version_id || !lastGreenRun?.workflow_version_id) return;
+    setActionPending("diff");
+    setDiffPanel({
+      open: true,
+      error: "",
+      baseRun: lastGreenRun,
+      baseGraph: null,
+      compareGraph: null,
+    });
+    try {
+      const [base, compare] = await Promise.all([
+        api.getVersionGraph(run.workflow_id, lastGreenRun.workflow_version_id),
+        api.getVersionGraph(run.workflow_id, run.workflow_version_id),
+      ]);
+      setDiffPanel({
+        open: true,
+        error: "",
+        baseRun: lastGreenRun,
+        baseGraph: base.graph,
+        compareGraph: compare.graph,
+      });
+    } catch (e) {
+      setDiffPanel({
+        open: true,
+        error: errorMessage(e),
+        baseRun: lastGreenRun,
+        baseGraph: null,
+        compareGraph: null,
+      });
     } finally {
       setActionPending(null);
     }
@@ -804,6 +894,21 @@ function RunDetailPanel({
               Fix with AI
             </a>
           )}
+          {run?.workflow_version_id && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void compareToLastGreen()}
+              disabled={actionPending !== null || !lastGreenRun}
+              title={
+                lastGreenRun
+                  ? "Compare this run's workflow version to the latest successful run on a different version"
+                  : "No successful run on a different workflow version"
+              }
+            >
+              {actionPending === "diff" ? "Comparing..." : "Compare to last green run"}
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-sm btn-ghost"
@@ -834,6 +939,55 @@ function RunDetailPanel({
           runStatus={run.status}
           onChanged={refreshRun}
         />
+      )}
+
+      {run && diffPanel.open && (
+        <section
+          className="exec-diff-panel"
+          role="dialog"
+          aria-label="Run graph diff"
+        >
+          <header className="exec-diff-head">
+            <div>
+              <strong>Graph diff</strong>
+              {diffPanel.baseRun && (
+                <span>
+                  Green v{diffPanel.baseRun.workflow_version} to run v{run.workflow_version}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() =>
+                setDiffPanel({
+                  open: false,
+                  error: "",
+                  baseRun: null,
+                  baseGraph: null,
+                  compareGraph: null,
+                })
+              }
+            >
+              Close
+            </button>
+          </header>
+          {diffPanel.error && <p className="error-text">{diffPanel.error}</p>}
+          {actionPending === "diff" && !diffPanel.baseGraph && (
+            <p className="muted">Loading graph diff...</p>
+          )}
+          {diffPanel.baseGraph && diffPanel.compareGraph && (
+            <div className="exec-diff-canvas">
+              <ReactFlowProvider>
+                <GraphDiffView
+                  baseGraph={diffPanel.baseGraph}
+                  compareGraph={diffPanel.compareGraph}
+                  readOnly
+                />
+              </ReactFlowProvider>
+            </div>
+          )}
+        </section>
       )}
 
       {run && (
