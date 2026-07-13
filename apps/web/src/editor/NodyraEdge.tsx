@@ -2,6 +2,7 @@ import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from "@xyf
 import { Plus, X } from "@phosphor-icons/react";
 import { useShallow } from "zustand/react/shallow";
 
+import { EdgePreview, edgePreviewValue, type EdgePreviewValue } from "./EdgePreview";
 import { useEditor } from "./store";
 
 export function deriveEdgeType(value: unknown): { icon: string; label: string } {
@@ -105,13 +106,24 @@ export function NodyraEdge({
   });
 
   const onEdgesChange = useEditor((s) => s.onEdgesChange);
-  const edgeType = useEditor(
-    useShallow((s): { icon: string; label: string } => {
-      if (!source) return { icon: "", label: "" };
+  const openNdv = useEditor((s) => s.openNdv);
+  const sourcePort = sourceHandleId ?? "main";
+  const { edgeType, preview } = useEditor(
+    useShallow((s): {
+      edgeType: { icon: string; label: string };
+      preview: EdgePreviewValue;
+    } => {
+      const empty = {
+        edgeType: { icon: "", label: "" },
+        preview: { hasValue: false, value: undefined },
+      };
+      if (!source) return empty;
       const outputs = s.runOutputs[source];
-      if (!outputs || typeof outputs !== "object") return { icon: "", label: "" };
-      const val = (outputs as Record<string, unknown>)[sourceHandleId ?? "main"];
-      return deriveEdgeType(val);
+      const previewValue = edgePreviewValue(outputs, sourcePort);
+      return {
+        edgeType: deriveEdgeType(previewValue.hasValue ? previewValue.value : undefined),
+        preview: previewValue,
+      };
     }),
   );
   // While an agent uses a connected sub-node, animate the wire so data appears
@@ -152,6 +164,14 @@ export function NodyraEdge({
               <span className="nodyra-edge-type-icon">{edgeType.icon}</span>
               <span className="nodyra-edge-type-label">{edgeType.label}</span>
             </div>
+          )}
+          {preview.hasValue && source && (
+            <EdgePreview
+              sourceLabel={`${source}.${sourcePort}`}
+              typeLabel={edgeType.label}
+              value={preview.value}
+              onOpen={() => openNdv(source)}
+            />
           )}
           <div className="nodyra-edge-actions">
             <button

@@ -2956,6 +2956,7 @@ body.is-resizing-vertical {
 
 /* ---- custom edge toolbar ---- */
 .nodyra-edge-mid {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2979,6 +2980,7 @@ body.is-resizing-vertical {
   transition: opacity 140ms ease;
 }
 .nodyra-edge-mid:hover .nodyra-edge-actions,
+.nodyra-edge-mid:focus-within .nodyra-edge-actions,
 .nodyra-edge-mid.is-selected .nodyra-edge-actions {
   opacity: 1;
 }
@@ -3040,6 +3042,10 @@ body.is-resizing-vertical {
 .nodyra-edge-mid:hover .nodyra-edge-type-badge {
   opacity: 1;
 }
+.nodyra-edge-mid:focus-within .nodyra-edge-type-badge,
+.nodyra-edge-mid.is-selected .nodyra-edge-type-badge {
+  opacity: 1;
+}
 .nodyra-edge-type-icon {
   font-size: 9px;
   font-weight: 700;
@@ -3054,6 +3060,79 @@ body.is-resizing-vertical {
   font-size: 10px;
   font-family: var(--font-mono);
   color: var(--ink-3);
+}
+.edge-preview-popover {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%) translateY(2px);
+  width: min(300px, 76vw);
+  max-width: 300px;
+  padding: 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 6px 8px -8px rgba(0, 0, 0, 0.86);
+  z-index: 6;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 130ms ease,
+    transform 130ms ease;
+}
+.nodyra-edge-mid:hover .edge-preview-popover,
+.nodyra-edge-mid:focus-within .edge-preview-popover,
+.nodyra-edge-mid.is-selected .edge-preview-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+.edge-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.edge-preview-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.edge-preview-body {
+  margin: 0;
+  max-height: 150px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.edge-preview-open {
+  margin-top: 8px;
+  padding: 3px 7px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--editor-radius-tight);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.edge-preview-open:hover,
+.edge-preview-open:focus-visible {
+  border-color: var(--accent-deep);
+  color: var(--ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .edge-preview-popover {
+    transition: none !important;
+  }
 }
 
 /* ---- port legend ---- */
