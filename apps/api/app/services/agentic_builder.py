@@ -45,6 +45,7 @@ async def run_agentic_build_loop(
     org_id: str,
     event_callback: Callable[[dict], Awaitable[None]],
     cancel_event: asyncio.Event,
+    failure_context: dict[str, Any] | None = None,
 ) -> dict:
     """Run the build -> execute -> diagnose -> fix loop.
 
@@ -75,13 +76,20 @@ async def run_agentic_build_loop(
     latest_graph: dict = current_graph
     failing_nodes: list[str] = []
     error_details: list[dict[str, str]] = []
+    repair_context = _normalize_failure_context(failure_context)
+    if repair_context is not None:
+        if repair_context.get("graph"):
+            current_graph = repair_context["graph"]
+            latest_graph = current_graph
+        failing_nodes = list(repair_context["failing_nodes"])
+        error_details = list(repair_context["error_details"])
 
     for iteration in range(1, max_iterations + 1):
         if cancel_event.is_set():
             logger.info("agentic build cancelled by client after iteration %d", iteration - 1)
             break
 
-        action = "draft" if iteration == 1 else "fix"
+        action = "fix" if repair_context is not None or iteration > 1 else "draft"
         await event_callback({
             "type": "iteration_start",
             "iteration": iteration,
@@ -90,7 +98,7 @@ async def run_agentic_build_loop(
 
         # --- AI step: draft or fix ------------------------------------------------
         try:
-            if iteration == 1:
+            if action == "draft":
                 new_graph, explanation = await _ai_draft(
                     goal, workflow_id, cancel_event=cancel_event,
                 )
@@ -341,4 +349,45 @@ def _extract_failures(outcome: dict) -> tuple[list[str], list[dict[str, str]]]:
                 "node_id": node_id,
                 "error": result.get("error", ""),
             })
+    if not error_details and outcome.get("error"):
+        error_details.append({
+            "node_id": "run",
+            "error": str(outcome.get("error") or ""),
+        })
     return failing_nodes, error_details
+
+
+def _normalize_failure_context(
+    failure_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Normalize optional failed-run diagnostics into repair-loop inputs."""
+    if not failure_context:
+        return None
+
+    graph = failure_context.get("graph")
+    node_errors = failure_context.get("node_errors") or {}
+    if not isinstance(node_errors, dict):
+        node_errors = {}
+
+    failed_node_id = failure_context.get("failed_node_id")
+    failed_node = str(failed_node_id) if failed_node_id else ""
+    failing_nodes = [failed_node] if failed_node else []
+    error_details: list[dict[str, str]] = []
+
+    for node_id, error in node_errors.items():
+        node_id_s = str(node_id)
+        if node_id_s and node_id_s not in failing_nodes:
+            failing_nodes.append(node_id_s)
+        error_details.append({"node_id": node_id_s, "error": str(error or "")})
+
+    run_error = failure_context.get("run_error")
+    if failed_node and not any(item["node_id"] == failed_node for item in error_details):
+        error_details.append({"node_id": failed_node, "error": str(run_error or "")})
+    elif run_error and not error_details:
+        error_details.append({"node_id": "run", "error": str(run_error)})
+
+    return {
+        "graph": graph if isinstance(graph, dict) else None,
+        "failing_nodes": failing_nodes,
+        "error_details": error_details,
+    }

@@ -214,6 +214,84 @@ async def test_agentic_loop_converges_in_one_iteration(client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
+async def test_agentic_loop_fix_failed_run_starts_with_failure_context(
+    client: AsyncClient,
+) -> None:
+    """A failed-run repair request should start in fix mode and pass the
+    failed graph plus node errors into the existing refine draft path."""
+    headers = await _auth_headers(client)
+    workflow_id = await _create_workflow(client)
+    captured = []
+
+    async def _capture_refine(session, workflow_id, prompt_or_body):  # noqa: ARG001
+        from app.schemas import AiWorkflowDraftRequest, AiWorkflowDraftResponse
+        from nodyra.models import WorkflowGraph
+
+        assert isinstance(prompt_or_body, AiWorkflowDraftRequest)
+        captured.append(prompt_or_body)
+        return AiWorkflowDraftResponse(
+            workflow_id=workflow_id,
+            graph=WorkflowGraph.model_validate(SIMPLE_GRAPH),
+            explanation="Repaired failed run from supplied context.",
+            mode=prompt_or_body.mode,
+            change_summary=["Added a defensive guard for the failed node."],
+            confidence="high",
+        )
+
+    with (
+        patch(
+            "app.services.agentic_builder.build_workflow_draft",
+            _capture_refine,
+        ),
+        patch(
+            "app.services.agentic_builder._start_test_run",
+        ) as mock_start_run,
+        patch(
+            "app.services.agentic_builder._wait_for_run",
+        ) as mock_wait_run,
+    ):
+        mock_start_run.return_value = "run-fixed"
+        mock_wait_run.return_value = {
+            "status": "completed",
+            "node_results": {
+                "t": {"status": "success", "output": {"text": "hello"}},
+                "c": {"status": "success", "output": {"greeting": "Hello"}},
+            },
+            "error": None,
+        }
+
+        async with client.stream(
+            "POST",
+            f"/workflows/{workflow_id}/agentic-build",
+            json=AgenticBuildRequest(
+                goal="Fix the failed production run",
+                max_iterations=1,
+                failure_context={
+                    "failed_run_id": "run-old",
+                    "failed_node_id": "c",
+                    "run_error": "Run failed",
+                    "node_errors": {"c": "KeyError: 'text'"},
+                    "graph": SIMPLE_GRAPH,
+                },
+            ).model_dump(),
+            headers=headers,
+        ) as resp:
+            assert resp.status_code == 200
+            events = await _collect_sse_events(resp)
+
+    starts = [e for e in events if e["type"] == "iteration_start"]
+    assert starts[0]["action"] == "fix"
+    assert captured
+    request = captured[0]
+    assert request.mode == "refine"
+    assert request.target_node_ids == ["c"]
+    assert request.current_graph is not None
+    assert request.current_graph.nodes[1].id == "c"
+    assert "KeyError: 'text'" in request.prompt
+    assert "run-old" not in request.prompt
+
+
+@pytest.mark.asyncio
 async def test_agentic_loop_converges_in_two_iterations(client: AsyncClient) -> None:
     """If the first run fails, the loop should fix the graph and converge on
     the second iteration."""

@@ -795,6 +795,15 @@ function RunDetailPanel({
               🐞 Debug in editor
             </a>
           )}
+          {run && (run.status === "error" || run.status === "failed") && (
+            <a
+              className="btn btn-sm"
+              href={`/workflows/${run.workflow_id}?ai=fix_failed&run_id=${run.id}`}
+              title="Open Fix with AI using this run's graph, run error, and failed node errors"
+            >
+              Fix with AI
+            </a>
+          )}
           <button
             type="button"
             className="btn btn-sm btn-ghost"

@@ -827,6 +827,15 @@ export interface AgenticBuildRequest {
   goal: string;
   test_data?: Record<string, unknown> | null;
   max_iterations?: number;
+  failure_context?: AgenticBuildFailureContext | null;
+}
+
+export interface AgenticBuildFailureContext {
+  failed_run_id?: string | null;
+  failed_node_id?: string | null;
+  run_error?: string | null;
+  node_errors?: Record<string, string>;
+  graph?: WorkflowGraph | null;
 }
 
 export interface AgenticBuildIterationStart {

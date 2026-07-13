@@ -7,6 +7,7 @@ import type {
   ApiTokenCreated,
   ApiTokenInfo,
   ApiTokenScopeInfo,
+  AgenticBuildRequest,
   AuthState,
   ArtifactInfo,
   AgenticBuildEvent,
@@ -1167,7 +1168,7 @@ export const api = {
   /** Start an agentic build loop and return an EventSource for SSE events. */
   startAgenticBuild: (
     workflowId: string,
-    body: { goal: string; test_data?: Record<string, unknown> | null; max_iterations?: number },
+    body: AgenticBuildRequest,
     onEvent: (event: AgenticBuildEvent) => void,
     onError: (error: Error) => void,
     onClose: () => void,
@@ -1190,6 +1191,7 @@ export const api = {
             goal: body.goal,
             test_data: body.test_data ?? null,
             max_iterations: body.max_iterations ?? 5,
+            failure_context: body.failure_context ?? null,
           }),
           signal: controller.signal,
         });

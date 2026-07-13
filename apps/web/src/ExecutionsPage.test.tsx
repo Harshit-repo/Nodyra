@@ -158,4 +158,17 @@ describe("ExecutionsPage replay from node", () => {
     await waitFor(() => expect(apiMocks.getRun).toHaveBeenCalledWith("run-new"));
     expect(screen.getByText("Run run-new")).toBeInTheDocument();
   });
+
+  it("links failed runs into the AI repair flow", async () => {
+    renderExecutions();
+
+    const repairLink = await screen.findByRole("link", {
+      name: "Fix with AI",
+    });
+
+    expect(repairLink).toHaveAttribute(
+      "href",
+      "/workflows/wf-1?ai=fix_failed&run_id=run-old",
+    );
+  });
 });

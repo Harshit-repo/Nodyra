@@ -1338,6 +1338,16 @@ class AiWorkflowDraftResponse(BaseModel):
     planner: str = "llm"
 
 
+class AgenticBuildFailureContext(BaseModel):
+    """Diagnostic context for starting agentic build from a failed run."""
+
+    failed_run_id: str | None = Field(default=None, max_length=128)
+    failed_node_id: str | None = Field(default=None, max_length=256)
+    run_error: str | None = Field(default=None, max_length=8000)
+    node_errors: dict[str, str] = Field(default_factory=dict, max_length=100)
+    graph: dict[str, Any] | None = None
+
+
 class AgenticBuildRequest(BaseModel):
     """Request body for POST /workflows/{id}/agentic-build.
 
@@ -1350,6 +1360,7 @@ class AgenticBuildRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=4000)
     test_data: dict | None = None
     max_iterations: int = Field(default=5, ge=1, le=5)
+    failure_context: AgenticBuildFailureContext | None = None
 
 
 class RuntimeModeStatus(BaseModel):

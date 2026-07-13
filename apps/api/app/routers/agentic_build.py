@@ -97,6 +97,9 @@ async def agentic_build(
                 goal=req.goal,
                 test_data=req.test_data,
                 max_iterations=req.max_iterations,
+                failure_context=(
+                    req.failure_context.model_dump() if req.failure_context is not None else None
+                ),
                 org_id=org_id,
                 event_callback=event_callback,
                 cancel_event=cancel_event,
