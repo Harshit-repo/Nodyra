@@ -14,12 +14,13 @@ env:
   REGISTRY: ghcr.io
   IMAGE_API: ghcr.io/${{ github.repository_owner }}/nodyra-api
   IMAGE_WEB: ghcr.io/${{ github.repository_owner }}/nodyra-web
+  IMAGE_RUNNER: ghcr.io/${{ github.repository_owner }}/nodyra-runner
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write  # required for Cosign keyless signing
 
@@ -66,14 +67,81 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build and push Runner image
+        id: build-runner
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.python
+          push: true
+          tags: |
+            ${{ env.IMAGE_RUNNER }}:${{ steps.meta.outputs.version }}
+            ${{ env.IMAGE_RUNNER }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
+
+      - name: Generate API SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-api.spdx.json
+
+      - name: Generate Web SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-web.spdx.json
+
+      - name: Generate Runner SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_RUNNER }}@${{ steps.build-runner.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-runner.spdx.json
 
       - name: Sign API image with Cosign (keyless)
         run: cosign sign --yes ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
 
       - name: Sign Web image with Cosign (keyless)
         run: cosign sign --yes ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
+
+      - name: Sign Runner image with Cosign (keyless)
+        run: cosign sign --yes ${{ env.IMAGE_RUNNER }}@${{ steps.build-runner.outputs.digest }}
+
+      - name: Attest SBOMs with Cosign
+        env:
+          API_REF: ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
+          WEB_REF: ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
+          RUNNER_REF: ${{ env.IMAGE_RUNNER }}@${{ steps.build-runner.outputs.digest }}
+        run: |
+          cosign attest --yes --type https://spdx.dev/Document --predicate sbom-api.spdx.json "$API_REF"
+          cosign attest --yes --type https://spdx.dev/Document --predicate sbom-web.spdx.json "$WEB_REF"
+          cosign attest --yes --type https://spdx.dev/Document --predicate sbom-runner.spdx.json "$RUNNER_REF"
+
+      - name: Verify image signatures and SBOM attestations
+        env:
+          API_REF: ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
+          WEB_REF: ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
+          RUNNER_REF: ${{ env.IMAGE_RUNNER }}@${{ steps.build-runner.outputs.digest }}
+          COSIGN_CERTIFICATE_IDENTITY_REGEXP: ^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$
+          COSIGN_CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          for ref in "$API_REF" "$WEB_REF" "$RUNNER_REF"; do
+            cosign verify \
+              --certificate-identity-regexp "$COSIGN_CERTIFICATE_IDENTITY_REGEXP" \
+              --certificate-oidc-issuer "$COSIGN_CERTIFICATE_OIDC_ISSUER" \
+              "$ref"
+            cosign verify-attestation \
+              --type https://spdx.dev/Document \
+              --certificate-identity-regexp "$COSIGN_CERTIFICATE_IDENTITY_REGEXP" \
+              --certificate-oidc-issuer "$COSIGN_CERTIFICATE_OIDC_ISSUER" \
+              "$ref"
+          done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -86,6 +154,14 @@ jobs:
             ```
             docker pull ${{ env.IMAGE_API }}:${{ steps.meta.outputs.version }}
             docker pull ${{ env.IMAGE_WEB }}:${{ steps.meta.outputs.version }}
+            docker pull ${{ env.IMAGE_RUNNER }}:${{ steps.meta.outputs.version }}
+            ```
+
+            ### Supply chain
+
+            ```bash
+            cosign verify ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
+            cosign verify-attestation --type https://spdx.dev/Document ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
             ```
 
             ### Helm upgrade
