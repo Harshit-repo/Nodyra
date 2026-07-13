@@ -1,12 +1,18 @@
 """Tests for GET /audit — list, filter, pagination, and access control (T-05)."""
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+
 import pytest
 from httpx import AsyncClient
 
+from app.config import settings
 from app.db import get_session
 from app.main import app
 from app.models import AuditEvent
+from app.services import audit as audit_service
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -155,6 +161,74 @@ async def test_pagination_full_walk(client: AsyncClient) -> None:
         offset += page_size
     assert len(collected) == 7
     assert len(set(collected)) == 7  # no duplicates across pages
+
+
+async def test_export_audit_events_ndjson(client: AsyncClient) -> None:
+    await _seed_events(client, n=2, actor_id="export-actor")
+    response = await client.get("/audit/export.ndjson")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    rows = [json.loads(line) for line in response.text.strip().splitlines()]
+    assert len(rows) == 2
+    assert {row["actor_id"] for row in rows} == {"export-actor"}
+    assert all("created_at" in row for row in rows)
+
+
+async def test_audit_webhook_batch_is_signed(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+    class _Client:
+        def __init__(self, *, timeout: float) -> None:
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc_info) -> None:
+            return None
+
+        async def post(self, url: str, *, content: bytes, headers: dict[str, str]):
+            captured["url"] = url
+            captured["content"] = content
+            captured["headers"] = headers
+            return _Response()
+
+    monkeypatch.setattr(settings, "audit_webhook_url", "https://siem.example/audit")
+    monkeypatch.setattr(settings, "audit_webhook_secret", "webhook-secret")
+    monkeypatch.setattr(settings, "audit_webhook_timeout_seconds", 2.5)
+    monkeypatch.setattr(audit_service.httpx, "AsyncClient", _Client)
+
+    event = AuditEvent(
+        id="evt-1",
+        org_id="org-1",
+        action="workflow.updated",
+        target_type="workflow",
+        target_id="wf-1",
+        detail="updated graph",
+        actor_id="user-1",
+        actor_email="user@example.com",
+    )
+    await audit_service.send_audit_webhook_batch(
+        [audit_service.audit_event_payload(event)]
+    )
+
+    body = captured["content"]
+    assert isinstance(body, bytes)
+    expected_signature = "sha256=" + hmac.new(
+        b"webhook-secret", body, hashlib.sha256
+    ).hexdigest()
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert captured["url"] == "https://siem.example/audit"
+    assert captured["timeout"] == 2.5
+    assert headers["X-Nodyra-Event"] == "audit.batch"
+    assert headers["X-Nodyra-Signature"] == expected_signature
+    payload = json.loads(body)
+    assert payload["events"][0]["action"] == "workflow.updated"
 
 
 # ── access control ────────────────────────────────────────────────────────────

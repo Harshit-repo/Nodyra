@@ -61,6 +61,7 @@ from app.routers import (
 )
 from app.security import get_client_ip
 from app.services import expr_preview
+from app.services.audit import audit_webhook_loop
 from app.services.docker_workers import docker_workers_autoscale_loop
 from app.services.environment_builds import run_environment_build_dispatch_loop
 from app.services.events import broker_reaper_loop
@@ -392,6 +393,11 @@ async def lifespan(app: FastAPI):
     heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
     github_sync = asyncio.create_task(_as_system(github_sync_dispatch_loop)())
     ghost_cleanup = asyncio.create_task(_as_system(ghost_cleanup_loop)())
+    audit_webhook = (
+        asyncio.create_task(_as_system(audit_webhook_loop)())
+        if settings.audit_webhook_url and settings.audit_webhook_secret
+        else None
+    )
     replica_heartbeat = asyncio.create_task(
         _as_system(replica_heartbeat_loop)(role="api")
     )
@@ -409,7 +415,7 @@ async def lifespan(app: FastAPI):
     # (matters for tests that reuse the process).
     _prior_drain = settings.queue_drain
     settings.queue_drain = True
-    for task in (scheduler, retention, reaper, autoscaler, docker_autoscale, broker_reaper, queue_loop, environment_builds, cloud_idle, heartbeat, github_sync, ghost_cleanup, replica_heartbeat, stuck_detector):
+    for task in (scheduler, retention, reaper, autoscaler, docker_autoscale, broker_reaper, queue_loop, environment_builds, cloud_idle, heartbeat, github_sync, ghost_cleanup, audit_webhook, replica_heartbeat, stuck_detector):
         if task is None:
             continue
         task.cancel()

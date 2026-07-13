@@ -240,6 +240,14 @@ class Settings(BaseSettings):
     # Audit log retention. Rows older than this many days are purged nightly
     # by the maintenance loop. 0 disables the automatic purge.
     audit_log_retention_days: int = 90
+    # Optional SIEM/audit-log webhook. Disabled unless both URL and secret are
+    # set. Events are batched by a background worker and signed with
+    # X-Nodyra-Signature: sha256=<hmac>.
+    audit_webhook_url: str = ""
+    audit_webhook_secret: str = ""
+    audit_webhook_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
+    audit_webhook_batch_size: int = Field(default=50, ge=1, le=500)
+    audit_webhook_queue_size: int = Field(default=1000, ge=1, le=100000)
     # Per-NodeRun output cap (bytes of the JSON-serialised value). Outputs
     # above this are replaced with a small {_truncated, size, preview} stub
     # before persisting so one fat DataFrame can't bloat the DB. 0 disables.
