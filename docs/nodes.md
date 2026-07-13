@@ -62,6 +62,12 @@ name from the built-in icon set (`play`, `clock`, `webhook`, `branch`,
 `mail`, `sheet`, `page`, `github`, `database`, `storage`, `ai`, `card`,
 `table`, `dot`, `pause`).
 
+Every visible built-in node must declare a specific category and a concise
+description, either through `@node(description=...)` or the function docstring.
+`packages/nodes/tests/test_manifest_completeness.py` enforces this so the
+palette, AI builder, and generated tool descriptions stay useful as the node
+catalog grows.
+
 ### Async nodes
 
 `async def` nodes are awaited by the engine — use them for IO-bound work.
