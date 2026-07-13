@@ -82,12 +82,30 @@ async def test_venv_backend_build_passes_index_urls() -> None:
     env.id = "test-venv"
     env.python_version = "3.12"
     env.packages = ["numpy"]
+    env.interpreter = "cpython"
     env.backend_config = {"index_urls": ["https://download.pytorch.org/whl/cu121"]}
 
     captured: list[tuple] = []
 
-    async def mock_do_build(env_id, python_version, packages, index_urls=None):
-        captured.append((env_id, python_version, packages, index_urls))
+    async def mock_do_build(
+        env_id,
+        python_version,
+        packages,
+        index_urls=None,
+        *,
+        interpreter="cpython",
+        backend_config=None,
+    ):
+        captured.append(
+            (
+                env_id,
+                python_version,
+                packages,
+                index_urls,
+                interpreter,
+                backend_config,
+            )
+        )
         return "ready", "ok"
 
     with patch("app.services.backends.venv._do_build", side_effect=mock_do_build):
@@ -96,6 +114,8 @@ async def test_venv_backend_build_passes_index_urls() -> None:
 
     assert status == "ready"
     assert captured[0][3] == ["https://download.pytorch.org/whl/cu121"]
+    assert captured[0][4] == "cpython"
+    assert captured[0][5] == env.backend_config
 
 
 # ---------------------------------------------------------------------------

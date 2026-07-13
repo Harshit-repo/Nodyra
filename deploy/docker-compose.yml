@@ -107,6 +107,9 @@ services:
       ENABLE_INPROCESS_SCHEDULER: "true"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       USE_SUBPROCESS_RUNNER: "true"
+      RUNTIME_HEARTBEAT_INTERVAL_SECONDS: ${RUNTIME_HEARTBEAT_INTERVAL_SECONDS:-15}
+      RUNTIME_HEARTBEAT_TIMEOUT_SECONDS: ${RUNTIME_HEARTBEAT_TIMEOUT_SECONDS:-45}
+      RUNTIME_NO_PROGRESS_TIMEOUT_SECONDS: ${RUNTIME_NO_PROGRESS_TIMEOUT_SECONDS:-900}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_PROTOCOL: ${OTEL_EXPORTER_PROTOCOL:-http}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
@@ -143,7 +146,9 @@ services:
       GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
     ports:
-      - "8000:8000"
+      # The demo intentionally disables auth, so public ports must stay local.
+      # Production ingress should terminate TLS and proxy to this service.
+      - "${NODYRA_BIND_HOST:-127.0.0.1}:8000:8000"
     volumes:
       - envdata:/app/envs
       - artifactdata:/app/artifacts
@@ -171,6 +176,9 @@ services:
       DISPATCH_ROLE: worker
       WORKER_LABELS: ${WORKER_LABELS:-}
       USE_SUBPROCESS_RUNNER: "true"
+      RUNTIME_HEARTBEAT_INTERVAL_SECONDS: ${RUNTIME_HEARTBEAT_INTERVAL_SECONDS:-15}
+      RUNTIME_HEARTBEAT_TIMEOUT_SECONDS: ${RUNTIME_HEARTBEAT_TIMEOUT_SECONDS:-45}
+      RUNTIME_NO_PROGRESS_TIMEOUT_SECONDS: ${RUNTIME_NO_PROGRESS_TIMEOUT_SECONDS:-900}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_PROTOCOL: ${OTEL_EXPORTER_PROTOCOL:-http}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
@@ -222,7 +230,7 @@ services:
     environment:
       VITE_API_PROXY: http://api:8000
     ports:
-      - "5173:5173"
+      - "${NODYRA_BIND_HOST:-127.0.0.1}:5173:5173"
     depends_on:
       - api
 

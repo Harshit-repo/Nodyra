@@ -189,7 +189,7 @@ def _worker_env() -> dict[str, str]:
 
     Passes through OS plumbing and ``NODYRA_*`` variables only; never the
     API's secrets. Name matching is case-insensitive (Windows semantics).
-    ``NODYRA_CODE_NODE_TIMEOUT_SECONDS`` is set fresh on every call so a
+    Runtime timeout and heartbeat settings are set fresh on every call so a
     live-settings change takes effect for the next spawned worker without
     waiting for the allowlist cache to expire.
     """
@@ -208,6 +208,9 @@ def _worker_env() -> dict[str, str]:
         _WORKER_ENV_CACHE = dict(env)
         _WORKER_ENV_CACHE_AT = now
     env["NODYRA_CODE_NODE_TIMEOUT_SECONDS"] = str(settings.code_node_timeout_seconds)
+    env["NODYRA_RUNTIME_HEARTBEAT_SECONDS"] = str(
+        settings.runtime_heartbeat_interval_seconds
+    )
     # SEC-3: egress policy for node HTTP/DB. If the operator pinned
     # NODYRA_ALLOW_PRIVATE_EGRESS it was copied through the allowlist above and
     # wins; otherwise the default follows the deployment model — hosted
@@ -466,6 +469,10 @@ class _RuntimeProcess:
             request_id = uuid.uuid4().hex
             callbacks: set[asyncio.Task] = set()
             recycle_after_run = False
+            last_liveness_at = time.monotonic()
+            last_progress_at = last_liveness_at
+            heartbeat_timeout = settings.runtime_heartbeat_timeout_seconds
+            no_progress_timeout = settings.runtime_no_progress_timeout_seconds
             try:
                 await self._write_message(
                     {
@@ -491,7 +498,26 @@ class _RuntimeProcess:
                     }
                 )
                 while True:
-                    line = await self.process.stdout.readline()
+                    heartbeat_remaining = heartbeat_timeout - (
+                        time.monotonic() - last_liveness_at
+                    )
+                    if heartbeat_remaining <= 0:
+                        await self.close()
+                        raise RuntimeError(
+                            f"runtime heartbeat lost for run {run_id!r} after "
+                            f"{heartbeat_timeout:g}s"
+                        )
+                    try:
+                        line = await asyncio.wait_for(
+                            self.process.stdout.readline(),
+                            timeout=heartbeat_remaining,
+                        )
+                    except TimeoutError:
+                        await self.close()
+                        raise RuntimeError(
+                            f"runtime heartbeat lost for run {run_id!r} after "
+                            f"{heartbeat_timeout:g}s"
+                        ) from None
                     if not line:
                         self.dead = True
                         raise RuntimeError("runtime subprocess closed stdout")
@@ -500,9 +526,31 @@ class _RuntimeProcess:
                     except json.JSONDecodeError:
                         continue
 
+                    # Rolling-upgrade compatibility: older runtimes did not put
+                    # request_id on call_workflow callbacks. Reject an explicit
+                    # different id, but temporarily accept a missing one.
+                    event_request_id = event.get("request_id")
+                    if event_request_id not in (None, request_id):
+                        continue
+
+                    now = time.monotonic()
+                    last_liveness_at = now
+                    kind = event.get("type")
+                    if kind == "heartbeat":
+                        if no_progress_timeout > 0 and (
+                            now - last_progress_at >= no_progress_timeout
+                        ):
+                            await self.close()
+                            raise RuntimeError(
+                                f"runtime run {run_id!r} made no protocol progress for "
+                                f"{no_progress_timeout:g}s while heartbeats continued"
+                            )
+                        continue
+
                     # Sub-workflow callback from the subprocess — handle it on a
                     # task so the read loop keeps draining the pipe.
-                    if event.get("type") == "call_workflow":
+                    if kind == "call_workflow":
+                        last_progress_at = now
                         task = asyncio.create_task(
                             self._handle_call_workflow(event, subworkflow_resolver)
                         )
@@ -510,9 +558,9 @@ class _RuntimeProcess:
                         task.add_done_callback(callbacks.discard)
                         continue
 
-                    if event.get("request_id") != request_id:
+                    if event_request_id != request_id:
                         continue
-                    kind = event.get("type")
+                    last_progress_at = now
                     if kind == "result":
                         if callbacks:
                             await asyncio.gather(*callbacks, return_exceptions=True)

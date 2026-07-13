@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import math
 import os
 import subprocess
@@ -35,10 +36,11 @@ import sys
 import time
 from collections.abc import Sequence
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 
-TERMINAL = {"success", "error", "cancelled"}
+TERMINAL = {"success", "error", "cancelled", "timed_out"}
 
 WORKFLOW_GRAPH = {
     "nodes": [
@@ -73,6 +75,25 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--runs", type=int, default=100)
     ap.add_argument("--cancel-ratio", type=float, default=0.2)
     ap.add_argument("--kill-container", default="")
+    ap.add_argument("--restart-api-container", default="")
+    ap.add_argument("--interrupt-redis-container", default="")
+    ap.add_argument("--interrupt-postgres-container", default="")
+    ap.add_argument(
+        "--outage-seconds",
+        type=float,
+        default=5.0,
+        help="Seconds to pause Redis/Postgres during their fault injection.",
+    )
+    ap.add_argument(
+        "--exercise-drain",
+        action="store_true",
+        help="Prove /ops/drain stops split-topology workers from leasing new runs.",
+    )
+    ap.add_argument(
+        "--report-json",
+        default="",
+        help="Optional path for machine-readable fault timings and invariant evidence.",
+    )
     ap.add_argument("--settle-seconds", type=float, default=180.0)
     ap.add_argument(
         "--ready-timeout",
@@ -165,29 +186,131 @@ async def make_workflow(client: httpx.AsyncClient, *, sandbox: bool) -> str:
 
 
 async def start_run(client: httpx.AsyncClient, wf_id: str, *, sandbox: bool) -> str | None:
-    r = await client.post(f"/workflows/{wf_id}/run", json=run_request_body(sandbox=sandbox))
-    if r.status_code >= 400:
-        print(f"  start rejected ({r.status_code}): {r.text[:120]}")
-        return None
-    body = r.json()
-    return body["run_id"] if "run_id" in body else body.get("id")
+    last_error = "not attempted"
+    for attempt in range(1, 6):
+        try:
+            r = await client.post(
+                f"/workflows/{wf_id}/run", json=run_request_body(sandbox=sandbox)
+            )
+            if r.status_code < 400:
+                body = r.json()
+                return body["run_id"] if "run_id" in body else body.get("id")
+            last_error = f"HTTP {r.status_code}: {r.text[:120]}"
+            if r.status_code < 500:
+                break
+        except httpx.HTTPError as exc:
+            last_error = str(exc)
+        if attempt < 5:
+            await asyncio.sleep(min(float(attempt), 3.0))
+    print(f"  start rejected after retries: {last_error}")
+    return None
 
 
 async def wait_for_api(client: httpx.AsyncClient, timeout_seconds: float) -> None:
+    await wait_for_endpoint(client, "/health/live", timeout_seconds)
+
+
+async def wait_for_endpoint(
+    client: httpx.AsyncClient, path: str, timeout_seconds: float
+) -> float:
+    started_at = time.monotonic()
     deadline = time.monotonic() + timeout_seconds
     last_error = "not attempted"
     while time.monotonic() < deadline:
         try:
-            r = await client.get("/health/live")
+            r = await client.get(path)
             if r.status_code == 200:
-                return
-            last_error = f"/health/live returned {r.status_code}"
+                return time.monotonic() - started_at
+            last_error = f"{path} returned {r.status_code}"
         except httpx.HTTPError as exc:
             last_error = str(exc)
         await asyncio.sleep(2)
     raise RuntimeError(
-        f"API did not become live within {timeout_seconds}s ({last_error})"
+        f"{path} did not become healthy within {timeout_seconds}s ({last_error})"
     )
+
+
+def _docker(*args: str) -> None:
+    subprocess.run(
+        ["docker", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+async def restart_container(
+    client: httpx.AsyncClient,
+    container: str,
+    *,
+    wait_for_api_health: bool,
+    ready_timeout: float,
+) -> float:
+    started_at = time.monotonic()
+    await asyncio.to_thread(_docker, "restart", container)
+    if wait_for_api_health:
+        await wait_for_endpoint(client, "/health/ready", ready_timeout)
+    return time.monotonic() - started_at
+
+
+async def interrupt_dependency(
+    client: httpx.AsyncClient,
+    container: str,
+    *,
+    outage_seconds: float,
+    ready_timeout: float,
+) -> float:
+    started_at = time.monotonic()
+    await asyncio.to_thread(_docker, "pause", container)
+    try:
+        await asyncio.sleep(max(0.1, outage_seconds))
+    finally:
+        await asyncio.to_thread(_docker, "unpause", container)
+    await wait_for_endpoint(client, "/health/ready", ready_timeout)
+    return time.monotonic() - started_at
+
+
+async def exercise_cluster_drain(
+    client: httpx.AsyncClient,
+    wf_id: str,
+    *,
+    sandbox: bool,
+) -> tuple[str | None, str | None, float]:
+    started_at = time.monotonic()
+    response = await client.post("/ops/drain", json={"draining": True})
+    response.raise_for_status()
+    violation: str | None = None
+    run_id: str | None = None
+    try:
+        # Let every worker observe the shared state before submitting the probe.
+        await asyncio.sleep(2.0)
+        run_id = await start_run(client, wf_id, sandbox=sandbox)
+        if run_id is None:
+            violation = "DRAIN violated: probe run could not be submitted"
+        else:
+            await asyncio.sleep(2.0)
+            probe = await client.get(f"/runs/{run_id}")
+            probe.raise_for_status()
+            status = str(probe.json().get("status") or "")
+            if status not in {"queued", "waiting"}:
+                violation = (
+                    "DRAIN violated: worker leased probe while cluster drain was active "
+                    f"(status={status!r})"
+                )
+    finally:
+        response = await client.post("/ops/drain", json={"draining": False})
+        response.raise_for_status()
+    return run_id, violation, time.monotonic() - started_at
+
+
+def write_report(path: str, report: dict) -> None:
+    if not path:
+        return
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(target)
 
 
 async def assert_sandbox_mode(client: httpx.AsyncClient, expected_mode: str) -> None:
@@ -220,6 +343,8 @@ async def main() -> int:
 
         run_ids: list[str] = []
         cancelled: set[str] = set()
+        faults: dict[str, float] = {}
+        violations: list[str] = []
         cancel_every = max(int(1 / max(args.cancel_ratio, 0.01)), 1)
         for i in range(args.runs):
             rid = await start_run(client, wf_id, sandbox=args.sandbox)
@@ -228,11 +353,54 @@ async def main() -> int:
                 if args.cancel_ratio > 0 and i % cancel_every == 0:
                     await client.post(f"/runs/{rid}/cancel")
                     cancelled.add(rid)
-            if args.kill_container and i == args.runs // 2:
+            if args.kill_container and i == max(1, args.runs // 4):
                 print(f"killing worker {args.kill_container} mid-storm")
-                subprocess.run(["docker", "kill", args.kill_container], check=False)
-                subprocess.run(["docker", "start", args.kill_container], check=False)
+                faults["worker_restart_seconds"] = await restart_container(
+                    client,
+                    args.kill_container,
+                    wait_for_api_health=False,
+                    ready_timeout=args.ready_timeout,
+                )
+            if args.interrupt_redis_container and i == max(1, args.runs * 2 // 5):
+                print(f"pausing Redis {args.interrupt_redis_container}")
+                faults["redis_recovery_seconds"] = await interrupt_dependency(
+                    client,
+                    args.interrupt_redis_container,
+                    outage_seconds=args.outage_seconds,
+                    ready_timeout=args.ready_timeout,
+                )
+            if args.interrupt_postgres_container and i == max(1, args.runs // 2):
+                print(f"pausing PostgreSQL {args.interrupt_postgres_container}")
+                faults["postgres_recovery_seconds"] = await interrupt_dependency(
+                    client,
+                    args.interrupt_postgres_container,
+                    outage_seconds=args.outage_seconds,
+                    ready_timeout=args.ready_timeout,
+                )
+            if args.restart_api_container and i == max(1, args.runs * 3 // 5):
+                print(f"restarting API {args.restart_api_container}")
+                faults["api_recovery_seconds"] = await restart_container(
+                    client,
+                    args.restart_api_container,
+                    wait_for_api_health=True,
+                    ready_timeout=args.ready_timeout,
+                )
             await asyncio.sleep(0.05)
+
+        if len(run_ids) != args.runs:
+            violations.append(
+                f"I0 violated: requested {args.runs} runs but only {len(run_ids)} were accepted"
+            )
+        if args.exercise_drain:
+            print("exercising cluster-wide graceful drain")
+            probe_id, drain_violation, elapsed = await exercise_cluster_drain(
+                client, wf_id, sandbox=args.sandbox
+            )
+            faults["drain_probe_seconds"] = elapsed
+            if probe_id:
+                run_ids.append(probe_id)
+            if drain_violation:
+                violations.append(drain_violation)
 
         print(
             f"storm done ({len(run_ids)} started, "
@@ -255,7 +423,6 @@ async def main() -> int:
             if pending:
                 await asyncio.sleep(3)
 
-        violations: list[str] = []
         if pending:
             violations.append(
                 f"I1 violated: {len(pending)} run(s) not terminal after "
@@ -291,12 +458,22 @@ async def main() -> int:
                 "PERF violated: p95 run-completion latency "
                 f"{summary['p95']:.3f}s exceeded {args.max_p95_seconds:.3f}s"
             )
+        report = {
+            "cancel_requests": len(cancelled),
+            "faults": faults,
+            "latency_seconds": summary,
+            "requested_runs": args.runs,
+            "started_runs": len(run_ids),
+            "status_counts": by_status,
+            "violations": violations,
+        }
+        write_report(args.report_json, report)
         if violations:
             print("\nSOAK FAILED:")
             for v in violations:
                 print(f"  - {v}")
             return 1
-        print("\nSOAK PASSED: all runs terminal, queue drained, worker kill survived.")
+        print("\nSOAK PASSED: all runs terminal, queue drained, and injected faults recovered.")
         return 0
 
 

@@ -239,6 +239,12 @@ async def _bounded(coro, timeout: float = 5.0) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # The core validator hook is replaceable by embedders. Reassert the API's
+    # metrics observer at every process startup so validation blocks cannot
+    # silently disappear after a temporary hook or module reload.
+    from app.services.metrics import install_code_validation_hook
+
+    install_code_validation_hook()
     # Split-topology misconfigurations abort startup (program A1) — a control
     # plane that silently executed runs, or used in-process events, would
     # corrupt the worker topology rather than degrade it.

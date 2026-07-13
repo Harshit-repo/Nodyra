@@ -222,20 +222,36 @@ export function ReadinessPanel() {
   }
 
   const items = readinessItems(status);
-  const ready = items.length === 0;
+  const isProduction = status.mode === "production";
+  const ready = isProduction && items.length === 0;
+  const postureClass = !isProduction ? "is-local" : ready ? "is-ready" : "is-warning";
 
   return (
     <ReadinessCardFrame>
-      <div className={`nodyra-readiness-state${ready ? " is-ready" : " is-warning"}`}>
+      <div className={`nodyra-readiness-state ${postureClass}`}>
         <span className="nodyra-readiness-state-icon" aria-hidden="true">
-          {ready ? <CheckCircle size={24} /> : <WarningCircle size={24} />}
+          {!isProduction ? (
+            <Info size={24} />
+          ) : ready ? (
+            <CheckCircle size={24} />
+          ) : (
+            <WarningCircle size={24} />
+          )}
         </span>
         <div>
-          <strong>{ready ? "Production-ready" : `${items.length} readiness issue${items.length === 1 ? "" : "s"}`}</strong>
+          <strong>
+            {!isProduction
+              ? "Local development mode"
+              : ready
+                ? "Production-ready"
+                : `${items.length} readiness issue${items.length === 1 ? "" : "s"}`}
+          </strong>
           <span>
-            {ready
-              ? "No production runtime warnings are currently reported."
-              : "Resolve these settings before relying on this deployment for production traffic."}
+            {!isProduction
+              ? "This workspace is optimized for local use. Switch to production mode to run the full readiness assessment."
+              : ready
+                ? "The active production posture reports no readiness issues."
+                : "Resolve these settings before relying on this deployment for production traffic."}
           </span>
         </div>
       </div>
@@ -256,7 +272,7 @@ export function ReadinessPanel() {
         </div>
       )}
 
-      {!ready && (
+      {items.length > 0 && (
         <ul className="nodyra-readiness-list" aria-label="Production readiness warnings">
           {items.map((item) => (
             <li key={item.id} className="nodyra-readiness-item">

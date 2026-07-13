@@ -644,6 +644,11 @@
   background: color-mix(in srgb, var(--color-warning-bg) 50%, var(--bg));
 }
 
+.nodyra-readiness-state.is-local {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  background: color-mix(in srgb, var(--accent-glow) 42%, var(--bg));
+}
+
 .nodyra-readiness-state-icon,
 .nodyra-readiness-item-icon {
   display: grid;
@@ -654,6 +659,10 @@
 
 .nodyra-readiness-state.is-ready .nodyra-readiness-state-icon {
   color: var(--color-success);
+}
+
+.nodyra-readiness-state.is-local .nodyra-readiness-state-icon {
+  color: var(--accent);
 }
 
 .nodyra-readiness-state strong,

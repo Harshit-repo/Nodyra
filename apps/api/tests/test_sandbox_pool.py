@@ -157,10 +157,129 @@ def test_run_timeout_marks_dead(monkeypatch):
         async def on_event(e):
             pass
 
-        with pytest.raises(RuntimeError, match="read failed"):
+        with pytest.raises(RuntimeError, match="exceeded overall timeout"):
             await worker.run(
                 "run1", graph={}, cache=None, targets=None, workflow_modules=[], on_event=on_event
             )
+        return worker
+
+    worker = asyncio.run(scenario())
+    assert worker.dead
+
+
+def test_run_heartbeat_is_liveness_not_forwarded():
+    client = FakeDockerClient()
+
+    async def scenario():
+        worker = await _spawned_worker(client)
+        sock = client.containers_made[0].sock._sock
+        sock.feed({"type": "heartbeat", "request_id": "run1", "monotonic_ms": 1})
+        sock.feed({"type": "result", "status": "success"})
+        events = []
+
+        async def on_event(event):
+            events.append(event)
+
+        status = await worker.run(
+            "run1", graph={}, cache=None, targets=None, workflow_modules=[], on_event=on_event
+        )
+        return status, events, worker
+
+    status, events, worker = asyncio.run(scenario())
+    assert status == "success"
+    assert events == []
+    assert not worker.dead
+
+
+def test_run_missing_heartbeat_fails_fast_and_marks_dead(monkeypatch):
+    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 0.05)
+    monkeypatch.setattr(settings, "runtime_no_progress_timeout_seconds", 0.0)
+    client = FakeDockerClient()
+
+    async def scenario():
+        worker = await _spawned_worker(client)
+
+        async def on_event(_event):
+            pass
+
+        with pytest.raises(RuntimeError, match="heartbeat lost"):
+            await worker.run(
+                "run1",
+                graph={},
+                cache=None,
+                targets=None,
+                workflow_modules=[],
+                on_event=on_event,
+                run_timeout=1.0,
+            )
+        return worker
+
+    worker = asyncio.run(scenario())
+    assert worker.dead
+
+
+def test_run_heartbeats_do_not_mask_no_progress(monkeypatch):
+    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "runtime_no_progress_timeout_seconds", 0.05)
+    client = FakeDockerClient()
+
+    async def scenario():
+        worker = await _spawned_worker(client)
+        sock = client.containers_made[0].sock._sock
+
+        async def delayed_heartbeat():
+            await asyncio.sleep(0.06)
+            sock.feed({"type": "heartbeat", "request_id": "run1"})
+
+        producer = asyncio.create_task(delayed_heartbeat())
+        try:
+            with pytest.raises(RuntimeError, match="no protocol progress"):
+                await worker.run(
+                    "run1",
+                    graph={},
+                    cache=None,
+                    targets=None,
+                    workflow_modules=[],
+                    on_event=lambda _event: None,
+                    run_timeout=1.0,
+                )
+        finally:
+            await asyncio.gather(producer, return_exceptions=True)
+        return worker
+
+    worker = asyncio.run(scenario())
+    assert worker.dead
+
+
+def test_run_heartbeats_do_not_mask_overall_timeout(monkeypatch):
+    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "runtime_no_progress_timeout_seconds", 0.0)
+    client = FakeDockerClient()
+
+    async def scenario():
+        worker = await _spawned_worker(client)
+        sock = client.containers_made[0].sock._sock
+
+        async def emit_heartbeats():
+            while True:
+                await asyncio.sleep(0.02)
+                sock.feed({"type": "heartbeat", "request_id": "run1"})
+
+        producer = asyncio.create_task(emit_heartbeats())
+        try:
+            with pytest.raises(RuntimeError, match="exceeded overall timeout"):
+                await worker.run(
+                    "run1",
+                    graph={},
+                    cache=None,
+                    targets=None,
+                    workflow_modules=[],
+                    on_event=lambda _event: None,
+                    run_timeout=0.1,
+                )
+        finally:
+            producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
         return worker
 
     worker = asyncio.run(scenario())

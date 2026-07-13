@@ -330,7 +330,7 @@ async def test_loop_fail_cancels_inflight_iterations_eng1():
     started: list = []
     finished: list = []
 
-    @node(name="ENG1 Slow", id="eng1_slow", registry=global_reg)
+    @node(name="ENG1 Slow", id="eng1_slow", registry=global_reg, hidden=True)
     async def eng1_slow(input=None):
         started.append(input)
         if input == "fail":
@@ -742,7 +742,7 @@ async def test_concurrent_loop_iter_outputs_do_not_bleed_into_outer_node_outputs
     from nodyra.sdk import node
     from nodyra.sdk import registry as global_reg
 
-    @node(name="E09 Key Spy", id="e09_key_spy", registry=global_reg)
+    @node(name="E09 Key Spy", id="e09_key_spy", registry=global_reg, hidden=True)
     async def e09_key_spy(input=None):
         await asyncio.sleep(0)  # yield so all iterations run concurrently
         return input * 10

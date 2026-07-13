@@ -12,12 +12,13 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
 from pydantic import ValidationError
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -4071,14 +4072,26 @@ async def _mcp_enabled_workflows(
     *,
     offset: int = 0,
     limit: int | None = None,
+    after_updated_at: datetime | None = None,
+    after_id: str | None = None,
 ) -> list[Workflow]:
     # No version eager-load: descriptors only need the mcp_* columns, and the
     # call path re-loads the chosen workflow (with versions) by id anyway.
-    stmt = (
-        select(Workflow)
-        .where(Workflow.mcp_enabled.is_(True))
-        .order_by(Workflow.updated_at.desc())
-    )
+    stmt = select(Workflow).where(Workflow.mcp_enabled.is_(True))
+    if after_updated_at is not None and after_id is not None:
+        # Keyset pagination is stable when rows are inserted or deleted between
+        # requests. ``id`` is the deterministic tie-breaker for equal database
+        # timestamps (common with SQLite and bulk imports).
+        stmt = stmt.where(
+            or_(
+                Workflow.updated_at < after_updated_at,
+                and_(
+                    Workflow.updated_at == after_updated_at,
+                    Workflow.id > after_id,
+                ),
+            )
+        )
+    stmt = stmt.order_by(Workflow.updated_at.desc(), Workflow.id.asc())
     if offset > 0:
         stmt = stmt.offset(offset)
     if limit is not None:
@@ -4133,6 +4146,72 @@ async def list_workflow_tool_descriptors(
             }
         )
     return out
+
+
+async def list_workflow_tool_descriptor_page(
+    session: AsyncSession,
+    *,
+    limit: int,
+    offset: int = 0,
+    after_updated_at: datetime | None = None,
+    after_id: str | None = None,
+) -> tuple[list[dict], tuple[datetime, str] | None, bool]:
+    """Return one deterministic, mutation-safe dynamic-tool page.
+
+    ``offset`` exists only to consume legacy cursors. Every cursor emitted by
+    the current router carries the final row's ``(updated_at, id)`` keyset, so
+    subsequent pages do not drift when another workflow is inserted or removed.
+    Name collisions are rejected when MCP exposure is enabled; the defensive
+    descriptor filter remains for legacy/corrupt rows.
+    """
+    if limit <= 0:
+        return [], None, False
+    rows = await _mcp_enabled_workflows(
+        session,
+        offset=offset,
+        limit=limit + 1,
+        after_updated_at=after_updated_at,
+        after_id=after_id,
+    )
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+    static_names = {tool.name for tool in STATIC_TOOLS}
+    seen: set[str] = set()
+    tools: list[dict] = []
+    for workflow in page_rows:
+        name = workflow_tool_name(workflow)
+        if name in static_names or name in seen:
+            logger.error(
+                "MCP tool name invariant violated: '%s' (workflow %s) is not "
+                "unique; disable or rename the conflicting workflow",
+                name,
+                workflow.id,
+            )
+            continue
+        seen.add(name)
+        schema = workflow.mcp_parameters_schema
+        tools.append(
+            {
+                "name": name,
+                "description": workflow.mcp_description
+                or f"Run the Nodyra workflow '{workflow.name}'.",
+                "inputSchema": schema
+                if isinstance(schema, dict) and schema
+                else _PERMISSIVE_SCHEMA,
+                "outputSchema": {"type": "object", "additionalProperties": True},
+                "annotations": {
+                    "readOnlyHint": False,
+                    "destructiveHint": False,
+                    "idempotentHint": False,
+                    "openWorldHint": True,
+                },
+                "execution": {"taskSupport": "forbidden"},
+            }
+        )
+    anchor = (
+        (page_rows[-1].updated_at, page_rows[-1].id) if page_rows else None
+    )
+    return tools, anchor, has_more
 
 
 async def call_workflow_tool(

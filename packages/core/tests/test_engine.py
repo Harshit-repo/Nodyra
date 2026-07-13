@@ -563,6 +563,8 @@ def test_worse_status_ranking() -> None:
     assert _worse_status(RunStatus.error, RunStatus.waiting) is RunStatus.error
     assert _worse_status(RunStatus.success, RunStatus.timed_out) is RunStatus.timed_out
     assert _worse_status(RunStatus.timed_out, RunStatus.waiting) is RunStatus.timed_out
+    assert _worse_status(RunStatus.error, RunStatus.timed_out) is RunStatus.error
+    assert _worse_status(RunStatus.timed_out, RunStatus.error) is RunStatus.error
     assert _worse_status(RunStatus.error, RunStatus.success) is RunStatus.error
     assert _worse_status(RunStatus.success, RunStatus.success) is RunStatus.success
 

@@ -43,9 +43,14 @@ async def test_metrics_exposes_prometheus_text(client: AsyncClient) -> None:
 
 
 async def test_metrics_exposes_code_validation_blocks(client: AsyncClient) -> None:
-    from app.services import metrics as _metrics  # noqa: F401 - registers the hook
+    from app.services import metrics as _metrics
     from nodyra.expr import _CodeValidator
 
+    # Warm the database-gauge cache first. Lightweight safety counters must
+    # still be live on the immediately following scrape.
+    warm = await client.get("/metrics")
+    assert warm.status_code == 200
+    _metrics.install_code_validation_hook()
     try:
         _CodeValidator().visit(ast.parse("import os\noutput = 1", mode="exec"))
     except ValueError:
@@ -243,6 +248,21 @@ async def test_drain_toggle_round_trips(client: AsyncClient) -> None:
         assert app_settings.queue_drain is False
     finally:
         app_settings.queue_drain = False
+
+
+async def test_drain_write_failure_returns_service_unavailable(
+    client: AsyncClient, monkeypatch
+) -> None:
+    from app.routers import ops
+
+    async def fail_to_propagate(_draining: bool) -> bool:
+        raise ConnectionError("redis unavailable")
+
+    monkeypatch.setattr(ops, "set_draining", fail_to_propagate)
+    response = await client.post("/ops/drain", json={"draining": True})
+
+    assert response.status_code == 503
+    assert "execution workers" in response.json()["detail"]
 
 
 async def _seed_dead_letter(run_ids: list[str]) -> None:

@@ -244,10 +244,21 @@ def _record_code_validation_blocked(reason: str, target: str) -> None:
     code_validation_blocked_total.inc(reason=reason, target=target)
 
 
-try:
+def install_code_validation_hook() -> None:
+    """Install (or restore) the API metrics hook on the core validator.
+
+    The core setter is intentionally replaceable for embedders and tests. API
+    startup calls this idempotently so an earlier temporary hook cannot leave
+    production validation rejections unobserved.
+    """
+
     from nodyra.expr import set_code_validation_blocked_hook
 
     set_code_validation_blocked_hook(_record_code_validation_blocked)
+
+
+try:
+    install_code_validation_hook()
 except Exception:
     # Metrics are optional in non-API import contexts; never break startup.
     pass

@@ -6,6 +6,7 @@ and deterministic.
 """
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass, field
 
@@ -13,7 +14,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.config import settings
-from app.services.runtime_pool import RuntimePool, _EnvPool, _RssBudget
+from app.services.runtime_pool import RuntimePool, _EnvPool, _RssBudget, _RuntimeProcess
 
 
 @dataclass(eq=False)  # default identity-based hash so the pool's set works
@@ -31,6 +32,111 @@ class _FakeProcess:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class _ProtocolStdin:
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+
+    def write(self, payload: bytes) -> None:
+        self.writes.append(payload)
+
+    async def drain(self) -> None:
+        pass
+
+
+class _ProtocolStdout:
+    def __init__(self) -> None:
+        self.lines: asyncio.Queue[bytes] = asyncio.Queue()
+
+    async def readline(self) -> bytes:
+        return await self.lines.get()
+
+    def feed(self, event: dict) -> None:
+        self.lines.put_nowait(json.dumps(event).encode() + b"\n")
+
+
+class _ProtocolProcess:
+    def __init__(self) -> None:
+        self.returncode = None
+        self.stdin = _ProtocolStdin()
+        self.stdout = _ProtocolStdout()
+        self.stderr = None
+        self.terminated = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = -15
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        return int(self.returncode or 0)
+
+
+async def _protocol_request_id(process: _ProtocolProcess) -> str:
+    for _ in range(100):
+        if process.stdin.writes:
+            return str(json.loads(process.stdin.writes[0])["request_id"])
+        await asyncio.sleep(0.001)
+    raise AssertionError("runtime host did not write a run request")
+
+
+@pytest.mark.asyncio
+async def test_runtime_process_consumes_heartbeat_without_forwarding(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "runtime_no_progress_timeout_seconds", 1.0)
+    process = _ProtocolProcess()
+    runtime = _RuntimeProcess(process, env_id=None)
+    events: list[dict] = []
+
+    task = asyncio.create_task(
+        runtime.run("run-1", {}, None, None, events.append)
+    )
+    request_id = await _protocol_request_id(process)
+    process.stdout.feed({"type": "heartbeat", "request_id": request_id})
+    process.stdout.feed(
+        {"type": "result", "request_id": request_id, "status": "success"}
+    )
+
+    assert await task == "success"
+    assert events == []
+    assert not runtime.dead
+
+
+@pytest.mark.asyncio
+async def test_runtime_process_missing_heartbeat_is_closed(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 0.05)
+    monkeypatch.setattr(settings, "runtime_no_progress_timeout_seconds", 0.0)
+    process = _ProtocolProcess()
+    runtime = _RuntimeProcess(process, env_id=None)
+
+    with pytest.raises(RuntimeError, match="heartbeat lost"):
+        await runtime.run("run-1", {}, None, None, lambda _event: None)
+
+    assert runtime.dead
+    assert process.terminated
+
+
+@pytest.mark.asyncio
+async def test_runtime_process_heartbeats_do_not_mask_no_progress(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "runtime_no_progress_timeout_seconds", 0.05)
+    process = _ProtocolProcess()
+    runtime = _RuntimeProcess(process, env_id=None)
+
+    task = asyncio.create_task(
+        runtime.run("run-1", {}, None, None, lambda _event: None)
+    )
+    request_id = await _protocol_request_id(process)
+    await asyncio.sleep(0.06)
+    process.stdout.feed({"type": "heartbeat", "request_id": request_id})
+
+    with pytest.raises(RuntimeError, match="no protocol progress"):
+        await task
+    assert runtime.dead
+    assert process.terminated
 
 
 @pytest.mark.asyncio

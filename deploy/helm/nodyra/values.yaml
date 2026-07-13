@@ -37,6 +37,14 @@ worker:
       cpu: 2000m
       memory: 4Gi
 
+runtime:
+  # Runtime-to-host supervision. Timeout must be greater than interval.
+  heartbeatIntervalSeconds: 15
+  heartbeatTimeoutSeconds: 45
+  # Live runtimes emitting only heartbeats are retired after this bound.
+  # Set 0 to disable for intentionally long single-node workloads.
+  noProgressTimeoutSeconds: 900
+
 web:
   replicas: 1
   port: 5173

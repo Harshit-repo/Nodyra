@@ -34,6 +34,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.models import Run, RunnerPool, RunQueueEntry
 from app.services import dispatcher_health
+from app.services.drain_state import is_draining
 
 logger = logging.getLogger(__name__)
 
@@ -881,7 +882,7 @@ async def run_queue_dispatch_loop() -> None:  # pragma: no cover
                 # Drain mode: keep requeueing expired leases and let in-flight
                 # tasks finish, but stop pulling new work so the process can
                 # exit cleanly without producing avoidable cancelled runs.
-                if settings.queue_drain:
+                if await is_draining():
                     continue
 
                 # Bound how many LOCAL (in-process pool) runs we lease this

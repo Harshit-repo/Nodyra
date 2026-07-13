@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -36,3 +35,16 @@ def test_sandbox_compose_uses_socket_proxy_not_raw_worker_socket() -> None:
     assert 'CONTAINERS: "1"' in proxy
     assert 'IMAGES: "1"' in proxy
     assert 'NETWORKS: "1"' in proxy
+
+
+def test_base_compose_publishes_api_and_web_on_loopback_by_default() -> None:
+    base = (REPO_ROOT / "deploy" / "docker-compose.yml").read_text()
+
+    api = _service_block(base, "api")
+    web = _service_block(base, "web")
+
+    expected_host = "${NODYRA_BIND_HOST:-127.0.0.1}"
+    assert f'"{expected_host}:8000:8000"' in api
+    assert f'"{expected_host}:5173:5173"' in web
+    assert '"8000:8000"' not in api
+    assert '"5173:5173"' not in web

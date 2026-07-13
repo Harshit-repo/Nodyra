@@ -83,6 +83,9 @@ _PROTOCOL_OUT = sys.stdout
 _PROC_START = time.monotonic()
 
 _pending_callbacks: dict[str, asyncio.Future] = {}
+# The protocol processes one run at a time. Keep the active request id on
+# host callbacks so receivers can discard stale messages after cancellation.
+_active_request_id = ""
 
 
 def _runtime_default_timeouts() -> dict[str, float]:
@@ -150,7 +153,14 @@ async def _run_subworkflow_via_host(call: SubworkflowCall) -> Any:
     callback_id = uuid.uuid4().hex
     future: asyncio.Future = asyncio.get_event_loop().create_future()
     _pending_callbacks[callback_id] = future
-    _emit({"type": "call_workflow", "callback_id": callback_id, **call.to_payload()})
+    _emit(
+        {
+            "type": "call_workflow",
+            "callback_id": callback_id,
+            "request_id": _active_request_id,
+            **call.to_payload(),
+        }
+    )
     try:
         return await future
     finally:
@@ -158,8 +168,10 @@ async def _run_subworkflow_via_host(call: SubworkflowCall) -> Any:
 
 
 async def _handle_run(request: dict[str, Any]) -> None:
+    global _active_request_id
     request_id = request.get("request_id", "")
     run_id = str(request.get("run_id") or request_id)
+    _active_request_id = request_id
 
     async def emit_heartbeats() -> None:
         while True:
@@ -286,6 +298,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
         org_run_limits.reset(limits_token)
         for module_id in loaded_module_ids:
             unregister_module(module_id, registry)
+        _active_request_id = ""
 
 
 def _resolve_callback(message: dict[str, Any]) -> bool:

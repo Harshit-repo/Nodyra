@@ -19,9 +19,6 @@ from app.services.mcp_client import (
     mcp_tool_to_node_manifest,
 )
 
-pytestmark = pytest.mark.asyncio
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -310,6 +307,68 @@ class TestLoadConnWithSecret:
 # ---------------------------------------------------------------------------
 # Integration tests via API (require DB + auth context)
 # ---------------------------------------------------------------------------
+
+
+async def test_list_connections_allows_auth_disabled_local_workspace(client):
+    response = await client.get("/mcp-connections")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_list_connections_requires_identity_when_auth_enabled(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "auth_required", True)
+
+    response = await client.get("/mcp-connections")
+
+    assert response.status_code == 401
+
+
+async def test_list_connections_rejects_viewer_when_auth_enabled(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "auth_required", True)
+    owner = (
+        await client.post(
+            "/auth/register",
+            json={
+                "name": "Owner",
+                "company": "Nodyra",
+                "email": "mcp-rbac-owner@nodyra.test",
+                "password": "supersecret",
+            },
+        )
+    ).json()
+    owner_headers = {"Authorization": f"Bearer {owner['token']}"}
+    created = await client.post(
+        "/auth/users",
+        headers=owner_headers,
+        json={
+            "name": "Viewer",
+            "email": "mcp-rbac-viewer@nodyra.test",
+            "password": "supersecret",
+            "role": "viewer",
+        },
+    )
+    assert created.status_code == 201
+    viewer = (
+        await client.post(
+            "/auth/login",
+            json={
+                "email": "mcp-rbac-viewer@nodyra.test",
+                "password": "supersecret",
+            },
+        )
+    ).json()
+
+    response = await client.get(
+        "/mcp-connections",
+        headers={"Authorization": f"Bearer {viewer['token']}"},
+    )
+
+    assert response.status_code == 403
 
 
 async def test_list_connections_uses_default_org_in_single_tenant(client):

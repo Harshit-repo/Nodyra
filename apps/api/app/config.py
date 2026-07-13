@@ -275,6 +275,17 @@ class Settings(BaseSettings):
     # the cap for long-running data jobs (bounded then only by
     # ``workflow_run_timeout_seconds`` / the run deadline).
     code_node_timeout_seconds: float = 600.0
+    # Runtime protocol liveness. The runtime emits heartbeats at ``interval``;
+    # the subprocess and sandbox hosts retire it after ``timeout`` without any
+    # valid event for the active request. Heartbeats prove transport/event-loop
+    # liveness but do not count as workflow progress, which has its own bound.
+    runtime_heartbeat_interval_seconds: float = Field(default=15.0, gt=0.0, le=300.0)
+    runtime_heartbeat_timeout_seconds: float = Field(default=45.0, gt=0.0, le=3600.0)
+    # 0 disables no-progress detection. Keep this above the default Code-node
+    # timeout so legitimate long-running nodes fail at their more specific cap.
+    runtime_no_progress_timeout_seconds: float = Field(
+        default=900.0, ge=0.0, le=86_400.0
+    )
     # Multi-tenancy master switch. Off (default): single-tenant behaviour,
     # zero filtering, the existing suite must pass unchanged. On: every
     # request resolves an organization (X-Org-Id header validated against
@@ -506,6 +517,15 @@ class Settings(BaseSettings):
             and self.sandbox_max_runs_per_container <= 0
         ):
             object.__setattr__(self, "sandbox_max_runs_per_container", 50)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_runtime_liveness(self) -> "Settings":
+        if self.runtime_heartbeat_timeout_seconds <= self.runtime_heartbeat_interval_seconds:
+            raise ValueError(
+                "runtime_heartbeat_timeout_seconds must be greater than "
+                "runtime_heartbeat_interval_seconds"
+            )
         return self
 
     @property

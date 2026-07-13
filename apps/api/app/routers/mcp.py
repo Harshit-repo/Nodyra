@@ -13,8 +13,12 @@ auth failures are HTTP 401.
 """
 
 import base64
+import binascii
+import json
 import logging
 import uuid
+from dataclasses import dataclass
+from datetime import datetime
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -45,9 +49,8 @@ from app.mcp.tools import (
     STATIC_TOOLS,
     McpToolError,
     call_workflow_tool,
-    count_workflow_tool_descriptors,
     get_tool,
-    list_workflow_tool_descriptors,
+    list_workflow_tool_descriptor_page,
     validate_tool_arguments,
 )
 from app.models import User
@@ -66,6 +69,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["mcp"])
 
 TOOL_PAGE_SIZE = 100
+MAX_CURSOR_OFFSET = 100_000
+MAX_CURSOR_LENGTH = 512
+
+
+@dataclass(frozen=True)
+class _ToolCursorState:
+    static_offset: int = 0
+    legacy_dynamic_offset: int = 0
+    after_updated_at: datetime | None = None
+    after_id: str | None = None
 
 
 def _cursor(offset: int) -> str:
@@ -77,15 +90,74 @@ def _cursor_offset(value: object) -> int:
         return 0
     if not isinstance(value, str):
         raise ValueError("cursor must be a string")
+    if len(value) > MAX_CURSOR_LENGTH:
+        raise ValueError("Invalid pagination cursor")
     try:
         padded = value + "=" * (-len(value) % 4)
-        decoded = base64.urlsafe_b64decode(padded).decode()
+        decoded = base64.b64decode(padded, altchars=b"-_", validate=True).decode()
         prefix, raw = decoded.split(":", 1)
         offset = int(raw)
-        if prefix != "nodyra" or offset < 0:
+        if prefix != "nodyra" or not 0 <= offset <= MAX_CURSOR_OFFSET:
             raise ValueError
         return offset
-    except (ValueError, UnicodeError) as exc:
+    except (binascii.Error, ValueError, UnicodeError) as exc:
+        raise ValueError("Invalid pagination cursor") from exc
+
+
+def _tool_cursor(
+    *,
+    static_offset: int,
+    anchor: tuple[datetime, str] | None,
+) -> str:
+    payload: dict[str, object] = {"v": 2, "s": static_offset}
+    if anchor is not None:
+        payload["a"] = [anchor[0].isoformat(), anchor[1]]
+    raw = "nodyra-tools:" + json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def _tool_cursor_state(value: object, *, static_count: int) -> _ToolCursorState:
+    if value in (None, ""):
+        return _ToolCursorState()
+    if not isinstance(value, str) or len(value) > MAX_CURSOR_LENGTH:
+        raise ValueError("Invalid pagination cursor")
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = base64.b64decode(padded, altchars=b"-_", validate=True).decode()
+        if not decoded.startswith("nodyra-tools:"):
+            # Existing clients may still hold the v1 combined offset cursor.
+            offset = _cursor_offset(value)
+            return _ToolCursorState(
+                static_offset=min(offset, static_count),
+                legacy_dynamic_offset=max(0, offset - static_count),
+            )
+        payload = json.loads(decoded.removeprefix("nodyra-tools:"))
+        if not isinstance(payload, dict) or payload.get("v") != 2:
+            raise ValueError
+        static_offset = payload.get("s")
+        if (
+            not isinstance(static_offset, int)
+            or isinstance(static_offset, bool)
+            or not 0 <= static_offset <= static_count
+        ):
+            raise ValueError
+        anchor_value = payload.get("a")
+        if anchor_value is None:
+            return _ToolCursorState(static_offset=static_offset)
+        if (
+            not isinstance(anchor_value, list)
+            or len(anchor_value) != 2
+            or not all(isinstance(item, str) for item in anchor_value)
+            or not 1 <= len(anchor_value[1]) <= 64
+        ):
+            raise ValueError
+        anchor_time = datetime.fromisoformat(anchor_value[0])
+        return _ToolCursorState(
+            static_offset=static_offset,
+            after_updated_at=anchor_time,
+            after_id=anchor_value[1],
+        )
+    except (binascii.Error, json.JSONDecodeError, ValueError, UnicodeError) as exc:
         raise ValueError("Invalid pagination cursor") from exc
 
 
@@ -208,27 +280,50 @@ async def _dispatch_single(
     if method == "ping":
         return jsonrpc_result(req_id, {})
     if method == "tools/list":
-        try:
-            offset = _cursor_offset(params.get("cursor"))
-        except ValueError as exc:
-            return jsonrpc_error(req_id, INVALID_PARAMS, str(exc))
         static_tools = [tool.descriptor() for tool in STATIC_TOOLS]
         static_count = len(static_tools)
-        tools = static_tools[offset:offset + TOOL_PAGE_SIZE]
+        try:
+            cursor_state = _tool_cursor_state(
+                params.get("cursor"), static_count=static_count
+            )
+        except ValueError as exc:
+            return jsonrpc_error(req_id, INVALID_PARAMS, str(exc))
+        tools = static_tools[
+            cursor_state.static_offset : cursor_state.static_offset + TOOL_PAGE_SIZE
+        ]
         remaining = TOOL_PAGE_SIZE - len(tools)
-        workflow_offset = max(0, offset - static_count)
+        next_static_offset = cursor_state.static_offset + len(tools)
+        dynamic_anchor: tuple[datetime, str] | None = None
+        dynamic_has_more = False
         if remaining > 0:
-            tools.extend(
-                await list_workflow_tool_descriptors(
+            dynamic_tools, dynamic_anchor, dynamic_has_more = (
+                await list_workflow_tool_descriptor_page(
                     session,
-                    offset=workflow_offset,
+                    offset=cursor_state.legacy_dynamic_offset,
+                    after_updated_at=cursor_state.after_updated_at,
+                    after_id=cursor_state.after_id,
                     limit=remaining,
                 )
             )
-        total = static_count + await count_workflow_tool_descriptors(session)
+            tools.extend(dynamic_tools)
+        elif next_static_offset >= static_count:
+            # Future releases may grow the static registry to an exact page
+            # boundary. Probe without materializing a page so dynamic tools do
+            # not become unreachable in that case.
+            dynamic_probe, _, _ = await list_workflow_tool_descriptor_page(
+                session,
+                after_updated_at=cursor_state.after_updated_at,
+                after_id=cursor_state.after_id,
+                limit=1,
+            )
+            dynamic_has_more = bool(dynamic_probe)
         payload: dict = {"tools": tools}
-        if offset + TOOL_PAGE_SIZE < total:
-            payload["nextCursor"] = _cursor(offset + TOOL_PAGE_SIZE)
+        static_has_more = next_static_offset < static_count
+        if static_has_more or dynamic_has_more:
+            payload["nextCursor"] = _tool_cursor(
+                static_offset=next_static_offset,
+                anchor=dynamic_anchor,
+            )
         return jsonrpc_result(req_id, payload)
     if method == "tools/call":
         name = str(params.get("name") or "")

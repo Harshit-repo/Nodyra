@@ -12,7 +12,13 @@ from nodyra.sdk import NodeRegistry, node
 from nodyra.sdk import registry as global_registry
 
 
-@node(name="StreamBody", id="stream_body_test", inputs=["item"], registry=global_registry)
+@node(
+    name="StreamBody",
+    id="stream_body_test",
+    inputs=["item"],
+    registry=global_registry,
+    hidden=True,
+)
 def _stream_body_test(item: int) -> int:
     """Loop-body helper that streams one chunk per iteration (test fixture)."""
     nodyra.emit_chunk(f"i{item}")

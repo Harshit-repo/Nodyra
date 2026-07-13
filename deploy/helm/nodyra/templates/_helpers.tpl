@@ -14,6 +14,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "nodyra.env" -}}
+{{- if le (int .Values.runtime.heartbeatTimeoutSeconds) (int .Values.runtime.heartbeatIntervalSeconds) -}}
+{{- fail "runtime.heartbeatTimeoutSeconds must be greater than runtime.heartbeatIntervalSeconds" -}}
+{{- end -}}
 - name: DATABASE_URL
   value: {{ .Values.postgres.url | quote }}
 - name: REDIS_URL
@@ -56,4 +59,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
       optional: true
 - name: TRUSTED_PROXY_COUNT
   value: {{ .Values.trustedProxyCount | default 1 | quote }}
+- name: RUNTIME_HEARTBEAT_INTERVAL_SECONDS
+  value: {{ .Values.runtime.heartbeatIntervalSeconds | quote }}
+- name: RUNTIME_HEARTBEAT_TIMEOUT_SECONDS
+  value: {{ .Values.runtime.heartbeatTimeoutSeconds | quote }}
+- name: RUNTIME_NO_PROGRESS_TIMEOUT_SECONDS
+  value: {{ .Values.runtime.noProgressTimeoutSeconds | quote }}
 {{- end -}}

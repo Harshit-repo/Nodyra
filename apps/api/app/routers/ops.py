@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from app.schemas import (
 )
 from app.security import require_permission, require_role
 from app.services import queue as run_queue
+from app.services.drain_state import is_draining, set_draining
 
 # require_role (not bare current_user): 401s without a token when
 # auth_required is on, but keeps anonymous access on open (auth-off)
@@ -296,7 +297,7 @@ async def queue_capacity(
 @router.get("/ops/drain", dependencies=[_viewer_dep])
 async def drain_status() -> dict:
     """Whether the dispatch loop is currently draining (no new leases)."""
-    return {"draining": settings.queue_drain}
+    return {"draining": await is_draining()}
 
 
 @router.post(
@@ -310,8 +311,14 @@ async def set_drain(payload: DrainRequest) -> dict:
     avoidable ``cancelled`` runs (see "Production-readiness gaps" #2 in
     docs/architecture-improvement-plan.md).
     """
-    settings.queue_drain = bool(payload.draining)
-    return {"draining": settings.queue_drain}
+    try:
+        draining = await set_draining(payload.draining)
+    except Exception as exc:  # noqa: BLE001 - do not claim an unpropagated drain
+        raise HTTPException(
+            status_code=503,
+            detail="Could not propagate drain state to execution workers; retry after Redis recovers",
+        ) from exc
+    return {"draining": draining}
 
 
 @router.get(
@@ -461,24 +468,20 @@ async def replay_dead_letter(
 async def metrics(session: AsyncSession = Depends(get_session)) -> Response:
     now = time.time()
     if now - _metrics_cache["last_fetched"] < _METRICS_CACHE_TTL:
+        text = _metrics_cache["text"]
+        try:
+            from app.services.metrics import get_metrics_text
+
+            text += get_metrics_text()
+        except Exception:  # noqa: BLE001 - telemetry must stay best-effort
+            pass
         return Response(
-            content=_metrics_cache["text"],
+            content=text,
             media_type="text/plain; version=0.0.4; charset=utf-8",
         )
     counts = await _counts(session)
     queue = await run_queue.stats(session)
     queue_oldest = queue.get("oldest_queued_age_seconds")
-
-    # Merge our lightweight Prometheus metrics (HTTP, run durations, node
-    # executions) into the existing endpoint.  The module is always loaded
-    # but its gauges may be zero if no runs have executed yet.
-    extra_metrics = ""
-    try:
-        from app.services.metrics import get_metrics_text
-
-        extra_metrics = get_metrics_text()
-    except Exception:  # noqa: BLE001
-        pass
 
     lines = [
         "# HELP nodyra_workflows Total workflows.",
@@ -528,11 +531,19 @@ async def metrics(session: AsyncSession = Depends(get_session)) -> Response:
         "# TYPE nodyra_queue_draining gauge",
         f"nodyra_queue_draining {1 if settings.queue_drain else 0}",
     ]
-    text = "\n".join(lines) + "\n"
-    if extra_metrics:
-        text += extra_metrics
-    _metrics_cache["text"] = text
+    # Cache only database-backed gauges. In-process counters must be rendered
+    # on every scrape; caching the full exposition hid new security and runtime
+    # events for up to 30 seconds and made alerting observably stale.
+    base_text = "\n".join(lines) + "\n"
+    _metrics_cache["text"] = base_text
     _metrics_cache["last_fetched"] = now
+    text = base_text
+    try:
+        from app.services.metrics import get_metrics_text
+
+        text += get_metrics_text()
+    except Exception:  # noqa: BLE001 - telemetry must stay best-effort
+        pass
     return Response(
         content=text,
         media_type="text/plain; version=0.0.4; charset=utf-8",

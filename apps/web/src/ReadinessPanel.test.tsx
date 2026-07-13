@@ -37,6 +37,25 @@ afterEach(() => {
 });
 
 describe("ReadinessPanel", () => {
+  it("labels an otherwise warning-free local runtime as development mode", async () => {
+    vi.spyOn(api, "getRuntimeMode").mockResolvedValue(
+      readyStatus({
+        mode: "local",
+        database_dialect: "sqlite",
+        queue_backend: "none",
+        artifact_backend: "local",
+        otel_enabled: false,
+      }),
+    );
+
+    renderPanel();
+
+    expect(await screen.findByText("Local development mode")).toBeTruthy();
+    expect(screen.queryByText("Production-ready")).toBeNull();
+    expect(screen.queryByLabelText("Production readiness warnings")).toBeNull();
+    expect(screen.getByText(/Switch to production mode/)).toBeTruthy();
+  });
+
   it("shows a production-ready state when runtime warnings are empty", async () => {
     vi.spyOn(api, "getRuntimeMode").mockResolvedValue(readyStatus());
 

@@ -152,10 +152,18 @@ class SandboxWorker:
                 f"sandbox container {self.container.name} sent {event.get('type')!r} before ready"
             )
 
-    async def _read_event(self, loop: asyncio.AbstractEventLoop) -> dict:
+    async def _read_event(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        *,
+        deadline: float | None = None,
+    ) -> dict:
         """Next JSON event from the attach socket (skips undecodable lines)."""
         _dropped = 0
         while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                self.dead = True
+                raise RuntimeError("sandbox protocol event deadline expired")
             while b"\n" in self._buf:
                 line, self._buf = self._buf.split(b"\n", 1)
                 line = line.strip()
@@ -215,12 +223,17 @@ class SandboxWorker:
         (caller surfaces run_error); a missing ``result`` event marks the
         worker dead so the pool never reuses it."""
         loop = asyncio.get_running_loop()
-        timeout = (
+        overall_timeout = (
             run_timeout
             if (run_timeout and run_timeout > 0)
             else (settings.workflow_run_timeout_seconds or 3600.0)
         )
-        await loop.run_in_executor(None, self._raw.settimeout, timeout)
+        heartbeat_timeout = settings.runtime_heartbeat_timeout_seconds
+        no_progress_timeout = settings.runtime_no_progress_timeout_seconds
+        started_at = time.monotonic()
+        overall_deadline = started_at + overall_timeout
+        last_liveness_at = started_at
+        last_progress_at = started_at
         await self._send(
             {
                 "type": "run",
@@ -241,21 +254,59 @@ class SandboxWorker:
         clean = False
         try:
             while True:
-                event = await self._read_event(loop)
+                now = time.monotonic()
+                if now >= overall_deadline:
+                    self.dead = True
+                    raise RuntimeError(
+                        f"sandbox run {run_id!r} exceeded overall timeout of "
+                        f"{overall_timeout:g}s"
+                    )
+                heartbeat_deadline = last_liveness_at + heartbeat_timeout
+                read_deadline = min(overall_deadline, heartbeat_deadline)
+                socket_timeout = max(0.001, read_deadline - now)
+                await loop.run_in_executor(None, self._raw.settimeout, socket_timeout)
+                try:
+                    event = await self._read_event(loop, deadline=read_deadline)
+                except RuntimeError as exc:
+                    self.dead = True
+                    if time.monotonic() >= overall_deadline:
+                        raise RuntimeError(
+                            f"sandbox run {run_id!r} exceeded overall timeout of "
+                            f"{overall_timeout:g}s"
+                        ) from exc
+                    raise RuntimeError(
+                        f"sandbox runtime heartbeat lost for run {run_id!r} after "
+                        f"{heartbeat_timeout:g}s: {exc}"
+                    ) from exc
+                now = time.monotonic()
+                last_liveness_at = now
                 etype = event.get("type")
-                if etype == "call_workflow":
+                if etype == "heartbeat":
+                    if no_progress_timeout > 0 and (
+                        now - last_progress_at >= no_progress_timeout
+                    ):
+                        self.dead = True
+                        raise RuntimeError(
+                            f"sandbox run {run_id!r} made no protocol progress for "
+                            f"{no_progress_timeout:g}s while heartbeats continued"
+                        )
+                elif etype == "call_workflow":
+                    last_progress_at = now
                     task = asyncio.create_task(
                         self._handle_call_workflow(event, subworkflow_resolver, loop)
                     )
                     callbacks.add(task)
                     task.add_done_callback(callbacks.discard)
                 elif etype in _FORWARDED_EVENTS:
+                    last_progress_at = now
                     await on_event(event)
                 elif etype == "result":
+                    last_progress_at = now
                     status = str(event.get("status", "error"))
                     clean = True
                     break
                 elif etype == "error":
+                    last_progress_at = now
                     await on_event(
                         {
                             "type": "run_error",
@@ -268,8 +319,11 @@ class SandboxWorker:
             self.runs_completed += 1
             if not clean:
                 self.dead = True
-            for task in callbacks:
+            pending = [task for task in callbacks if not task.done()]
+            for task in pending:
                 task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
         return status
 
     async def _handle_call_workflow(

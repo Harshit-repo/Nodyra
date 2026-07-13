@@ -23,6 +23,17 @@ jobs:
       - run: uv sync --locked --all-packages
       - run: uv run ruff check .
       - run: uv run python scripts/check_rename.py
+      - name: Engine planning performance budgets
+        run: >-
+          uv run python scripts/benchmark_engine_planning.py
+          --output engine-planning-benchmark.json
+      - name: Upload engine planning trend artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-planning-benchmark
+          path: engine-planning-benchmark.json
+          retention-days: 30
       - name: AI builder eval (advisory)
         continue-on-error: true
         run: uv run python scripts/ai_builder_eval.py --n 10
@@ -89,6 +100,24 @@ jobs:
         run: >-
           uv run python scripts/report_flaky_tests.py
           pytest-reruns-314.log --junit pytest-results-314.xml
+
+  # The sandbox transport uses blocking socket reads through the platform
+  # executor. Keep the lifecycle suite required on Windows as well as Linux so
+  # event-loop and fake-container timing regressions cannot re-enter unnoticed.
+  sandbox-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv lock --check
+      - run: uv sync --locked --all-packages
+      - name: Sandbox lifecycle and liveness (Windows)
+        run: >-
+          uv run pytest --timeout=300 --timeout-method=thread -q
+          apps/api/tests/test_sandbox_pool.py
+          apps/api/tests/test_sandbox_container_runtime.py
 
   # Real-backend lane: runs the suite against Postgres + Redis so behaviour that
   # SQLite can't model is actually exercised:
@@ -290,6 +319,60 @@ jobs:
           exit 1
       - name: REST smoke
         run: curl -fsS http://localhost:8000/templates >/tmp/nodyra-templates.json
+      - name: Demo seed is repeatable
+        env:
+          DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra
+        run: |
+          uv run python scripts/seed_ai_demo_workflows.py >/tmp/nodyra-demo-first.json
+          uv run python scripts/seed_ai_demo_workflows.py >/tmp/nodyra-demo-second.json
+      - name: Seed recovery fixture
+        env:
+          DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra
+          ARTIFACT_S3_ENDPOINT: http://localhost:9000
+          ARTIFACT_S3_BUCKET: nodyra-artifacts
+          AWS_ACCESS_KEY_ID: nodyra
+          AWS_SECRET_ACCESS_KEY: nodyra-ci-minio-password
+        run: uv run python scripts/recovery_fixture.py seed --manifest recovery-manifest.json
+      - name: Back up PostgreSQL and object storage
+        env:
+          ARTIFACT_S3_ENDPOINT: http://localhost:9000
+          ARTIFACT_S3_BUCKET: nodyra-artifacts
+          AWS_ACCESS_KEY_ID: nodyra
+          AWS_SECRET_ACCESS_KEY: nodyra-ci-minio-password
+        run: |
+          docker compose -f deploy/docker-compose.yml exec -T postgres \
+            pg_dump -U nodyra -Fc nodyra > recovery.dump
+          uv run python scripts/recovery_fixture.py copy-bucket \
+            --manifest recovery-manifest.json \
+            --source-bucket nodyra-artifacts \
+            --target-bucket nodyra-artifacts-restored
+      - name: Restore into a clean database and verify
+        env:
+          DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra_restore
+          ARTIFACT_S3_ENDPOINT: http://localhost:9000
+          ARTIFACT_S3_BUCKET: nodyra-artifacts-restored
+          AWS_ACCESS_KEY_ID: nodyra
+          AWS_SECRET_ACCESS_KEY: nodyra-ci-minio-password
+        run: |
+          restore_started=$(date +%s)
+          docker compose -f deploy/docker-compose.yml exec -T postgres \
+            createdb -U nodyra nodyra_restore
+          docker compose -f deploy/docker-compose.yml exec -T postgres \
+            pg_restore -U nodyra -d nodyra_restore --no-owner --no-privileges \
+            < recovery.dump
+          restore_seconds=$(($(date +%s)-restore_started))
+          uv run python scripts/recovery_fixture.py verify \
+            --manifest recovery-manifest.json \
+            --evidence recovery-evidence.json \
+            --restore-seconds "$restore_seconds" \
+            --max-rto-seconds 3600
+      - name: Upload redacted recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-evidence
+          path: recovery-evidence.json
+          retention-days: 30
       - name: MCP smoke
         env:
           NODYRA_MCP_URL: http://localhost:8000/mcp
@@ -362,10 +445,23 @@ jobs:
           --runs 50
           --cancel-ratio 0.2
           --kill-container nodyra-worker-1
+          --restart-api-container nodyra-api-1
+          --interrupt-redis-container nodyra-redis-1
+          --interrupt-postgres-container nodyra-postgres-1
+          --outage-seconds 5
+          --exercise-drain
           --sandbox
           --expect-sandbox-mode required
           --max-p95-seconds 240
           --settle-seconds 240
+          --report-json sandbox-chaos-evidence.json
+      - name: Upload sandbox chaos evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-chaos-evidence
+          path: sandbox-chaos-evidence.json
+          retention-days: 30
       - name: Compose logs
         if: always()
         run: >-
@@ -389,9 +485,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm install
+      - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run typecheck
-      - run: npm test -- --run
+      - run: npm test
       - run: npm run build
 
   # Critical-path browser smoke: first-user setup -> workflow authoring ->
@@ -409,7 +506,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm install
+      - run: npm ci
         working-directory: apps/web
       - run: npx playwright install --with-deps chromium
         working-directory: apps/web

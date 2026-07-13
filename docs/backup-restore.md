@@ -19,6 +19,35 @@ docker run --rm -v nodyra_envdata:/data -v "$PWD:/backup" \
 
 Store `.env` with the dumps in your secret backup system.
 
+### Automated restore verification
+
+Documentation is not restore evidence. The shipped CI creates a synthetic
+workflow, terminal run, envelope-encrypted credential, and checksummed S3
+artifact; restores PostgreSQL into a clean database and objects into a clean
+bucket; then verifies row integrity, strict credential decryptability, and
+artifact SHA-256. The redacted JSON evidence is retained as the
+`recovery-evidence` CI artifact.
+
+Use the same fixture around your own backup mechanism:
+
+```sh
+# Before the snapshot (uses DATABASE_URL and the configured S3 variables):
+uv run python scripts/recovery_fixture.py seed --manifest recovery-manifest.json
+
+# After restoring into clean DATABASE_URL / ARTIFACT_S3_BUCKET targets:
+uv run python scripts/recovery_fixture.py verify \
+  --manifest recovery-manifest.json \
+  --evidence recovery-evidence.json \
+  --restore-seconds "$RESTORE_SECONDS" \
+  --max-rto-seconds 3600
+```
+
+`copy-bucket` exists for the disposable reference drill; production object
+storage should use versioning, replication, immutable retention where required,
+and provider-native inventory/restore tooling. Never upload the database dump,
+bucket backup, `.env`, or key material as ordinary CI artifacts—only the
+redacted evidence JSON is safe to retain.
+
 ## Restore
 
 Create fresh volumes, restore Postgres, extract artifacts and environments, and

@@ -80,6 +80,13 @@ runnable webhook, and one green MCP-created run:
 make demo
 ```
 
+The first run creates `.tmp/nodyra-demo.env` with strong random credentials;
+later runs reuse that file so the PostgreSQL and MinIO volumes remain
+accessible. Secret values are never printed. The demo disables authentication,
+so every published port is deliberately bound to `127.0.0.1` and the generator
+refuses a non-loopback bind. Use the authenticated deployment path above—not
+`make demo`—for access from another machine.
+
 The seeded webhook is active at `POST http://localhost:8000/webhook/demo/intake`:
 
 ```bash
@@ -90,6 +97,24 @@ curl -X POST http://localhost:8000/webhook/demo/intake \
 
 The fake credential is named `Demo Fake API Key` and is intentionally not valid
 for any real service.
+
+Stop the demo without deleting its data or credentials:
+
+```bash
+make demo-down
+```
+
+To rotate the local demo credentials, first stop the stack, then run:
+
+```bash
+uv run python scripts/generate_demo_env.py \
+  --output .tmp/nodyra-demo.env --force
+make demo
+```
+
+Rotating the PostgreSQL password does not rewrite an existing database volume's
+role password. Remove the demo volumes as well if you intentionally want a
+completely fresh demo database.
 
 ## 6. Let an AI agent build workflows for you
 

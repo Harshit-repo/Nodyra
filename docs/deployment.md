@@ -99,6 +99,17 @@ source of truth.
 | `MAX_CONCURRENT_RUNS` | `8` | Global cap on top-level run dispatch. Sub-workflows bypass this cap (they run in-process on the parent's host). |
 | `RUNNER_IDLE_SECONDS` | `300` | Reap warm subprocesses idle for this long. |
 | `RUN_SYNCHRONOUSLY` | `false` | Tests only — block on dispatch instead of fire-and-forget. |
+| `RUNTIME_HEARTBEAT_INTERVAL_SECONDS` | `15` | Runtime-to-host heartbeat interval. Applied consistently to subprocesses and sandbox containers. |
+| `RUNTIME_HEARTBEAT_TIMEOUT_SECONDS` | `45` | Retire and clean up a runtime that emits no valid active-request event within this window. Must exceed the heartbeat interval. |
+| `RUNTIME_NO_PROGRESS_TIMEOUT_SECONDS` | `900` | Retire a live runtime that emits only heartbeats and no workflow progress for this long. `0` disables. |
+
+Heartbeat loss and no-progress are intentionally distinct. The first detects a
+dead process, broken pipe, blocked event loop, or disconnected container. The
+second detects a runtime that is alive but wedged. The overall workflow timeout
+remains a third, independent wall-clock ceiling; continuing heartbeats never
+extend it. Keep the no-progress timeout above any legitimate long-running node
+timeout, or set it to `0` for workflows that intentionally stay inside one node
+for longer than the configured bound.
 
 ### Scheduler
 

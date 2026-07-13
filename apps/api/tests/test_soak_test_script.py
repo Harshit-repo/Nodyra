@@ -28,12 +28,23 @@ def test_parse_args_sandbox_profile() -> None:
     soak = _load_soak_module()
 
     args = soak.parse_args(
-        ["--sandbox", "--expect-sandbox-mode", "required", "--max-p95-seconds", "120"]
+        [
+            "--sandbox",
+            "--expect-sandbox-mode",
+            "required",
+            "--max-p95-seconds",
+            "120",
+            "--exercise-drain",
+            "--outage-seconds",
+            "7",
+        ]
     )
 
     assert args.sandbox is True
     assert args.expect_sandbox_mode == "required"
     assert args.max_p95_seconds == 120
+    assert args.exercise_drain is True
+    assert args.outage_seconds == 7
 
 
 def test_latency_summary_uses_finished_minus_started_and_nearest_rank_p95() -> None:
@@ -51,3 +62,9 @@ def test_latency_summary_uses_finished_minus_started_and_nearest_rank_p95() -> N
         "p95": 4.0,
         "max": 4.0,
     }
+
+
+def test_timed_out_is_a_terminal_run_status() -> None:
+    soak = _load_soak_module()
+
+    assert "timed_out" in soak.TERMINAL

@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 
+from nodyra.engine.subworkflows import SubworkflowCall
 from nodyra.serialization import serialize_value
 from nodyra_runtime import server
 from nodyra_runtime.server import _needs_host_callbacks
@@ -496,3 +497,37 @@ def test_needs_host_callbacks_empty_graph() -> None:
 
 def test_needs_host_callbacks_missing_graph() -> None:
     assert _needs_host_callbacks({"type": "run"}) is False
+
+
+@pytest.mark.asyncio
+async def test_subworkflow_callback_carries_active_request_id(monkeypatch) -> None:
+    emitted: list[dict] = []
+    monkeypatch.setattr(server, "_emit", emitted.append)
+    server._active_request_id = "request-123"
+    call = SubworkflowCall(
+        workflow_id="child",
+        parameters={"value": 1},
+        use_published=True,
+        parent_run_id="parent-run",
+        depth=1,
+    )
+    task = asyncio.create_task(server._run_subworkflow_via_host(call))
+    try:
+        for _ in range(20):
+            if emitted:
+                break
+            await asyncio.sleep(0)
+        assert emitted[0]["request_id"] == "request-123"
+        server._resolve_callback(
+            {
+                "type": "call_workflow_response",
+                "callback_id": emitted[0]["callback_id"],
+                "result": {"ok": True},
+            }
+        )
+        assert await task == {"ok": True}
+    finally:
+        server._active_request_id = ""
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

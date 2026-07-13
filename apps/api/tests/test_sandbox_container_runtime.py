@@ -1,6 +1,7 @@
 """Shared container machinery: image tags, dockerfile generation, build."""
 import pytest
 
+from app.config import settings
 from app.services.container_runtime import (
     IMAGE_SCHEMA_VERSION,
     _validate_packages,
@@ -233,7 +234,13 @@ def test_hardening_kwargs_complete():
         "io.nodyra.kind": "sandbox-run",
     }
     # rootfs is read-only, so HOME must point at the writable tmpfs
-    assert kw["environment"] == {"HOME": "/tmp"}
+    assert kw["environment"] == {
+        "HOME": "/tmp",
+        "NODYRA_CODE_NODE_TIMEOUT_SECONDS": str(settings.code_node_timeout_seconds),
+        "NODYRA_RUNTIME_HEARTBEAT_SECONDS": str(
+            settings.runtime_heartbeat_interval_seconds
+        ),
+    }
 
 
 def test_hardening_kwargs_overrides():

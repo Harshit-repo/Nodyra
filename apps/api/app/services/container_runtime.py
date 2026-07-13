@@ -78,7 +78,13 @@ def hardening_kwargs(
     overrides: dict | None = None,
     runtime_flags: dict | None = None,
 ) -> dict[str, Any]:
-    environment: dict[str, str] = {"HOME": "/tmp"}
+    environment: dict[str, str] = {
+        "HOME": "/tmp",
+        "NODYRA_CODE_NODE_TIMEOUT_SECONDS": str(settings.code_node_timeout_seconds),
+        "NODYRA_RUNTIME_HEARTBEAT_SECONDS": str(
+            settings.runtime_heartbeat_interval_seconds
+        ),
+    }
     # PYTHON_JIT / PYTHON_LAZY_IMPORTS: the same two spawn-time env vars the
     # subprocess pool injects (runtime_pool._resolve_env_runtime_flags).
     # Interpreter selection (cpython-ft/pypy) is NOT threaded through here —

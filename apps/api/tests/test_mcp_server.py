@@ -1,5 +1,6 @@
 import json
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from httpx import AsyncClient
 
@@ -188,35 +189,130 @@ async def test_mcp_tools_pagination_pages_dynamic_workflow_tools_without_full_ma
 ) -> None:
     import app.routers.mcp as mcp_router
 
-    calls: list[tuple[int, int | None]] = []
+    calls: list[tuple[int, int, datetime | None, str | None]] = []
+    anchor_time = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
 
-    async def fake_count(_session) -> int:
-        return 1_000
-
-    async def fake_descriptors(_session, *, offset: int = 0, limit: int | None = None):
-        calls.append((offset, limit))
-        size = limit or 1_000
-        return [
+    async def fake_page(
+        _session,
+        *,
+        limit: int,
+        offset: int = 0,
+        after_updated_at: datetime | None = None,
+        after_id: str | None = None,
+    ):
+        calls.append((offset, limit, after_updated_at, after_id))
+        tools = [
             {
                 "name": f"workflow_tool_{offset + i}",
                 "description": "dynamic",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             }
-            for i in range(size)
+            for i in range(limit)
         ]
+        return tools, (anchor_time, "anchor-workflow"), True
 
-    monkeypatch.setattr(mcp_router, "count_workflow_tool_descriptors", fake_count)
-    monkeypatch.setattr(mcp_router, "list_workflow_tool_descriptors", fake_descriptors)
+    monkeypatch.setattr(mcp_router, "list_workflow_tool_descriptor_page", fake_page)
     static_count = len(mcp_router.STATIC_TOOLS)
     cursor = mcp_router._cursor(static_count + 250)
 
     resp = await client.post("/mcp", json=rpc("tools/list", {"cursor": cursor}))
     body = resp.json()["result"]
 
-    assert calls == [(250, mcp_router.TOOL_PAGE_SIZE)]
+    assert calls == [(250, mcp_router.TOOL_PAGE_SIZE, None, None)]
     assert len(body["tools"]) == mcp_router.TOOL_PAGE_SIZE
     assert body["tools"][0]["name"] == "workflow_tool_250"
     assert "nextCursor" in body
+
+    await client.post(
+        "/mcp", json=rpc("tools/list", {"cursor": body["nextCursor"]})
+    )
+    assert calls[-1] == (
+        0,
+        mcp_router.TOOL_PAGE_SIZE,
+        anchor_time,
+        "anchor-workflow",
+    )
+
+
+async def test_mcp_rejects_oversized_or_excessive_cursors(client: AsyncClient) -> None:
+    import app.routers.mcp as mcp_router
+
+    excessive = mcp_router._cursor(mcp_router.MAX_CURSOR_OFFSET + 1)
+    for cursor in ("x" * (mcp_router.MAX_CURSOR_LENGTH + 1), excessive):
+        response = await client.post(
+            "/mcp", json=rpc("tools/list", {"cursor": cursor})
+        )
+        assert response.json()["error"]["code"] == -32602
+        assert response.json()["error"]["message"] == "Invalid pagination cursor"
+
+
+async def test_dynamic_workflow_keyset_is_stable_across_mutations(
+    client: AsyncClient,
+) -> None:
+    from sqlalchemy import delete, update
+
+    import app.mcp.tools as mcp_tools
+    from app.models import Workflow
+
+    workflow_ids: list[str] = []
+    for index in range(4):
+        workflow_id = await make_workflow(client, f"Keyset {index}")
+        workflow_ids.append(workflow_id)
+        response = await client.put(
+            f"/workflows/{workflow_id}",
+            json={
+                "mcp_enabled": True,
+                "mcp_tool_name": f"keyset_{workflow_id}",
+            },
+        )
+        assert response.status_code == 200
+
+    tied_timestamp = datetime(2025, 1, 1, 12, 0, tzinfo=UTC)
+    async with mcp_tools.SessionLocal() as session:
+        await session.execute(
+            update(Workflow)
+            .where(Workflow.id.in_(workflow_ids))
+            .values(updated_at=tied_timestamp)
+        )
+        await session.commit()
+        first_tools, anchor, has_more = (
+            await mcp_tools.list_workflow_tool_descriptor_page(session, limit=2)
+        )
+
+    ordered_ids = sorted(workflow_ids)
+    assert [tool["name"] for tool in first_tools] == [
+        f"keyset_{workflow_id}" for workflow_id in ordered_ids[:2]
+    ]
+    assert anchor is not None
+    assert has_more is True
+
+    # Delete a row before the anchor and add a newer row. Offset pagination
+    # would now shift; the keyset must continue with the two untouched rows.
+    async with mcp_tools.SessionLocal() as session:
+        await session.execute(delete(Workflow).where(Workflow.id == ordered_ids[0]))
+        await session.commit()
+    inserted_id = await make_workflow(client, "Inserted while paging")
+    response = await client.put(
+        f"/workflows/{inserted_id}",
+        json={"mcp_enabled": True, "mcp_tool_name": f"keyset_{inserted_id}"},
+    )
+    assert response.status_code == 200
+
+    async with mcp_tools.SessionLocal() as session:
+        second_tools, _, second_has_more = (
+            await mcp_tools.list_workflow_tool_descriptor_page(
+                session,
+                limit=2,
+                after_updated_at=anchor[0],
+                after_id=anchor[1],
+            )
+        )
+
+    assert [tool["name"] for tool in second_tools] == [
+        f"keyset_{workflow_id}" for workflow_id in ordered_ids[2:]
+    ]
+    assert f"keyset_{inserted_id}" not in {tool["name"] for tool in second_tools}
+    assert second_has_more is False
 
 
 async def test_workflow_authoring_guide_tool(client: AsyncClient) -> None:

@@ -12,6 +12,7 @@ The same engine runs inside env runners and inside exported scripts.
 """
 
 import asyncio
+import heapq
 import logging
 import time
 from collections import defaultdict
@@ -46,8 +47,10 @@ if TYPE_CHECKING:
 _STATUS_RANK: dict[RunStatus, int] = {
     RunStatus.success: 0,
     RunStatus.waiting: 1,
-    RunStatus.error: 2,
     RunStatus.timed_out: 2,
+    # A concrete node/runtime error is more informative than a concurrent
+    # timeout, so it must win regardless of task-completion order.
+    RunStatus.error: 3,
 }
 
 # Default per-node output cap (10 MiB).  A node that produces more than this
@@ -116,20 +119,19 @@ def _topo_order(graph: WorkflowGraph) -> list[str]:
             successors[source].add(target)
 
     indegree = {nid: len(sources) for nid, sources in preds.items()}
-    by_index = lambda nid: node_index[nid]  # noqa: E731
-    ready = sorted(
-        (nid for nid, deg in indegree.items() if deg == 0), key=by_index
-    )
+    ready = [
+        (node_index[nid], nid) for nid, degree in indegree.items() if degree == 0
+    ]
+    heapq.heapify(ready)
     order: list[str] = []
 
     while ready:
-        nid = ready.pop(0)
+        _, nid = heapq.heappop(ready)
         order.append(nid)
-        for succ in sorted(successors[nid], key=by_index):
+        for succ in successors[nid]:
             indegree[succ] -= 1
             if indegree[succ] == 0:
-                ready.append(succ)
-        ready.sort(key=by_index)
+                heapq.heappush(ready, (node_index[succ], succ))
 
     if len(order) != len(graph.nodes):
         raise GraphError("Workflow graph has a cycle")
@@ -150,28 +152,38 @@ class _Plan:
     index: dict[str, int]                 # node id -> graph.nodes position
 
 
+def _loop_owner_index(loop_regions: dict[str, "LoopRegion"]) -> dict[str, str]:
+    """Map every loop-owned node to its immediate (innermost) loop start."""
+    owner_by_node: dict[str, str] = {}
+    # Nested bodies can also be members of an outer region. The smallest body
+    # is the immediate owner; setdefault preserves it when outer regions follow.
+    regions = sorted(loop_regions.values(), key=lambda region: len(region.body_ids))
+    for region in regions:
+        owner_by_node.setdefault(region.end_id, region.start_id)
+        for node_id in region.body_ids:
+            owner_by_node.setdefault(node_id, region.start_id)
+    return owner_by_node
+
+
 def _owner_unit(
     nid: str,
-    loop_regions: dict[str, "LoopRegion"],
+    owner_by_node: dict[str, str],
     unit_set: set[str],
 ) -> str | None:
     """The scheduling unit that produces ``nid``'s output when ``nid`` is
     loop-owned: walk to the owning region's start (hopping outward through
     nested regions) until a unit is found."""
     cur = nid
-    while True:
-        region = next(
-            (
-                r for r in loop_regions.values()
-                if cur == r.end_id or cur in r.body_ids
-            ),
-            None,
-        )
-        if region is None:
+    seen: set[str] = set()
+    while cur not in seen:
+        seen.add(cur)
+        owner = owner_by_node.get(cur)
+        if owner is None:
             return None
-        if region.start_id in unit_set:
-            return region.start_id
-        cur = region.start_id
+        if owner in unit_set:
+            return owner
+        cur = owner
+    raise GraphError("Nested loop ownership contains a cycle")
 
 
 def _build_plan(
@@ -188,6 +200,7 @@ def _build_plan(
     at execution time — exactly as it did under level barriers."""
     index = {n.id: i for i, n in enumerate(graph.nodes)}
     unit_set = {nid for nid in node_ids if nid not in owned}
+    owner_by_node = _loop_owner_index(loop_regions)
     units = sorted(unit_set, key=index.__getitem__)
     deps: dict[str, set[str]] = {u: set() for u in units}
     for edge in graph.edges:
@@ -197,7 +210,7 @@ def _build_plan(
         if source not in unit_set:
             if source not in owned:
                 continue
-            source = _owner_unit(source, loop_regions, unit_set)
+            source = _owner_unit(source, owner_by_node, unit_set)
             if source is None or source == edge.target:
                 continue
         deps[edge.target].add(source)
@@ -390,21 +403,42 @@ async def _execute_nodes(
                 # surfaces it after queue.join() drains the remaining work.
                 queue.task_done()
 
-    workers = [asyncio.ensure_future(_worker()) for _ in range(worker_count)]
+    workers = [
+        asyncio.create_task(_worker(), name=f"nodyra-scheduler-{index}")
+        for index in range(worker_count)
+    ]
+    join_task = asyncio.create_task(queue.join(), name="nodyra-scheduler-join")
     try:
-        # Wait until all units have been dequeued and processed.  Workers exit
-        # when they pull a sentinel; we post one sentinel per worker after the
-        # work is done.
-        await queue.join()
+        # Supervise queue completion and every worker together. Waiting on
+        # queue.join() alone deadlocks if one worker raises while queued items
+        # remain: no surviving worker can necessarily make those dependencies
+        # ready. Surface the first failed/early worker immediately instead.
+        done, _ = await asyncio.wait(
+            {join_task, *workers}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if join_task not in done:
+            worker = next(task for task in workers if task in done)
+            await worker  # re-raise its original exception, including cancellation
+            raise GraphError("scheduler worker exited before the queue drained")
+
+        await join_task
+        # A final worker and queue.join() may complete in the same loop tick.
+        # Observe that worker before posting sentinels so its exception cannot
+        # be mistaken for successful queue drainage.
+        for worker in workers:
+            if worker.done():
+                await worker
+
         for _ in workers:
             queue.put_nowait(None)
-        # Drain workers — they'll all see a sentinel and return.
         await asyncio.gather(*workers)
     except BaseException:
-        # REL-2: cancel every in-flight worker so no node task runs detached.
-        for w in workers:
-            w.cancel()
-        await asyncio.gather(*workers, return_exceptions=True)
+        # Cancel and observe the complete task group so no node continues after
+        # the run has failed or its caller has been cancelled.
+        join_task.cancel()
+        for worker in workers:
+            worker.cancel()
+        await asyncio.gather(join_task, *workers, return_exceptions=True)
         raise
 
     if completed != total:

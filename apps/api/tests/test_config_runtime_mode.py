@@ -1,5 +1,8 @@
 """Tests for explicit local vs production runtime-mode configuration."""
 
+import pytest
+from pydantic import ValidationError
+
 from app.config import Settings
 
 _PG = "postgresql+asyncpg://u:p@h/db"
@@ -16,6 +19,14 @@ def test_default_runtime_mode_is_local_with_no_warnings():
     assert s.runtime_mode == "local"
     assert s.is_production is False
     assert s.runtime_warnings() == []
+
+
+def test_runtime_heartbeat_timeout_must_exceed_emit_interval():
+    with pytest.raises(ValidationError, match="must be greater"):
+        _settings(
+            runtime_heartbeat_interval_seconds=45,
+            runtime_heartbeat_timeout_seconds=45,
+        )
 
 
 def test_production_with_sqlite_warns():
