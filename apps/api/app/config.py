@@ -465,20 +465,39 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _harden_multi_tenant_defaults(self) -> "Settings":
-        """M7: multi-tenant SaaS should not silently deploy risky nodes.
+        """M7/PY-1: multi-tenant defaults should fail closed.
 
         When multi-tenancy is on and the operator has *not* explicitly chosen a
         policy, raise the default from the single-tenant ``warn`` to
         ``require_approval`` so deploying a Code/HTTP-bearing workflow needs an
         explicit acknowledgement. An explicit ``unsafe_node_policy`` (env or
         kwarg) is always honoured — it appears in ``model_fields_set``.
+
+        The same rule applies to execution isolation: multi-tenant instances
+        default to required sandboxing and non-zero warm sandbox pools, while
+        explicit env/kwarg choices are preserved and then evaluated by the
+        startup sandbox policy.
         """
-        if (
-            self.multi_tenancy_enabled
-            and "unsafe_node_policy" not in self.model_fields_set
-            and self.unsafe_node_policy == "warn"
-        ):
+        if not self.multi_tenancy_enabled:
+            return self
+
+        explicit = self.model_fields_set
+        if "unsafe_node_policy" not in explicit and self.unsafe_node_policy == "warn":
             object.__setattr__(self, "unsafe_node_policy", "require_approval")
+
+        if "execution_sandbox" not in explicit and self.execution_sandbox == "off":
+            object.__setattr__(self, "execution_sandbox", "required")
+        if "sandbox_warm_per_key" not in explicit and self.sandbox_warm_per_key <= 0:
+            object.__setattr__(self, "sandbox_warm_per_key", 1)
+        if "sandbox_warm_total" not in explicit and self.sandbox_warm_total <= 0:
+            object.__setattr__(self, "sandbox_warm_total", 8)
+        if "sandbox_warm_ttl_seconds" not in explicit and self.sandbox_warm_ttl_seconds <= 0:
+            object.__setattr__(self, "sandbox_warm_ttl_seconds", 300.0)
+        if (
+            "sandbox_max_runs_per_container" not in explicit
+            and self.sandbox_max_runs_per_container <= 0
+        ):
+            object.__setattr__(self, "sandbox_max_runs_per_container", 50)
         return self
 
     @property

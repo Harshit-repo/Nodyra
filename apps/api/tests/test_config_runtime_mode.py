@@ -265,3 +265,39 @@ def test_explicit_unsafe_node_policy_is_respected_under_multi_tenancy():
 def test_unsafe_node_policy_default_unchanged_without_multi_tenancy():
     s = _settings()
     assert s.unsafe_node_policy == "warn"
+
+
+# --- PY-1: multi-tenancy hardens sandbox defaults ---------------------------
+
+
+def test_multi_tenant_defaults_require_sandbox_and_warm_pool():
+    s = _settings(multi_tenancy_enabled=True)
+    assert s.execution_sandbox == "required"
+    assert s.sandbox_warm_per_key > 0
+    assert s.sandbox_warm_total > 0
+    assert s.sandbox_warm_ttl_seconds > 0
+    assert s.sandbox_max_runs_per_container > 0
+
+
+def test_explicit_multi_tenant_sandbox_kwargs_are_respected():
+    s = _settings(
+        multi_tenancy_enabled=True,
+        execution_sandbox="off",
+        sandbox_warm_per_key=0,
+        sandbox_warm_total=0,
+        sandbox_warm_ttl_seconds=0,
+        sandbox_max_runs_per_container=0,
+    )
+    assert s.execution_sandbox == "off"
+    assert s.sandbox_warm_per_key == 0
+    assert s.sandbox_warm_total == 0
+    assert s.sandbox_warm_ttl_seconds == 0
+    assert s.sandbox_max_runs_per_container == 0
+
+
+def test_explicit_multi_tenant_sandbox_env_is_respected(monkeypatch):
+    monkeypatch.setenv("MULTI_TENANCY_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_SANDBOX", "off")
+    s = Settings(_env_file=None)
+    assert s.multi_tenancy_enabled is True
+    assert s.execution_sandbox == "off"

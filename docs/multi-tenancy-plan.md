@@ -260,6 +260,15 @@ This is what decides whether *hard* multi-tenancy is possible. It is also where
 the warm-pool performance wedge and the multi-tenant requirement directly
 conflict.
 
+> Current implementation note (2026-07-13): when
+> `MULTI_TENANCY_ENABLED=true` and `EXECUTION_SANDBOX` is not explicitly set,
+> `Settings` now defaults `execution_sandbox` to `required`. Warm sandbox pools
+> also default on (`sandbox_warm_per_key=1`, `sandbox_warm_total=8`,
+> `sandbox_warm_ttl_seconds=300`, `sandbox_max_runs_per_container=50`) so the
+> safer posture is not cold by default. Explicit env or kwarg overrides are
+> still honored; unsafe combinations are rejected by the startup sandbox policy
+> unless `SANDBOX_POLICY_STRICT=false` is deliberately set.
+
 ### The conflict
 
 `runtime_pool.py` runs arbitrary tenant Python in **long-lived host-trust
