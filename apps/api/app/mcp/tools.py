@@ -2719,7 +2719,7 @@ async def _update_workflow_settings(
         "environment_id", "default_runner_pool_id", "error_workflow_id",
         "error_alerts", "allow_concurrent", "execution_mode",
         "sandbox_resources",
-        "run_timeout_seconds", "folder_id",
+        "run_timeout_seconds", "artifact_retention_days", "folder_id",
         "mcp_description", "mcp_parameters_schema",
     }
     values = {key: value for key, value in args.items() if key in allowed}
@@ -3925,7 +3925,7 @@ STATIC_TOOLS: list[McpTool] = [
     ),
     McpTool(
         name="update_workflow_settings",
-        description="Update execution, environment, error-handler, folder, and MCP schema settings.",
+        description="Update execution, environment, retention, error-handler, folder, and MCP schema settings.",
         input_schema={
             "type": "object",
             "properties": {
@@ -3947,6 +3947,11 @@ STATIC_TOOLS: list[McpTool] = [
                     ),
                 },
                 "run_timeout_seconds": {"type": ["number", "null"], "minimum": 0},
+                "artifact_retention_days": {
+                    "type": ["integer", "null"],
+                    "minimum": 0,
+                    "maximum": 3650,
+                },
                 "folder_id": {"type": ["string", "null"]},
                 "mcp_description": {"type": ["string", "null"]},
                 "mcp_parameters_schema": {"type": ["object", "null"]},

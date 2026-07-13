@@ -533,6 +533,9 @@ class Workflow(Base):
     # Per-workflow wall-clock cap (seconds) for a single run. NULL falls back
     # to ``settings.workflow_run_timeout_seconds``; 0 means no cap.
     run_timeout_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Optional artifact-only retention window. NULL follows normal run
+    # retention; 0 disables artifact-only pruning for this workflow.
+    artifact_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mcp_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default=false()
     )

@@ -1669,6 +1669,7 @@ async def test_workflow_settings_and_version_tools(client: AsyncClient) -> None:
             "workflow_id": workflow_id,
             "allow_concurrent": False,
             "run_timeout_seconds": 45,
+            "artifact_retention_days": 3,
             "mcp_parameters_schema": {
                 "type": "object",
                 "properties": {"value": {"type": "integer"}},
@@ -1679,6 +1680,7 @@ async def test_workflow_settings_and_version_tools(client: AsyncClient) -> None:
     settings_data = json.loads(settings_result["content"][0]["text"])
     assert settings_data["allow_concurrent"] is False
     assert settings_data["run_timeout_seconds"] == 45
+    assert settings_data["artifact_retention_days"] == 3
 
     version_result = await _tool(
         client,

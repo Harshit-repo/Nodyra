@@ -5,7 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.config import settings
-from app.models import Artifact, Run
+from app.models import Artifact, Run, Workflow
 from app.services import retention
 
 
@@ -38,6 +38,39 @@ async def test_retention_prune_deletes_artifact_metadata_and_file(
     async with retention.SessionLocal() as session:
         remaining = (await session.scalars(select(Artifact))).all()
     assert remaining == []
+
+
+async def test_workflow_artifact_retention_prunes_artifacts_without_run(
+    client: AsyncClient,
+) -> None:
+    workflow_id, artifact_id = await _make_dataset_run(client)
+
+    async with retention.SessionLocal() as session:
+        artifact = await session.get(Artifact, artifact_id)
+        assert artifact is not None
+        artifact_path = Path(settings.artifacts_dir) / artifact.storage_key
+        assert artifact_path.exists()
+        run_id = artifact.run_id
+        assert run_id is not None
+        artifact.created_at = datetime.now(UTC) - timedelta(days=10)
+        workflow = await session.get(Workflow, workflow_id)
+        assert workflow is not None
+        workflow.artifact_retention_days = 1
+        await session.commit()
+
+    previous = settings.run_retention_days
+    settings.run_retention_days = 0
+    try:
+        aged_out, capped_out = await retention.prune_old_runs()
+    finally:
+        settings.run_retention_days = previous
+
+    assert aged_out == 0
+    assert capped_out == 0
+    assert not artifact_path.exists()
+    async with retention.SessionLocal() as session:
+        assert await session.get(Artifact, artifact_id) is None
+        assert await session.get(Run, run_id) is not None
 
 
 # --- Task 10/11: pluggable artifact backend ----------------------------------

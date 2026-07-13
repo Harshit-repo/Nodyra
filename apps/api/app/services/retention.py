@@ -6,6 +6,8 @@ tick. Two configurable rules — applied independently per tick:
 - ``run_retention_days``: drop runs whose ``started_at`` is older than N days.
 - ``run_retention_max_per_workflow``: keep only the most recent N runs per
   workflow.
+- ``workflow.artifact_retention_days``: optionally delete old artifact files
+  for a workflow while retaining the run history rows.
 
 We delete the child ``node_runs`` rows explicitly because SQLite doesn't
 enforce ``ON DELETE CASCADE`` unless ``PRAGMA foreign_keys=ON`` is set, and
@@ -22,8 +24,17 @@ from sqlalchemy import delete, func, select
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import AuditEvent, NodeRun, Run, RunApproval, RunEvent, RunQueueEntry
-from app.services.artifacts import delete_artifacts_for_run_ids
+from app.models import (
+    Artifact,
+    AuditEvent,
+    NodeRun,
+    Run,
+    RunApproval,
+    RunEvent,
+    RunQueueEntry,
+    Workflow,
+)
+from app.services.artifacts import delete_artifact_files, delete_artifacts_for_run_ids
 from app.services.live_settings import get_live_settings
 from app.services.output_store import delete_outputs_for_run_ids
 
@@ -32,10 +43,61 @@ logger = logging.getLogger(__name__)
 # Maximum IDs fetched and deleted per prune tick to avoid loading millions of
 # UUIDs into a Python list and risking a DB timeout on the bulk DELETE.
 _PRUNE_BATCH_SIZE = 10_000
+_TERMINAL_STATUSES = ("success", "error", "cancelled")
+
+
+async def prune_workflow_artifacts(now: datetime | None = None) -> int:
+    """Delete artifacts whose workflow-specific retention window has elapsed.
+
+    This intentionally removes only artifact bytes and metadata. Run, NodeRun,
+    and RunEvent rows remain available for history/debugging until the global
+    run retention rules delete the run itself.
+    """
+    now = now or datetime.now(UTC)
+    pruned = 0
+    async with SessionLocal() as session:
+        policies = (
+            await session.execute(
+                select(Workflow.id, Workflow.artifact_retention_days).where(
+                    Workflow.artifact_retention_days.is_not(None),
+                    Workflow.artifact_retention_days > 0,
+                )
+            )
+        ).all()
+
+        for workflow_id, days in policies:
+            cutoff = now - timedelta(days=max(0, int(days or 0)))
+            while True:
+                rows = list(
+                    (
+                        await session.scalars(
+                            select(Artifact)
+                            .join(Run, Artifact.run_id == Run.id)
+                            .where(
+                                Run.workflow_id == workflow_id,
+                                Run.status.in_(_TERMINAL_STATUSES),
+                                Artifact.created_at < cutoff,
+                            )
+                            .limit(_PRUNE_BATCH_SIZE)
+                        )
+                    ).all()
+                )
+                if not rows:
+                    break
+                delete_artifact_files(rows)
+                ids = [row.id for row in rows]
+                result = await session.execute(
+                    delete(Artifact).where(Artifact.id.in_(ids))
+                )
+                pruned += int(result.rowcount or 0)
+                await session.commit()
+
+        await session.commit()
+    return pruned
 
 
 async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
-    """Run both prune rules once. Returns (aged_out, capped_out) counts."""
+    """Run retention once. Returns (aged_out, capped_out) run counts."""
     now = now or datetime.now(UTC)
     aged_out = 0
     capped_out = 0
@@ -58,7 +120,7 @@ async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
     live = await get_live_settings()
     async with SessionLocal() as session:
         # Never prune runs that are still actively executing — only terminal states.
-        _terminal = Run.status.in_(("success", "error", "cancelled"))
+        _terminal = Run.status.in_(_TERMINAL_STATUSES)
 
         days = max(0, live.run_retention_days)
         if days > 0:
@@ -112,6 +174,7 @@ async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
 
         await session.commit()
 
+    await prune_workflow_artifacts(now)
     return aged_out, capped_out
 
 

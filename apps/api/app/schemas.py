@@ -118,6 +118,7 @@ class WorkflowUpdate(BaseModel):
     # Per-workflow wall-clock cap (seconds) for a run. None leaves it unset
     # (falls back to the server default); 0 disables the cap for this workflow.
     run_timeout_seconds: float | None = Field(default=None, ge=0)
+    artifact_retention_days: int | None = Field(default=None, ge=0, le=3650)
     expected_graph_revision: int | None = Field(default=None, ge=0)
     mcp_enabled: bool | None = None
     mcp_tool_name: str | None = None
@@ -231,6 +232,7 @@ class WorkflowDetail(BaseModel):
     sandbox_resources: dict[str, Any] | None = None
     requirements: list[str] = Field(default_factory=list)
     run_timeout_seconds: float | None = None
+    artifact_retention_days: int | None = None
     mcp_enabled: bool = False
     mcp_tool_name: str | None = None
     mcp_description: str | None = None

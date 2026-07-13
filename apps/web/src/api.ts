@@ -364,6 +364,7 @@ export interface WorkflowPatch {
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
   run_timeout_seconds?: number | null;
+  artifact_retention_days?: number | null;
   execution_mode?: "inherit" | "sandboxed" | "standard";
   sandbox_resources?: { memory_mb?: number; cpu?: number; tmpfs_mb?: number } | null;
   requirements?: string[];

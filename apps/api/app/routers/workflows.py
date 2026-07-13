@@ -587,6 +587,7 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
         sandbox_resources=workflow.sandbox_resources,
         requirements=list(workflow.requirements or []),
         run_timeout_seconds=workflow.run_timeout_seconds,
+        artifact_retention_days=workflow.artifact_retention_days,
         mcp_enabled=workflow.mcp_enabled,
         mcp_tool_name=workflow.mcp_tool_name,
         mcp_description=workflow.mcp_description,
@@ -1010,6 +1011,8 @@ async def update_workflow(
         workflow.requirements = _validate_requirement_lines(body.requirements)
     if "run_timeout_seconds" in sent:
         workflow.run_timeout_seconds = body.run_timeout_seconds
+    if "artifact_retention_days" in sent:
+        workflow.artifact_retention_days = body.artifact_retention_days
     if body.mcp_enabled is not None:
         workflow.mcp_enabled = body.mcp_enabled
     if "mcp_tool_name" in sent:

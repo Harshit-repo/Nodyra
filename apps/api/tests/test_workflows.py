@@ -169,6 +169,7 @@ async def test_update_nullable_runtime_bindings_can_be_cleared(
                 "default_runner_pool_id": runner_pool_id,
                 "error_workflow_id": error_workflow_id,
                 "run_timeout_seconds": 12,
+                "artifact_retention_days": 7,
                 "mcp_tool_name": "configured_tool",
                 "mcp_description": "configured",
                 "mcp_parameters_schema": {"type": "object"},
@@ -178,6 +179,7 @@ async def test_update_nullable_runtime_bindings_can_be_cleared(
     assert configured["environment_id"] == environment_id
     assert configured["default_runner_pool_id"] == runner_pool_id
     assert configured["error_workflow_id"] == error_workflow_id
+    assert configured["artifact_retention_days"] == 7
 
     cleared = (
         await client.put(
@@ -187,6 +189,7 @@ async def test_update_nullable_runtime_bindings_can_be_cleared(
                 "default_runner_pool_id": None,
                 "error_workflow_id": None,
                 "run_timeout_seconds": None,
+                "artifact_retention_days": None,
                 "mcp_tool_name": None,
                 "mcp_description": None,
                 "mcp_parameters_schema": None,
@@ -198,6 +201,7 @@ async def test_update_nullable_runtime_bindings_can_be_cleared(
         "default_runner_pool_id",
         "error_workflow_id",
         "run_timeout_seconds",
+        "artifact_retention_days",
         "mcp_tool_name",
         "mcp_description",
         "mcp_parameters_schema",

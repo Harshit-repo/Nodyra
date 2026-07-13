@@ -317,6 +317,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [defaultRunnerPoolId, setDefaultRunnerPoolId] = useState<string | null>(null);
   const [chipSaving, setChipSaving] = useState(false);
   const [runTimeout, setRunTimeout] = useState<string>("");
+  const [artifactRetentionDays, setArtifactRetentionDays] = useState<string>("");
   const [executionMode, setExecutionMode] = useState<"inherit" | "sandboxed" | "standard">("inherit");
   const [sandboxResources, setSandboxResources] = useState<{
     memory_mb?: number;
@@ -475,6 +476,11 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
       setDefaultRunnerPoolId(detail.default_runner_pool_id ?? null);
       setRunTimeout(
         detail.run_timeout_seconds != null ? String(detail.run_timeout_seconds) : "",
+      );
+      setArtifactRetentionDays(
+        detail.artifact_retention_days != null
+          ? String(detail.artifact_retention_days)
+          : "",
       );
       setExecutionMode(detail.execution_mode ?? "inherit");
       setSandboxResources(detail.sandbox_resources ?? {});
@@ -1072,6 +1078,10 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
         environment_id: environmentId ?? undefined,
         default_runner_pool_id: defaultRunnerPoolId,
         run_timeout_seconds: runTimeout === "" ? null : Math.max(0, parseFloat(runTimeout) || 0),
+        artifact_retention_days:
+          artifactRetentionDays === ""
+            ? null
+            : Math.max(0, parseInt(artifactRetentionDays, 10) || 0),
         execution_mode: executionMode,
         sandbox_resources:
           Object.keys(cleanedSandboxResources).length > 0
@@ -2207,6 +2217,8 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
         <WorkflowSettingsModal
           runTimeout={runTimeout}
           onRunTimeoutChange={setRunTimeout}
+          artifactRetentionDays={artifactRetentionDays}
+          onArtifactRetentionDaysChange={setArtifactRetentionDays}
           executionMode={executionMode}
           onExecutionModeChange={setExecutionMode}
           sandboxResources={sandboxResources}

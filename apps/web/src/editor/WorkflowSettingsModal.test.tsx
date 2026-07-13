@@ -6,6 +6,8 @@ import { WorkflowSettingsModal } from "./WorkflowSettingsModal";
 const baseProps = {
   runTimeout: "",
   onRunTimeoutChange: vi.fn(),
+  artifactRetentionDays: "",
+  onArtifactRetentionDaysChange: vi.fn(),
   executionMode: "inherit" as const,
   onExecutionModeChange: vi.fn(),
   sandboxResources: {},
@@ -25,6 +27,20 @@ describe("WorkflowSettingsModal", () => {
   it("shows the run timeout field", () => {
     render(<WorkflowSettingsModal {...baseProps} />);
     expect(screen.getByLabelText(/run timeout/i)).toBeInTheDocument();
+  });
+
+  it("updates artifact retention days", () => {
+    const onArtifactRetentionDaysChange = vi.fn();
+    render(
+      <WorkflowSettingsModal
+        {...baseProps}
+        onArtifactRetentionDaysChange={onArtifactRetentionDaysChange}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/artifact retention/i), {
+      target: { value: "7" },
+    });
+    expect(onArtifactRetentionDaysChange).toHaveBeenCalledWith("7");
   });
 
   it("calls onMcpEnabledChange when MCP toggled", async () => {

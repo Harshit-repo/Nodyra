@@ -11,6 +11,8 @@ export interface SandboxResources {
 export interface WorkflowSettingsModalProps {
   runTimeout: string;
   onRunTimeoutChange: (v: string) => void;
+  artifactRetentionDays: string;
+  onArtifactRetentionDaysChange: (v: string) => void;
   executionMode: WorkflowExecutionMode;
   onExecutionModeChange: (v: WorkflowExecutionMode) => void;
   sandboxResources: SandboxResources;
@@ -29,6 +31,7 @@ export interface WorkflowSettingsModalProps {
 export function WorkflowSettingsModal(props: WorkflowSettingsModalProps) {
   const {
     runTimeout, onRunTimeoutChange,
+    artifactRetentionDays, onArtifactRetentionDaysChange,
     executionMode, onExecutionModeChange,
     sandboxResources, onSandboxResourcesChange,
     requirementsText, onRequirementsTextChange,
@@ -77,6 +80,26 @@ export function WorkflowSettingsModal(props: WorkflowSettingsModalProps) {
             />
             <span className="ws-field-hint">
               Leave empty for no limit. Runs that exceed this are cancelled.
+            </span>
+          </label>
+
+          <label className="field ws-field">
+            <span className="ws-field-label">
+              Artifact retention
+              <span className="ws-field-unit">days</span>
+            </span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={artifactRetentionDays}
+              placeholder="Global run retention"
+              aria-label="Artifact retention (days)"
+              onChange={(e) => onArtifactRetentionDaysChange(e.target.value)}
+            />
+            <span className="ws-field-hint">
+              Blank keeps artifacts until the run is pruned. Set a value to
+              prune old artifact files while preserving run history.
             </span>
           </label>
 
