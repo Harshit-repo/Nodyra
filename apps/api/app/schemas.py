@@ -278,6 +278,38 @@ class WorkflowPublishResponse(BaseModel):
     updated_deployments: int = 0
 
 
+class WorkflowCheckCase(BaseModel):
+    name: str = Field(default="Workflow check", min_length=1, max_length=200)
+    input_data: dict[str, Any] = Field(default_factory=dict)
+    expected_outputs: dict[str, Any] = Field(default_factory=dict)
+    assertions: list[str] = Field(default_factory=list)
+
+
+class WorkflowChecksSaveRequest(BaseModel):
+    checks: list[WorkflowCheckCase] = Field(min_length=1, max_length=50)
+    replace: bool = True
+
+
+class WorkflowCheckInfo(WorkflowCheckCase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workflow_id: str
+    status: str = "untested"
+    last_result: dict[str, Any] | None = None
+    last_run_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowCheckRunResult(BaseModel):
+    check: WorkflowCheckInfo
+    passed: bool
+    status: str
+    failures: list[str] = Field(default_factory=list)
+    node_outputs: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
 class EnvironmentCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     python_version: str = "3.12"

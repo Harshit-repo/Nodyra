@@ -68,7 +68,11 @@ import type {
   SystemSettings,
   UserAdminInfo,
   UserInfo,
+  GeneratedWorkflowTestsResponse,
   WorkflowDetail,
+  WorkflowCheckInfo,
+  WorkflowCheckRunResult,
+  WorkflowChecksSaveRequest,
   WorkflowEvent,
   WorkflowGraph,
   WorkflowPublishResponse,
@@ -462,6 +466,31 @@ export const api = {
       body: JSON.stringify(body),
       signal,
     }),
+  generateWorkflowTests: (id: string) =>
+    request<GeneratedWorkflowTestsResponse>(`/workflows/${id}/generate-tests`, {
+      method: "POST",
+    }),
+  listWorkflowChecks: (id: string) =>
+    request<WorkflowCheckInfo[]>(`/workflows/${id}/checks`),
+  saveWorkflowChecks: (id: string, body: WorkflowChecksSaveRequest) =>
+    request<WorkflowCheckInfo[]>(`/workflows/${id}/checks`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  runWorkflowChecks: (id: string) =>
+    request<WorkflowCheckRunResult[]>(`/workflows/${id}/checks/run`, {
+      method: "POST",
+    }),
+  runWorkflowCheck: (workflowId: string, checkId: string) =>
+    request<WorkflowCheckRunResult>(
+      `/workflows/${workflowId}/checks/${encodeURIComponent(checkId)}/run`,
+      { method: "POST" },
+    ),
+  deleteWorkflowCheck: (workflowId: string, checkId: string) =>
+    request<void>(
+      `/workflows/${workflowId}/checks/${encodeURIComponent(checkId)}`,
+      { method: "DELETE" },
+    ),
   deleteWorkflow: (id: string) =>
     request<void>(`/workflows/${id}`, { method: "DELETE" }),
 

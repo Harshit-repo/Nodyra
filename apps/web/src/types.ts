@@ -307,6 +307,47 @@ export interface WorkflowVersionInfo {
   node_count: number;
 }
 
+export interface WorkflowCheckCase {
+  name: string;
+  input_data: Record<string, unknown>;
+  expected_outputs: Record<string, unknown>;
+  assertions: string[];
+}
+
+export interface WorkflowChecksSaveRequest {
+  checks: WorkflowCheckCase[];
+  replace?: boolean;
+}
+
+export interface WorkflowCheckInfo extends WorkflowCheckCase {
+  id: string;
+  workflow_id: string;
+  status: "untested" | "passed" | "failed" | string;
+  last_result?: Record<string, unknown> | null;
+  last_run_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowCheckRunResult {
+  check: WorkflowCheckInfo;
+  passed: boolean;
+  status: string;
+  failures: string[];
+  node_outputs: Record<string, Record<string, unknown>>;
+}
+
+export interface GeneratedWorkflowTestCase {
+  name?: string;
+  input_data?: Record<string, unknown>;
+  expected_outputs?: Record<string, unknown>;
+  assertions?: string[];
+}
+
+export interface GeneratedWorkflowTestsResponse {
+  tests: GeneratedWorkflowTestCase[];
+}
+
 export type DiffStatus = "added" | "removed" | "changed" | "unchanged";
 
 export interface ProviderTriggerStatusCounts {

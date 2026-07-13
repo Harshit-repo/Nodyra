@@ -26,6 +26,7 @@ import { GenerateNodeModal } from "./editor/GenerateNodeModal";
 import { Inspector } from "./editor/Inspector";
 import { NodePalette } from "./editor/NodePalette";
 import { PortDataViewer } from "./editor/PortDataViewer";
+import { WorkflowChecksPanel } from "./editor/WorkflowChecksPanel";
 import { WorkflowHistory } from "./editor/WorkflowHistory";
 import {
   childToGraph,
@@ -336,6 +337,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
     null,
   );
   const [functionsOpen, setFunctionsOpen] = useState(false);
+  const [checksOpen, setChecksOpen] = useState(false);
   const [generateNodeOpen, setGenerateNodeOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiMode, setAiMode] = useState<AiDraftMode>("draft");
@@ -1864,6 +1866,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
           <OverflowMenu
             items={[
               { id: "history", label: "History & versions", onSelect: () => setShowHistory(true) },
+              { id: "checks", label: "Workflow checks", onSelect: () => setChecksOpen(true) },
               { id: "functions", label: "Functions", onSelect: () => setFunctionsOpen(true) },
               { id: "export-py", label: "Export · Python script (.py)", onSelect: () => void triggerExport(`/api/workflows/${id}/export.py`, `${name || "workflow"}.py`) },
               { id: "export-docker", label: "Export · Docker bundle (.zip)", onSelect: () => void triggerExport(`/api/workflows/${id}/export/docker`, `${name || "workflow"}-docker.zip`) },
@@ -2250,6 +2253,13 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
             // the canvas and clicks Save to persist.
             loadGraph(graph, { dirty: true });
           }}
+        />
+      )}
+
+      {checksOpen && id && (
+        <WorkflowChecksPanel
+          workflowId={id}
+          onClose={() => setChecksOpen(false)}
         />
       )}
 

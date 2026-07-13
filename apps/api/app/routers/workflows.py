@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -9,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, We
 from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
@@ -28,6 +29,7 @@ from app.models import (
     RunnerPool,
     User,
     Workflow,
+    WorkflowCheck,
     WorkflowRevision,
     WorkflowVersion,
 )
@@ -39,6 +41,9 @@ from app.schemas import (
     PageResponse,
     ProviderTriggerStatusCounts,
     ProviderTriggerSubscriptionInfo,
+    WorkflowCheckInfo,
+    WorkflowCheckRunResult,
+    WorkflowChecksSaveRequest,
     WorkflowCreate,
     WorkflowDetail,
     WorkflowPublishRequest,
@@ -61,6 +66,7 @@ from app.services.audit import log_audit
 from app.services.events import workflow_broker
 from app.services.github_sync import enqueue_github_push
 from app.services.github_sync_jobs import notify_sync_workers
+from app.services.graph_utils import first_trigger_node, resolve_trigger_targets
 from app.services.provider_triggers import sync_workflow_provider_triggers
 from app.services.runtime_pool import _org_run_limits_for
 from app.services.runtime_pool import pool as runtime_pool
@@ -175,6 +181,164 @@ def _select_graph(workflow: Workflow, *, use_draft: bool) -> dict:
     if use_draft:
         return _draft_graph(workflow)
     return _latest(workflow).graph or EMPTY_GRAPH
+
+
+def _check_info(check: WorkflowCheck) -> WorkflowCheckInfo:
+    return WorkflowCheckInfo(
+        id=check.id,
+        workflow_id=check.workflow_id,
+        name=check.name,
+        input_data=check.input_data or {},
+        expected_outputs=check.expected_outputs or {},
+        assertions=list(check.assertions or []),
+        status=check.status,
+        last_result=check.last_result,
+        last_run_at=check.last_run_at,
+        created_at=check.created_at,
+        updated_at=check.updated_at,
+    )
+
+
+def _node_outputs_for_check(result) -> dict[str, dict[str, Any]]:
+    return {
+        node_id: serialize_value(node_result.outputs)
+        for node_id, node_result in result.nodes.items()
+    }
+
+
+def _lookup_expected_output(
+    node_outputs: dict[str, dict[str, Any]], key: str
+) -> tuple[bool, Any]:
+    if key in node_outputs:
+        return True, node_outputs[key]
+    if "." in key:
+        node_id, port = key.split(".", 1)
+        if node_id in node_outputs and port in node_outputs[node_id]:
+            return True, node_outputs[node_id][port]
+    if len(node_outputs) == 1:
+        only_outputs = next(iter(node_outputs.values()))
+        if key in only_outputs:
+            return True, only_outputs[key]
+    return False, None
+
+
+def _evaluate_check_result(
+    check: WorkflowCheck, result
+) -> tuple[bool, list[str], dict[str, dict[str, Any]]]:
+    status_text = str(result.status)
+    node_outputs = _node_outputs_for_check(result)
+    failures: list[str] = []
+
+    for key, expected in (check.expected_outputs or {}).items():
+        found, actual = _lookup_expected_output(node_outputs, str(key))
+        if not found:
+            failures.append(f"Expected output {key!r} was not produced.")
+        elif actual != expected:
+            failures.append(f"Expected {key!r} to be {expected!r}, got {actual!r}.")
+
+    if not check.expected_outputs and not check.assertions and status_text != "success":
+        failures.append(f"Expected run status 'success', got {status_text!r}.")
+
+    for raw_assertion in check.assertions or []:
+        assertion = str(raw_assertion).strip().lower()
+        if not assertion:
+            continue
+        if "status" in assertion and "success" in assertion and status_text != "success":
+            failures.append(f"Assertion failed: {raw_assertion}")
+
+    return not failures and status_text == "success", failures, node_outputs
+
+
+async def _execute_workflow_check(
+    session: AsyncSession,
+    workflow: Workflow,
+    check: WorkflowCheck,
+):
+    graph_dict = _draft_graph(workflow)
+    trigger = first_trigger_node(graph_dict, prefer_manual=True)
+    trigger_id = trigger["id"] if isinstance(trigger, dict) else getattr(trigger, "id", None)
+    targets = resolve_trigger_targets(graph_dict, trigger_id, None) if trigger_id else None
+    cache = runner_service._seed_parameters(
+        graph_dict,
+        None,
+        check.input_data or {},
+        trigger_id=trigger_id,
+    )
+    ephemeral_run_id = f"workflow-check-{uuid4().hex}"
+    prep = await runner_service._prepare_run_context(
+        ephemeral_run_id,
+        workflow.id,
+        graph_dict,
+        cache or None,
+        workflow.org_id,
+    )
+
+    loaded_module_ids: list[str] = []
+    artifact_token = artifact_store.set(
+        make_artifact_store(
+            ephemeral_run_id,
+            org_id=workflow.org_id,
+            max_bytes=prep.max_artifact_bytes,
+            max_count=prep.max_artifacts_per_run,
+        )
+    )
+    limits_token = org_run_limits.set(await _org_run_limits_for(workflow.org_id))
+    try:
+        for module in prep.workflow_modules:
+            if not module.get("contents", "").strip():
+                continue
+            register_module_functions(
+                module["id"],
+                module["contents"],
+                node_registry,
+                include_undecorated=bool(module.get("include_undecorated")),
+            )
+            loaded_module_ids.append(module["id"])
+
+        prepared_graph = WorkflowGraph.model_validate(prep.graph_dict)
+        async with runtime_pool.global_slot():
+            return await execute(
+                prepared_graph,
+                node_registry,
+                cache=deserialize_value(prep.cache or {}),
+                targets=targets,
+                default_timeouts=runner_service._engine_default_timeouts(),
+                max_node_output_bytes=prep.output_cap,
+                process_isolator=runner_service.process_isolator,
+            )
+    finally:
+        org_run_limits.reset(limits_token)
+        artifact_store.reset(artifact_token)
+        for module_id in loaded_module_ids:
+            unregister_module(module_id, node_registry)
+
+
+async def _run_and_persist_check(
+    session: AsyncSession, workflow: Workflow, check: WorkflowCheck
+) -> WorkflowCheckRunResult:
+    result = await _execute_workflow_check(session, workflow, check)
+    passed, failures, node_outputs = _evaluate_check_result(check, result)
+    status_text = str(result.status)
+    now = datetime.now(UTC)
+    check.status = "passed" if passed else "failed"
+    check.last_run_at = now
+    check.updated_at = now
+    check.last_result = serialize_value(
+        {
+            "passed": passed,
+            "status": status_text,
+            "failures": failures,
+            "node_outputs": node_outputs,
+        }
+    )
+    await session.flush()
+    return WorkflowCheckRunResult(
+        check=_check_info(check),
+        passed=passed,
+        status=status_text,
+        failures=failures,
+        node_outputs=node_outputs,
+    )
 
 
 def _node_exists(graph: WorkflowGraph, node_id: str) -> bool:
@@ -1488,3 +1652,130 @@ async def generate_workflow_tests(
     wf.tests = tests
     await session.commit()
     return {"tests": tests}
+
+
+@router.get(
+    "/{workflow_id}/checks",
+    response_model=list[WorkflowCheckInfo],
+    dependencies=[Depends(require_permission("workflow:read"))],
+)
+async def list_workflow_checks(
+    workflow_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> list[WorkflowCheckInfo]:
+    await _load(session, workflow_id)
+    checks = (
+        await session.scalars(
+            select(WorkflowCheck)
+            .where(WorkflowCheck.workflow_id == workflow_id)
+            .order_by(WorkflowCheck.created_at.asc())
+        )
+    ).all()
+    return [_check_info(check) for check in checks]
+
+
+@router.post(
+    "/{workflow_id}/checks",
+    response_model=list[WorkflowCheckInfo],
+    dependencies=[Depends(require_permission("workflow:write"))],
+)
+async def save_workflow_checks(
+    workflow_id: str,
+    body: WorkflowChecksSaveRequest,
+    session: AsyncSession = Depends(get_session),
+) -> list[WorkflowCheckInfo]:
+    workflow = await _load(session, workflow_id)
+    cases = [case.model_dump(mode="json") for case in body.checks]
+    if body.replace:
+        await session.execute(
+            delete(WorkflowCheck).where(WorkflowCheck.workflow_id == workflow_id)
+        )
+
+    checks: list[WorkflowCheck] = []
+    for case in cases:
+        check = WorkflowCheck(
+            org_id=workflow.org_id,
+            workflow_id=workflow.id,
+            name=case["name"],
+            input_data=case.get("input_data") or {},
+            expected_outputs=case.get("expected_outputs") or {},
+            assertions=case.get("assertions") or [],
+        )
+        session.add(check)
+        checks.append(check)
+
+    workflow.tests = cases
+    await session.flush()
+    await session.commit()
+    return [_check_info(check) for check in checks]
+
+
+@router.post(
+    "/{workflow_id}/checks/run",
+    response_model=list[WorkflowCheckRunResult],
+    dependencies=[Depends(require_permission("workflow:run"))],
+)
+async def run_workflow_checks(
+    workflow_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> list[WorkflowCheckRunResult]:
+    workflow = await _load(session, workflow_id)
+    checks = (
+        await session.scalars(
+            select(WorkflowCheck)
+            .where(WorkflowCheck.workflow_id == workflow_id)
+            .order_by(WorkflowCheck.created_at.asc())
+        )
+    ).all()
+    results = [
+        await _run_and_persist_check(session, workflow, check) for check in checks
+    ]
+    await session.commit()
+    return results
+
+
+@router.post(
+    "/{workflow_id}/checks/{check_id}/run",
+    response_model=WorkflowCheckRunResult,
+    dependencies=[Depends(require_permission("workflow:run"))],
+)
+async def run_workflow_check(
+    workflow_id: str,
+    check_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> WorkflowCheckRunResult:
+    workflow = await _load(session, workflow_id)
+    check = await session.scalar(
+        select(WorkflowCheck).where(
+            WorkflowCheck.workflow_id == workflow_id,
+            WorkflowCheck.id == check_id,
+        )
+    )
+    if check is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow check not found")
+    result = await _run_and_persist_check(session, workflow, check)
+    await session.commit()
+    return result
+
+
+@router.delete(
+    "/{workflow_id}/checks/{check_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_permission("workflow:write"))],
+)
+async def delete_workflow_check(
+    workflow_id: str,
+    check_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    await _load(session, workflow_id)
+    result = await session.execute(
+        delete(WorkflowCheck).where(
+            WorkflowCheck.workflow_id == workflow_id,
+            WorkflowCheck.id == check_id,
+        )
+    )
+    if result.rowcount == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow check not found")
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

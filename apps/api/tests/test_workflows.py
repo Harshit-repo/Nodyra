@@ -259,6 +259,101 @@ async def test_missing_workflow_returns_404(client: AsyncClient) -> None:
     assert (await client.get("/workflows/nope")).status_code == 404
 
 
+def _checkable_graph() -> dict:
+    return {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "c",
+                "type": "code",
+                "params": {"code": "output = input['x'] + 1"},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "c",
+                "target_input": "input",
+            }
+        ],
+    }
+
+
+async def test_workflow_checks_persist_and_run(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Checked"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": _checkable_graph()})
+
+    saved = (
+        await client.post(
+            f"/workflows/{workflow_id}/checks",
+            json={
+                "checks": [
+                    {
+                        "name": "increments x",
+                        "input_data": {"x": 2},
+                        "expected_outputs": {"c.main": 3},
+                        "assertions": ["run.status == 'success'"],
+                    }
+                ]
+            },
+        )
+    ).json()
+
+    assert saved[0]["name"] == "increments x"
+    assert saved[0]["status"] == "untested"
+
+    listed = (await client.get(f"/workflows/{workflow_id}/checks")).json()
+    assert [check["id"] for check in listed] == [saved[0]["id"]]
+
+    results = (await client.post(f"/workflows/{workflow_id}/checks/run")).json()
+    assert results[0]["passed"] is True
+    assert results[0]["status"] == "success"
+    assert results[0]["node_outputs"]["c"]["main"] == 3
+    assert results[0]["check"]["status"] == "passed"
+
+    rerun = (
+        await client.post(
+            f"/workflows/{workflow_id}/checks/{saved[0]['id']}/run"
+        )
+    ).json()
+    assert rerun["passed"] is True
+
+
+async def test_workflow_check_reports_expectation_failure(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Failing check"})).json()[
+        "id"
+    ]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": _checkable_graph()})
+
+    saved = (
+        await client.post(
+            f"/workflows/{workflow_id}/checks",
+            json={
+                "checks": [
+                    {
+                        "name": "wrong expectation",
+                        "input_data": {"x": 2},
+                        "expected_outputs": {"c.main": 99},
+                    }
+                ]
+            },
+        )
+    ).json()
+
+    result = (
+        await client.post(
+            f"/workflows/{workflow_id}/checks/{saved[0]['id']}/run"
+        )
+    ).json()
+    assert result["passed"] is False
+    assert result["status"] == "success"
+    assert "Expected 'c.main' to be 99" in result["failures"][0]
+    assert result["check"]["status"] == "failed"
+
+
 async def test_saving_a_graph_with_a_metanode_is_accepted(client: AsyncClient) -> None:
     """``meta_node`` is a structural type the engine inlines at run time; it has
     no registry manifest, so node-type validation must exempt it (like ``user:``
