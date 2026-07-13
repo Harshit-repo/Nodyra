@@ -152,7 +152,8 @@ jobs:
 
       # REQUIRED — verified green on Postgres. Gates the lane.
       #   * test_run_queue: the durable queue incl. the Postgres-only
-      #     SKIP LOCKED lease path (the crown jewel that SQLite can't cover).
+      #     SKIP LOCKED lease path and RQ-1 worker-burst/lease-reclaim/
+      #     dead-letter replay chaos cases (SQLite can't cover those).
       #   * packages/runtime: spawns the `nodyra_runtime` subprocess and runs a
       #     real workflow graph through it end to end.
       - name: Postgres queue + real subprocess (required)

@@ -3,15 +3,19 @@
 Task 4 covers the ``run_queue`` table/model. Later tasks (5/5b/6) extend this
 file with queue-service and dead-letter behaviour.
 
-These tests exercise the ORM model directly, so they spin up their own
-temporary SQLite engine/session rather than going through the app ``client``
-fixture.
+These tests exercise the ORM model directly, so they spin up their own engine
+and sessionmaker rather than going through the app ``client`` fixture. Local
+runs use temporary SQLite files under the repo's ignored ``.tmp`` directory;
+the Postgres CI lane sets ``NODYRA_TEST_DATABASE_URL`` so the same file also
+exercises the real row-locking path.
 """
 
+import asyncio
 import os
 import tempfile
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -25,23 +29,44 @@ from app import models  # noqa: F401 - registers ORM models on Base.metadata
 from app.db import Base
 from app.models import RunQueueEntry
 
+TEST_DATABASE_URL = os.environ.get("NODYRA_TEST_DATABASE_URL")
+SQLITE_TMP_DIR = Path(__file__).resolve().parents[3] / ".tmp" / "pytest-sqlite"
+
 
 @pytest_asyncio.fixture
-async def session() -> AsyncIterator:
-    handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    handle.close()
-    db_path = handle.name
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    maker = async_sessionmaker(engine, expire_on_commit=False)
-    async with maker() as s:
-        yield s
-    await engine.dispose()
+async def session_maker() -> AsyncIterator[async_sessionmaker]:
+    if TEST_DATABASE_URL:
+        db_path = None
+        engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    else:
+        SQLITE_TMP_DIR.mkdir(parents=True, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            suffix=".db",
+            dir=SQLITE_TMP_DIR,
+            delete=False,
+        )
+        handle.close()
+        db_path = Path(handle.name)
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     try:
-        os.unlink(db_path)
-    except OSError:
-        pass
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        yield maker
+    finally:
+        await engine.dispose()
+        if db_path:
+            try:
+                db_path.unlink()
+            except OSError:
+                pass
+
+
+@pytest_asyncio.fixture
+async def session(session_maker: async_sessionmaker) -> AsyncIterator:
+    async with session_maker() as s:
+        yield s
 
 
 @pytest.mark.asyncio
@@ -781,3 +806,265 @@ async def test_lease_exclude_local_composes_with_provider_filter(session) -> Non
         exclude_local=True,
     )
     assert entry is not None and entry.run_id == "r-docker"
+
+
+async def _require_postgres(session_maker: async_sessionmaker) -> None:
+    async with session_maker() as session:
+        if session.bind is None or session.bind.dialect.name != "postgresql":
+            pytest.skip("Postgres-only queue chaos coverage")
+
+
+@pytest.mark.asyncio
+async def test_postgres_two_worker_burst_has_no_duplicate_or_stuck_entries(
+    session_maker: async_sessionmaker,
+) -> None:
+    """RQ-1: 50 queued entries drained by two workers without duplicates or
+    leftover leased/running rows. This must run on Postgres so the real
+    ``FOR UPDATE SKIP LOCKED`` lease path is exercised."""
+    from app.services import queue as q
+
+    await _require_postgres(session_maker)
+    moment = datetime.now(UTC) - timedelta(seconds=1)
+    async with session_maker() as session:
+        for i in range(50):
+            await q.enqueue(
+                session,
+                run_id=f"burst-{i:02d}",
+                workflow_id="wf-burst",
+                available_at=moment,
+            )
+        await session.commit()
+
+    start = asyncio.Event()
+
+    async def worker(worker_id: str) -> list[str]:
+        leased: list[str] = []
+        empty_polls = 0
+        await start.wait()
+        while empty_polls < 5:
+            async with session_maker() as session:
+                entry = await q.lease(session, worker_id=worker_id, lease_seconds=30)
+                if entry is None:
+                    await session.rollback()
+                    empty_polls += 1
+                    run_id = None
+                else:
+                    run_id = entry.run_id
+                    leased.append(run_id)
+                    empty_polls = 0
+                    await session.commit()
+
+            if run_id is None:
+                await asyncio.sleep(0.005)
+                continue
+
+            # Leave a small interleaving window so the peer worker is also
+            # exercising the lease path rather than this task draining serially.
+            await asyncio.sleep(0.002)
+            async with session_maker() as session:
+                assert await q.complete(session, run_id=run_id) is True
+                await session.commit()
+
+        return leased
+
+    tasks = [
+        asyncio.create_task(worker("worker-a")),
+        asyncio.create_task(worker("worker-b")),
+    ]
+    start.set()
+    by_worker = await asyncio.gather(*tasks)
+    all_run_ids = [run_id for part in by_worker for run_id in part]
+
+    assert len(all_run_ids) == 50
+    assert len(set(all_run_ids)) == 50
+    assert all(by_worker), "both workers should participate in the burst"
+
+    async with session_maker() as session:
+        rows = (await session.scalars(select(RunQueueEntry))).all()
+        stats = await q.stats(session)
+
+    assert len(rows) == 50
+    assert {row.status for row in rows} == {"completed"}
+    assert {row.attempts for row in rows} == {1}
+    assert stats["queued"] == 0
+    assert stats["leased"] == 0
+    assert stats["running"] == 0
+    assert stats["completed"] == 50
+
+
+@pytest.mark.asyncio
+async def test_postgres_expired_running_lease_is_reclaimed_once(
+    session_maker: async_sessionmaker,
+) -> None:
+    """RQ-1: a worker-lost running lease requeues exactly once and can be
+    reclaimed by another worker without duplicating the queue row."""
+    from app.models import Run
+    from app.services import queue as q
+
+    await _require_postgres(session_maker)
+    moment = datetime.now(UTC)
+    async with session_maker() as session:
+        run = Run(
+            workflow_id="wf-reclaim",
+            workflow_version=1,
+            mode="production",
+            trigger_type="manual",
+            status="queued",
+        )
+        session.add(run)
+        await session.flush()
+        run_id = run.id
+        await q.enqueue(session, run_id=run_id, workflow_id="wf-reclaim")
+        await session.commit()
+
+    async with session_maker() as session:
+        leased = await q.lease(
+            session,
+            worker_id="worker-a",
+            lease_seconds=1,
+            now=moment,
+        )
+        assert leased is not None and leased.run_id == run_id
+        leased.status = "running"
+        run = await session.get(Run, run_id)
+        assert run is not None
+        run.status = "running"
+        await session.commit()
+
+    async with session_maker() as session:
+        acted = await q.requeue_expired_leases(
+            session,
+            now=moment + timedelta(seconds=2),
+        )
+        await session.commit()
+    assert acted == 1
+
+    async with session_maker() as session:
+        entry = await session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        )
+        run = await session.get(Run, run_id)
+        assert entry is not None
+        assert run is not None
+        assert entry.status == "queued"
+        assert entry.leased_by is None
+        assert entry.lease_expires_at is None
+        assert entry.attempts == 1
+        assert [record["event"] for record in entry.attempts_log] == ["lease_expired"]
+        assert run.status == "queued"
+
+    async with session_maker() as session:
+        reclaimed = await q.lease(
+            session,
+            worker_id="worker-b",
+            now=moment + timedelta(seconds=3),
+        )
+        assert reclaimed is not None and reclaimed.run_id == run_id
+        assert reclaimed.attempts == 2
+        await q.complete(session, run_id=run_id)
+        await session.commit()
+
+    async with session_maker() as session:
+        rows = (
+            await session.scalars(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
+        ).all()
+    assert len(rows) == 1
+    assert rows[0].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_postgres_dead_letter_replay_returns_to_queue(
+    session_maker: async_sessionmaker,
+) -> None:
+    """RQ-1: retry exhaustion dead-letters the entry; replay resets attempts
+    and preserves replay seed so the next lease is a fresh dispatch."""
+    from app.services import queue as q
+
+    await _require_postgres(session_maker)
+    moment = datetime.now(UTC)
+    async with session_maker() as session:
+        await q.enqueue(
+            session,
+            run_id="dead-replay",
+            workflow_id="wf-dead",
+            max_attempts=2,
+            available_at=moment,
+        )
+        await session.commit()
+
+    for attempt in range(2):
+        async with session_maker() as session:
+            leased = await q.lease(
+                session,
+                worker_id=f"worker-{attempt}",
+                now=moment + timedelta(seconds=attempt),
+            )
+            assert leased is not None and leased.run_id == "dead-replay"
+            await session.commit()
+
+        async with session_maker() as session:
+            failed = await q.fail(
+                session,
+                run_id="dead-replay",
+                retryable=True,
+                error=f"boom-{attempt}",
+                now=moment + timedelta(seconds=attempt),
+            )
+            assert failed is not None
+            if attempt == 0:
+                assert failed.status == "queued"
+                # Avoid sleeping through retry backoff in a state-machine test.
+                failed.available_at = moment + timedelta(milliseconds=1)
+            else:
+                assert failed.status == "dead_lettered"
+            await session.commit()
+
+    async with session_maker() as session:
+        entry = await session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == "dead-replay")
+        )
+        assert entry is not None
+        assert entry.status == "dead_lettered"
+        assert entry.attempts == 2
+        assert [record["event"] for record in entry.attempts_log] == [
+            "retry_scheduled",
+            "dead_lettered",
+        ]
+
+        replayed = await q.replay(
+            session,
+            run_id="dead-replay",
+            cache={"upstream": {"ok": True}},
+            targets=["node-a"],
+            now=moment + timedelta(seconds=10),
+        )
+        assert replayed is not None
+        assert replayed.status == "queued"
+        assert replayed.attempts == 0
+        assert replayed.replay_seed == {
+            "cache": {"upstream": {"ok": True}},
+            "targets": ["node-a"],
+        }
+        await session.commit()
+
+    async with session_maker() as session:
+        leased = await q.lease(
+            session,
+            worker_id="worker-replay",
+            now=moment + timedelta(seconds=11),
+        )
+        assert leased is not None and leased.run_id == "dead-replay"
+        assert leased.attempts == 1
+        assert leased.replay_seed == {
+            "cache": {"upstream": {"ok": True}},
+            "targets": ["node-a"],
+        }
+        await q.complete(session, run_id="dead-replay")
+        await session.commit()
+
+    async with session_maker() as session:
+        entry = await session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == "dead-replay")
+        )
+    assert entry is not None
+    assert entry.status == "completed"
