@@ -35,6 +35,7 @@ from nodyra.ai_runtime import (
 )
 from nodyra.process_isolation import default_isolator
 from nodyra.sdk import node
+from nodyra_nodes.ai_v2.prompt_safety import wrap_untrusted_tool_output
 from nodyra_nodes.ai_v2.tools import collect_tool_adapters
 from nodyra_nodes.http_security import assert_public_http_url, safe_request
 
@@ -1193,7 +1194,11 @@ class SubAgentToolAdapter(ToolAdapter):
                     except Exception as exc:  # noqa: BLE001 - surface tool error to sub-agent
                         result = f"Tool error: {exc}"
                     messages.append(
-                        AIMessage.tool_result(tool_call_id=call.id, name=call.name, content=result)
+                        AIMessage.tool_result(
+                            tool_call_id=call.id,
+                            name=call.name,
+                            content=wrap_untrusted_tool_output(result),
+                        )
                     )
                     steps.append(
                         {"tool": call.name, "arguments": dict(call.arguments), "result": result}

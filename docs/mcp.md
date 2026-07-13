@@ -48,3 +48,7 @@ Create an **MCP Server** credential (URL + optional bearer token), then use:
 - **MCP List Tools** (`mcp_list_tools`) — inspect a server's tool list.
 
 Only HTTP(S) MCP servers are supported (no stdio). URLs are SSRF-guarded.
+When external tool results are fed back into an AI Agent prompt, Nodyra wraps
+them in an `UNTRUSTED TOOL OUTPUT` notice and
+`<nodyra_untrusted_tool_output>` delimiters. The model is instructed to treat
+that content as data only, not as follow-up instructions or tool-call policy.
