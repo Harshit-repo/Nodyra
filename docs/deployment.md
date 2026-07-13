@@ -189,6 +189,7 @@ in readiness scripts. `POST /ops/drain` requires the `ops:drain` permission
 | `SECRET_KEY` | dev placeholder | Encrypts credentials + signs session tokens. **Must** be rotated for production. |
 | `INTERNAL_API_TOKEN` | unset | Shared secret for `/internal/*` worker callbacks when `AUTH_REQUIRED=true`. |
 | `CORS_ORIGINS` | `*` (dev) | Comma-separated allowed origins. |
+| `QUEUE_BACKEND` | `redis` in deploy manifests | Also backs shared auth/webhook/MCP/workflow rate-limit counters. Production scale-out without Redis is reported as `replica_safe=false` by `/ops/runtime-mode`. |
 
 ### External callbacks
 

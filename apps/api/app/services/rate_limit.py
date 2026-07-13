@@ -31,6 +31,10 @@ _buckets: dict[str, deque[float]] = defaultdict(deque)
 # deployments, swept at moderate intervals to cap memory.
 _EVICT_THRESHOLD = 10_000
 _SWEEP_INTERVAL_HITS = 500  # sweep every N hits when above the threshold
+_hit_counter: int = 0
+# Whether the limiter is currently degraded to the per-process fallback because
+# Redis is unreachable. Tracked so the transition is logged once, not per hit.
+_redis_degraded = False
 
 
 def _now() -> float:
@@ -40,10 +44,10 @@ def _now() -> float:
 
 def reset() -> None:
     """Drop all in-process counters (test isolation)."""
+    global _hit_counter, _redis_degraded
     _buckets.clear()
-
-
-_hit_counter: int = 0
+    _hit_counter = 0
+    _redis_degraded = False
 
 
 def _sweep(now: float, window_seconds: float) -> int:
@@ -83,11 +87,6 @@ if redis.call('TTL', KEYS[1]) < 0 then
 end
 return count
 """
-
-# Whether the limiter is currently degraded to the per-process fallback because
-# Redis is unreachable. Tracked so the transition is logged once, not per hit.
-_redis_degraded = False
-
 
 async def _allow_redis(key: str, limit: int, window_seconds: int) -> bool | None:
     """Redis fixed-window counter. Returns None when Redis is unavailable so

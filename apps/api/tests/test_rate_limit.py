@@ -46,3 +46,50 @@ async def test_window_slides_so_old_hits_expire(monkeypatch) -> None:
 
 async def test_non_positive_limit_always_allows() -> None:
     assert await rate_limit.allow("test", "ip", limit=0) is True
+
+
+async def test_redis_backend_uses_atomic_lua_eval(monkeypatch) -> None:
+    import app.redis_client as redis_module
+
+    calls: list[tuple[str, int, str]] = []
+    counts: dict[str, int] = {}
+
+    class FakeRedis:
+        async def eval(self, script: str, numkeys: int, *args):
+            assert numkeys == 1
+            key = str(args[0])
+            window = int(args[1])
+            calls.append((key, window, script))
+            counts[key] = counts.get(key, 0) + 1
+            return counts[key]
+
+    monkeypatch.setattr(settings, "queue_backend", "redis")
+    monkeypatch.setattr(redis_module, "redis_client", FakeRedis())
+
+    assert await rate_limit.allow("auth", "10.0.0.1", limit=2, window_seconds=30) is True
+    assert await rate_limit.allow("auth", "10.0.0.1", limit=2, window_seconds=30) is True
+    assert await rate_limit.allow("auth", "10.0.0.1", limit=2, window_seconds=30) is False
+
+    assert len(calls) == 3
+    assert calls[0][0] == "nodyra:rl:auth:10.0.0.1"
+    assert calls[0][1] == 30
+    assert "INCR" in calls[0][2] and "EXPIRE" in calls[0][2]
+    assert rate_limit._buckets == {}
+    assert rate_limit._redis_degraded is False
+
+
+async def test_redis_backend_falls_back_when_unavailable(monkeypatch) -> None:
+    import app.redis_client as redis_module
+
+    class BrokenRedis:
+        async def eval(self, *_args):
+            raise OSError("redis down")
+
+    monkeypatch.setattr(settings, "queue_backend", "redis")
+    monkeypatch.setattr(redis_module, "redis_client", BrokenRedis())
+
+    assert await rate_limit.allow("auth", "10.0.0.2", limit=1, window_seconds=30) is True
+    assert await rate_limit.allow("auth", "10.0.0.2", limit=1, window_seconds=30) is False
+
+    assert "auth:10.0.0.2" in rate_limit._buckets
+    assert rate_limit._redis_degraded is True
