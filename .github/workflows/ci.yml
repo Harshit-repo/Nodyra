@@ -3,6 +3,9 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
 
 jobs:
   # Fast default lane: lint + full suite on SQLite (no external services).
@@ -244,6 +247,81 @@ jobs:
           NODYRA_SECRET_KEY: ci-placeholder
       - name: helm lint
         run: helm lint deploy/helm/nodyra
+
+  sandbox-soak:
+    # Heavy Docker lane: run nightly and on demand, not on every PR push.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AUTH_REQUIRED: "false"
+      EXECUTION_SANDBOX: required
+      SANDBOX_RUNTIME: runc
+      POSTGRES_PASSWORD: nodyra
+      MINIO_ROOT_PASSWORD: nodyra-ci-minio-password
+      INTERNAL_API_TOKEN: ci-internal-token
+      NODYRA_SECRET_KEY: ci-secret-key-at-least-32-bytes-long
+      ARTIFACT_STORAGE_BACKEND: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --all-packages
+      - name: Mint short-lived test Pro license
+        working-directory: apps/api
+        run: |
+          uv run python - <<'PY'
+          import os
+
+          from tests._license_keys import TEST_PUBLIC_KEY_PEM, pro_key
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write("LICENSE_PUBLIC_KEY<<LICENSE_PUBLIC_KEY_EOF\n")
+              env.write(TEST_PUBLIC_KEY_PEM)
+              env.write("LICENSE_PUBLIC_KEY_EOF\n")
+              env.write("NODYRA_LICENSE_KEY<<NODYRA_LICENSE_KEY_EOF\n")
+              env.write(pro_key())
+              env.write("\nNODYRA_LICENSE_KEY_EOF\n")
+          PY
+      - name: Start sandbox compose stack
+        run: >-
+          docker compose -f deploy/docker-compose.yml
+          -f deploy/docker-compose.sandbox.yml
+          up -d --build api worker
+      - name: Wait for API readiness
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8000/health/ready; then
+              exit 0
+            fi
+            docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sandbox.yml ps
+            sleep 5
+          done
+          docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sandbox.yml logs --no-color --tail=300 api worker docker-socket-proxy
+          exit 1
+      - name: Sandbox worker-kill soak
+        run: >-
+          uv run python scripts/soak_test.py
+          --base-url http://localhost:8000
+          --runs 50
+          --cancel-ratio 0.2
+          --kill-container nodyra-worker-1
+          --sandbox
+          --expect-sandbox-mode required
+          --settle-seconds 240
+      - name: Compose logs
+        if: always()
+        run: >-
+          docker compose -f deploy/docker-compose.yml
+          -f deploy/docker-compose.sandbox.yml
+          logs --no-color --tail=300 api worker docker-socket-proxy
+      - name: Stop sandbox compose stack
+        if: always()
+        run: >-
+          docker compose -f deploy/docker-compose.yml
+          -f deploy/docker-compose.sandbox.yml
+          down -v
 
   web:
     runs-on: ubuntu-latest
