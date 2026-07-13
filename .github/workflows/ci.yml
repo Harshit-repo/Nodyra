@@ -355,6 +355,7 @@ jobs:
           --kill-container nodyra-worker-1
           --sandbox
           --expect-sandbox-mode required
+          --max-p95-seconds 240
           --settle-seconds 240
       - name: Compose logs
         if: always()

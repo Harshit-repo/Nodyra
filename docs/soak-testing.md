@@ -38,6 +38,7 @@ uv run python scripts/soak_test.py \
   --kill-container nodyra-worker-1 \
   --sandbox \
   --expect-sandbox-mode required \
+  --max-p95-seconds 240 \
   --settle-seconds 240
 ```
 
@@ -45,7 +46,10 @@ The script asserts three invariants: every started run reaches a terminal
 status before `--settle-seconds`, the durable queue has no leased/running
 entries after settling, and killing then restarting a worker loses zero runs.
 When `--sandbox` is set it also forces `execution_mode=sandboxed` on the
-workflow and per-run request.
+workflow and per-run request. It reports run-completion p50, p95, and max
+latency from the run API's `started_at`/`finished_at` timestamps; pass
+`--max-p95-seconds` to make the soak fail when the tail latency exceeds the
+threshold.
 
 CI includes a `sandbox-soak` job that runs on the nightly schedule and via
 manual `workflow_dispatch`. It mints a short-lived test Pro license using the
@@ -55,10 +59,12 @@ existing test signing helper, starts the base compose stack plus
 ```bash
 uv run python scripts/soak_test.py --base-url http://localhost:8000 \
   --runs 50 --cancel-ratio 0.2 --kill-container nodyra-worker-1 \
-  --sandbox --expect-sandbox-mode required --settle-seconds 240
+  --sandbox --expect-sandbox-mode required --max-p95-seconds 240 \
+  --settle-seconds 240
 ```
 
 and always prints API, worker, and socket-proxy logs before tearing the stack
-down. Paste the script output into any PR that claims manual soak evidence. If
-Docker or a sandbox-capable license is unavailable in the environment running
-the checks, state that explicitly.
+down. The CI summary includes the soak output, including p50/p95/max latency.
+Paste the script output into any PR that claims manual soak evidence. If Docker
+or a sandbox-capable license is unavailable in the environment running the
+checks, state that explicitly.
