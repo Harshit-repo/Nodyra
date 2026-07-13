@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 import type { NodeVariableInfo } from "../types";
+import { api, userFriendlyError } from "../api";
 import type { TokenUsage } from "./store";
 import { estimateCost, formatCost, shortModelLabel } from "./tokenCost";
 import {
@@ -68,7 +69,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function isTableable(value: unknown): boolean {
   if (asArtifactRef(value)) return false;
   const dataset = asDatasetRef(value);
-  if (dataset) return (dataset.preview ?? []).length > 0;
+  if (dataset) return true;
   const envelope = asTypedEnvelope(value);
   if (envelope?.type === "dataframe" && typedRecords(envelope)) return true;
   const display = typedDisplayValue(value);
@@ -953,10 +954,12 @@ function RecordTable({
   data,
   dragPrefix,
   dtypes,
+  rowOffset = 0,
 }: {
   data: Record<string, unknown>[];
   dragPrefix?: string;
   dtypes?: Record<string, string>;
+  rowOffset?: number;
 }) {
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -1093,7 +1096,7 @@ function RecordTable({
         <tbody>
           {pageRows.map((row, i) => (
             <tr key={startIdx + i}>
-              <td className="data-table-index">{startIdx + i}</td>
+              <td className="data-table-index">{rowOffset + startIdx + i}</td>
               {columns.map((col) => {
                 const expr = dragPrefix
                   ? buildExpression(dragPrefix, [col])
@@ -1149,12 +1152,65 @@ function DatasetTableView({
   dragPrefix?: string;
 }) {
   const [sqlOpen, setSqlOpen] = useState(false);
-  const rows = (dataset.preview ?? []) as Record<string, unknown>[];
+  const [page, setPage] = useState(0);
+  const [rows, setRows] = useState<Record<string, unknown>[]>(
+    (dataset.preview ?? []) as Record<string, unknown>[],
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pageHasMore, setPageHasMore] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
   const dtypes = Object.fromEntries(
     (dataset.schema ?? []).map((c) => [c.name, c.type]),
   );
   const cols = dataset.column_count ?? dataset.schema?.length ?? 0;
   const totalRows = dataset.row_count;
+  const artifactId = dataset.artifact.artifact_id;
+  const offset = page * PAGE_SIZE;
+  const knownTotal = typeof totalRows === "number" ? totalRows : null;
+  const hasNext =
+    knownTotal === null ? pageHasMore : offset + rows.length < knownTotal;
+
+  useEffect(() => {
+    setPage(0);
+    setRows((dataset.preview ?? []) as Record<string, unknown>[]);
+    setError(null);
+    setPageHasMore(false);
+  }, [artifactId, dataset.preview]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    api
+      .queryDataset(
+        artifactId,
+        `SELECT * FROM dataset LIMIT ${PAGE_SIZE + 1} OFFSET ${offset}`,
+        PAGE_SIZE,
+      )
+      .then((result) => {
+        if (!cancelled) {
+          setRows(result.rows);
+          setPageHasMore(result.truncated);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setRows([]);
+          setPageHasMore(false);
+          setError(userFriendlyError(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [artifactId, offset, reloadToken]);
+
+  const startLabel = rows.length === 0 ? 0 : offset + 1;
+  const endLabel = offset + rows.length;
   return (
     <div className="dataset-view">
       <div className="dataset-view-strip">
@@ -1184,16 +1240,50 @@ function DatasetTableView({
           Download
         </a>
       </div>
-      {rows.length === 0 ? (
-        <div className="muted">Dataset has no preview rows.</div>
+      {error ? (
+        <div className="dataset-page-error">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="btn btn-xs btn-ghost"
+            onClick={() => setReloadToken((current) => current + 1)}
+          >
+            Retry
+          </button>
+        </div>
+      ) : rows.length === 0 && loading ? (
+        <div className="muted">Loading dataset rows...</div>
+      ) : rows.length === 0 ? (
+        <div className="muted">Dataset page has no rows.</div>
       ) : (
         <>
-          <RecordTable data={rows} dragPrefix={dragPrefix} dtypes={dtypes} />
-          {dataset.preview_truncated && (
-            <div className="dataset-preview-note muted">
-              Preview is a sample of the first {rows.length} rows.
-            </div>
-          )}
+          <RecordTable
+            data={rows}
+            dragPrefix={dragPrefix}
+            dtypes={dtypes}
+            rowOffset={offset}
+          />
+          <div className="data-table-pagination dataset-page-controls">
+            <button
+              type="button"
+              disabled={page === 0 || loading}
+              onClick={() => setPage((current) => Math.max(0, current - 1))}
+            >
+              ← Prev
+            </button>
+            <span>
+              Rows {startLabel.toLocaleString()}-{endLabel.toLocaleString()} of{" "}
+              {knownTotal === null ? "?" : knownTotal.toLocaleString()}
+              {loading ? " · loading" : ""}
+            </span>
+            <button
+              type="button"
+              disabled={!hasNext || loading}
+              onClick={() => setPage((current) => current + 1)}
+            >
+              Next →
+            </button>
+          </div>
         </>
       )}
       {sqlOpen && (
