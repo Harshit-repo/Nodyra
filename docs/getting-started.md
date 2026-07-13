@@ -71,7 +71,27 @@ def normalize_customer(input: dict, lowercase_email: bool = True) -> dict:
 Upload the module and it appears in the palette. See
 [Writing a node](nodes.md).
 
-## 5. Let an AI agent build workflows for you
+## 5. Seed the demo workspace
+
+For a populated local instance with demo workflows, a fake credential, a
+runnable webhook, and one green MCP-created run:
+
+```bash
+make demo
+```
+
+The seeded webhook is active at `POST http://localhost:8000/webhook/demo/intake`:
+
+```bash
+curl -X POST http://localhost:8000/webhook/demo/intake \
+  -H "Content-Type: application/json" \
+  -d '{"customer":"Ada","event":"trial_started"}'
+```
+
+The fake credential is named `Demo Fake API Key` and is intentionally not valid
+for any real service.
+
+## 6. Let an AI agent build workflows for you
 
 Nodyra ships a first-class MCP server with 61 tools. Connect Claude Code:
 
@@ -83,7 +103,7 @@ claude mcp add --transport http nodyra https://your-instance/mcp \
 Then describe the workflow you want; it appears on the canvas — editable,
 testable, and deployable. Full guide: [MCP quickstart](mcp-quickstart.md).
 
-## 6. Go to production
+## 7. Go to production
 
 - **Publish** your workflow to create an immutable version, then create a
   **deployment** pinned to that version. Drafts never affect production.
@@ -95,7 +115,7 @@ testable, and deployable. Full guide: [MCP quickstart](mcp-quickstart.md).
   the production checklist, and [backup & restore](backup-restore.md) before
   you rely on it.
 
-## 7. Next steps
+## 8. Next steps
 
 - [Architecture](architecture.md) — how the control plane, runtime pool, and
   environments fit together.

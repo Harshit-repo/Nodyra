@@ -26,7 +26,9 @@ from sqlalchemy.orm import selectinload  # noqa: E402
 
 import nodyra_nodes  # noqa: E402,F401  # registers bundled nodes
 from app.db import SessionLocal  # noqa: E402
-from app.models import Environment, Workflow, WorkflowVersion  # noqa: E402
+from app.models import Credential, Environment, Workflow, WorkflowVersion  # noqa: E402
+from app.services import org_keys  # noqa: E402
+from app.tenancy import DEFAULT_ORG_ID  # noqa: E402
 from nodyra.artifacts import LocalArtifactStore  # noqa: E402
 from nodyra.context import artifact_store  # noqa: E402
 from nodyra.engine import execute  # noqa: E402
@@ -101,6 +103,16 @@ LONG_POLICY_TEXT = " ".join(
     ]
     * 8
 )
+
+DEMO_CREDENTIAL = {
+    "name": "Demo Fake API Key",
+    "type": "generic",
+    "description": (
+        "Non-production credential seeded by make demo. It is safe to delete "
+        "and must never be used for real integrations."
+    ),
+    "data": {"api_key": "demo_not_a_real_secret", "label": "fake-demo-key"},
+}
 
 WORKFLOWS: list[dict[str, Any]] = [
     {
@@ -323,6 +335,52 @@ WORKFLOWS: list[dict[str, Any]] = [
                 edge("e4", "mock_map", "out_dataset"),
                 edge("e5", "out_dataset", "preview"),
             ],
+        ),
+    },
+    {
+        "name": "Demo - Runnable Webhook Intake",
+        "description": (
+            "Active published webhook demo. POST JSON to /webhook/demo/intake "
+            "and inspect the resulting run."
+        ),
+        "active": True,
+        "webhook_path": "demo/intake",
+        "graph": graph(
+            [
+                node(
+                    "hook",
+                    "webhook_trigger",
+                    {
+                        "path": "demo/intake",
+                        "http_method": "POST",
+                        "auth_type": "none",
+                    },
+                    0,
+                    80,
+                ),
+                node(
+                    "normalize",
+                    "code",
+                    {
+                        "code": dedent(
+                            """
+                            body = input.get("body", {}) if isinstance(input, dict) else {}
+                            output = {
+                                "received": body,
+                                "source": "demo-webhook",
+                                "summary": (
+                                    f"Received demo webhook for "
+                                    f"{body.get('customer', 'unknown customer')}"
+                                ),
+                            }
+                            """
+                        ).strip()
+                    },
+                    320,
+                    80,
+                ),
+            ],
+            [edge("e1", "hook", "normalize")],
         ),
     },
     {
@@ -556,11 +614,41 @@ WORKFLOWS: list[dict[str, Any]] = [
 ]
 
 
-async def seed_workflows() -> list[dict[str, str]]:
+async def seed_demo_credential(session) -> dict[str, str]:
+    encrypted_data, encrypted_dek = await org_keys.encrypt_credential_for(
+        DEFAULT_ORG_ID, DEMO_CREDENTIAL["data"], session
+    )
+    credential = await session.scalar(
+        select(Credential).where(Credential.name == DEMO_CREDENTIAL["name"])
+    )
+    if credential is None:
+        credential = Credential(
+            name=DEMO_CREDENTIAL["name"],
+            type=DEMO_CREDENTIAL["type"],
+            scope="global",
+            description=DEMO_CREDENTIAL["description"],
+            encrypted_data=encrypted_data,
+            encrypted_dek=encrypted_dek,
+        )
+        session.add(credential)
+        action = "created"
+    else:
+        credential.type = DEMO_CREDENTIAL["type"]
+        credential.scope = "global"
+        credential.description = DEMO_CREDENTIAL["description"]
+        credential.encrypted_data = encrypted_data
+        credential.encrypted_dek = encrypted_dek
+        action = "updated"
+    return {"name": DEMO_CREDENTIAL["name"], "action": action}
+
+
+async def seed_workflows() -> dict[str, Any]:
     async with SessionLocal() as session:
         env_id = await session.scalar(select(Environment.id).where(Environment.is_global.is_(True)))
+        credential = await seed_demo_credential(session)
         seeded: list[dict[str, str]] = []
         for item in WORKFLOWS:
+            active = bool(item.get("active", False))
             workflow = await session.scalar(
                 select(Workflow)
                 .options(selectinload(Workflow.versions))
@@ -569,7 +657,7 @@ async def seed_workflows() -> list[dict[str, str]]:
             if workflow is None:
                 workflow = Workflow(
                     name=item["name"],
-                    active=False,
+                    active=active,
                     environment_id=env_id,
                     draft_graph=item["graph"],
                     published_version=1,
@@ -584,7 +672,7 @@ async def seed_workflows() -> list[dict[str, str]]:
                 session.add(workflow)
                 action = "created"
             else:
-                workflow.active = False
+                workflow.active = active
                 if workflow.environment_id is None:
                     workflow.environment_id = env_id
                 workflow.draft_graph = item["graph"]
@@ -605,7 +693,15 @@ async def seed_workflows() -> list[dict[str, str]]:
                 action = "updated"
             seeded.append({"name": item["name"], "action": action})
         await session.commit()
-        return seeded
+        webhooks = [
+            {
+                "name": item["name"],
+                "url": f"/webhook/{item['webhook_path']}",
+            }
+            for item in WORKFLOWS
+            if item.get("webhook_path")
+        ]
+        return {"credential": credential, "workflows": seeded, "webhooks": webhooks}
 
 
 async def run_local_workflows() -> list[dict[str, Any]]:
