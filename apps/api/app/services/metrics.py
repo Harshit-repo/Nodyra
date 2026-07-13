@@ -234,6 +234,24 @@ output_store_events_total = _Counter(
     "their resolved value.",
 )
 
+code_validation_blocked_total = _Counter(
+    "nodyra_code_validation_blocked_total",
+    "Code-node validation rejections, labeled by bounded reason and blocked target.",
+)
+
+
+def _record_code_validation_blocked(reason: str, target: str) -> None:
+    code_validation_blocked_total.inc(reason=reason, target=target)
+
+
+try:
+    from nodyra.expr import set_code_validation_blocked_hook
+
+    set_code_validation_blocked_hook(_record_code_validation_blocked)
+except Exception:
+    # Metrics are optional in non-API import contexts; never break startup.
+    pass
+
 
 def _render_all() -> str:
     metrics = [
@@ -246,6 +264,7 @@ def _render_all() -> str:
         queue_leased,
         node_executions_total,
         output_store_events_total,
+        code_validation_blocked_total,
     ]
     return "\n\n".join(m.render() for m in metrics) + "\n"
 

@@ -1,3 +1,5 @@
+import ast
+
 from httpx import AsyncClient
 
 
@@ -38,6 +40,25 @@ async def test_metrics_exposes_prometheus_text(client: AsyncClient) -> None:
     assert "nodyra_workflows" in text
     assert "nodyra_runs_total" in text
     assert "nodyra_uptime_seconds" in text
+
+
+async def test_metrics_exposes_code_validation_blocks(client: AsyncClient) -> None:
+    from app.services import metrics as _metrics  # noqa: F401 - registers the hook
+    from nodyra.expr import _CodeValidator
+
+    try:
+        _CodeValidator().visit(ast.parse("import os\noutput = 1", mode="exec"))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("blocked import was accepted")
+
+    resp = await client.get("/metrics")
+    assert resp.status_code == 200
+    assert (
+        'nodyra_code_validation_blocked_total{reason="import",target="os"}'
+        in resp.text
+    )
 
 
 async def test_runtime_mode_endpoint_reports_topology(client: AsyncClient) -> None:

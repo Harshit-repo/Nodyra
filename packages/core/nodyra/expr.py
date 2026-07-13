@@ -14,6 +14,7 @@ Missing keys return ``None`` rather than raising so expressions stay forgiving.
 
 import ast
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -207,6 +208,30 @@ CODE_NODE_BLOCKED_MODULES: frozenset[str] = frozenset({
     "sys", "sysconfig", "gc", "inspect", "dis", "tokenize",
 })
 
+_CodeValidationBlockedHook = Callable[[str, str], None]
+_code_validation_blocked_hook: _CodeValidationBlockedHook | None = None
+
+
+def set_code_validation_blocked_hook(
+    hook: _CodeValidationBlockedHook | None,
+) -> _CodeValidationBlockedHook | None:
+    """Install a best-effort observer and return the previous hook."""
+    global _code_validation_blocked_hook
+    previous = _code_validation_blocked_hook
+    _code_validation_blocked_hook = hook
+    return previous
+
+
+def _record_code_validation_block(reason: str, target: str) -> None:
+    hook = _code_validation_blocked_hook
+    if hook is None:
+        return
+    try:
+        hook(reason, target)
+    except Exception:
+        # Telemetry must never change whether unsafe code is rejected.
+        return
+
 
 class _CodeValidator(ast.NodeVisitor):
     """Validate exec()-mode code: block class defs, blocked names, and dangerous imports.
@@ -218,6 +243,7 @@ class _CodeValidator(ast.NodeVisitor):
 
     def generic_visit(self, node: ast.AST) -> None:
         if type(node) in _BLOCKED_STMT_NODES:
+            _record_code_validation_block("statement", type(node).__name__)
             raise ValueError(
                 f"Code node disallows: {type(node).__name__} — "
                 "use built-in functions or pass data via the input variable"
@@ -226,11 +252,13 @@ class _CodeValidator(ast.NodeVisitor):
 
     def visit_Name(self, node: ast.Name) -> None:
         if node.id in _BLOCKED_NAMES:
+            _record_code_validation_block("name", node.id)
             raise ValueError(f"Code references blocked name: {node.id}")
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr in _BLOCKED_NAMES:
+            _record_code_validation_block("attribute", node.attr)
             raise ValueError(f"Code accesses blocked attribute: {node.attr}")
         self.generic_visit(node)
 
@@ -238,6 +266,7 @@ class _CodeValidator(ast.NodeVisitor):
         for alias in node.names:
             root = alias.name.split(".")[0]
             if root in CODE_NODE_BLOCKED_MODULES:
+                _record_code_validation_block("import", root)
                 raise ValueError(
                     f"Import of '{alias.name}' is not allowed in Code nodes. "
                     "Use Nodyra's built-in nodes for OS, network, and file operations."
@@ -248,6 +277,7 @@ class _CodeValidator(ast.NodeVisitor):
         module = node.module or ""
         root = module.split(".")[0]
         if root in CODE_NODE_BLOCKED_MODULES:
+            _record_code_validation_block("import_from", root)
             raise ValueError(
                 f"Import from '{module}' is not allowed in Code nodes. "
                 "Use Nodyra's built-in nodes for OS, network, and file operations."

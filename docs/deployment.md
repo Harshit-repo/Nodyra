@@ -229,6 +229,11 @@ Migration policy:
 - `GET /health/ready` — readiness probe (Postgres + Redis).
 - `GET /system/status` — JSON status with version, uptime, counts.
 - `GET /metrics` — Prometheus text format.
+  - `nodyra_code_validation_blocked_total{reason,target}` increments when
+    Code node validation rejects blocked imports, names, attributes, or
+    statement types. Alert on sustained increases; they often indicate an
+    attempted sandbox escape or a workflow author using the wrong integration
+    surface.
 - `GET /runs` (paginated, filterable) and the **Executions** page in the UI
   show every run across the system with per-node logs, timing, and outputs.
 - `deploy/observability/prometheus-alerts.yml` — starter alerts for API

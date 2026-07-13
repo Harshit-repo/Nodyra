@@ -1,8 +1,10 @@
 from nodyra.expr import (
+    _CodeValidator,
     build_context,
     contains_expression,
     evaluate,
     from_ai_binding,
+    set_code_validation_blocked_hook,
 )
 
 
@@ -91,6 +93,44 @@ def test_safe_builtins_block_dangerous_calls() -> None:
     # `open` is not exposed; the eval falls back to the friendly error.
     result = evaluate('{{ open("/etc/passwd") }}', ctx)
     assert isinstance(result, str) and "expr error" in result
+
+
+def test_code_validation_metric_hook_records_bounded_reason_and_target() -> None:
+    import ast
+
+    seen: list[tuple[str, str]] = []
+    previous = set_code_validation_blocked_hook(
+        lambda reason, target: seen.append((reason, target))
+    )
+    try:
+        try:
+            _CodeValidator().visit(ast.parse("import os\noutput = 1", mode="exec"))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("blocked import was accepted")
+
+        assert seen == [("import", "os")]
+    finally:
+        set_code_validation_blocked_hook(previous)
+
+
+def test_code_validation_metric_hook_failure_does_not_bypass_rejection() -> None:
+    import ast
+
+    def broken_hook(_reason: str, _target: str) -> None:
+        raise RuntimeError("metrics unavailable")
+
+    previous = set_code_validation_blocked_hook(broken_hook)
+    try:
+        try:
+            _CodeValidator().visit(ast.parse("open('secret.txt')", mode="exec"))
+        except ValueError as exc:
+            assert "blocked name" in str(exc)
+        else:
+            raise AssertionError("blocked name was accepted")
+    finally:
+        set_code_validation_blocked_hook(previous)
 
 
 def test_alias_inside_string_literal_is_not_rewritten() -> None:
