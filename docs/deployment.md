@@ -249,6 +249,16 @@ Off by default. To enable, set on every API replica **and** worker:
     OTEL_ENABLED=true
     OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318/v1/traces   # OTLP/HTTP
 
+The compose bundle includes a ready-to-use collector and Jaeger UI:
+
+    docker compose -f deploy/docker-compose.yml --profile observability up -d
+
+That profile reads `deploy/observability/otel-collector.yaml`, exposes OTLP/HTTP
+on `localhost:4318`, and exposes Jaeger at `http://localhost:16686`. Set the web
+build's `VITE_TRACE_BASE_URL` to the Jaeger trace route
+(`http://localhost:16686/trace` by default) so the Executions page can link each
+traced run directly to its distributed trace.
+
 Each run produces one trace: `run.enqueue` (API, child of the HTTP request
 span) → `run.lease` (the worker that picked the entry up) → `run.execute` →
 one `node.execute` span per node with `nodyra.node_id`, `nodyra.node_type`,

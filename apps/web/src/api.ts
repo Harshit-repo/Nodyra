@@ -1393,6 +1393,7 @@ export interface RunTimelineEvent {
 export interface RunTimeline {
   run_id: string;
   status: string;
+  trace_id?: string | null;
   events: RunTimelineEvent[];
 }
 

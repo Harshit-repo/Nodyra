@@ -82,6 +82,7 @@ const runRow: RunListItem = {
   workflow_name: "Failed pipeline",
   workflow_version: 3,
   workflow_version_id: "version-error",
+  trace_id: "1234567890abcdef1234567890abcdef",
   mode: "queue",
   status: "error",
   trigger_type: "manual",
@@ -94,6 +95,7 @@ const oldRun: RunInfo = {
   workflow_id: "wf-1",
   workflow_version: 3,
   workflow_version_id: "version-error",
+  trace_id: "1234567890abcdef1234567890abcdef",
   mode: "queue",
   status: "error",
   trigger_type: "manual",
@@ -171,6 +173,7 @@ describe("ExecutionsPage replay from node", () => {
     apiMocks.runTimeline.mockResolvedValue({
       run_id: "run-old",
       status: "error",
+      trace_id: "1234567890abcdef1234567890abcdef",
       events: [],
     });
     apiMocks.runApprovals.mockResolvedValue([]);
@@ -209,6 +212,19 @@ describe("ExecutionsPage replay from node", () => {
     expect(repairLink).toHaveAttribute(
       "href",
       "/workflows/wf-1?ai=fix_failed&run_id=run-old",
+    );
+  });
+
+  it("links traced runs to the trace explorer", async () => {
+    renderExecutions();
+
+    const traceLink = await screen.findByRole("link", {
+      name: "Trace 12345678",
+    });
+
+    expect(traceLink).toHaveAttribute(
+      "href",
+      "http://localhost:16686/trace/1234567890abcdef1234567890abcdef",
     );
   });
 

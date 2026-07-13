@@ -5607,9 +5607,19 @@ kbd {
 .exec-detail-sub {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 4px;
   font-size: 11.5px;
+}
+.exec-trace-link {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-decoration: none;
+}
+.exec-trace-link:hover {
+  text-decoration: underline;
 }
 /* Run-level failure reason (e.g. graph cycle) shown under the status pill. */
 .exec-detail-run-error {

@@ -956,6 +956,9 @@ async def _execute_run(
         if org_id:
             attrs["nodyra.org_id"] = org_id
         with tracing.span("run.execute", carrier=trace_carrier, attributes=attrs) as sp:
+            trace_id = tracing.trace_id_from_span(sp)
+            if trace_id:
+                await _record_run_trace_id(run_id, trace_id)
             status = await _execute_run_impl(
                 run_id,
                 workflow_id,
@@ -974,6 +977,17 @@ async def _execute_run(
     finally:
         if org_token is not None:
             current_org_id.reset(org_token)
+
+
+async def _record_run_trace_id(run_id: str, trace_id: str) -> None:
+    async with SessionLocal() as session:
+        run = await session.get(Run, run_id)
+        if run is None:
+            return
+        if run.trace_id == trace_id:
+            return
+        run.trace_id = trace_id
+        await session.commit()
 
 
 @dataclass

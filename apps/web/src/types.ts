@@ -608,6 +608,7 @@ export interface RunInfo {
    *  node (e.g. graph cycle). Populated by GET /runs/{id}. */
   error?: string | null;
   trigger_type: string;
+  trace_id?: string | null;
   started_at: string;
   finished_at: string | null;
   node_runs: NodeRunResult[];
@@ -760,6 +761,7 @@ export interface RunListItem {
   mode: string;
   status: string;
   trigger_type: string;
+  trace_id?: string | null;
   started_at: string;
   finished_at: string | null;
 }

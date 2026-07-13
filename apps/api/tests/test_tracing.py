@@ -132,6 +132,10 @@ async def test_run_produces_connected_trace(client: AsyncClient, exporter) -> No
     # single connected trace: every span shares the enqueue span's trace id
     trace_id = by_name["run.enqueue"][0].context.trace_id
     assert all(s.context.trace_id == trace_id for s in spans)
+    trace_id_hex = f"{trace_id:032x}"
+    assert run["trace_id"] == trace_id_hex
+    timeline = (await client.get(f"/runs/{run_id}/timeline")).json()
+    assert timeline["trace_id"] == trace_id_hex
     # node spans hang off run.execute
     assert all(
         s.parent is not None and s.parent.span_id == run_span.context.span_id

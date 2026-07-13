@@ -404,6 +404,15 @@ function formatGuardrailTimelineSummary(
 
 type RunTimelineEvent = RunTimeline["events"][number];
 
+const TRACE_BASE_URL =
+  import.meta.env.VITE_TRACE_BASE_URL || "http://localhost:16686/trace";
+
+function traceLink(traceId: string): string | null {
+  const base = TRACE_BASE_URL.trim().replace(/\/+$/, "");
+  if (!base || !traceId) return null;
+  return `${base}/${encodeURIComponent(traceId)}`;
+}
+
 export function ExecutionsPage() {
   const [params, setParams] = useSearchParams();
   const selectedRunId = params.get("run");
@@ -844,6 +853,17 @@ function RunDetailPanel({
               <span className="muted"> · {run.trigger_type} · {run.mode}</span>
               {formatLabels(run.required_labels) && (
                 <span className="muted"> · labels: {formatLabels(run.required_labels)}</span>
+              )}
+              {run.trace_id && traceLink(run.trace_id) && (
+                <a
+                  className="exec-trace-link"
+                  href={traceLink(run.trace_id) ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={run.trace_id}
+                >
+                  Trace {run.trace_id.slice(0, 8)}
+                </a>
               )}
             </div>
           )}

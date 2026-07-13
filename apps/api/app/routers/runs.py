@@ -226,6 +226,7 @@ async def list_all_runs(
             mode=run.mode,
             status=run.status,
             trigger_type=run.trigger_type,
+            trace_id=run.trace_id,
             started_at=run.started_at,
             finished_at=run.finished_at,
         )
@@ -303,6 +304,7 @@ async def get_run(
         status=run.status,
         error=await _run_level_error(session, run, run.node_runs),
         trigger_type=run.trigger_type,
+        trace_id=run.trace_id,
         started_at=run.started_at,
         finished_at=run.finished_at,
         node_runs=run.node_runs,
@@ -719,7 +721,7 @@ async def run_timeline(
             )
         )
 
-    return RunTimeline(run_id=run_id, status=run.status, events=events)
+    return RunTimeline(run_id=run_id, status=run.status, trace_id=run.trace_id, events=events)
 
 
 @router.get("/runs/{run_id}/approvals", response_model=list[RunApprovalInfo])

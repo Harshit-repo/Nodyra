@@ -31,6 +31,25 @@ services:
       timeout: 3s
       retries: 10
 
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    profiles: ["observability"]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:16686:16686"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    profiles: ["observability"]
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "127.0.0.1:4318:4318"
+    depends_on:
+      - jaeger
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -88,6 +107,9 @@ services:
       ENABLE_INPROCESS_SCHEDULER: "true"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       USE_SUBPROCESS_RUNNER: "true"
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_PROTOCOL: ${OTEL_EXPORTER_PROTOCOL:-http}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
       EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
       SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
       ENVS_DIR: /app/envs
@@ -149,6 +171,9 @@ services:
       DISPATCH_ROLE: worker
       WORKER_LABELS: ${WORKER_LABELS:-}
       USE_SUBPROCESS_RUNNER: "true"
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_PROTOCOL: ${OTEL_EXPORTER_PROTOCOL:-http}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
       ENVS_DIR: /app/envs
       ARTIFACTS_DIR: /app/artifacts
       ARTIFACT_STORAGE_BACKEND: ${ARTIFACT_STORAGE_BACKEND:-s3}

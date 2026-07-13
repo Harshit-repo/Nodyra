@@ -629,6 +629,7 @@ class RunListItem(BaseModel):
     mode: str
     status: str
     trigger_type: str
+    trace_id: str | None = None
     started_at: datetime
     finished_at: datetime | None
 
@@ -656,6 +657,7 @@ class RunInfo(BaseModel):
     # show *why* a run failed without the caller having to fetch the timeline.
     error: str | None = None
     trigger_type: str
+    trace_id: str | None = None
     started_at: datetime
     finished_at: datetime | None
     node_runs: list[NodeRunInfo] = []
@@ -1554,6 +1556,7 @@ class RunTimelineEvent(BaseModel):
 class RunTimeline(BaseModel):
     run_id: str
     status: str
+    trace_id: str | None = None
     events: list[RunTimelineEvent]
 
 

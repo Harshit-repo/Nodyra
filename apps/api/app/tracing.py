@@ -136,6 +136,17 @@ def inject_context() -> dict | None:
     return carrier or None
 
 
+def trace_id_from_span(span: Any | None) -> str | None:
+    """Return the current span trace id as the 32-char hex value used by Jaeger."""
+    if span is None:
+        return None
+    context = span.get_span_context()
+    trace_id = getattr(context, "trace_id", 0)
+    if not trace_id:
+        return None
+    return f"{trace_id:032x}"
+
+
 def _context_from(carrier: dict | None) -> Any:
     if not carrier:
         return None  # None → ambient current context
