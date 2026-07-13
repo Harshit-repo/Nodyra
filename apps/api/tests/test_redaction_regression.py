@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -13,10 +14,12 @@ from nodyra.models import RunResult, RunStatus
 async def test_secret_redaction_covers_persisted_events_logs_and_artifacts(
     client: AsyncClient,
     monkeypatch,
+    caplog,
 ) -> None:
     """A credential value must not leak through persisted run inspection surfaces."""
     import app.services.runner as runner_module
 
+    caplog.set_level(logging.DEBUG)
     secret = "prod-redaction-sentinel-123456"
     artifact_id = "artifact-redaction-sentinel"
     await client.post(
@@ -135,3 +138,6 @@ async def test_secret_redaction_covers_persisted_events_logs_and_artifacts(
     )
     assert secret not in persisted_blob
     assert "***REDACTED***" in persisted_blob
+
+    log_blob = "\n".join(record.getMessage() for record in caplog.records)
+    assert secret not in log_blob
