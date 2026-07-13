@@ -274,6 +274,10 @@ the warm-pool benefit (cold start every run).
    `kubernetes` seam (`models.py:65-92`, `remote_dispatch`): container-per-run,
    gVisor, Firecracker microVMs, or K8s Jobs with a restrictive PodSecurity /
    seccomp profile. No host mounts, dropped capabilities, read-only rootfs.
+   Docker-backed workers must not mount the raw host Docker socket directly;
+   use the shipped `docker-socket-proxy` overlay, a dedicated rootless daemon,
+   or a Kubernetes/remote runner pool so daemon access is isolated from the app
+   worker as much as the deployment tier allows.
 2. **Resource limits** per run: CPU, memory, PIDs, wall-clock, disk.
 3. **Egress control / network policy.** A tenant's code must not reach: other
    tenants' runners, the Nodyra DB/Redis, the host metadata endpoint

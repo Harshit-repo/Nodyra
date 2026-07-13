@@ -405,11 +405,19 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sandbox.yml
 
 The overlay sets `EXECUTION_SANDBOX=auto` by default; set
 `EXECUTION_SANDBOX=required` to refuse worker startup unless Docker and the
-selected runtime are available. It also mounts `/var/run/docker.sock` on the
-**worker** service. The socket grants the worker root-equivalent control of
-the host daemon — acceptable precisely because tenant code no longer executes
-inside the worker; runs execute in the hardened sibling containers it spawns
-on the host daemon (images stay host-local, no registry needed).
+selected runtime are available. The worker does **not** mount
+`/var/run/docker.sock` directly. The overlay starts a `docker-socket-proxy`
+service, mounts the host socket only into that proxy, and points the worker at
+`SANDBOX_DOCKER_HOST=tcp://docker-socket-proxy:2375`. The proxy exposes only
+the API groups the sandbox needs for environment image builds, network
+management, container create/start/stop/log/remove, and daemon info/version.
+Denied groups such as `exec`, Swarm/services, volumes, secrets, plugins, and
+auth remain disabled.
+
+This is still host-daemon access, not a hard tenant boundary by itself. For
+untrusted tenants, prefer a dedicated rootless Docker/Podman daemon or a
+Kubernetes runner pool. See `docs/operations/workers.md` for the worker
+security tiers and verification checklist.
 
 ### Without Docker: rootless Podman
 

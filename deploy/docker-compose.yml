@@ -180,11 +180,6 @@ services:
       - artifactdata:/app/artifacts
       # User data directory: uncomment to expose a host folder to nodes.
       # - ./data:/app/data
-      # Required for EXECUTION_SANDBOX: lets the worker spawn sibling run
-      # containers on the host daemon (Docker-out-of-Docker). The worker
-      # itself never runs untrusted code — runs execute in the hardened
-      # sibling containers it creates.
-      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy

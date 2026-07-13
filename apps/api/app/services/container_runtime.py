@@ -107,6 +107,12 @@ def hardening_kwargs(
         ],
         # rootfs is read-only; /tmp is the only writable surface.
         "environment": environment,
+        # Stable labels make proxy audits and host-side cleanup target only
+        # Nodyra-managed sandbox containers.
+        "labels": {
+            "io.nodyra.managed": "true",
+            "io.nodyra.kind": "sandbox-run",
+        },
     }
     for key, value in (overrides or {}).items():
         if key in _OVERRIDABLE:

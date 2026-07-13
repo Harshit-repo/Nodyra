@@ -2,15 +2,51 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d
 #
-# The worker gains the host Docker socket so it can spawn hardened sibling
-# run containers (Docker-out-of-Docker). The worker itself never executes
-# untrusted code; runs execute in the disposable containers it creates.
+# The worker talks to Docker through docker-socket-proxy, not a raw
+# /var/run/docker.sock bind. The proxy exposes only the Docker API groups
+# needed to build environment images, manage the sandbox bridge network, and
+# create/start/stop/log/remove Nodyra-labeled run containers.
 services:
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.0
+    environment:
+      LOG_LEVEL: warning
+      POST: "1"
+      BUILD: "1"
+      CONTAINERS: "1"
+      IMAGES: "1"
+      INFO: "1"
+      NETWORKS: "1"
+      VERSION: "1"
+      AUTH: "0"
+      COMMIT: "0"
+      CONFIGS: "0"
+      DISTRIBUTION: "0"
+      EVENTS: "0"
+      EXEC: "0"
+      GRPC: "0"
+      NODES: "0"
+      PLUGINS: "0"
+      SECRETS: "0"
+      SERVICES: "0"
+      SESSION: "0"
+      SWARM: "0"
+      SYSTEM: "0"
+      TASKS: "0"
+      VOLUMES: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   worker:
     environment:
       EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
       SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
-    volumes:
-      - envdata:/app/envs
-      - artifactdata:/app/artifacts
-      - /var/run/docker.sock:/var/run/docker.sock
+      SANDBOX_DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-tcp://docker-socket-proxy:2375}
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started

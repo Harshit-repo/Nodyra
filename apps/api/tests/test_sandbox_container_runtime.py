@@ -228,6 +228,10 @@ def test_hardening_kwargs_complete():
     assert kw["pids_limit"] == 256
     assert kw["network"] == "nodyra-sandbox"
     assert kw["runtime"] == "runsc"
+    assert kw["labels"] == {
+        "io.nodyra.managed": "true",
+        "io.nodyra.kind": "sandbox-run",
+    }
     # rootfs is read-only, so HOME must point at the writable tmpfs
     assert kw["environment"] == {"HOME": "/tmp"}
 
