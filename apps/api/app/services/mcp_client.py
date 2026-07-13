@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from itertools import count
 from typing import Any
 
@@ -11,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import MCPConnection
+from app.models import AuditEvent, MCPConnection
 from app.services.org_keys import get_org_kek
 
 _logger = logging.getLogger(__name__)
@@ -106,6 +108,73 @@ def _unwrap_mcp_result(result: dict) -> Any:
     return content
 
 
+def record_mcp_tool_call(
+    session: AsyncSession,
+    conn: MCPConnection,
+    tool_name: str,
+    *,
+    ok: bool,
+    run_id: str | None = None,
+    actor_id: str | None = None,
+    actor_email: str | None = None,
+    duration_ms: int | None = None,
+    error: str | None = None,
+) -> None:
+    """Append a per-connection MCP tool-call audit record."""
+    detail = {
+        "connection_id": conn.id,
+        "connection_name": conn.name,
+        "tool": tool_name,
+        "ok": ok,
+        "run_id": run_id,
+        "duration_ms": duration_ms,
+        "error": error,
+    }
+    session.add(
+        AuditEvent(
+            org_id=conn.org_id,
+            action="mcp_tool_call",
+            target_type="mcp_connection",
+            target_id=conn.id,
+            detail=json.dumps(detail, ensure_ascii=False, sort_keys=True),
+            actor_id=actor_id,
+            actor_email=actor_email,
+        )
+    )
+
+
+async def _commit_mcp_tool_audit(
+    session: AsyncSession | None,
+    conn: MCPConnection,
+    tool_name: str,
+    *,
+    ok: bool,
+    run_id: str | None,
+    actor_id: str | None,
+    actor_email: str | None,
+    duration_ms: int | None,
+    error: str | None = None,
+) -> None:
+    if session is None:
+        return
+    try:
+        record_mcp_tool_call(
+            session,
+            conn,
+            tool_name,
+            ok=ok,
+            run_id=run_id,
+            actor_id=actor_id,
+            actor_email=actor_email,
+            duration_ms=duration_ms,
+            error=error,
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        _logger.warning("Failed to write MCP tool-call audit", exc_info=True)
+
+
 async def discover_tools(
     conn: MCPConnection, *, decrypted_secret: str | None
 ) -> list[dict]:
@@ -141,36 +210,65 @@ async def call_tool(
     *,
     decrypted_secret: str | None,
     timeout_seconds: float | None = None,
+    audit_session: AsyncSession | None = None,
+    run_id: str | None = None,
+    actor_id: str | None = None,
+    actor_email: str | None = None,
 ) -> Any:
     """Execute a single MCP tool call and return its result."""
     from nodyra_nodes.httpx_security import pinned_request_kwargs, resolve_pinned
 
+    started = time.monotonic()
     timeout_seconds = timeout_seconds or settings.mcp_tool_timeout_seconds
-    pinned = resolve_pinned(conn.url, context="MCP connection")
-    extra = pinned_request_kwargs(pinned)
-    headers = _build_auth_headers(conn, decrypted_secret)
-    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        resp = await client.post(
-            pinned.url,
-            json={
-                "jsonrpc": "2.0",
-                "id": next(_rpc_id),
-                "method": "tools/call",
-                "params": {"name": tool_name, "arguments": arguments},
-            },
-            headers={"Content-Type": "application/json", **headers, **extra["headers"]},
-            extensions=extra["extensions"],
-        )
-        resp.raise_for_status()
-        if len(resp.content) > settings.mcp_max_response_bytes:
-            raise MCPError(
-                f"MCP response too large ({len(resp.content)} bytes; "
-                f"cap {settings.mcp_max_response_bytes})"
+    try:
+        pinned = resolve_pinned(conn.url, context="MCP connection")
+        extra = pinned_request_kwargs(pinned)
+        headers = _build_auth_headers(conn, decrypted_secret)
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            resp = await client.post(
+                pinned.url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": next(_rpc_id),
+                    "method": "tools/call",
+                    "params": {"name": tool_name, "arguments": arguments},
+                },
+                headers={"Content-Type": "application/json", **headers, **extra["headers"]},
+                extensions=extra["extensions"],
             )
-        data = resp.json()
-    if "error" in data:
-        raise MCPError(data["error"].get("message", "MCP tools/call error"))
-    result = data.get("result", {})
+            resp.raise_for_status()
+            if len(resp.content) > settings.mcp_max_response_bytes:
+                raise MCPError(
+                    f"MCP response too large ({len(resp.content)} bytes; "
+                    f"cap {settings.mcp_max_response_bytes})"
+                )
+            data = resp.json()
+        if "error" in data:
+            raise MCPError(data["error"].get("message", "MCP tools/call error"))
+        result = data.get("result", {})
+    except Exception as exc:
+        await _commit_mcp_tool_audit(
+            audit_session,
+            conn,
+            tool_name,
+            ok=False,
+            run_id=run_id,
+            actor_id=actor_id,
+            actor_email=actor_email,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    await _commit_mcp_tool_audit(
+        audit_session,
+        conn,
+        tool_name,
+        ok=True,
+        run_id=run_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
+        duration_ms=int((time.monotonic() - started) * 1000),
+    )
     return _unwrap_mcp_result(result)
 
 

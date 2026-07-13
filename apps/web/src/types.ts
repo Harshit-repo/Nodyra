@@ -41,6 +41,20 @@ export interface MCPToolInfo {
   input_schema: Record<string, unknown>;
 }
 
+export interface MCPToolCallAuditInfo {
+  id: string;
+  connection_id: string;
+  tool: string;
+  ok: boolean;
+  org_id: string | null;
+  actor_id: string | null;
+  actor_email: string | null;
+  run_id: string | null;
+  duration_ms: number | null;
+  error: string | null;
+  created_at: string;
+}
+
 export interface ApiTokenCreate {
   name: string;
   scopes: string[];

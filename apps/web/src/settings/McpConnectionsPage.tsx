@@ -7,7 +7,7 @@ import { api, userFriendlyError } from "../api";
 import { useConfirm } from "../ConfirmProvider";
 import { useToast } from "../ToastProvider";
 import { useModalA11y } from "../useModalA11y";
-import type { MCPConnection } from "../types";
+import type { MCPConnection, MCPToolCallAuditInfo } from "../types";
 
 // ---------------------------------------------------------------------------
 // Create / Edit modal
@@ -259,6 +259,81 @@ function CreateConnectionModal({
 // Connection list card
 // ---------------------------------------------------------------------------
 
+function formatCallTime(value: string): string {
+  const ts = new Date(value);
+  if (Number.isNaN(ts.getTime())) return value;
+  return ts.toLocaleString();
+}
+
+function ConnectionCallHistory({ connectionId }: { connectionId: string }) {
+  const [calls, setCalls] = useState<MCPToolCallAuditInfo[] | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setCalls(null);
+    setError("");
+    void (async () => {
+      try {
+        const rows = await api.listMcpConnectionCalls(connectionId);
+        if (!cancelled) setCalls(rows);
+      } catch (err) {
+        if (!cancelled) {
+          setError(userFriendlyError(err));
+          setCalls([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionId]);
+
+  if (error) {
+    return <p className="mcp-call-error">Call history unavailable. {error}</p>;
+  }
+  if (calls === null) {
+    return (
+      <div className="mcp-call-history" aria-label="Loading MCP call history">
+        <span className="skeleton-line short" />
+        <span className="skeleton-line" />
+      </div>
+    );
+  }
+  if (calls.length === 0) {
+    return (
+      <div className="mcp-call-history">
+        <div className="mcp-call-history-title">Recent calls</div>
+        <p className="mcp-call-empty">No external tool calls recorded.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mcp-call-history">
+      <div className="mcp-call-history-title">Recent calls</div>
+      <ul>
+        {calls.map((call) => (
+          <li key={call.id} className="mcp-call-row">
+            <span className={`mcp-call-status ${call.ok ? "ok" : "error"}`}>
+              {call.ok ? "ok" : "err"}
+            </span>
+            <span className="mcp-call-main">
+              <code>{call.tool || "unknown_tool"}</code>
+              <span>
+                {formatCallTime(call.created_at)}
+                {call.duration_ms !== null ? ` · ${call.duration_ms} ms` : ""}
+                {call.run_id ? ` · run ${call.run_id}` : ""}
+              </span>
+              {!call.ok && call.error && <span className="mcp-call-error-text">{call.error}</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function ConnectionCard({
   conn,
   onEdit,
@@ -313,6 +388,8 @@ function ConnectionCard({
           <span className="pkg-chip">all tools allowed</span>
         )}
       </div>
+
+      <ConnectionCallHistory connectionId={conn.id} />
 
       <div className="env-actions">
         <button

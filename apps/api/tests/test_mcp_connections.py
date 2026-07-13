@@ -334,6 +334,83 @@ async def test_list_connections_uses_default_org_in_single_tenant(client):
     assert response.json() == []
 
 
+async def test_mcp_tool_audit_records_success_and_error_calls(client, httpx_mock):
+    registered = (
+        await client.post(
+            "/auth/register",
+            json={
+                "name": "Owner",
+                "company": "Nodyra",
+                "email": "mcp-audit-owner@nodyra.test",
+                "password": "supersecret",
+            },
+        )
+    ).json()
+    headers = {"Authorization": f"Bearer {registered['token']}"}
+    created = await client.post(
+        "/mcp-connections",
+        headers=headers,
+        json={
+            "name": "Audited MCP",
+            "url": "https://mcp.example.com/mcp",
+            "transport": "streamable-http",
+        },
+    )
+    assert created.status_code == 201
+    conn_id = created.json()["id"]
+
+    httpx_mock.add_response(
+        url="https://mcp.example.com/mcp",
+        method="POST",
+        json=_MOCK_CALL_RESPONSE,
+    )
+    httpx_mock.add_response(
+        url="https://mcp.example.com/mcp",
+        method="POST",
+        json=_MOCK_CALL_ERROR,
+    )
+
+    from app.main import SessionLocal
+
+    async with SessionLocal() as session:
+        conn = await session.get(MCPConnection, conn_id)
+        assert conn is not None
+        assert (
+            await call_tool(
+                conn,
+                "echo",
+                {"message": "hello"},
+                decrypted_secret=None,
+                audit_session=session,
+                run_id="run_success",
+            )
+        ) == "hello world"
+        with pytest.raises(MCPError, match="Tool execution failed"):
+            await call_tool(
+                conn,
+                "explode",
+                {},
+                decrypted_secret=None,
+                audit_session=session,
+                run_id="run_error",
+            )
+
+    response = await client.get(
+        f"/mcp-connections/{conn_id}/calls",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    by_tool = {item["tool"]: item for item in body["items"]}
+    assert by_tool["echo"]["ok"] is True
+    assert by_tool["echo"]["connection_id"] == conn_id
+    assert by_tool["echo"]["run_id"] == "run_success"
+    assert isinstance(by_tool["echo"]["duration_ms"], int)
+    assert by_tool["explode"]["ok"] is False
+    assert "Tool execution failed" in by_tool["explode"]["error"]
+
+
 @pytest.mark.skip(reason="Requires full DB + auth setup; run manually")
 class TestMCPConnectionsAPI:
     """Full integration tests that require auth setup."""

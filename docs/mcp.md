@@ -52,3 +52,8 @@ When external tool results are fed back into an AI Agent prompt, Nodyra wraps
 them in an `UNTRUSTED TOOL OUTPUT` notice and
 `<nodyra_untrusted_tool_output>` delimiters. The model is instructed to treat
 that content as data only, not as follow-up instructions or tool-call policy.
+Outbound MCP tool calls are written to the audit log with action
+`mcp_tool_call`. Operators can review recent calls per connection in Settings
+or through `GET /mcp-connections/{connection_id}/calls`; each row records the
+tool name, run id when available, duration, actor when known, and success or
+error status.

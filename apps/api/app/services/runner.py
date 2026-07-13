@@ -1554,6 +1554,8 @@ async def _execute_run_impl(
                                 tool_name,
                                 arguments,
                                 decrypted_secret=secret,
+                                audit_session=_session,
+                                run_id=run_id,
                             )
                         except Exception as exc:
                             _emit_mcp_event(

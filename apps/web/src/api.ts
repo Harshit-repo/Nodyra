@@ -29,6 +29,7 @@ import type {
   MCPConnection,
   MCPConnectionCreate,
   MCPConnectionUpdate,
+  MCPToolCallAuditInfo,
   MCPToolInfo,
   NodeManifest,
   NodeSource,
@@ -1045,6 +1046,9 @@ export const api = {
 
   listMcpConnectionTools: (id: string) =>
     request<MCPToolInfo[]>(`/mcp-connections/${id}/tools`),
+
+  listMcpConnectionCalls: (id: string) =>
+    requestList<MCPToolCallAuditInfo>(`/mcp-connections/${id}/calls?limit=5`),
 
   // --- SSO ------------------------------------------------------------------
   getSSOConfig: () => request<SSOConfig | null>("/admin/sso"),

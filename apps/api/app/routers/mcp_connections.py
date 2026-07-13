@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import MCPConnection
+from app.models import AuditEvent, MCPConnection
+from app.schemas import MCPToolCallAuditInfo, PageResponse
 from app.security import current_user, require_permission
 from app.services.mcp_client import (
     _load_conn_with_secret,
@@ -244,6 +246,75 @@ async def list_mcp_tools(
         raise HTTPException(status.HTTP_404_NOT_FOUND)
     cache = conn.tool_cache or []
     return [mcp_tool_to_node_manifest(t, conn_id=conn.id) for t in cache]
+
+
+@router.get(
+    "/{connection_id}/calls",
+    response_model=PageResponse[MCPToolCallAuditInfo],
+)
+async def list_mcp_connection_calls(
+    connection_id: str,
+    limit: int = 25,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_session),
+    current_user=Depends(current_user),
+    _: None = Depends(require_permission("mcp_connection:manage")),
+) -> PageResponse[MCPToolCallAuditInfo]:
+    org_id = _org()
+    conn = await session.scalar(
+        select(MCPConnection).where(
+            MCPConnection.id == connection_id,
+            MCPConnection.org_id == org_id,
+        )
+    )
+    if conn is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+
+    safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
+    filters = (
+        AuditEvent.action == "mcp_tool_call",
+        AuditEvent.target_type == "mcp_connection",
+        AuditEvent.target_id == connection_id,
+    )
+    total = await session.scalar(select(func.count()).select_from(AuditEvent).where(*filters))
+    rows = await session.scalars(
+        select(AuditEvent)
+        .where(*filters)
+        .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+        .limit(safe_limit)
+        .offset(safe_offset)
+    )
+    return PageResponse(
+        items=[_audit_row_to_call(row) for row in rows.all()],
+        total=total or 0,
+        limit=safe_limit,
+        offset=safe_offset,
+    )
+
+
+def _audit_row_to_call(row: AuditEvent) -> MCPToolCallAuditInfo:
+    try:
+        detail = json.loads(row.detail or "{}")
+    except json.JSONDecodeError:
+        detail = {}
+    return MCPToolCallAuditInfo(
+        id=row.id,
+        connection_id=str(detail.get("connection_id") or row.target_id),
+        tool=str(detail.get("tool") or ""),
+        ok=bool(detail.get("ok")),
+        org_id=row.org_id,
+        actor_id=row.actor_id,
+        actor_email=row.actor_email,
+        run_id=detail.get("run_id") if isinstance(detail.get("run_id"), str) else None,
+        duration_ms=(
+            int(detail["duration_ms"])
+            if isinstance(detail.get("duration_ms"), int | float)
+            else None
+        ),
+        error=detail.get("error") if isinstance(detail.get("error"), str) else None,
+        created_at=row.created_at,
+    )
 
 
 def _row_to_dict(conn: MCPConnection) -> dict:

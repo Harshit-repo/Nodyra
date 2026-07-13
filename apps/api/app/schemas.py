@@ -1382,6 +1382,22 @@ class RuntimeModeStatus(BaseModel):
     warnings: list[str]
 
 
+class MCPToolCallAuditInfo(BaseModel):
+    """Recent external MCP tool call, backed by AuditEvent rows."""
+
+    id: str
+    connection_id: str
+    tool: str
+    ok: bool
+    org_id: str | None = None
+    actor_id: str | None = None
+    actor_email: str | None = None
+    run_id: str | None = None
+    duration_ms: int | None = None
+    error: str | None = None
+    created_at: datetime
+
+
 class QueueStats(BaseModel):
     """Aggregated run-queue health for the ops/backpressure surface.
 
