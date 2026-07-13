@@ -252,6 +252,48 @@ jobs:
       - name: helm lint
         run: helm lint deploy/helm/nodyra
 
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AUTH_REQUIRED: "false"
+      POSTGRES_PASSWORD: nodyra
+      MINIO_ROOT_PASSWORD: nodyra-ci-minio-password
+      INTERNAL_API_TOKEN: ci-internal-token
+      NODYRA_SECRET_KEY: ci-secret-key-at-least-32-bytes-long
+      ARTIFACT_STORAGE_BACKEND: s3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --all-packages
+      - name: Start compose stack
+        run: docker compose -f deploy/docker-compose.yml up -d --build
+      - name: Wait for API readiness
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8000/health/ready; then
+              exit 0
+            fi
+            docker compose -f deploy/docker-compose.yml ps
+            sleep 5
+          done
+          docker compose -f deploy/docker-compose.yml logs --no-color --tail=300 api worker web
+          exit 1
+      - name: REST smoke
+        run: curl -fsS http://localhost:8000/templates >/tmp/nodyra-templates.json
+      - name: MCP smoke
+        env:
+          NODYRA_MCP_URL: http://localhost:8000/mcp
+        run: uv run python scripts/mcp_smoke.py --no-token
+      - name: Compose logs
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml logs --no-color --tail=300 api worker web
+      - name: Stop compose stack
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down -v
+
   sandbox-soak:
     # Heavy Docker lane: run nightly and on demand, not on every PR push.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
