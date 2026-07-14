@@ -1,6 +1,7 @@
 """SandboxWorker lifecycle: spawn, ready handshake, protocol, teardown."""
 
 import asyncio
+import threading
 
 import pytest
 
@@ -219,7 +220,7 @@ def test_run_missing_heartbeat_fails_fast_and_marks_dead(monkeypatch):
 
 
 def test_run_heartbeats_do_not_mask_no_progress(monkeypatch):
-    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 1.0)
     monkeypatch.setattr(settings, "runtime_no_progress_timeout_seconds", 0.05)
     client = FakeDockerClient()
 
@@ -227,11 +228,14 @@ def test_run_heartbeats_do_not_mask_no_progress(monkeypatch):
         worker = await _spawned_worker(client)
         sock = client.containers_made[0].sock._sock
 
-        async def delayed_heartbeat():
-            await asyncio.sleep(0.06)
-            sock.feed({"type": "heartbeat", "request_id": "run1"})
-
-        producer = asyncio.create_task(delayed_heartbeat())
+        # A native timer is independent of ProactorEventLoop scheduling on
+        # Windows, where sub-200 ms asyncio timing made this liveness test
+        # intermittently report heartbeat loss before the fake socket feed.
+        producer = threading.Timer(
+            0.1,
+            lambda: sock.feed({"type": "heartbeat", "request_id": "run1"}),
+        )
+        producer.start()
         try:
             with pytest.raises(RuntimeError, match="no protocol progress"):
                 await worker.run(
@@ -241,10 +245,11 @@ def test_run_heartbeats_do_not_mask_no_progress(monkeypatch):
                     targets=None,
                     workflow_modules=[],
                     on_event=lambda _event: None,
-                    run_timeout=1.0,
+                    run_timeout=2.0,
                 )
         finally:
-            await asyncio.gather(producer, return_exceptions=True)
+            producer.cancel()
+            producer.join(timeout=1.0)
         return worker
 
     worker = asyncio.run(scenario())
