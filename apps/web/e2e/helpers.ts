@@ -6,7 +6,9 @@ export const PASSWORD = "e2e-password-123";
 /**
  * Authenticate through the real login UI. The first test to reach a freshly
  * reset E2E database creates the owner; later isolated browser contexts sign
- * in as that same owner.
+ * in as that same owner. Each isolated context also completes the first-run
+ * acknowledgement before returning so callers never interact through the
+ * modal overlay.
  */
 export async function authenticateOwner(page: Page): Promise<void> {
   await page.goto("/");
@@ -26,6 +28,13 @@ export async function authenticateOwner(page: Page): Promise<void> {
     await page.getByRole("textbox", { name: "Password" }).fill(PASSWORD);
     await signIn.click();
   }
+
+  const firstRunDialog = page.getByRole("dialog", { name: "Workspace setup" });
+  await expect(firstRunDialog).toBeVisible();
+  await firstRunDialog
+    .getByRole("button", { name: "Dismiss first-run setup" })
+    .click();
+  await expect(firstRunDialog).toBeHidden();
 
   await expect(
     page.getByRole("button", { name: "New workflow" }).first(),

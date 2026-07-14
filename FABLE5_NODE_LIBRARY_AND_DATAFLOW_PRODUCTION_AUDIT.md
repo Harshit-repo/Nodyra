@@ -11,7 +11,7 @@
 
 ## 1. Executive Summary
 
-Noodle's node layer is, on the whole, **strong and production-minded**: a clean `@node`-decorator SDK, 512 registered nodes across 26 categories with 100% description coverage, a genuinely good typed-serialization + Artifact + DatasetRef data plane, a multi-layered SSRF guard, mature secret redaction, and a deploy-time "unsafe node" policy gate. It is well ahead of most workflow engines on data-plane design.
+Nodyra's node layer is, on the whole, **strong and production-minded**: a clean `@node`-decorator SDK, 512 registered nodes across 26 categories with 100% description coverage, a genuinely good typed-serialization + Artifact + DatasetRef data plane, a multi-layered SSRF guard, mature secret redaction, and a deploy-time "unsafe node" policy gate. It is well ahead of most workflow engines on data-plane design.
 
 The audit found **one systemic data-flow defect with three linked facets**, all fixed on this branch:
 1. **OS-1** — the large-output **offload store was silently dead code**: its key validator required node-ids to be hex UUIDs, which no real node-id ever is, so every offload write raised and was swallowed and outputs always stayed inline (DB bloat).
@@ -149,7 +149,7 @@ The one storage-layer defect was `output_store` (§5) — the **Result Store tie
 
 ---
 
-## 7. Should Noodle Add Other Data-Flow Types?
+## 7. Should Nodyra Add Other Data-Flow Types?
 
 Evaluated the request's candidate mechanisms against what already exists:
 

@@ -7,6 +7,16 @@ import time
 from nodyra.process_isolation import PooledProcessIsolator
 
 
+def test_pool_start_method_is_cross_platform_spawn():
+    iso = PooledProcessIsolator()
+    try:
+        pool = iso._checkout(None)
+        assert pool._mp_context.get_start_method() == "spawn"
+        iso._checkin(None)
+    finally:
+        iso.shutdown()
+
+
 def test_same_key_reuses_pool():
     iso = PooledProcessIsolator()
     try:

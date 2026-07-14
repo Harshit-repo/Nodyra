@@ -6,11 +6,11 @@ product
 
 ## Users
 
-Noodle is for technical operations teams, platform engineers, data engineers, and trusted internal workflow authors running a self-hosted automation platform. They use it while building, inspecting, publishing, and operating Python-native workflows that touch credentials, infrastructure, datasets, schedules, webhooks, and production runbooks.
+Nodyra is for technical operations teams, platform engineers, data engineers, and trusted internal workflow authors running a self-hosted automation platform. They use it while building, inspecting, publishing, and operating Python-native workflows that touch credentials, infrastructure, datasets, schedules, webhooks, and production runbooks.
 
 ## Product Purpose
 
-Noodle lets teams keep automation and data movement close to their Python stack. Users compose workflows on a React canvas, execute nodes as plain Python functions in controlled environments, inspect node inputs and outputs, manage credentials and RBAC, and publish versioned workflow releases for production execution. Success means the product feels reliable enough for operational work, direct enough for engineers, and clear enough that admins can understand what will run, where, and with which privileges.
+Nodyra lets teams keep automation and data movement close to their Python stack. Users compose workflows on a React canvas, execute nodes as plain Python functions in controlled environments, inspect node inputs and outputs, manage credentials and RBAC, and publish versioned workflow releases for production execution. Success means the product feels reliable enough for operational work, direct enough for engineers, and clear enough that admins can understand what will run, where, and with which privileges.
 
 ## Brand Personality
 
@@ -18,7 +18,7 @@ Practical, technical, trustworthy. The interface should feel like a precise cont
 
 ## Anti-references
 
-Do not make Noodle feel like a toy no-code builder, a generic SaaS dashboard, a crypto/AI hype surface, or a multi-tenant consumer automation marketplace. Avoid decorative gradients, glassy marketing panels, vague "magic" copy, and patterns that obscure the fact that trusted users can run real Python inside the deployment boundary.
+Do not make Nodyra feel like a toy no-code builder, a generic SaaS dashboard, a crypto/AI hype surface, or a multi-tenant consumer automation marketplace. Avoid decorative gradients, glassy marketing panels, vague "magic" copy, and patterns that obscure the fact that trusted users can run real Python inside the deployment boundary.
 
 ## Design Principles
 

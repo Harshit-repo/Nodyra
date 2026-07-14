@@ -14,6 +14,18 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Alembic creates ``alembic_version.version_num`` as VARCHAR(32), but this
+    # revision identifier is 34 characters. PostgreSQL enforces that width and
+    # otherwise fails while recording the revision after this upgrade. SQLite
+    # does not enforce VARCHAR widths and cannot alter the column in place.
+    if op.get_bind().dialect.name == "postgresql":
+        op.alter_column(
+            "alembic_version",
+            "version_num",
+            existing_type=sa.String(32),
+            type_=sa.String(64),
+            existing_nullable=False,
+        )
     op.add_column(
         "environments",
         sa.Column("interpreter", sa.String(20), nullable=False, server_default="cpython"),

@@ -182,7 +182,7 @@ deploy/
 | HB-2 | **P1** | Deployment/security | `deploy/docker-compose.yml` | `postgres` published `5432:5432` and `redis` `6379:6379` on all interfaces with `POSTGRES_PASSWORD: nodyra` hard-coded, in the same file that sets `RUNTIME_MODE=production`. Any network peer of a single-host deployment could connect to an unauthenticated Redis / default-password Postgres | Dev convenience defaults left in the production-posture compose | **Fixed** ✅ (loopback binds; `${POSTGRES_PASSWORD:-nodyra}` override; `.env.example` updated) |
 | HB-3 | **P2** | Security/info-leak | `apps/api/app/routers/health.py` | `/health/ready` returned `f"error: {exc}"` for DB/Redis failures; driver errors can embed DSN (host/user/password). Endpoint is auth-exempt (K8s probes) | Convenience formatting predating the auth-exemption decision | **Fixed** ✅ (log full, return `error: unreachable`) |
 | HB-4 | **P1** | CI health | `apps/api/app/mcp/tools.py` (+3) | `uv run ruff check .` → 4 I001 errors at branch tip; CI's blocking ruff step ⇒ tip cannot merge | Recent uncommitted MCP-hardening edits landed unsorted imports | **Fixed** ✅ (`ruff --fix`, re-verified clean) |
-| HB-5 | P3 | Repo hygiene | `deploy/helm/noodle/` | Empty leftover chart directory (only empty `templates/`) from the rename; confuses `helm lint`/operators | Rename residue | **Fixed** ✅ (removed) |
+| HB-5 | P3 | Repo hygiene | former Helm chart directory | Empty leftover chart directory (only empty `templates/`) from the rename; confuses `helm lint`/operators | Rename residue | **Fixed** ✅ (removed) |
 | HB-6 | P3 | Docs drift | `docs/deployment.md` | `DISPATCH_ROLE` table omitted `control` (the role compose actually uses); recommended obsolete "keep one replica inline" pattern; compose section said API runs `disabled` | Docs not updated when `control` role landed | **Fixed** ✅ |
 | HB-7 | P3 | Docs | `apps/api/app/routers/runner_pools.py` | Registration-token docstring claimed "TTL (24h)"; actual default `runner_token_ttl_days=365` | Stale docstring | **Fixed** ✅ |
 
@@ -492,7 +492,7 @@ admin analytics (P3).
 - `apps/api/app/mcp/tools.py` + 3 files — import sorting (ruff)
 - `deploy/docker-compose.yml` — loopback DB/Redis ports; parameterized PG password
 - `deploy/.env.example` — POSTGRES_PASSWORD documented
-- `deploy/helm/noodle/` — removed (empty rename leftover)
+- Former Helm chart directory — removed (empty rename leftover)
 - `docs/deployment.md` — `control` role documented; stale recommendation fixed
 - `docs/deployment/workers.md` — **new** worker scaling guide
 - `apps/api/tests/test_worker_health.py` — **new**

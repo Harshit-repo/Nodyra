@@ -11,7 +11,7 @@ This plan takes every area of Nodyra from its current verified score to 10/10. I
 ## 0. Global Conventions (read first, apply to every item)
 
 ### 0.1 Environment
-- Repo root: `D:\noodle` (Windows host). Python venv: `.venv\Scripts\python.exe` (Python 3.12.5). Node 22.
+- Repo root: the active Windows workspace. Python venv: `.venv\Scripts\python.exe` (Python 3.12.5). Node 22.
 - Backend tests: `.\.venv\Scripts\python.exe -m pytest -q --timeout=180 -p no:cacheprovider` from repo root (runs `apps` + `packages` per `pyproject.toml testpaths`).
 - Frontend: `cd apps\web` then `npx tsc`, `npx vitest run`, `npm run build`, `npx playwright test --config e2e/playwright.config.ts`.
 - Lint: `.\.venv\Scripts\python.exe -m ruff check .` must stay "All checks passed!".

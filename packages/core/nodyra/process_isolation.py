@@ -16,6 +16,7 @@ import concurrent.futures
 import contextvars
 import functools
 import logging
+import multiprocessing
 import threading
 import time
 from collections.abc import Callable
@@ -129,7 +130,13 @@ class PooledProcessIsolator:
                         )
                         self._evict_locked(oldest)
                 pool = concurrent.futures.ProcessPoolExecutor(
-                    max_workers=self._max_workers
+                    max_workers=self._max_workers,
+                    # Python 3.14 changed the POSIX default from ``fork`` to
+                    # ``forkserver``. Pin ``spawn`` so execution semantics are
+                    # deterministic across supported platforms and workers
+                    # never inherit unsafe thread/connection state from the
+                    # API host. Pools are warm, so startup cost is amortized.
+                    mp_context=multiprocessing.get_context("spawn"),
                 )
                 self._pools[key] = pool
             self._in_flight[key] = self._in_flight.get(key, 0) + 1

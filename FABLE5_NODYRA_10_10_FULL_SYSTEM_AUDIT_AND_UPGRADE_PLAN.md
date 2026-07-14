@@ -52,7 +52,7 @@
 ## Critical Instruction Compliance
 
 - **Old audits were not trusted.** The seven root-level audit reports (`BACKEND_PRODUCTION_AUDIT_2026-06-16.md`, `NOODLE_ARCHITECTURE_ENGINE_ASSESSMENT.md`, `TENANT_ENTERPRISE_READINESS_AUDIT_AND_FIX_REPORT.md`, etc.) and `docs/audits/` were not used as evidence. Every claim in this report traces to current source, tests, config, or a command run in this session.
-- **Verification was direct:** I read the engine (`packages/core/noodle/engine/*`), queue (`app/services/queue.py`), runner (`app/services/runner.py`), executors, sandbox pool + container hardening, artifact backends, MCP server/client, config, security, tenancy, deploy files, CI workflows, migrations, and the frontend; I ran the full backend suite, the web suite, web typecheck, ruff, and alembic head checks myself.
+- **Verification was direct:** I read the engine (`packages/core/nodyra/engine/*`), queue (`app/services/queue.py`), runner (`app/services/runner.py`), executors, sandbox pool + container hardening, artifact backends, MCP server/client, config, security, tenancy, deploy files, CI workflows, migrations, and the frontend; I ran the full backend suite, the web suite, web typecheck, ruff, and alembic head checks myself.
 - **`docs/superpowers/plans/*2026-07-02*`** (master roadmap, phase1-stabilize, phase2-rename, phase3-cli, phase4-product) were read **only** for product direction and rename/superpower alignment (Phase 10 section below). Implementation status was verified from code — e.g., the plans' claim that "packages/client is already nodyra-client" was confirmed by reading `packages/client/pyproject.toml`.
 
 ---
@@ -97,17 +97,17 @@ apps/
                                #   OnboardingTour, CommandPalette
     queries/, shell/, settings/ (MCP connections, KMS, SSO, roles, audit log pages)
 packages/
-  core/noodle/                 # Engine: scheduler.py (dep-counting), node_exec.py, loops, metanodes,
+  core/nodyra/                 # Engine: scheduler.py (dep-counting), node_exec.py, loops, metanodes,
                                #   subworkflows, validation; expr.py; artifacts.py (LocalArtifactStore);
                                #   process_isolation.py (per-env ProcessPoolExecutors); sdk.py
-  nodes/noodle_nodes/          # 379 @node functions + integrations_v2/ (48 providers) + ai_v2/ suite
-  runtime/noodle_runtime/      # Newline-framed JSON runtime server (subprocess + container protocol)
-  runner/noodle_runner_agent/  # Remote runner agent
+  nodes/nodyra_nodes/          # 379 @node functions + integrations_v2/ (48 providers) + ai_v2/ suite
+  runtime/nodyra_runtime/      # Newline-framed JSON runtime server (subprocess + container protocol)
+  runner/nodyra_runner_agent/  # Remote runner agent
   client/nodyra_client/        # Python client + `nodyra` CLI (already renamed)
   exporter/, importer/
 deploy/
   docker-compose.yml           # postgres/redis/minio/api(control)/worker/web; sandbox opt-in comments
-  Dockerfile.python, helm/noodle/ (api+worker+web deployments, migration job, ingress)
+  Dockerfile.python, helm/nodyra/ (api+worker+web deployments, migration job, ingress)
 apps/api/alembic/versions/     # 80 migrations, single head (0079), downgrades present, CI drift check
 .github/workflows/ci.yml       # ruff, pytest(+timeout), 3.14 lane, PG lane, alembic drift,
                                #   pip-audit (blocking), bandit/mypy (advisory), web tc/test/build, e2e
@@ -149,7 +149,7 @@ Execution flow (verified): `start_run` (gates: trigger targeting, rate limit, po
 | 26 | UI/UX | 7.5 | Onboarding welcome + tour, command palette, run sidecar, diff views, NDV panels, empty states | AI-create entry point; sandbox settings; artifact browser; MCP discovery panel; run timeline |
 | 27 | Onboarding / first-run | 7 | Welcome card + 3 steps + template strip + editor tour | "First run in 5 minutes" guided path with sample data; production-readiness checklist |
 | 28 | Node library breadth/quality | 9 | 379 nodes across data/AI/files/geo/security/ML + 47 SaaS providers | Per-provider docs pages; template gallery exercising the long tail |
-| 29 | Noodle→Nodyra rename readiness | 6 | Excellent executable plan + client pre-renamed + brand homepage in tree; **zero product code renamed** (web `<title>` still "Noodle", 70 web files say noodle) | Execute Phase 2: sweep + `git mv` + env fallbacks + guard script in CI |
+| 29 | Legacy-name→Nodyra rename readiness | 6 | Excellent executable plan + client pre-renamed + brand homepage in tree; product rename had not yet started at audit time | Execute Phase 2: sweep + `git mv` + env fallbacks + guard script in CI |
 | 30 | Product-market differentiation | 8 | MCP-first bidirectional (server AND client), Python-native, AI builder, real sandbox, self-host | Tell the story: docs, quickstart, template gallery, launch site (already drafted in `brand/`) |
 
 ---
@@ -158,7 +158,7 @@ Execution flow (verified): `start_run` (gates: trigger targeting, rate limit, po
 
 ### What is good (verified)
 
-- **Scheduler** (`packages/core/noodle/engine/scheduler.py`): dependency-counting execution replaces level barriers; each node starts the moment its predecessors complete. Worker-coroutine pool with sentinel shutdown and full cancellation propagation (`REL-2` handling at scheduler.py:401-406). Deterministic topo order independent of canvas position (documented contract). Loop regions and transparent metanodes are expanded before planning so the core scheduler sees a flat DAG.
+- **Scheduler** (`packages/core/nodyra/engine/scheduler.py`): dependency-counting execution replaces level barriers; each node starts the moment its predecessors complete. Worker-coroutine pool with sentinel shutdown and full cancellation propagation (`REL-2` handling at scheduler.py:401-406). Deterministic topo order independent of canvas position (documented contract). Loop regions and transparent metanodes are expanded before planning so the core scheduler sees a flat DAG.
 - **Node execution** (`node_exec.py`): retries, per-node + per-type timeouts, `$error` output ports (n8n-style visual error handling), context-local stdout capture (safe under concurrent runs), dataset auto-promotion, process isolation for `code` nodes.
 - **Subworkflows**: cycle/depth invariants enforced in the engine with explicit meta (no ContextVar smuggling); host resolves children; inline-vs-call outcomes.
 - **State machine**: queue status (`queued/leased/running/waiting/completed/failed/cancelled/dead_lettered`) is deliberately separate from user-facing `Run.status`, with documented mapping. Approval-waiting runs park (`waiting`) and resume through `replay_seed`.
@@ -214,7 +214,7 @@ Traced through the failure matrix (code-level reasoning; suite covers most trans
 ### Current behaviour (verified)
 
 - **Modes:** `execution_sandbox = off | auto | required` (`config.py:237`). `auto` probes Docker and falls back to subprocess with a warning; `required` refuses to boot without a working daemon + runtime (`sandbox_pool.init_sandbox`).
-- **Hardening (container_runtime.hardening_kwargs):** cap_drop ALL, no-new-privileges, read-only rootfs, tmpfs /tmp (256 m), mem 1 g / cpu 1.0 / pids 256 / nofile+nproc ulimits, tini init, dedicated bridge network (`noodle-sandbox` — no postgres/redis/minio reachability), isolation runtime auto-pick **kata > runsc (gVisor) > runc**.
+- **Hardening (container_runtime.hardening_kwargs):** cap_drop ALL, no-new-privileges, read-only rootfs, tmpfs /tmp (256 m), mem 1 g / cpu 1.0 / pids 256 / nofile+nproc ulimits, tini init, dedicated bridge network (`nodyra-sandbox` — no postgres/redis/minio reachability), isolation runtime auto-pick **kata > runsc (gVisor) > runc**.
 - **Pooling:** warm per (org_id, env_id) — cross-tenant container reuse impossible by construction; TTL reaper; max-runs recycling; image = thin env layer over a base image with schema versioning.
 - **Policy (fail-closed, `sandbox_policy.py`):** multi-tenancy **requires** `execution_sandbox=required` + subprocess runner + dedicated network unless `sandbox_policy_strict=false` is explicitly set; the "config lie" (sandbox requested but in-process runner would bypass it) aborts boot even single-tenant.
 - **Execution path:** `runner._execute_run_impl` routes to `SandboxExecutor` whenever the pool is active and no remote pool is set (runner.py:1295-1318). Cancellation hard-kills the container. Non-clean protocol exit marks the worker dead (never reused).
@@ -279,12 +279,12 @@ Answers to the task's checklist: DB stores only metadata ✅ · large outputs of
 - **61 tools** (`app/mcp/tools.py`): full CRUD, incremental graph ops (add/patch/remove node/edge) with **optimistic concurrency** (`expected_graph_revision`) and revision recording, validation summaries, publish/rollback/diff, runs (start/wait/cancel/retry/events), schedules, environments incl. build jobs, credentials listing, run approvals, node catalog search with config suggestions.
 - **Workflow-as-tool:** `enable_mcp_tool` exposes any workflow as a first-class MCP tool with a validated parameters schema (`_validate_mcp_parameters_schema`, argument validation at call time).
 - **Auth:** scoped PATs (`ndpat_`), optional external OAuth 2.1 AS with introspection + caching + circuit breaker, scope→role mapping per tool, origin checking, protected-resource metadata endpoint. Destructive tools require explicit `approve=true` (`_require_explicit_mcp_approval`).
-- **Resources + prompts** exist (`noodle://` URIs — rename target).
+- **Resources + prompts** exist (`nodyra://` URIs after the rename).
 
 ### Client (7.5/10 after this session's fix)
 
 - Connections CRUD + discovery (`tools/list`), DNS-pinned SSRF guard on every request (`resolve_pinned`), dangerous-header blocklist, org-KEK-encrypted secrets, tool→node manifest conversion, `mcp_tool` node executing through a platform hook with per-run ContextVar hygiene.
-- **BUG (P1, fixed here):** `mcp_tool` node raised `NameError` on every execution — the `from noodle.expr import build_context, evaluate` import was dropped by commit `aa575191`. No test executed the node (only manifest conversion was covered). Fixed + 3 execution-level regression tests (`packages/nodes/tests/test_mcp_tool_node.py`).
+- **BUG (P1, fixed here):** `mcp_tool` node raised `NameError` on every execution — the expression-helper import was dropped by commit `aa575191`. No test executed the node (only manifest conversion was covered). Fixed + 3 execution-level regression tests (`packages/nodes/tests/test_mcp_tool_node.py`).
 
 ### Can Claude/Cursor build workflows through MCP? Yes — the tool surface is unusually complete (incremental edits + validation + publish + run + watch events). **The gap is that nothing tells anyone.** Phase 4 Task 1 (quickstart doc + Settings card) is correctly rated the marketing P0.
 
@@ -319,7 +319,7 @@ Verified from source and test suites (no live browser pass in this session — f
 4. **No MCP discovery panel** — external tools must be configured blind (connection page exists, tool browsing doesn't).
 5. **Template gallery is a strip of buttons**, not a browsable gallery with descriptions/previews (Phase 4 Task 5 covers this).
 6. **God components** (EditorPage 2,091 LOC) will slow every future UX iteration.
-7. **Small polish:** web `<title>` is still "Noodle"; one unhandled error in the vitest run (OnboardingTour test — suite still green) worth chasing.
+7. **Small polish:** the web title still used the former name; one unhandled error in the Vitest run (OnboardingTour test — suite still green) was worth chasing.
 
 **10/10 additions** (beyond the roadmap's): run timeline with per-node durations as the default run view; data preview on edges (roadmap P2); keyboard-shortcut help overlay; workflow health score card (P3).
 
@@ -359,9 +359,9 @@ Verified from source and test suites (no live browser pass in this session — f
 
 **What the 2026-07-02 plans say (direction only):** 4-phase path — stabilize (done: `98641c1a`), full rename (Python packages, env vars w/ one-release fallback, Redis keys, cookies, MCP URIs; keep `ndpat_`, DB tables, alembic history), CLI v1 (`nodyra-client` on PyPI, `run watch`, rich/`--json`), P1 product items (MCP quickstart P0, AI-builder vocabulary, replay-from-node UI, MCP trace, template gallery, per-workflow requirements, HuggingFace provider). Decision log is locked and sensible.
 
-**Verified current state:** Phase 1 committed. Phase 2 **not started** in product code: web `<title>` "Noodle", 70 web files + all Python packages still `noodle*`, MCP URIs `noodle://`, cookies `noodle_session`. Pre-positioned: `packages/client` is already `nodyra_client` with a `nodyra` CLI entry point; `brand/homepage/nodyra.html` (uncommitted, in-flight); landing-page plan exists.
+**Verified current state at audit time:** Phase 1 committed. Phase 2 had **not started** in product code: the web title, Python packages, MCP URIs, and session cookies still used the former name. Pre-positioned: `packages/client` was already `nodyra_client` with a `nodyra` CLI entry point; `brand/homepage/nodyra.html` (uncommitted, in-flight); landing-page plan existed.
 
-**Assessment of the strategy: correct.** Full rename pre-public-release is the only cheap moment; the case-preserving sweep + `git mv` + guard-script approach is the right mechanism; keeping DB/table/alembic names avoids pointless churn; `NOODLE_*`→`NODYRA_*` with one-release fallback protects the only known production install. One addition: **fold the README/SECURITY.md security-model rewrite into the rename sweep** (S3 above) — the rename touches every doc anyway, and shipping "Nodyra" with a security section describing a product three weeks dead would undermine the premium positioning.
+**Assessment of the strategy: correct.** Full rename pre-public-release is the only cheap moment; the case-preserving sweep + `git mv` + guard-script approach is the right mechanism; keeping DB/table/alembic names avoids pointless churn; the environment-variable migration needed one-release compatibility where technically safe. One addition: **fold the README/SECURITY.md security-model rewrite into the rename sweep** (S3 above) — the rename touches every doc anyway, and shipping "Nodyra" with a security section describing an obsolete product would undermine the premium positioning.
 
 **Launch-readiness sequencing (recommended):** Phase 2 rename → Phase 4 Task 1 (MCP quickstart — it is the differentiator story) → template gallery + replay-from-node → Phase 3 CLI (parallel) → sandbox/artifact/MCP UI surfaces (this report's P1s) → soak test → launch.
 
@@ -371,19 +371,19 @@ Verified from source and test suites (no live browser pass in this session — f
 
 | # | Sev | Area | File(s) | Evidence / Repro | Root cause | Fix | Status |
 |---|---|---|---|---|---|---|---|
-| BUG-1 | **P1** | MCP client node | `packages/nodes/noodle_nodes/mcp_tool.py` | `ruff` F821; any workflow running an `mcp_tool` node → `NameError: name 'build_context' is not defined` (line 38 executes unconditionally) | Commit `aa575191` ("fix params format") dropped `from noodle.expr import build_context, evaluate`; only manifest-conversion was tested, never node execution | Re-added import; added 3 execution-level regression tests | **Fixed** ✅ |
+| BUG-1 | **P1** | MCP client node | `packages/nodes/nodyra_nodes/mcp_tool.py` | `ruff` F821; any workflow running an `mcp_tool` node → `NameError: name 'build_context' is not defined` (line 38 executes unconditionally) | Commit `aa575191` ("fix params format") dropped the expression-helper import; only manifest-conversion was tested, never node execution | Re-added import; added 3 execution-level regression tests | **Fixed** ✅ |
 | BUG-2 | **P1** | CI / repo health | 30 files | `uv run ruff check .` → 59 errors at branch tip; CI's blocking `ruff check .` step ⇒ tip cannot merge | Recent commits (incl. `65f2d82c`) landed without the lint gate | 42 auto-fixed (imports/unused); manual: `node_registry.py` logger placement, `test_custom_roles.py`/`test_engine_validation.py` blind-exception asserts → `IntegrityError`/`GraphError`, `test_file_nodes.py` section imports noqa'd, `scripts/test_mcp_e2e.py` import order. `ruff check .` now passes | **Fixed** ✅ (per Harry: future lint issues to be noted, not chased) |
 | BUG-3 | P2 | Docs/security | `README.md`, `SECURITY.md` | README §"Security model" claims sandbox/MT "out of scope for v1"; code ships both (`sandbox_pool.py`, `tenancy.py`) | Docs never updated after MT Phase D | Rewrite during Phase 2 rename sweep | Open |
 | BUG-4 | P2 | Env/config docs | `.env.example` | No `EXECUTION_SANDBOX`/`SANDBOX_*` entries despite full config support | Sandbox slice shipped without example-env update | Add documented block | Open |
 | BUG-5 | P3 | Web tests | `OnboardingTour` test | vitest: "1 error" (unhandled) alongside 439 passing | Unawaited async in test teardown (suspected) | Chase when touching onboarding | Open |
-| BUG-6 | P3 | Repo hygiene | `apps/worker/` (empty pkg), root-level stale audit reports, `D:noodledocssuperpowersspecs` artifact dir | Listed in repo root | Phase 1 hygiene task incomplete | Fold into Phase 2 sweep | Open |
+| BUG-6 | P3 | Repo hygiene | `apps/worker/` (empty pkg), root-level stale audit reports, malformed local artifact directory | Listed in repo root | Phase 1 hygiene task incomplete | Fold into Phase 2 sweep | Open |
 
 ---
 
 ## Fixes Made
 
 1. **BUG-1 — `mcp_tool` NameError**
-   - Files: `packages/nodes/noodle_nodes/mcp_tool.py` (+1 line import)
+   - Files: `packages/nodes/nodyra_nodes/mcp_tool.py` (+1 line import)
    - Tests added: `packages/nodes/tests/test_mcp_tool_node.py` — executes the node function directly: dispatch through the platform hook, `{{ $json.* }}` expression resolution from inputs, empty-arguments default. 3 tests, all passing.
    - Verification: `uv run pytest packages/nodes/tests/test_mcp_tool_node.py -q` → 3 passed.
 2. **BUG-2 — lint gate red**
@@ -488,7 +488,7 @@ Not run (honestly): `docker compose build/up` (no Docker probe on this Windows h
 
 ## Files Changed
 
-- `packages/nodes/noodle_nodes/mcp_tool.py` — restore dropped `noodle.expr` import (BUG-1).
+- `packages/nodes/nodyra_nodes/mcp_tool.py` — restore dropped expression-helper import (BUG-1).
 - `packages/nodes/tests/test_mcp_tool_node.py` — **new** regression tests.
 - Lint (BUG-2): `ruff --fix` across ~28 files (import order/unused imports only — no behaviour change), plus manual edits to `apps/api/app/routers/node_registry.py`, `apps/api/tests/test_custom_roles.py`, `packages/core/tests/test_engine_validation.py`, `packages/nodes/tests/test_file_nodes.py`, `scripts/test_mcp_e2e.py`.
 - This report: `FABLE5_NODYRA_10_10_FULL_SYSTEM_AUDIT_AND_UPGRADE_PLAN.md`.

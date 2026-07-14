@@ -31,7 +31,7 @@
   operator responsibilities, reporting vulnerabilities.
 - [Workers & scaling](deployment/workers.md).
 - [Soak testing](soak-testing.md).
-- [Upgrading to Nodyra](upgrading-to-nodyra.md) — migrating from the Noodle
+- [Upgrading to Nodyra](upgrading-to-nodyra.md) — migrating from the former product name
   working name.
 
 ## Extending Nodyra
