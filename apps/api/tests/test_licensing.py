@@ -29,6 +29,26 @@ async def test_no_key_is_community():
 
 
 @pytest.mark.asyncio
+async def test_no_key_falls_back_when_settings_database_is_offline(monkeypatch):
+    class OfflineSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc_info):
+            return None
+
+        async def get(self, *_args, **_kwargs):
+            raise OSError("settings database unavailable")
+
+    monkeypatch.setattr(licensing, "SessionLocal", OfflineSession)
+
+    lic = await licensing.current_license()
+
+    assert lic.edition is Edition.COMMUNITY
+    assert lic.valid is True
+
+
+@pytest.mark.asyncio
 async def test_valid_pro_key(monkeypatch):
     monkeypatch.setattr(settings, "license_key", pro_key())
     licensing.invalidate_license_cache()

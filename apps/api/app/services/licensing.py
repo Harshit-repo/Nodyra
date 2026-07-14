@@ -197,7 +197,7 @@ async def _db_license_key() -> str | None:
         async with SessionLocal() as session:
             row = await session.get(SystemSetting, "singleton")
             return getattr(row, "license_key", None) if row is not None else None
-    except (OperationalError, ProgrammingError):
+    except (OSError, OperationalError, ProgrammingError):
         return None
 
 
