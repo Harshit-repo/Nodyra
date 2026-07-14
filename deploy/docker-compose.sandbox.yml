@@ -38,6 +38,18 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     read_only: true
+    # v0.4.0 renders its HAProxy config under /tmp and PID under /run. Keep the
+    # root filesystem immutable while providing only the small, non-executable
+    # scratch mounts the entrypoint requires.
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1m
+      - /run:rw,noexec,nosuid,size=1m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:2375/_ping | grep -q '^OK$'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 5s
     cap_drop:
       - ALL
     security_opt:
@@ -50,4 +62,4 @@ services:
       SANDBOX_DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-tcp://docker-socket-proxy:2375}
     depends_on:
       docker-socket-proxy:
-        condition: service_started
+        condition: service_healthy
