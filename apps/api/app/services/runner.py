@@ -282,6 +282,7 @@ local_executor = LocalExecutor(
 sandbox_executor = SandboxExecutor(
     pool=sandbox_pool.pool,
     subworkflow_resolver=resolve_subworkflow,
+    admission=runtime_pool,
 )
 
 

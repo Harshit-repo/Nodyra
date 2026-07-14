@@ -15,9 +15,10 @@ class SandboxExecutor:
     """Adapter over ``sandbox_pool.pool`` — the per-(org, env) warm
     container pool. No DB access, mirroring LocalExecutor."""
 
-    def __init__(self, *, pool: Any, subworkflow_resolver: Any) -> None:
+    def __init__(self, *, pool: Any, subworkflow_resolver: Any, admission: Any) -> None:
         self._pool = pool
         self._subworkflow_resolver = subworkflow_resolver
+        self._admission = admission
 
     @property
     def active(self) -> bool:
@@ -26,23 +27,27 @@ class SandboxExecutor:
     async def execute(
         self, ctx: RunExecutionContext, on_event: EventCallback
     ) -> RunOutcome:
-        status = await self._pool.dispatch(
-            ctx["run_id"],
-            org_id=ctx.get("org_id"),
-            env_id=ctx["environment_id"],
-            env_payload=ctx["env_payload"] or {},
-            graph=ctx["graph"],
-            cache=ctx["cache"],
-            targets=ctx["targets"],
-            workflow_modules=ctx["workflow_modules"],
-            on_event=on_event,
-            subworkflow_resolver=self._subworkflow_resolver,
-            subworkflow_meta=ctx.get("subworkflow_meta"),
-            run_timeout=ctx["run_timeout"],
-            pause_on_approval=ctx["pause_on_approval"],
-            agent_action_resume=ctx["agent_action_resume"],
-            spawn_overrides=ctx.get("sandbox_spawn_overrides"),
-        )
+        # Sandboxed and warm-subprocess runs share one admission ceiling. The
+        # durable queue reads this same gate before leasing local work, so a
+        # sandbox burst remains queued instead of spawning unbounded containers.
+        async with self._admission.global_slot():
+            status = await self._pool.dispatch(
+                ctx["run_id"],
+                org_id=ctx.get("org_id"),
+                env_id=ctx["environment_id"],
+                env_payload=ctx["env_payload"] or {},
+                graph=ctx["graph"],
+                cache=ctx["cache"],
+                targets=ctx["targets"],
+                workflow_modules=ctx["workflow_modules"],
+                on_event=on_event,
+                subworkflow_resolver=self._subworkflow_resolver,
+                subworkflow_meta=ctx.get("subworkflow_meta"),
+                run_timeout=ctx["run_timeout"],
+                pause_on_approval=ctx["pause_on_approval"],
+                agent_action_resume=ctx["agent_action_resume"],
+                spawn_overrides=ctx.get("sandbox_spawn_overrides"),
+            )
         return RunOutcome(status=str(status))
 
     async def cancel(self, run_id: str) -> bool:

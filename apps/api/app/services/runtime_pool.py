@@ -808,15 +808,53 @@ class _RssBudget:
                 self._cond.notify_all()
 
 
+class _ResizableAdmission:
+    """Loop-local, dynamically resizable concurrency gate.
+
+    Unlike replacing an ``asyncio.Semaphore`` during a resize, this preserves
+    existing waiters and accounts for every in-flight holder. Shrinking below
+    current usage simply withholds new admissions until enough holders exit.
+    """
+
+    def __init__(self, capacity: int) -> None:
+        self._capacity = max(1, capacity)
+        self._in_use = 0
+        self._condition = asyncio.Condition()
+
+    @property
+    def available(self) -> int:
+        return max(0, self._capacity - self._in_use)
+
+    def locked(self) -> bool:
+        return self.available == 0
+
+    async def resize(self, capacity: int) -> int:
+        capacity = max(1, capacity)
+        async with self._condition:
+            self._capacity = capacity
+            self._condition.notify_all()
+        return capacity
+
+    async def __aenter__(self) -> "_ResizableAdmission":
+        async with self._condition:
+            await self._condition.wait_for(lambda: self._in_use < self._capacity)
+            self._in_use += 1
+        return self
+
+    async def __aexit__(self, _exc_type, _exc, _tb) -> None:
+        async with self._condition:
+            self._in_use = max(0, self._in_use - 1)
+            self._condition.notify_all()
+
+
 class RuntimePool:
     def __init__(self) -> None:
         self._envs: dict[str, _EnvPool] = {}
         self._lock = asyncio.Lock()
-        # Global ceiling on simultaneously executing top-level runs. Acquired
-        # only here in ``dispatch`` — never around the in-process engine — so
-        # sub-workflows (which call the engine directly, not the pool) consume
-        # no slot and cannot deadlock a parent that is waiting on them.
-        self._global_sem = asyncio.Semaphore(max(1, settings.max_concurrent_runs))
+        # Global ceiling on simultaneously executing top-level runs. Shared by
+        # warm subprocesses, sandbox containers, and the in-process fallback;
+        # sub-workflows bypass it because their parent already owns a slot.
+        self._global_sem = _ResizableAdmission(settings.max_concurrent_runs)
         self._max_concurrent_runs = max(1, settings.max_concurrent_runs)
         self._scale_lock = asyncio.Lock()
         # Soft fan-out throttle for sub-workflow subprocess spawns. Separate
@@ -858,18 +896,8 @@ class RuntimePool:
         async with self._scale_lock:
             if new_max == self._max_concurrent_runs:
                 return new_max
-            old_value = self._max_concurrent_runs
+            await self._global_sem.resize(new_max)
             self._max_concurrent_runs = new_max
-            if new_max > old_value:
-                # Growing: create a new semaphore with extra permits.
-                # Existing waiters remain on the old semaphore until they
-                # acquire; new callers use the new (larger) one.
-                delta = new_max - old_value
-                new_sem = asyncio.Semaphore(new_max)
-                # Transfer: release delta permits to match the new capacity.
-                for _ in range(delta):
-                    new_sem._value += 1  # noqa: SLF001 — internal field is documented in CPython
-                self._global_sem = new_sem
             return new_max
 
     def current_max_slots(self) -> int:
@@ -881,18 +909,17 @@ class RuntimePool:
 
         Used by the local durable-queue dispatch loop to bound how many local
         runs it leases per tick (leasing more than there are slots would just
-        pile up blocked coroutines). Reads the semaphore's internal permit
-        counter — best-effort and may briefly over/under-count under races;
-        the semaphore itself remains the real enforcement.
+        pile up blocked coroutines). The resizable admission gate remains the
+        authoritative enforcement if this point-in-time value races a caller.
         """
-        return max(0, getattr(self._global_sem, "_value", 0))
+        return self._global_sem.available
 
-    def global_slot(self) -> asyncio.Semaphore:
+    def global_slot(self) -> _ResizableAdmission:
         """The global ``max_concurrent_runs`` ceiling as an async context
-        manager. Used by the in-process top-level path (runner) so it honours
-        the same admission cap as subprocess ``dispatch``. Never acquire this
-        around a sub-workflow call — the parent already holds a slot, so doing
-        so would deadlock (mirrors the ``dispatch_subworkflow`` bypass).
+        manager. Used by sandbox and in-process top-level paths so every local
+        executor honours the same admission cap as subprocess ``dispatch``.
+        Never acquire this around a sub-workflow call — the parent already
+        holds a slot, so doing so would deadlock.
         """
         return self._global_sem
 

@@ -3,6 +3,14 @@
 import asyncio
 
 
+class _Admission:
+    def __init__(self, slots: int = 1) -> None:
+        self._slots = asyncio.Semaphore(slots)
+
+    def global_slot(self) -> asyncio.Semaphore:
+        return self._slots
+
+
 def test_executor_protocol_shape():
     from app.services.executors.base import (
         RunExecutionContext,
@@ -146,7 +154,11 @@ def test_sandbox_executor_delegates_and_cancels():
     async def resolver(call, parent_env_id=None):
         return None
 
-    ex = SandboxExecutor(pool=FakeSandboxPool(), subworkflow_resolver=resolver)
+    ex = SandboxExecutor(
+        pool=FakeSandboxPool(),
+        subworkflow_resolver=resolver,
+        admission=_Admission(),
+    )
     ctx = {
         "run_id": "r1", "workflow_id": "wf1", "org_id": "org9",
         "graph": {}, "cache": None, "targets": None,
@@ -167,3 +179,73 @@ def test_sandbox_executor_delegates_and_cancels():
     assert ex.active is True
     assert asyncio.run(ex.cancel("r1")) is True
     assert calls["cancelled"] == "r1"
+
+
+async def test_sandbox_executor_shares_global_admission_ceiling():
+    from app.services.executors.sandbox import SandboxExecutor
+
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    class FakeSandboxPool:
+        enabled = True
+
+        def __init__(self) -> None:
+            self.active = 0
+            self.peak = 0
+            self.started: list[str] = []
+
+        async def dispatch(self, run_id, **_kwargs):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            self.started.append(run_id)
+            try:
+                if run_id == "r1":
+                    first_started.set()
+                    await release_first.wait()
+                return "success"
+            finally:
+                self.active -= 1
+
+        async def cancel(self, _run_id):
+            return True
+
+    def context(run_id: str) -> dict:
+        return {
+            "run_id": run_id,
+            "workflow_id": "wf1",
+            "org_id": "org9",
+            "graph": {},
+            "cache": None,
+            "targets": None,
+            "environment_id": "env5",
+            "runner_pool_id": None,
+            "env_payload": {"id": "env5"},
+            "workflow_modules": [],
+            "run_timeout": None,
+            "default_timeouts": {},
+            "pause_on_approval": False,
+            "agent_action_resume": None,
+            "subworkflow_meta": None,
+        }
+
+    async def on_event(_event: dict) -> None:
+        return None
+
+    pool = FakeSandboxPool()
+    executor = SandboxExecutor(
+        pool=pool,
+        subworkflow_resolver=None,
+        admission=_Admission(slots=1),
+    )
+    first = asyncio.create_task(executor.execute(context("r1"), on_event))
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    second = asyncio.create_task(executor.execute(context("r2"), on_event))
+    await asyncio.sleep(0.05)
+    assert pool.started == ["r1"]
+
+    release_first.set()
+    outcomes = await asyncio.gather(first, second)
+    assert [outcome.status for outcome in outcomes] == ["success", "success"]
+    assert pool.started == ["r1", "r2"]
+    assert pool.peak == 1

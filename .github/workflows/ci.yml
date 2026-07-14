@@ -474,6 +474,19 @@ jobs:
           docker compose -f deploy/docker-compose.yml
           -f deploy/docker-compose.sandbox.yml
           down -v
+      - name: Assert sandbox containers reclaimed
+        if: always()
+        run: |
+          leftovers="$(docker ps -aq \
+            --filter 'label=io.nodyra.managed=true' \
+            --filter 'label=io.nodyra.kind=sandbox-run')"
+          if [ -n "$leftovers" ]; then
+            echo "orphaned Nodyra sandbox containers remain after shutdown"
+            docker ps -a \
+              --filter 'label=io.nodyra.managed=true' \
+              --filter 'label=io.nodyra.kind=sandbox-run'
+            exit 1
+          fi
 
   web:
     runs-on: ubuntu-latest

@@ -1,4 +1,8 @@
 """Shared container machinery: image tags, dockerfile generation, build."""
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from app.config import settings
@@ -6,6 +10,7 @@ from app.services.container_runtime import (
     IMAGE_SCHEMA_VERSION,
     _validate_packages,
     _validate_python_version,
+    cleanup_owned_sandbox_containers,
     ensure_docker_image,
     image_tag_for,
 )
@@ -113,6 +118,34 @@ def test_base_image_cached():
     assert client.images.built == []
 
 
+def test_base_image_build_is_deduplicated_across_threads():
+    from app.services.container_runtime import base_image_tag, ensure_base_image
+
+    client = FakeDockerClient()
+    build_entered = threading.Event()
+    release_build = threading.Event()
+    original_build = client.images.build
+
+    def blocked_build(**kwargs):
+        build_entered.set()
+        assert release_build.wait(timeout=2)
+        return original_build(**kwargs)
+
+    client.images.build = blocked_build
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(ensure_base_image, client, "3.12")
+        try:
+            assert build_entered.wait(timeout=2)
+            second = executor.submit(ensure_base_image, client, "3.12")
+            time.sleep(0.05)  # give an unlocked check-then-build race time to enter
+        finally:
+            release_build.set()
+        assert first.result(timeout=2) == base_image_tag("3.12")
+        assert second.result(timeout=2) == base_image_tag("3.12")
+
+    assert client.images.built == [base_image_tag("3.12")]
+
+
 def test_env_image_derives_from_base():
     """Env images are thin layers over the base: FROM base, extra packages
     installed as root, then privileges dropped again."""
@@ -157,6 +190,36 @@ def test_env_image_without_extra_packages_is_from_only():
     client.images.build = capture
     ensure_docker_image(client, "t2", {"python_version": "3.12", "packages": []})
     assert captured["dockerfile"] == f"FROM {base_image_tag('3.12')}\n"
+
+
+def test_env_image_build_is_deduplicated_across_threads():
+    from app.services.container_runtime import base_image_tag
+
+    client = FakeDockerClient()
+    client.images.existing.add(base_image_tag("3.12"))
+    build_entered = threading.Event()
+    release_build = threading.Event()
+    original_build = client.images.build
+
+    def blocked_build(**kwargs):
+        build_entered.set()
+        assert release_build.wait(timeout=2)
+        return original_build(**kwargs)
+
+    client.images.build = blocked_build
+    payload = {"python_version": "3.12", "packages": []}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(ensure_docker_image, client, "same-env", payload)
+        try:
+            assert build_entered.wait(timeout=2)
+            second = executor.submit(ensure_docker_image, client, "same-env", payload)
+            time.sleep(0.05)  # give an unlocked check-then-build race time to enter
+        finally:
+            release_build.set()
+        first.result(timeout=2)
+        second.result(timeout=2)
+
+    assert client.images.built == ["same-env"]
 
 
 def test_package_validation_blocks_shell_metacharacters():
@@ -254,6 +317,27 @@ def test_hardening_kwargs_overrides():
     # overrides can't strip the security floor
     assert kw["cap_drop"] == ["ALL"]
     assert kw["read_only"] is True
+
+
+def test_owner_label_and_orphan_cleanup_are_replica_scoped():
+    client = FakeDockerClient()
+    owned_labels = hardening_kwargs(
+        runtime="runc", network="bridge", owner_id="worker-a"
+    )["labels"]
+    peer_labels = hardening_kwargs(
+        runtime="runc", network="bridge", owner_id="worker-b"
+    )["labels"]
+    owned = client.containers.run("image", name="owned", labels=owned_labels)
+    peer = client.containers.run("image", name="peer", labels=peer_labels)
+
+    assert cleanup_owned_sandbox_containers(client, "worker-a") == 1
+    assert owned.removed is True
+    assert peer.removed is False
+
+
+def test_orphan_cleanup_rejects_blank_owner():
+    with pytest.raises(ValueError, match="owner id"):
+        cleanup_owned_sandbox_containers(FakeDockerClient(), " ")
 
 
 def test_ensure_sandbox_network_creates_once():

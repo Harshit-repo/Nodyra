@@ -303,6 +303,10 @@ class Settings(BaseSettings):
     # Docker daemon for sandbox containers; empty = environment default
     # (DOCKER_HOST / the mounted socket).
     sandbox_docker_host: str = ""
+    # Stable identity used to reclaim this worker's sandbox containers after a
+    # process restart. Empty defaults to the host/container hostname. Set a
+    # unique stable value per worker when replicas share one Docker daemon.
+    sandbox_owner_id: str = ""
     # Dedicated bridge network for run containers — keeps tenant code off
     # the compose project network (no postgres/redis/minio reachability).
     sandbox_network: str = "nodyra-sandbox"

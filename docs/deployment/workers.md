@@ -72,12 +72,19 @@ containers instead of the warm subprocess pool:
 docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --scale worker=3
 ```
 
-The worker mounts the host Docker socket and spawns **sibling** run containers
-(Docker-out-of-Docker) on the isolated `nodyra-sandbox` bridge network — the
-worker process itself never executes untrusted code. `SANDBOX_RUNTIME=auto`
-picks the strongest available runtime (kata > gVisor/runsc > runc).
-`EXECUTION_SANDBOX=required` refuses worker startup without a working daemon —
-mandatory when `MULTI_TENANCY_ENABLED=true`.
+The worker reaches the host daemon through the sandbox overlay's restricted
+Docker socket proxy and spawns **sibling** run containers (Docker-out-of-Docker)
+on the isolated `nodyra-sandbox` bridge network — the worker process itself
+never executes untrusted code. `SANDBOX_RUNTIME=auto` picks the strongest
+available runtime (kata > gVisor/runsc > runc). `EXECUTION_SANDBOX=required`
+refuses worker startup without a working daemon — mandatory when
+`MULTI_TENANCY_ENABLED=true`.
+
+Each run container is labeled with its worker owner. On process restart the
+worker force-removes containers left by its prior process before leasing new
+work. `SANDBOX_OWNER_ID` defaults to the worker hostname; set it to a stable,
+unique value per replica when an orchestrator recreates workers on a shared
+Docker daemon. Never reuse one owner ID across concurrently active replicas.
 
 ### Artifacts across workers
 

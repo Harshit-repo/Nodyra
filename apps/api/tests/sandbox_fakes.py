@@ -54,9 +54,10 @@ class FakeSock:
 
 
 class FakeContainer:
-    def __init__(self, name: str):
+    def __init__(self, name: str, *, labels: dict[str, str] | None = None):
         self.name = name
         self.removed = False
+        self.labels = labels or {}
         self.sock = FakeSock()
 
     def attach_socket(self, params=None):
@@ -72,7 +73,10 @@ class _FakeContainers:
 
     def run(self, image: str, **kwargs) -> FakeContainer:
         self._client.run_calls.append({"image": image, **kwargs})
-        c = FakeContainer(kwargs.get("name", f"c{len(self._client.containers_made)}"))
+        c = FakeContainer(
+            kwargs.get("name", f"c{len(self._client.containers_made)}"),
+            labels=kwargs.get("labels"),
+        )
         # A real nodyra_runtime emits ready as its first line.
         if self._client.auto_ready:
             c.sock._sock.feed({"type": "ready"})
@@ -84,6 +88,21 @@ class _FakeContainers:
             if c.name == name:
                 return c
         raise KeyError(name)
+
+    def list(self, *, all: bool = False, filters: dict | None = None) -> list[FakeContainer]:
+        del all
+        required = (filters or {}).get("label") or []
+
+        def matches(container: FakeContainer) -> bool:
+            if container.removed:
+                return False
+            for requirement in required:
+                key, _, value = requirement.partition("=")
+                if container.labels.get(key) != value:
+                    return False
+            return True
+
+        return [container for container in self._client.containers_made if matches(container)]
 
 
 class _FakeImages:

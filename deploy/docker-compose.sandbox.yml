@@ -60,6 +60,9 @@ services:
       EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
       SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
       SANDBOX_DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-tcp://docker-socket-proxy:2375}
+      # Override with a unique stable value per replica when scaling workers
+      # against one daemon; the hostname fallback is stable across restart.
+      SANDBOX_OWNER_ID: ${SANDBOX_OWNER_ID:-}
     depends_on:
       docker-socket-proxy:
         condition: service_healthy

@@ -12,12 +12,32 @@ import io
 import logging
 import re
 import tarfile
+import threading
+import weakref
 from pathlib import Path
 from typing import Any
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Docker image creation is a synchronous check-then-build operation. Multiple
+# sandbox starts for the same environment can reach it from separate executor
+# threads, so the cache probe must be serialized per tag. Weak values keep the
+# lock registry bounded as old environment/image tags disappear from use.
+_IMAGE_BUILD_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = (
+    weakref.WeakValueDictionary()
+)
+_IMAGE_BUILD_LOCKS_GUARD = threading.Lock()
+
+
+def _image_build_lock(tag: str) -> threading.Lock:
+    with _IMAGE_BUILD_LOCKS_GUARD:
+        lock = _IMAGE_BUILD_LOCKS.get(tag)
+        if lock is None:
+            lock = threading.Lock()
+            _IMAGE_BUILD_LOCKS[tag] = lock
+        return lock
 
 # Bump whenever the generated Dockerfile changes shape — stale images built
 # from the old recipe (e.g. root-running v1 images, PyPI-installing v2 images)
@@ -77,6 +97,7 @@ def hardening_kwargs(
     network: str,
     overrides: dict | None = None,
     runtime_flags: dict | None = None,
+    owner_id: str | None = None,
 ) -> dict[str, Any]:
     environment: dict[str, str] = {
         "HOME": "/tmp",
@@ -94,6 +115,12 @@ def hardening_kwargs(
         environment["PYTHON_JIT"] = "1"
     if (runtime_flags or {}).get("lazy_imports"):
         environment["PYTHON_LAZY_IMPORTS"] = "1"
+    labels = {
+        "io.nodyra.managed": "true",
+        "io.nodyra.kind": "sandbox-run",
+    }
+    if owner_id:
+        labels["io.nodyra.owner"] = owner_id
     kw: dict[str, Any] = {
         "cap_drop": ["ALL"],
         "security_opt": ["no-new-privileges:true"],
@@ -115,15 +142,42 @@ def hardening_kwargs(
         "environment": environment,
         # Stable labels make proxy audits and host-side cleanup target only
         # Nodyra-managed sandbox containers.
-        "labels": {
-            "io.nodyra.managed": "true",
-            "io.nodyra.kind": "sandbox-run",
-        },
+        "labels": labels,
     }
     for key, value in (overrides or {}).items():
         if key in _OVERRIDABLE:
             kw[key] = value
     return kw
+
+
+def cleanup_owned_sandbox_containers(client: Any, owner_id: str) -> int:
+    """Force-remove sandbox containers left by a prior owner process.
+
+    Cleanup is deliberately owner-scoped: multiple workers may share a Docker
+    daemon, and one replica must never remove another replica's active runs.
+    """
+    owner_id = owner_id.strip()
+    if not owner_id:
+        raise ValueError("sandbox owner id must not be blank")
+    filters = {
+        "label": [
+            "io.nodyra.managed=true",
+            "io.nodyra.kind=sandbox-run",
+            f"io.nodyra.owner={owner_id}",
+        ]
+    }
+    removed = 0
+    for container in client.containers.list(all=True, filters=filters):
+        try:
+            container.remove(force=True)
+            removed += 1
+        except Exception as exc:  # noqa: BLE001 — best-effort per container
+            logger.warning(
+                "could not remove orphaned sandbox container %s: %s",
+                getattr(container, "name", "unknown"),
+                exc,
+            )
+    return removed
 
 
 def ensure_sandbox_network(client: Any, name: str | None = None) -> str:
@@ -272,50 +326,58 @@ def ensure_base_image(client: Any, python_version: str) -> str:
     """Build the workspace-source base image if absent. Sync — run_in_executor."""
     python_version = _validate_python_version(python_version)
     tag = base_image_tag(python_version)
-    try:
-        client.images.get(tag)
-        return tag  # cache hit
-    except Exception:  # noqa: BLE001 — NotFound; build below
-        pass
+    with _image_build_lock(tag):
+        # Re-check inside the tag lock: a peer executor thread may have built
+        # the image while this caller was waiting.
+        try:
+            client.images.get(tag)
+            return tag  # cache hit
+        except Exception:  # noqa: BLE001 — NotFound; build below
+            pass
 
-    # Non-root: installs run as root, the runtime does not. HOME is /tmp at
-    # runtime (tmpfs) because the rootfs — including /home — is read-only.
-    src = "/opt/nodyra-src/packages"
-    dockerfile = (
-        f"FROM python:{python_version}-slim\n"
-        "RUN pip install uv --quiet\n"
-        f"COPY packages {src}\n"
-        f"RUN uv pip install --system "
-        + " ".join(f"{src}/{pkg}" for pkg in _BASE_PACKAGES) + "\n"
-        "RUN useradd --uid 65532 --create-home --shell /usr/sbin/nologin nodyra\n"
-        "USER nodyra\n"
-        'ENTRYPOINT ["python", "-u", "-m", "nodyra_runtime"]\n'
-    )
-    context = _base_build_context(dockerfile, _workspace_root())
-    client.images.build(fileobj=context, custom_context=True, tag=tag, rm=True)
-    logger.info("built sandbox base image %s", tag)
-    return tag
+        # Non-root: installs run as root, the runtime does not. HOME is /tmp at
+        # runtime (tmpfs) because the rootfs — including /home — is read-only.
+        src = "/opt/nodyra-src/packages"
+        dockerfile = (
+            f"FROM python:{python_version}-slim\n"
+            "RUN pip install uv --quiet\n"
+            f"COPY packages {src}\n"
+            f"RUN uv pip install --system "
+            + " ".join(f"{src}/{pkg}" for pkg in _BASE_PACKAGES) + "\n"
+            "RUN useradd --uid 65532 --create-home --shell /usr/sbin/nologin nodyra\n"
+            "USER nodyra\n"
+            'ENTRYPOINT ["python", "-u", "-m", "nodyra_runtime"]\n'
+        )
+        context = _base_build_context(dockerfile, _workspace_root())
+        client.images.build(fileobj=context, custom_context=True, tag=tag, rm=True)
+        logger.info("built sandbox base image %s", tag)
+        return tag
 
 
 def ensure_docker_image(client: Any, image_tag: str, env_payload: dict) -> None:
     """Build the env image if absent. Sync — call via run_in_executor."""
-    try:
-        client.images.get(image_tag)
-        return  # cache hit
-    except Exception:  # noqa: BLE001 — NotFound; build below
-        pass
+    with _image_build_lock(image_tag):
+        try:
+            client.images.get(image_tag)
+            return  # cache hit
+        except Exception:  # noqa: BLE001 — NotFound; build below
+            pass
 
-    python_version = _validate_python_version(env_payload.get("python_version", "3.12"))
-    packages = _validate_packages(env_payload.get("packages") or [])
-    base = ensure_base_image(client, python_version)
-
-    dockerfile = f"FROM {base}\n"
-    if packages:
-        dockerfile += (
-            "USER root\n"
-            f"RUN uv pip install --system {' '.join(packages)}\n"
-            "USER nodyra\n"
+        python_version = _validate_python_version(
+            env_payload.get("python_version", "3.12")
         )
+        packages = _validate_packages(env_payload.get("packages") or [])
+        base = ensure_base_image(client, python_version)
 
-    client.images.build(fileobj=io.BytesIO(dockerfile.encode()), tag=image_tag, rm=True)
-    logger.info("built docker image %s", image_tag)
+        dockerfile = f"FROM {base}\n"
+        if packages:
+            dockerfile += (
+                "USER root\n"
+                f"RUN uv pip install --system {' '.join(packages)}\n"
+                "USER nodyra\n"
+            )
+
+        client.images.build(
+            fileobj=io.BytesIO(dockerfile.encode()), tag=image_tag, rm=True
+        )
+        logger.info("built docker image %s", image_tag)

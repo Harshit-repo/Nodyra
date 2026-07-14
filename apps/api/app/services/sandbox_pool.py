@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import socket
 import time
 import uuid
 from typing import Any
@@ -24,6 +25,7 @@ from app.config import settings
 from app.services.container_runtime import (
     DockerStreamDemuxer,
     attach_raw_socket,
+    cleanup_owned_sandbox_containers,
     ensure_docker_image,
     hardening_kwargs,
     image_tag_for,
@@ -93,6 +95,7 @@ class SandboxWorker:
         runtime: str,
         network: str,
         overrides: dict | None = None,
+        owner_id: str | None = None,
     ) -> SandboxWorker:
         loop = asyncio.get_running_loop()
         tag = image_tag_for(env_payload)
@@ -103,6 +106,7 @@ class SandboxWorker:
             network=network,
             overrides=overrides,
             runtime_flags=env_payload.get("runtime_flags"),
+            owner_id=owner_id,
         )
         container = await loop.run_in_executor(
             None,
@@ -394,15 +398,19 @@ class SandboxPool:
         self._client: Any | None = None
         self._runtime: str = "runc"
         self._network: str = ""
+        self._owner_id: str = ""
         self._idle: dict[tuple[str | None, str | None, str], list[SandboxWorker]] = {}
         self._active: dict[str, SandboxWorker] = {}  # run_id -> worker
         self._lock = asyncio.Lock()
         self._reaper: asyncio.Task | None = None
 
-    def configure(self, client: Any, *, runtime: str, network: str) -> None:
+    def configure(
+        self, client: Any, *, runtime: str, network: str, owner_id: str = ""
+    ) -> None:
         self._client = client
         self._runtime = runtime
         self._network = network
+        self._owner_id = owner_id
 
     @property
     def enabled(self) -> bool:
@@ -521,6 +529,7 @@ class SandboxPool:
             runtime=self._runtime,
             network=self._network,
             overrides=overrides,
+            owner_id=self._owner_id,
         )
 
     async def _release(self, worker: SandboxWorker) -> None:
@@ -604,6 +613,10 @@ async def init_sandbox() -> str | None:
         await loop.run_in_executor(None, client.ping)
         runtime = await loop.run_in_executor(None, detect_runtime, client, settings.sandbox_runtime)
         network = await loop.run_in_executor(None, ensure_sandbox_network, client)
+        owner_id = settings.sandbox_owner_id.strip() or socket.gethostname()
+        removed = await loop.run_in_executor(
+            None, cleanup_owned_sandbox_containers, client, owner_id
+        )
     except Exception as exc:
         if mode == "required":
             raise RuntimeError(
@@ -615,6 +628,12 @@ async def init_sandbox() -> str | None:
             exc,
         )
         return None
-    pool.configure(client, runtime=runtime, network=network)
-    logger.info("sandbox execution active: runtime=%s network=%s", runtime, network)
+    pool.configure(client, runtime=runtime, network=network, owner_id=owner_id)
+    logger.info(
+        "sandbox execution active: runtime=%s network=%s owner=%s reclaimed=%d",
+        runtime,
+        network,
+        owner_id,
+        removed,
+    )
     return runtime

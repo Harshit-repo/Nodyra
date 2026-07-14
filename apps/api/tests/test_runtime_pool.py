@@ -268,6 +268,67 @@ async def test_capacity_probe_reflects_global_slot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resize_up_grants_exact_requested_capacity() -> None:
+    orig = settings.max_concurrent_runs
+    settings.max_concurrent_runs = 2
+    try:
+        pool = RuntimePool()
+        assert await pool.resize(4) == 4
+        assert pool.current_max_slots() == 4
+        assert pool.available_global_slots() == 4
+        async with pool.global_slot():
+            assert pool.available_global_slots() == 3
+    finally:
+        settings.max_concurrent_runs = orig
+
+
+@pytest.mark.asyncio
+async def test_resize_down_drains_before_admitting_new_work() -> None:
+    orig = settings.max_concurrent_runs
+    settings.max_concurrent_runs = 2
+    try:
+        pool = RuntimePool()
+        both_started = asyncio.Event()
+        third_started = asyncio.Event()
+        release = [asyncio.Event(), asyncio.Event()]
+        admitted: list[int] = []
+
+        async def hold(index: int) -> None:
+            async with pool.global_slot():
+                admitted.append(index)
+                if len(admitted) == 2:
+                    both_started.set()
+                if index == 2:
+                    third_started.set()
+                else:
+                    await release[index].wait()
+
+        first = asyncio.create_task(hold(0))
+        second = asyncio.create_task(hold(1))
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        assert await pool.resize(1) == 1
+        assert pool.available_global_slots() == 0
+
+        third = asyncio.create_task(hold(2))
+        await asyncio.sleep(0.05)
+        assert admitted == [0, 1]
+
+        release[0].set()
+        await first
+        await asyncio.sleep(0.05)
+        assert admitted == [0, 1]
+
+        release[1].set()
+        await second
+        await asyncio.wait_for(third_started.wait(), timeout=1)
+        await third
+        assert admitted == [0, 1, 2]
+        assert pool.available_global_slots() == 1
+    finally:
+        settings.max_concurrent_runs = orig
+
+
+@pytest.mark.asyncio
 async def test_rss_budget_disabled_when_budget_zero() -> None:
     """Budget 0 (or unknown estimate) means the gate never blocks."""
     budget = _RssBudget()

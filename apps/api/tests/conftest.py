@@ -136,9 +136,11 @@ def _reset_run_dispatch_state():
         pool = runtime_pool_mod.pool
         pool._envs.clear()
         pool._lock = asyncio.Lock()
-        pool._global_sem = asyncio.Semaphore(
-            max(1, settings.max_concurrent_runs)
+        pool._global_sem = runtime_pool_mod._ResizableAdmission(
+            settings.max_concurrent_runs
         )
+        pool._max_concurrent_runs = max(1, settings.max_concurrent_runs)
+        pool._scale_lock = asyncio.Lock()
         sub_cap = (
             settings.max_concurrent_subworkflows or settings.max_concurrent_runs
         )

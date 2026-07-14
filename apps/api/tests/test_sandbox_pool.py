@@ -676,12 +676,26 @@ def test_init_required_raises_without_daemon(monkeypatch):
 def test_init_required_with_daemon(monkeypatch):
     monkeypatch.setattr(settings, "execution_sandbox", "required")
     monkeypatch.setattr(settings, "sandbox_runtime", "auto")
+    monkeypatch.setattr(settings, "sandbox_owner_id", "worker-a")
     fresh = SandboxPool()
     monkeypatch.setattr(sp, "pool", fresh)
     client = FakeDockerClient(runtimes=("runc", "runsc"))
+    base_labels = {
+        "io.nodyra.managed": "true",
+        "io.nodyra.kind": "sandbox-run",
+    }
+    orphan = client.containers.run(
+        "image", name="orphan", labels={**base_labels, "io.nodyra.owner": "worker-a"}
+    )
+    peer = client.containers.run(
+        "image", name="peer", labels={**base_labels, "io.nodyra.owner": "worker-b"}
+    )
     monkeypatch.setattr(sp, "_make_docker_client", lambda: client)
     assert asyncio.run(sp.init_sandbox()) == "runsc"
     assert fresh.enabled
+    assert fresh._owner_id == "worker-a"
+    assert orphan.removed is True
+    assert peer.removed is False
     assert "nodyra-sandbox" in client.networks.existing
 
 
