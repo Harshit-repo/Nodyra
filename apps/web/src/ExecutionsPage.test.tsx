@@ -189,9 +189,15 @@ describe("ExecutionsPage replay from node", () => {
   it("replays from the failed node and follows the queued replay run", async () => {
     renderExecutions();
 
-    const replayButton = await screen.findByRole("button", {
-      name: "Replay from here",
-    });
+    await waitFor(
+      () => expect(apiMocks.getRun).toHaveBeenCalledWith("run-old"),
+      { timeout: 5_000 },
+    );
+    const replayButton = await screen.findByRole(
+      "button",
+      { name: "Replay from here" },
+      { timeout: 5_000 },
+    );
 
     fireEvent.click(replayButton);
 
