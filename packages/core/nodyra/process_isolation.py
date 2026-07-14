@@ -12,15 +12,18 @@ kill a 30-minute code node halfway through.
 """
 
 import asyncio
-import concurrent.futures
 import contextvars
 import functools
+import importlib
 import logging
 import multiprocessing
 import threading
 import time
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from concurrent.futures.process import ProcessPoolExecutor
 
 _logger = logging.getLogger(__name__)
 
@@ -65,7 +68,7 @@ class PooledProcessIsolator:
         # At max_workers=4 the default allows up to 8 active environments
         # before idle pools are evicted.
         self._max_total_workers = max_total_workers
-        self._pools: dict[str | None, concurrent.futures.ProcessPoolExecutor] = {}
+        self._pools: dict[str | None, ProcessPoolExecutor] = {}
         self._last_activity: dict[str | None, float] = {}
         self._in_flight: dict[str | None, int] = {}
         self._mutex = threading.Lock()
@@ -79,6 +82,9 @@ class PooledProcessIsolator:
     ) -> Any:
         key = pool_key.get()
         pool = self._checkout(key)
+        broken_pool_error = importlib.import_module(
+            "concurrent.futures.process"
+        ).BrokenProcessPool
         loop = asyncio.get_running_loop()
         future = loop.run_in_executor(pool, functools.partial(fn, **kwargs))
         try:
@@ -88,7 +94,7 @@ class PooledProcessIsolator:
         except TimeoutError:
             self.evict(key)  # kill the wedged worker; next run gets a fresh pool
             raise
-        except concurrent.futures.process.BrokenProcessPool as exc:
+        except broken_pool_error as exc:
             self.evict(key)
             raise ValueError(
                 "code node crashed: subprocess died (possible "
@@ -97,7 +103,7 @@ class PooledProcessIsolator:
         finally:
             self._checkin(key)
 
-    def _checkout(self, key: str | None) -> concurrent.futures.ProcessPoolExecutor:
+    def _checkout(self, key: str | None) -> "ProcessPoolExecutor":
         with self._mutex:
             now = time.monotonic()
             idle = [
@@ -129,7 +135,13 @@ class PooledProcessIsolator:
                             self._max_total_workers,
                         )
                         self._evict_locked(oldest)
-                pool = concurrent.futures.ProcessPoolExecutor(
+                # Resolve from the currently registered submodule instead of
+                # concurrent.futures' lazy top-level alias. Test/plugin module
+                # isolation can evict and re-import the submodule; retaining
+                # the old alias then gives multiprocessing a stale
+                # ``_process_worker`` and every submission fails to pickle.
+                process_module = importlib.import_module("concurrent.futures.process")
+                pool = process_module.ProcessPoolExecutor(
                     max_workers=self._max_workers,
                     # Python 3.14 changed the POSIX default from ``fork`` to
                     # ``forkserver``. Pin ``spawn`` so execution semantics are

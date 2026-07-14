@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -38,6 +38,19 @@ async def session_maker() -> AsyncIterator[async_sessionmaker]:
     if TEST_DATABASE_URL:
         db_path = None
         engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+
+        # This module is a queue-unit/locking suite and deliberately uses
+        # synthetic run/workflow IDs. Disable only FK triggers on its isolated
+        # Postgres connections so tests reach the queue behavior under test;
+        # unique indexes, row locks, and SKIP LOCKED remain active. Migration
+        # drift and the separate full-API Postgres lane validate real FKs.
+        @event.listens_for(engine.sync_engine, "connect")
+        def _isolate_queue_foreign_keys(dbapi_connection, _connection_record) -> None:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("SET session_replication_role = replica")
+            finally:
+                cursor.close()
     else:
         SQLITE_TMP_DIR.mkdir(parents=True, exist_ok=True)
         handle = tempfile.NamedTemporaryFile(
@@ -1126,7 +1139,12 @@ async def test_postgres_expired_running_lease_is_reclaimed_once(
         session.add(run)
         await session.flush()
         run_id = run.id
-        await q.enqueue(session, run_id=run_id, workflow_id="wf-reclaim")
+        await q.enqueue(
+            session,
+            run_id=run_id,
+            workflow_id="wf-reclaim",
+            available_at=moment,
+        )
         await session.commit()
 
     async with session_maker() as session:

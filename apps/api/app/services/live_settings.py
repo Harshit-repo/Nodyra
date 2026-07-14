@@ -102,7 +102,7 @@ async def _load_from_db(session: AsyncSession | None = None) -> tuple[LiveSettin
     try:
         async with SessionLocal() as session:
             return await _load(session)
-    except (OperationalError, ProgrammingError):
+    except (OSError, OperationalError, ProgrammingError):
         # Pre-migration or missing table — fall back to boot defaults.
         return _from_boot(), False
 

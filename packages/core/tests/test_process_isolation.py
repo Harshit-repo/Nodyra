@@ -2,6 +2,10 @@
 reused per key, and evicted only when idle with no in-flight tasks —
 a long-running code node must never have its pool reaped mid-task."""
 
+import concurrent.futures
+import importlib
+import os
+import sys
 import time
 
 from nodyra.process_isolation import PooledProcessIsolator
@@ -15,6 +19,29 @@ def test_pool_start_method_is_cross_platform_spawn():
         iso._checkin(None)
     finally:
         iso.shutdown()
+
+
+async def test_pool_survives_process_module_reimport():
+    """Pool creation must not retain concurrent.futures' stale lazy alias."""
+    module_name = "concurrent.futures.process"
+    stale_module = importlib.import_module(module_name)
+    stale_package_attr = concurrent.futures.process
+    try:
+        del sys.modules[module_name]
+        del concurrent.futures.process
+        fresh_module = importlib.import_module(module_name)
+        assert fresh_module is not stale_module
+
+        iso = PooledProcessIsolator(max_workers=1)
+        try:
+            child_pid = await iso.run(os.getpid, {}, timeout=30)
+            assert isinstance(child_pid, int)
+            assert child_pid != os.getpid()
+        finally:
+            iso.shutdown()
+    finally:
+        sys.modules[module_name] = stale_module
+        concurrent.futures.process = stale_package_attr
 
 
 def test_same_key_reuses_pool():
