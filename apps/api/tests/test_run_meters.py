@@ -9,7 +9,7 @@ from app.config import settings
 from app.exceptions import QuotaExceeded
 from app.services import metering, org_limits, retention
 from app.services.runner import start_run
-from app.tenancy import DEFAULT_ORG_ID, current_org_id
+from app.tenancy import current_org_id
 
 GRAPH = {
     "nodes": [
@@ -31,10 +31,12 @@ def mt_on(monkeypatch):
 async def _seed_org_workflow(session, *, executions_per_day: int | None) -> str:
     session.add_all(
         [
-            models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
             models.Organization(id="org-x", name="X", slug="x"),
         ]
     )
+    # Establish the parent row before adding OrgSettings. SQLite accepts the
+    # unordered unit of work, while PostgreSQL correctly enforces the FK.
+    await session.flush()
     if executions_per_day is not None:
         session.add(
             models.OrgSettings(org_id="org-x", executions_per_day=executions_per_day)

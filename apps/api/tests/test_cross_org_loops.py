@@ -45,6 +45,10 @@ async def _insert(session_factory, *objects):
         with run_as_system():
             for obj in objects:
                 session.add(obj)
+                # The arguments are deliberately parent-before-child. Flush
+                # each step so the fixture does not depend on SQLite's lax FK
+                # behavior or on ORM relationships that these raw rows omit.
+                await session.flush()
             await session.commit()
 
 
@@ -66,8 +70,8 @@ async def test_retention_skips_non_default_org_without_system(client):
     settings.run_retention_max_per_workflow = 0
 
     org_b_id = "org-b-retention-" + uuid.uuid4().hex[:8]
-    wf_id = str(uuid.uuid4())
-    run_id = str(uuid.uuid4())
+    wf_id = uuid.uuid4().hex
+    run_id = uuid.uuid4().hex
 
     await _insert(
         retention_module.SessionLocal,
@@ -100,9 +104,9 @@ async def test_retention_skips_non_default_org_without_system(client):
 async def test_queue_requeue_skips_non_default_org_without_system(client):
     """requeue_expired_leases() without system context must not see org-b entries."""
     org_b_id = "org-b-queue-" + uuid.uuid4().hex[:8]
-    wf_id = str(uuid.uuid4())
-    run_id = str(uuid.uuid4())
-    entry_id = str(uuid.uuid4())
+    wf_id = uuid.uuid4().hex
+    run_id = uuid.uuid4().hex
+    entry_id = uuid.uuid4().hex
     now = datetime.now(UTC)
     expired = now - timedelta(seconds=1)
 
@@ -147,9 +151,9 @@ async def test_startup_interrupted_cleanup_runs_as_system(client, monkeypatch):
     import app.main as main_module
 
     org_b_id = "org-b-startup-" + uuid.uuid4().hex[:8]
-    wf_id = str(uuid.uuid4())
-    run_id = str(uuid.uuid4())
-    entry_id = str(uuid.uuid4())
+    wf_id = uuid.uuid4().hex
+    run_id = uuid.uuid4().hex
+    entry_id = uuid.uuid4().hex
     now = datetime.now(UTC)
 
     await _insert(
@@ -193,7 +197,7 @@ async def test_startup_interrupted_cleanup_runs_as_system(client, monkeypatch):
 async def test_scheduler_session_isolates_org_b_workflows(client):
     """Scheduler session queries are org-filtered without run_as_system()."""
     org_b_id = "org-b-sched-" + uuid.uuid4().hex[:8]
-    wf_id = str(uuid.uuid4())
+    wf_id = uuid.uuid4().hex
 
     await _insert(
         triggers_module.SessionLocal,
@@ -229,15 +233,15 @@ async def test_heartbeat_skips_non_default_org_runs_without_system(client):
     never gets requeued.  With run_as_system the run is visible and requeued.
     """
     org_b_id = "org-b-hb-" + uuid.uuid4().hex[:8]
-    pool_id = str(uuid.uuid4())
-    runner_id = str(uuid.uuid4())
-    wf_id = str(uuid.uuid4())
-    run_id = str(uuid.uuid4())
+    pool_id = uuid.uuid4().hex
+    runner_id = uuid.uuid4().hex
+    wf_id = uuid.uuid4().hex
+    run_id = uuid.uuid4().hex
 
     offline_seconds = 0  # any runner with past last_seen_at qualifies
     stale_time = datetime.now(UTC) - timedelta(seconds=5)
 
-    entry_id = str(uuid.uuid4())
+    entry_id = uuid.uuid4().hex
     now = datetime.now(UTC)
 
     await _insert(

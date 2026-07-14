@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app import models
 from app.config import settings
 from app.services import retention
-from app.tenancy import DEFAULT_ORG_ID, current_org_id, run_as_system
+from app.tenancy import current_org_id, run_as_system
 
 
 def _webhook_graph(path: str) -> dict:
@@ -60,7 +60,6 @@ async def test_webhook_fires_foreign_org_workflow_and_pins_run(
     async with retention.SessionLocal() as session:
         session.add_all(
             [
-                models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
                 models.Organization(id="org-x", name="X", slug="x"),
             ]
         )

@@ -34,6 +34,7 @@ from app import models  # noqa: F401 - registers ORM models on Base.metadata
 from app.config import settings
 from app.db import Base, get_session
 from app.main import app
+from app.tenancy import DEFAULT_ORG_ID
 
 # Tests never shell out to `uv`, and runs execute synchronously for determinism.
 # Force the in-process engine: the subprocess runner keeps a warm process per
@@ -340,6 +341,21 @@ async def client() -> AsyncIterator[AsyncClient]:
             await conn.run_sync(Base.metadata.create_all)
 
     test_session = async_sessionmaker(engine, expire_on_commit=False)
+
+    # ``alembic/versions/0040_orgs.py`` establishes this invariant in every
+    # real deployment. ``metadata.create_all()`` does not run migration data
+    # backfills, so mirror the migrated schema state for both test backends.
+    # PostgreSQL's FK enforcement exposed the missing row; keeping SQLite on
+    # the same fixture state prevents the two lanes from drifting again.
+    async with test_session() as session:
+        session.add(
+            models.Organization(
+                id=DEFAULT_ORG_ID,
+                name="Default",
+                slug="default",
+            )
+        )
+        await session.commit()
 
     async def override_get_session() -> AsyncIterator:
         async with test_session() as session:

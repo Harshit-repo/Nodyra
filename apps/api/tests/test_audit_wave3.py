@@ -136,8 +136,12 @@ async def test_artifact_upload_revoked_when_runner_deleted(client: AsyncClient):
 async def test_artifact_upload_rejects_cross_run_runner(client: AsyncClient):
     """RP-2: a runner may not upload to a run assigned to a *different* runner."""
     # Runner A gets a token; the run is assigned to some other runner B.
-    _pool_id, runner_a, token_a = await _pool_with_token(client)
-    run_id = await _make_run(client, runner_id="some-other-runner-B")
+    pool_id, runner_a, token_a = await _pool_with_token(client)
+    runner_b = (
+        await client.post(f"/runner-pools/{pool_id}/registration-tokens")
+    ).json()["runner_id"]
+    assert runner_b != runner_a
+    run_id = await _make_run(client, runner_id=runner_b)
 
     resp = await client.post(
         "/runner-pools/artifact-upload",

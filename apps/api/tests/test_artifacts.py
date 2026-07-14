@@ -243,6 +243,19 @@ def test_s3_backend_requires_bucket_setting(monkeypatch) -> None:
 # --- S3 write-path: persist_artifact_refs rehomes local bytes to backend ---
 
 
+async def _seed_artifact_run(session_factory, run_id: str) -> None:
+    """Create the production parent rows required by artifact metadata."""
+    async with session_factory() as session:
+        workflow = Workflow(
+            name=f"Artifact parent {run_id}",
+            draft_graph={"nodes": [], "edges": []},
+        )
+        session.add(workflow)
+        await session.flush()
+        session.add(Run(id=run_id, workflow_id=workflow.id, status="running"))
+        await session.commit()
+
+
 async def test_persist_artifact_refs_rehomes_to_configured_backend(
     client: AsyncClient, monkeypatch
 ) -> None:
@@ -282,6 +295,7 @@ async def test_persist_artifact_refs_rehomes_to_configured_backend(
 
     # Stage the local scratch file the worker would have written.
     run_id = "r-rehome"
+    await _seed_artifact_run(artifacts_svc.SessionLocal, run_id)
     node_dir = tmp_path / "runs" / run_id / "n1"
     node_dir.mkdir(parents=True)
     storage_key = f"runs/{run_id}/n1/aid-payload.bin"
@@ -350,6 +364,7 @@ async def test_persist_artifact_refs_keeps_local_when_upload_fails(
     register_backend(_FailingBackend())
 
     run_id = "r-fail"
+    await _seed_artifact_run(artifacts_svc.SessionLocal, run_id)
     storage_key = f"runs/{run_id}/n1/aid-payload.bin"
     local_path = tmp_path / storage_key
     local_path.parent.mkdir(parents=True)

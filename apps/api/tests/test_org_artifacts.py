@@ -113,7 +113,6 @@ async def test_runner_upload_must_match_run_org_namespace(client, monkeypatch):
     async with retention.SessionLocal() as db:
         db.add_all(
             [
-                models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
                 models.Organization(id="org-x", name="X", slug="x"),
             ]
         )
@@ -172,7 +171,6 @@ async def test_persist_artifact_refs_stamps_non_default_run_org(client, monkeypa
     async with artifacts_svc.SessionLocal() as db:
         db.add_all(
             [
-                models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
                 models.Organization(id="org-x", name="X", slug="x"),
             ]
         )

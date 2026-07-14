@@ -374,6 +374,13 @@ async def test_credential_load_blocks_cross_org_identity_map(client: AsyncClient
 
     # Credential created in org-b.
     async with SessionLocal() as session:
+        session.add_all(
+            [
+                models.Organization(id="org-a", name="A", slug="a"),
+                models.Organization(id="org-b", name="B", slug="b"),
+            ]
+        )
+        await session.flush()
         token = current_org_id.set("org-b")
         cred = models.Credential(name="secret", encrypted_data="x")
         session.add(cred)

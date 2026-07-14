@@ -127,9 +127,34 @@ async def test_fleet_health_flags_pool_without_dispatcher(
     ).json()["id"]
 
     # A queued run on each pool.
-    from app.models import RunQueueEntry
+    from app.models import Run, RunQueueEntry, Workflow
 
     async with SessionLocal() as session:
+        session.add(
+            Workflow(
+                id="wf",
+                name="Fleet health fixture",
+                draft_graph={"nodes": [], "edges": []},
+            )
+        )
+        await session.flush()
+        session.add_all(
+            [
+                Run(
+                    id="q-agent",
+                    workflow_id="wf",
+                    runner_pool_id=agent_pool,
+                    status="queued",
+                ),
+                Run(
+                    id="q-docker",
+                    workflow_id="wf",
+                    runner_pool_id=docker_pool,
+                    status="queued",
+                ),
+            ]
+        )
+        await session.flush()
         session.add_all(
             [
                 RunQueueEntry(run_id="q-agent", workflow_id="wf",

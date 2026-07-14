@@ -35,7 +35,6 @@ def mt_on(monkeypatch):
 async def _seed(session, *, isolation: str, pool_org: str | None, provider: str):
     session.add_all(
         [
-            models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
             models.Organization(id="org-x", name="X", slug="x", execution_isolation=isolation),
         ]
     )
@@ -122,7 +121,6 @@ async def test_write_time_pool_validation(client: AsyncClient, mt_on):
     async with retention.SessionLocal() as session:
         session.add_all(
             [
-                models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
                 models.Organization(
                     id="org-x",
                     name="X",
@@ -159,7 +157,6 @@ async def test_environment_create_validates_dedicated_pool_assignment(
     async with retention.SessionLocal() as session:
         session.add_all(
             [
-                models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
                 models.Organization(
                     id="org-x",
                     name="X",
@@ -224,6 +221,7 @@ async def test_global_credentials_are_org_local_for_system_resolution(
                 models.Organization(id="org-b", name="B", slug="b"),
             ]
         )
+        await session.flush()
         cred = models.Credential(
             id="cred-a",
             org_id="org-a",
