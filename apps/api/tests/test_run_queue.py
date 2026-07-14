@@ -450,10 +450,16 @@ async def test_lease_uses_multi_tenant_fair_order_and_marks_capped_orgs(
     monkeypatch,
 ) -> None:
     from app.config import settings
-    from app.services import org_limits, queue
+    from app.services import live_settings, org_limits, queue
 
     monkeypatch.setattr(settings, "multi_tenancy_enabled", True)
+    live_settings.invalidate_live_settings_cache()
     org_limits.invalidate_limits_cache()
+    monkeypatch.setattr(
+        live_settings,
+        "SessionLocal",
+        lambda: pytest.fail("queue leasing opened a second database session"),
+    )
     old = datetime.now(UTC) - timedelta(seconds=5)
     session.add(models.OrgSettings(org_id="org-c", max_concurrent_runs=1))
     session.add_all(
@@ -482,6 +488,7 @@ async def test_lease_uses_multi_tenant_fair_order_and_marks_capped_orgs(
     assert leased is not None
     assert leased.run_id == "b-queued"
     assert capped.queue_reason == "org_quota_exceeded"
+    live_settings.invalidate_live_settings_cache()
     org_limits.invalidate_limits_cache()
 
 

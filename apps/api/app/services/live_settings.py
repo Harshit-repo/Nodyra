@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings as boot_settings
 from app.db import SessionLocal
@@ -65,38 +66,48 @@ def invalidate_live_settings_cache() -> None:
     _cache_expires_at = 0.0
 
 
-async def _load_from_db() -> tuple[LiveSettings, bool]:
+def _from_row(row: SystemSetting) -> LiveSettings:
+    return LiveSettings(
+        max_concurrent_runs=row.max_concurrent_runs,
+        runner_idle_seconds=row.runner_idle_seconds,
+        run_retention_days=row.run_retention_days,
+        run_retention_max_per_workflow=row.run_retention_max_per_workflow,
+        max_output_bytes=row.max_output_bytes,
+        max_artifact_bytes=row.max_artifact_bytes,
+        max_artifacts_per_run=row.max_artifacts_per_run,
+        app_timezone=row.app_timezone,
+        worker_rss_soft_budget_bytes=row.worker_rss_soft_budget_bytes,
+    )
+
+
+async def _load_from_db(session: AsyncSession | None = None) -> tuple[LiveSettings, bool]:
     """Return (snapshot, came_from_db). ``came_from_db=False`` means the
     singleton row wasn't found (or the table is missing pre-migration), in
     which case the caller should NOT cache the result — boot-default reads
     are cheap and we want test code that mutates ``settings.X`` mid-test to
     see those changes on the next access without invalidating manually.
     """
+    async def _load(active_session: AsyncSession) -> tuple[LiveSettings, bool]:
+        row = await active_session.get(SystemSetting, _SINGLETON_ID)
+        if row is None:
+            return _from_boot(), False
+        return _from_row(row), True
+
+    # Transactional callers (notably queue leasing) must read the singleton
+    # through their existing session. Opening SessionLocal here would observe a
+    # different transaction and can target a different test/tenant database.
+    if session is not None:
+        return await _load(session)
+
     try:
         async with SessionLocal() as session:
-            row = await session.get(SystemSetting, _SINGLETON_ID)
-            if row is None:
-                return _from_boot(), False
-            return (
-                LiveSettings(
-                    max_concurrent_runs=row.max_concurrent_runs,
-                    runner_idle_seconds=row.runner_idle_seconds,
-                    run_retention_days=row.run_retention_days,
-                    run_retention_max_per_workflow=row.run_retention_max_per_workflow,
-                    max_output_bytes=row.max_output_bytes,
-                    max_artifact_bytes=row.max_artifact_bytes,
-                    max_artifacts_per_run=row.max_artifacts_per_run,
-                    app_timezone=row.app_timezone,
-                    worker_rss_soft_budget_bytes=row.worker_rss_soft_budget_bytes,
-                ),
-                True,
-            )
+            return await _load(session)
     except (OperationalError, ProgrammingError):
         # Pre-migration or missing table — fall back to boot defaults.
         return _from_boot(), False
 
 
-async def get_live_settings() -> LiveSettings:
+async def get_live_settings(*, session: AsyncSession | None = None) -> LiveSettings:
     """Return the current live settings snapshot, cached for ``_CACHE_TTL_SECONDS``
     when the singleton row exists in the DB. Boot-default reads (no row, or
     pre-migration) bypass the cache so a process that's mutating
@@ -104,13 +115,21 @@ async def get_live_settings() -> LiveSettings:
     immediately.
     """
     global _cache_value, _cache_expires_at
+    # A caller-provided session defines the transaction and database whose
+    # settings must be observed. A process-global snapshot could have been
+    # populated by another transaction (or another test database), so this
+    # path deliberately bypasses the shared cache.
+    if session is not None:
+        value, _ = await _load_from_db(session)
+        return value
+
     now = time.monotonic()
     if _cache_value is not None and now < _cache_expires_at:
         return _cache_value
     async with _cache_lock:
         if _cache_value is not None and time.monotonic() < _cache_expires_at:
             return _cache_value
-        value, from_db = await _load_from_db()
+        value, from_db = await _load_from_db(session)
         if from_db:
             _cache_value = value
             _cache_expires_at = time.monotonic() + _CACHE_TTL_SECONDS

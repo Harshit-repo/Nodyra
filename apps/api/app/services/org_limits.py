@@ -42,10 +42,10 @@ def invalidate_limits_cache() -> None:
     _cache.clear()
 
 
-async def _instance_defaults() -> EffectiveLimits:
+async def _instance_defaults(session: AsyncSession) -> EffectiveLimits:
     from app.services.live_settings import get_live_settings
 
-    live = await get_live_settings()
+    live = await get_live_settings(session=session)
     return EffectiveLimits(
         max_concurrent_runs=live.max_concurrent_runs,
         executions_per_day=0,
@@ -65,7 +65,7 @@ async def effective_limits(
     now = time.monotonic()
     if cached is not None and now < cached[0]:
         return cached[1]
-    defaults = await _instance_defaults()
+    defaults = await _instance_defaults(session)
     row = None
     if org_id:
         row = await session.scalar(
@@ -122,7 +122,7 @@ async def batch_effective_limits(
     subsequent ``effective_limits`` calls within the TTL hit memory only.
     """
     now = time.monotonic()
-    defaults = await _instance_defaults()
+    defaults = await _instance_defaults(session)
     result: dict[str, EffectiveLimits] = {}
     uncached: list[str] = []
     for org_id in org_ids:

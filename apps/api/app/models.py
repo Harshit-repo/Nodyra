@@ -21,9 +21,12 @@ from sqlalchemy import (
     text,
     true,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
+
+POSTGRES_JSON = JSON().with_variant(JSONB(), "postgresql")
 
 
 def _uuid() -> str:
@@ -91,7 +94,7 @@ class CustomRole(Base):
     """
 
     __tablename__ = "custom_roles"
-    __table_args__ = (UniqueConstraint("org_id", "name", name="uq_custom_roles_org_name"),)
+    __table_args__ = (Index("uq_custom_roles_org_name", "org_id", "name", unique=True),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
@@ -448,6 +451,10 @@ class GithubSyncJob(Base):
     """A durable queue entry for a GitHub sync push or pull operation."""
 
     __tablename__ = "github_sync_jobs"
+    __table_args__ = (
+        Index("ix_github_sync_jobs_status_next_retry", "status", "next_retry_at"),
+        Index("ix_github_sync_jobs_org_status_retry", "org_id", "status", "next_retry_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
@@ -726,6 +733,15 @@ class AuditEvent(Base):
     actor_type: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    __table_args__ = (
+        Index(
+            "ix_audit_events_org_id_created_at",
+            "org_id",
+            text("created_at DESC"),
+        ),
+        Index("ix_audit_events_session_id", "session_id"),
+    )
+
 
 class PinnedData(Base):
     """A frozen output value for a single node within a workflow."""
@@ -795,7 +811,7 @@ class Run(Base):
         ForeignKey("run_batches.id", ondelete="SET NULL"), nullable=True, index=True
     )
     required_labels: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    deduplication_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    deduplication_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Synchronous webhook response recorded by a respond_to_webhook node
     # (Respond Node mode). Shape: {status, headers, body, content_type}.
     webhook_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -833,6 +849,13 @@ class Run(Base):
         Index("ix_runs_workflow_id_started_at", "workflow_id", "started_at"),
         Index("ix_runs_status_started_at", "status", "started_at"),
         Index("ix_runs_org_status_started", "org_id", "status", "started_at"),
+        Index("ix_runs_runner_pool_finished", "runner_pool_id", "finished_at"),
+        Index(
+            "uq_runs_deduplication_key",
+            "deduplication_key",
+            unique=True,
+            postgresql_where=text("deduplication_key IS NOT NULL"),
+        ),
     )
 
 
@@ -1136,6 +1159,13 @@ class WorkflowVersion(Base):
     """An immutable snapshot of a workflow's graph. Every save creates one."""
 
     __tablename__ = "workflow_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_id",
+            "version",
+            name="uq_workflow_versions_workflow_version",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
@@ -1336,11 +1366,11 @@ class MCPConnection(Base):
     """
 
     __tablename__ = "mcp_connections"
+    __table_args__ = (Index("idx_mcp_connections_org", "org_id"),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"),
-        index=True,
         nullable=False,
         server_default="default",
     )
@@ -1350,14 +1380,14 @@ class MCPConnection(Base):
     auth_type: Mapped[str] = mapped_column(Text, nullable=False, default="none")
     auth_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     # SQLite-compatible default: `'{}'::jsonb` is Postgres-only.
-    headers: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    headers: Mapped[dict] = mapped_column(POSTGRES_JSON, nullable=False, default=dict)
     # Call-time policy: a disabled connection rejects every call; a non-null
     # allowed_tools list restricts calls to exactly those tool names.
     enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=true()
     )
     allowed_tools: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    tool_cache: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    tool_cache: Mapped[dict | None] = mapped_column(POSTGRES_JSON, nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -1369,6 +1399,14 @@ class SSOConfig(Base):
     """Per-org SSO configuration (OIDC or SAML)."""
 
     __tablename__ = "sso_configs"
+    __table_args__ = (
+        Index(
+            "ix_sso_configs_email_domain",
+            "email_domain",
+            unique=True,
+            postgresql_where=text("email_domain IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
@@ -1385,7 +1423,7 @@ class SSOConfig(Base):
     idp_certificate: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Common
     email_domain: Mapped[str | None] = mapped_column(Text, nullable=True)
-    attribute_map: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    attribute_map: Mapped[dict] = mapped_column(POSTGRES_JSON, nullable=False, default=dict)
     jit_provisioning: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

@@ -11,7 +11,7 @@ from app.config import settings
 from app.db import Base
 from app.routers.orgs import get_org_settings, update_org_settings
 from app.schemas import OrgSettingsUpdate
-from app.services import org_limits
+from app.services import live_settings, org_limits
 from app.services.crypto import hash_password
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, install_org_filter
 
@@ -36,8 +36,10 @@ async def session(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _clear_limits_cache():
+    live_settings.invalidate_live_settings_cache()
     org_limits.invalidate_limits_cache()
     yield
+    live_settings.invalidate_live_settings_cache()
     org_limits.invalidate_limits_cache()
 
 
@@ -47,6 +49,17 @@ async def test_defaults_inherit_instance_settings(session, monkeypatch):
     assert limits.max_concurrent_runs == 8
     assert limits.executions_per_day == 0  # unlimited by default
     assert limits.max_inflight_subworkflows == 0  # falls back to global cap
+
+
+async def test_transactional_defaults_bypass_process_cache(session, monkeypatch):
+    session.add(models.SystemSetting(id="singleton", max_concurrent_runs=3))
+    await session.commit()
+    monkeypatch.setattr(live_settings, "_cache_value", live_settings._from_boot())
+    monkeypatch.setattr(live_settings, "_cache_expires_at", float("inf"))
+
+    limits = await org_limits.effective_limits(session, DEFAULT_ORG_ID)
+
+    assert limits.max_concurrent_runs == 3
 
 
 async def test_override_wins_and_zero_means_unlimited(session):
