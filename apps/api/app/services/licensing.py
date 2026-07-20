@@ -79,7 +79,8 @@ class License:
     notice: str | None
 
 
-_PRO_FEATURES = frozenset({Feature.SANDBOX, Feature.OBSERVABILITY, Feature.GIT_SYNC})
+_COMMUNITY_FEATURES = frozenset({Feature.SANDBOX})
+_PRO_FEATURES = _COMMUNITY_FEATURES | frozenset({Feature.OBSERVABILITY, Feature.GIT_SYNC})
 _ENT_FEATURES = _PRO_FEATURES | frozenset(
     {
         Feature.MULTI_TENANCY,
@@ -94,8 +95,8 @@ _ENT_FEATURES = _PRO_FEATURES | frozenset(
 # (features, ResourceLimits) per tier. 0 = unlimited.
 TIER_DEFAULTS: dict[Edition, tuple[frozenset, ResourceLimits]] = {
     Edition.COMMUNITY: (
-        frozenset(),
-        ResourceLimits(environments=3, runners=1, deployments=3, seats=2),
+        _COMMUNITY_FEATURES,
+        ResourceLimits(environments=3, runners=1, deployments=10, seats=5),
     ),
     Edition.PRO: (
         _PRO_FEATURES,
@@ -302,12 +303,6 @@ async def reconcile_capabilities() -> list[str]:
         warnings.append(
             "multi_tenancy_enabled requires the Enterprise edition; "
             "disabled (running single-tenant)."
-        )
-    if boot_settings.execution_sandbox != "off" and not await has_feature(Feature.SANDBOX):
-        boot_settings.execution_sandbox = "off"
-        warnings.append(
-            "execution_sandbox requires the Pro edition or higher; "
-            "disabled (running the subprocess pool)."
         )
     if boot_settings.otel_enabled and not await has_feature(Feature.OBSERVABILITY):
         boot_settings.otel_enabled = False

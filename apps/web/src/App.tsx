@@ -1,4 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 const AUTH_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
 const AUTH_MAX_RETRIES = AUTH_RETRY_DELAYS_MS.length;
@@ -24,6 +32,7 @@ import type { AuthState, UserInfo } from "./types";
 import { EntitlementsProvider } from "./entitlements";
 import { WorkspaceAccessProvider } from "./WorkspaceAccess";
 import { clearClientDataScope, clearClientSession } from "./sessionIsolation";
+import { t } from "./i18n";
 
 // Route pages are code-split so the initial bundle doesn't carry the editor
 // (React Flow + Plotly) and every admin page. `named` adapts our named exports
@@ -81,6 +90,40 @@ function NotFound() {
         Back to workflows
       </Link>
     </div>
+  );
+}
+
+function EditorViewportGate({ children }: { children: ReactNode }) {
+  const [phoneViewport, setPhoneViewport] = useState(() =>
+    window.matchMedia("(max-width: 640px)").matches,
+  );
+  const [fullEditor, setFullEditor] = useState(() =>
+    new URLSearchParams(window.location.search).get("full") === "1",
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 640px)");
+    const onChange = (event: MediaQueryListEvent) => setPhoneViewport(event.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
+
+  if (!phoneViewport || fullEditor) return children;
+  return (
+    <main className="mobile-editor-gate">
+      <div>
+        <span>{t("mobile.mode")}</span>
+        <h1>{t("mobile.title")}</h1>
+        <p>{t("mobile.description")}</p>
+        <div className="mobile-editor-gate-actions">
+          <Link className="btn btn-primary" to="/executions">{t("mobile.executions")}</Link>
+          <Link className="btn" to="/">{t("mobile.workflows")}</Link>
+          <button className="btn btn-ghost" type="button" onClick={() => setFullEditor(true)}>
+            {t("mobile.editorAnyway")}
+          </button>
+        </div>
+      </div>
+    </main>
   );
 }
 
@@ -243,7 +286,9 @@ export default function App() {
               element={
                 <Suspense fallback={<BackendLoading retrying={false} />}>
                   <ErrorBoundary resetKey={location.pathname}>
-                    <EditorPage />
+                    <EditorViewportGate>
+                      <EditorPage />
+                    </EditorViewportGate>
                   </ErrorBoundary>
                 </Suspense>
               }

@@ -36,6 +36,7 @@ export function NodeRegistryPage() {
   );
   const [installBusy, setInstallBusy] = useState(false);
   const [selectedEnvId, setSelectedEnvId] = useState("");
+  const [selectedVersion, setSelectedVersion] = useState("");
   const [installErrors, setInstallErrors] = useState<Record<string, string>>(
     {},
   );
@@ -127,6 +128,7 @@ export function NodeRegistryPage() {
   function handleInstallClick(pkg: RegistryPackage) {
     setInstallModal(pkg);
     setSelectedEnvId("");
+    setSelectedVersion(pkg.version);
     setInstallErrors({});
   }
 
@@ -138,6 +140,7 @@ export function NodeRegistryPage() {
       const result = await api.installRegistryPackage({
         package_id: installModal.id,
         environment_id: selectedEnvId,
+        version: selectedVersion || installModal.version,
       });
       notify(
         `Installing ${installModal.name}… (install ID: ${result.install_id})`,
@@ -158,13 +161,23 @@ export function NodeRegistryPage() {
   }
 
   function isPackageInstalled(pkg: RegistryPackage): boolean {
-    return installedPypiPackages.has(pkg.pypi_package || pkg.id);
+    const name = pkg.pypi_package || pkg.id;
+    return Array.from(installedPypiPackages).some(
+      (spec) => spec === name || spec.startsWith(`${name} @ `),
+    );
+  }
+
+  function isCurrentVersionInstalled(pkg: RegistryPackage): boolean {
+    return Boolean(pkg.trust?.locked_spec && installedPypiPackages.has(pkg.trust.locked_spec));
   }
 
   // Gather installed packages from environments for the "installed" tab
   const installedPackages: RegistryPackage[] = packages.filter((p) =>
     isPackageInstalled(p),
   );
+  const selectedInstallVersion = installModal?.versions?.find(
+    (version) => version.version === selectedVersion,
+  ) ?? installModal;
 
   return (
     <div className="home">
@@ -267,6 +280,9 @@ export function NodeRegistryPage() {
                         {isPackageInstalled(pkg) && (
                           <span className="badge badge--success">Installed</span>
                         )}
+                        <span className={`badge registry-trust registry-trust--${pkg.trust?.status ?? "unverified"}`}>
+                          {pkg.trust?.status ?? "unverified"}
+                        </span>
                       </div>
                     </div>
                     <p className="muted" style={{ margin: "8px 0" }}>
@@ -279,7 +295,26 @@ export function NodeRegistryPage() {
                       <span>
                         <strong>Version:</strong> {pkg.version}
                       </span>
+                      <span>
+                        <strong>Trust:</strong> {pkg.trust?.reason ?? "No trust evidence"}
+                      </span>
+                      <span>
+                        <strong>Compatibility:</strong>{" "}
+                        {pkg.compatibility?.nodyra ?? "Not declared"}
+                      </span>
+                      <span>
+                        <strong>Health:</strong> {pkg.health ?? "Unknown"}
+                      </span>
+                      <span>
+                        <strong>Downloads:</strong> {(pkg.downloads ?? 0).toLocaleString()}
+                      </span>
                     </div>
+                    {(pkg.advisories?.length ?? 0) > 0 && (
+                      <p className="registry-advisory" role="note">
+                        <Warning size={15} aria-hidden="true" />
+                        {pkg.advisories?.length} security advisor{pkg.advisories?.length === 1 ? "y" : "ies"}
+                      </p>
+                    )}
                     {pkg.nodes && pkg.nodes.length > 0 && (
                       <div className="env-packages">
                         {pkg.nodes.map((node) => (
@@ -290,7 +325,7 @@ export function NodeRegistryPage() {
                       </div>
                     )}
                     <div className="env-actions">
-                      {isPackageInstalled(pkg) ? (
+                      {isCurrentVersionInstalled(pkg) ? (
                         <button className="btn btn-sm" disabled>
                           <CheckCircle size={16} weight="bold" /> Installed
                         </button>
@@ -298,8 +333,12 @@ export function NodeRegistryPage() {
                         <button
                           className="btn btn-sm btn-primary"
                           onClick={() => handleInstallClick(pkg)}
+                          disabled={!pkg.trust?.installable}
+                          title={pkg.trust?.installable ? "Install verified package" : pkg.trust?.reason}
                         >
-                          Install
+                          {pkg.trust?.installable
+                            ? isPackageInstalled(pkg) ? "Review upgrade" : "Review install"
+                            : "Install blocked"}
                         </button>
                       )}
                     </div>
@@ -406,6 +445,27 @@ export function NodeRegistryPage() {
               ))}
             </select>
 
+            {(installModal.versions?.length ?? 0) > 1 && (
+              <>
+                <label className="field-label" style={{ marginTop: 12 }}>Version</label>
+                <select
+                  className="field-input"
+                  value={selectedVersion}
+                  onChange={(event) => setSelectedVersion(event.target.value)}
+                >
+                  {installModal.versions?.map((version) => (
+                    <option
+                      key={version.version}
+                      value={version.version}
+                      disabled={!version.trust?.installable}
+                    >
+                      {version.version} — {version.lifecycle ?? "active"} — {version.trust?.status ?? "unverified"}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
             {installModal.nodes && installModal.nodes.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <label className="field-label">Nodes provided</label>
@@ -419,6 +479,17 @@ export function NodeRegistryPage() {
               </div>
             )}
 
+            <section className="registry-permissions" aria-labelledby="registry-permissions-title">
+              <h3 id="registry-permissions-title">Declared access</h3>
+              <dl>
+                <div><dt>Network</dt><dd>{selectedInstallVersion?.permissions?.network?.join(", ") || "None declared"}</dd></div>
+                <div><dt>Filesystem</dt><dd>{selectedInstallVersion?.permissions?.filesystem?.join(", ") || "None declared"}</dd></div>
+                <div><dt>Secrets</dt><dd>{selectedInstallVersion?.permissions?.secrets?.join(", ") || "None declared"}</dd></div>
+                <div><dt>Subprocess</dt><dd>{selectedInstallVersion?.permissions?.subprocess ? "Requested" : "Not requested"}</dd></div>
+              </dl>
+              <p>{selectedInstallVersion?.trust?.reason}</p>
+            </section>
+
             <div className="modal-actions">
               <button
                 className="btn btn-ghost"
@@ -429,7 +500,7 @@ export function NodeRegistryPage() {
               </button>
               <button
                 className="btn btn-primary"
-                disabled={installBusy || !selectedEnvId}
+                disabled={installBusy || !selectedEnvId || !selectedInstallVersion?.trust?.installable}
                 onClick={handleInstallConfirm}
               >
                 {installBusy ? (

@@ -1,0 +1,47 @@
+# Overlay for a disposable, one-evaluator-per-namespace deployment.
+# Supply image tag, URLs, ingress host, expiry, and an externally managed
+# runtime secret at install time. Do not use this profile as a shared tenant.
+api:
+  replicas: 1
+  authRequired: true
+  allowRegistration: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+
+worker:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+web:
+  replicas: 1
+
+evaluation:
+  enabled: true
+  # Required RFC 3339 timestamp, set by the provisioning service.
+  expiresAt: ""
+  maxPods: "8"
+  requestsCpu: "2"
+  requestsMemory: "4Gi"
+  limitsCpu: "4"
+  limitsMemory: "8Gi"
+  requestsStorage: "5Gi"
+  defaultPublicEgress: true
+  allowedEgressCidrs: []
+
+ingress:
+  enabled: true
+  tls: true
+
+secret:
+  existingSecret: nodyra-evaluation-runtime

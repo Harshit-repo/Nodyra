@@ -8,11 +8,18 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-import { api, errorMessage, type RuntimeModeStatus } from "./api";
+import {
+  api,
+  errorMessage,
+  type ProductionAttestationCheck,
+  type RuntimeModeStatus,
+} from "./api";
 import { queryKeys } from "./queries";
 
 const DEPLOYMENT_DOCS =
-  "https://github.com/Harshit-repo/nodyra/blob/main/docs/deployment.md";
+  "https://github.com/Harshit-repo/noodle/blob/main/docs/deployment.md";
+const ATTESTATION_DOCS =
+  "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/production-attestation.md";
 
 type ReadinessFix = {
   title: string;
@@ -193,6 +200,13 @@ export function ReadinessPanel() {
     retry: false,
     refetchInterval: 15000,
   });
+  const attestationQuery = useQuery({
+    queryKey: ["production-attestation"],
+    queryFn: api.productionAttestation,
+    enabled: runtimeQuery.data?.mode === "production",
+    retry: false,
+    refetchInterval: 60000,
+  });
 
   if (runtimeQuery.isError) {
     return (
@@ -222,8 +236,11 @@ export function ReadinessPanel() {
   }
 
   const items = readinessItems(status);
+  const attestation = attestationQuery.data;
+  const attestationIssues = attestation?.checks.filter((check) => check.status !== "pass") ?? [];
   const isProduction = status.mode === "production";
-  const ready = isProduction && items.length === 0;
+  const ready = isProduction && (attestation ? attestation.production_ready : items.length === 0);
+  const issueCount = attestation ? attestation.summary.failed + attestation.summary.warnings : items.length;
   const postureClass = !isProduction ? "is-local" : ready ? "is-ready" : "is-warning";
 
   return (
@@ -244,7 +261,7 @@ export function ReadinessPanel() {
               ? "Local development mode"
               : ready
                 ? "Production-ready"
-                : `${items.length} readiness issue${items.length === 1 ? "" : "s"}`}
+                : `${issueCount} readiness issue${issueCount === 1 ? "" : "s"}`}
           </strong>
           <span>
             {!isProduction
@@ -272,7 +289,40 @@ export function ReadinessPanel() {
         </div>
       )}
 
-      {items.length > 0 && (
+      {attestation && (
+        <div className="nodyra-attestation-summary" role="status">
+          <span>{attestation.summary.passed} passed</span>
+          <span>{attestation.summary.warnings} warnings</span>
+          <span>{attestation.summary.failed} failed</span>
+          <small>Verified {new Date(attestation.generated_at).toLocaleString()}</small>
+        </div>
+      )}
+
+      {attestationIssues.length > 0 && (
+        <ul className="nodyra-readiness-list" aria-label="Production attestation findings">
+          {attestationIssues.map((check: ProductionAttestationCheck) => (
+            <li key={check.id} className="nodyra-readiness-item">
+              <span className="nodyra-readiness-item-icon" aria-hidden="true">
+                <WarningCircle size={18} />
+              </span>
+              <div>
+                <strong>{check.title}</strong>
+                <p>{check.remediation}</p>
+                <details className="nodyra-attestation-evidence">
+                  <summary>Evidence</summary>
+                  <code>{JSON.stringify(check.evidence)}</code>
+                </details>
+              </div>
+              <a className="btn btn-sm btn-ghost" href={ATTESTATION_DOCS} target="_blank" rel="noreferrer">
+                <ArrowSquareOut size={14} aria-hidden="true" />
+                Runbook
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!attestation && items.length > 0 && (
         <ul className="nodyra-readiness-list" aria-label="Production readiness warnings">
           {items.map((item) => (
             <li key={item.id} className="nodyra-readiness-item">

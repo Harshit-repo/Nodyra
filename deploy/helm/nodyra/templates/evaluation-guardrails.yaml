@@ -1,0 +1,87 @@
+{{- if .Values.evaluation.enabled }}
+{{- if not .Values.evaluation.expiresAt }}
+{{- fail "evaluation.expiresAt is required when evaluation.enabled=true" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-evaluation-lifecycle
+  labels:
+    {{- include "nodyra.labels" . | nindent 4 }}
+  annotations:
+    nodyra.io/expires-at: {{ .Values.evaluation.expiresAt | quote }}
+    nodyra.io/delete-policy: "delete-namespace"
+data:
+  notice: "Disposable evaluation environment. The platform reaper must delete this namespace at expiry."
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ .Release.Name }}-evaluation-quota
+  labels:
+    {{- include "nodyra.labels" . | nindent 4 }}
+spec:
+  hard:
+    pods: {{ .Values.evaluation.maxPods | quote }}
+    requests.cpu: {{ .Values.evaluation.requestsCpu | quote }}
+    requests.memory: {{ .Values.evaluation.requestsMemory | quote }}
+    limits.cpu: {{ .Values.evaluation.limitsCpu | quote }}
+    limits.memory: {{ .Values.evaluation.limitsMemory | quote }}
+    requests.storage: {{ .Values.evaluation.requestsStorage | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ .Release.Name }}-evaluation-limits
+  labels:
+    {{- include "nodyra.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      default:
+        cpu: 1000m
+        memory: 1Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-evaluation-egress
+  labels:
+    {{- include "nodyra.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS. Provider lookups still pass through Nodyra's SSRF policy.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL, Redis, object storage, and Nodyra services in this namespace.
+    - to:
+        - podSelector: {}
+    {{- if .Values.evaluation.defaultPublicEgress }}
+    # Public IPv4 only; private, loopback, link-local, CGNAT, and multicast are excluded.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 224.0.0.0/4
+    {{- end }}
+    {{- range .Values.evaluation.allowedEgressCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+    {{- end }}
+{{- end }}

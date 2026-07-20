@@ -29,7 +29,7 @@ async def chat_turn(workflow_id: str, body: ChatTurnRequest) -> ChatTurnResponse
         ) from exc
     except NoChatTriggerError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
     return ChatTurnResponse(
         run_id=result.run_id,
@@ -59,7 +59,7 @@ async def chat_turn_stream(
         ) from exc
     except NoChatTriggerError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
     return ChatStreamStart(run_id=run_id, session_id=session_id)
 

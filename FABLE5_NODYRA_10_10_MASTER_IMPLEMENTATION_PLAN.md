@@ -6,7 +6,7 @@
 
 **Baseline commit:** `093d5e34` on `fable5-nodyra-full-test-bugfix-production-plan`
 
-**Status:** Active — Phase 0 complete; Phase 1 implemented with external evidence gates pending
+**Status:** Engineering implementation complete through Phase 8; final local certification green; remote/live infrastructure and user-outcome gates pending
 
 **Companion evidence:** `FABLE5_NODYRA_FULL_TEST_BUGFIX_AND_PRODUCTION_IMPROVEMENT_PLAN.md`
 
@@ -51,18 +51,22 @@ The product reaches the target state when:
 
 | Verification | Result |
 |---|---|
-| Complete Python monorepo suite | **3,210 passed, 98 skipped, 0 failed** in 15m29s |
+| Complete Python monorepo suite | Final local run: **3,243 passed, 98 skipped, 0 failed** in 20m32s; six release-automation tests added and passed separately afterward |
 | Complete web suite | **486 passed, 1 skipped** |
-| Web typecheck and production build | **Passed** |
-| Web dependency audit | **0 vulnerabilities** |
+| Web typecheck and production build | **Passed**; bundle budget passed at **959,701 gzip bytes** |
+| Dependency audits | npm: **0 vulnerabilities**; Python: **no known vulnerabilities** |
 | Repository Ruff and diff integrity | **Passed** |
 | Docker Compose configuration render | **Passed** |
-| Live container recovery drill | Pending CI runner with Docker daemon |
-| Helm render/lint | Pending CI runner with Helm |
+| Fresh-database migration | SQLite base-to-head passed at `0092_schema_drift_alignment (head)` |
+| Local critical certification | **5/5 consecutive passes**; 73 focused tests plus release/deployment/static gates per pass |
+| Live container recovery drill | **Passed** in GitHub run `29309192451`: 1.0s restore, 3.224s fixture snapshot age, all integrity/decryptability checks true |
+| Helm render/lint | **Passed** in GitHub runs `29309182064` and `29309192451` |
 
-The implementation is locally green. Phase 1 is not release-certified until the
-new Linux/Windows/container lanes and restore drill have passed five consecutive
-required CI runs and attached their evidence artifacts.
+The engineering implementation and local certification are green, including
+five consecutive critical-gate passes. Phase 1 is not release-certified until
+the required remote lanes and live restore drill have passed five consecutive
+runs with the retry trend inside the program gate. Product/adoption phases are
+not scored 10/10 until their real-user and production-window outcomes exist.
 
 ### 2.2 Recent commits reviewed
 
@@ -205,7 +209,7 @@ Global rules:
 
 ### P0-RECENT-02 — Make the demo path safe by construction
 
-**Status:** Implemented; container E2E evidence pending CI
+**Status:** Completed; live container E2E green
 
 **Implementation:** Use generated ephemeral secrets, bind API/web exposure to loopback in the demo override, display a clear non-production banner, add `make demo-down`, and E2E-test two consecutive idempotent seeds plus teardown.
 
@@ -232,7 +236,7 @@ Replace ad hoc worker futures around the scheduler queue with structured supervi
 
 ### ENG-03 — Bound and benchmark graph planning
 
-**Status:** Implemented and locally verified; CI trend history pending
+**Status:** Implemented and verified in the first production-like CI run; trend history pending
 
 - Replace ready-list `pop(0)`/re-sorting with a deterministic heap or deque strategy.
 - Precompute loop-region ownership rather than repeatedly scanning regions.
@@ -241,7 +245,7 @@ Replace ad hoc worker futures around the scheduler queue with structured supervi
 
 ### RUN-01 — End-to-end chaos and soak
 
-**Status:** Harness and nightly lane implemented; container evidence pending CI
+**Status:** Harness and required manual lane green once; repeat/24-hour evidence pending
 
 Test real PostgreSQL, Redis, API, worker, and execution processes for burst dispatch, worker kill, lease reclaim, retry exhaustion, dead-letter replay, cancellation, API restart, Redis interruption, PostgreSQL transient loss, and graceful drain. Nightly soak: 24 hours or a documented equivalent accelerated workload.
 
@@ -249,7 +253,7 @@ Test real PostgreSQL, Redis, API, worker, and execution processes for burst disp
 
 ### SBX-01 — Make sandbox tests platform-stable
 
-**Status:** Implemented; Windows CI evidence pending
+**Status:** Completed; Windows and Linux CI green
 
 Diagnose the current fake-container creation timing failures on Windows. Remove wall-clock races, add deterministic readiness signaling, and run the sandbox pool suite on Linux and Windows. Preserve fail-closed behavior.
 
@@ -261,20 +265,26 @@ Add protocol heartbeats between runtime and sandbox/runner host, a bounded no-pr
 
 ### OPS-RECOVERY-01 — Automated backup/restore drill
 
-**Status:** Harness and CI drill implemented; live restore evidence pending Docker CI
+**Status:** Completed with first live Docker CI evidence; repeat history pending
 
 Create a disposable environment, seed workflows/runs/artifacts/credentials, back up PostgreSQL and object storage, restore into a clean deployment, rotate endpoints safely, and verify checksums plus decryptability. Run nightly or before release.
 
 ### Phase 1 gate
 
 - [ ] Required failure scenarios pass five consecutive CI runs.
-- [ ] Windows and Linux sandbox suites pass.
-- [ ] Restore evidence meets RPO/RTO targets.
+- [x] Windows and Linux sandbox suites pass.
+- [x] Restore evidence meets RPO/RTO targets.
 - [x] Engine scheduler cannot hang under injected internal exceptions.
 
 ---
 
 ## 8. Phase 2 — Activation, onboarding, and product clarity
+
+**Implementation status (2026-07-20):** implemented in the working tree: one
+resumable activation checklist, credential-free trusted templates, Core-first
+palette behavior, actionable artifact empty states, centralized product-state
+copy, localization primitives, and local opt-in funnel telemetry. Moderated
+first-user and real-cohort outcome gates remain external.
 
 ### ONB-01 — One activation journey
 
@@ -321,6 +331,13 @@ Track install completed, first page, template selected, first run, first success
 
 ## 9. Phase 3 — Architecture, API, and scale
 
+**Implementation status (2026-07-20):** implemented in the working tree:
+explicit run-lifecycle services, versioned execution/runner contracts,
+immutable `ExecutionOptions`, dependency-neutral engine types, canonical
+migration endpoints with compatibility aliases, and direct boundary/contract
+tests. Production-scale PostgreSQL and editor benchmark history remains a live
+evidence gate.
+
 ### BE-01 — Split run lifecycle orchestration
 
 Decompose `_execute_run_impl` into tested services for admission, execution selection, event collection, persistence/finalization, retry/error dispatch, and cleanup. Model lifecycle transitions explicitly and reject invalid transitions.
@@ -357,6 +374,12 @@ Add representative data-volume fixtures, query plans, slow-query logging, keyset
 
 ## 10. Phase 4 — Artifact and data platform
 
+**Implementation status (2026-07-20):** implemented for the supported local
+and S3-compatible backends: streaming/range I/O, multipart browser uploads,
+checksum inspection, health/reconcile and safe repair, lineage/provenance, and
+backend protocol extensions. Ten-GiB live transfer evidence and any future
+Azure/GCS artifact-backend plugins remain separate portability evidence.
+
 ### ART-01 — Streaming and multipart artifact I/O
 
 Implement bounded-memory upload/download streaming, multipart S3 transfers, cancellation, retry, content-length enforcement, and cleanup of abandoned multipart uploads.
@@ -386,6 +409,13 @@ Evaluate content-addressable storage behind a feature flag. Do not enable until 
 ---
 
 ## 11. Phase 5 — Frontend architecture, accessibility, and performance
+
+**Implementation status (2026-07-20):** implemented in the working tree:
+Core-first progressive palette discovery, route/code splitting, enforced gzip
+budgets, activation and registry UX, semantic states, reduced-motion and
+responsive hardening, and localization scaffolding. Automated suite,
+typecheck, and production build are green; formal assistive-technology and
+viewport certification remains an external evidence gate.
 
 ### FE-01 — Palette and editor performance
 
@@ -426,6 +456,14 @@ Extract user-facing strings, support pluralization/date/number/time-zone formatt
 
 ## 12. Phase 6 — Security, deployment, and operations GA
 
+**Implementation status (2026-07-20):** implemented in the working tree:
+machine-readable production attestation, a guarded evaluation sandbox,
+signed/trusted registry packages, operational evidence/support bundles,
+artifact and service health, Prometheus alerts/runbooks, upgrade/rollback
+guidance, SBOM/scanning/signing release jobs, and Helm/Compose profiles. Live
+production attestation, N-1 upgrade, restore, and penetration evidence remains
+required for GA.
+
 ### SEC-01 — Production posture attestation
 
 Extend readiness from warnings to structured checks with severity, evidence, remediation, last verified time, and machine-readable pass/fail. Include auth, CORS, secrets, database, Redis, artifact backend, TLS/proxy assumptions, sandbox, backups, KMS, tracing, replicas, queue, webhooks, and license posture.
@@ -463,6 +501,14 @@ Provide one command that outputs redacted configuration posture, migrations, dep
 ---
 
 ## 13. Phase 7 — Ecosystem, licensing, and adoption
+
+**Implementation status (2026-07-20):** product code and operator assets are
+implemented in the working tree: signed/versioned registry lifecycle,
+searchable verified templates, compatibility-first imports, disposable
+evaluation Helm profile, adoption-aligned Community defaults, funnel metrics,
+and the quickstart/chooser/recipes/academy content. The outcome gates below
+remain open until real hosted/self-hosted cohorts and pricing experiments
+produce evidence.
 
 ### ECO-01 — First-class community registry
 
@@ -502,6 +548,14 @@ Test a more generous Community posture: at least five seats, ten active deployme
 
 ## 14. Phase 8 — Release maturity and continuous excellence
 
+**Implementation status (2026-07-20):** the working tree aligns product
+components on `0.1.0`, defines the support/deprecation policy, builds
+hash-addressed release evidence, blocks high/critical image findings, promotes
+immutable digests through protected stages with rollback gates, and validates a
+monthly evidence-backed scorecard. Release automation has direct tests and five
+consecutive local critical-gate passes; signed publication and remote staged
+promotion remain live release evidence.
+
 ### REL-01 — SemVer and support policy
 
 Move beyond `0.0.1` with explicit alpha/beta/RC/GA criteria, public changelog, deprecation window, supported-version policy, security support policy, and LTS decision. Keep package, API, runner, runtime, and web versions aligned or publish their compatibility matrix.
@@ -540,16 +594,23 @@ Append one row per completed change. Never record expected results as actual res
 | 2026-07-13 | OPS-RECOVERY-01 | Working tree | Recovery fixture tests and CI workflow validation | Seed/copy/restore/verify contract, checksums, credential decryptability, redacted evidence passed | Live pg_dump/object restore pending Docker CI evidence |
 | 2026-07-13 | OPS metrics freshness | Working tree | Hot-cache metrics regression + reordered subset | 63 passed; live safety counters visible on every scrape | Database gauges retain 30-second cache; process counters never do |
 | 2026-07-13 | Integrated repository gate | Working tree | `uv run pytest -q`; `uv run ruff check .`; `git diff --check` | 3,210 passed/98 skipped/0 failed; Ruff and diff clean | 13 third-party/platform deprecation/resource warnings recorded for later cleanup |
+| 2026-07-14 | Sandbox admission, recovery, and orphan reclamation | `5db338d9` | 94 focused tests; two local real-Compose chaos drills | All focused tests green; final drill produced 51 terminal runs, no violations, and zero managed containers after teardown | Sandboxed runs share global admission; image builds deduplicate; cleanup is owner-scoped and bounded |
+| 2026-07-14 | Production-like certification run 1/5 | `5db338d9`; GitHub runs [`29309182064`](https://github.com/Harshit-repo/noodle/actions/runs/29309182064) and [`29309192451`](https://github.com/Harshit-repo/noodle/actions/runs/29309192451) | Linux, Python 3.14, Windows sandbox, PostgreSQL, security, web, E2E, Compose, Helm, recovery, and sandbox chaos | Both runs green; Linux 3,222 passed/97 skipped; PostgreSQL 64 required + 1,386 API passed/6 skipped; web 486 passed/1 skipped; Windows sandbox 52 passed | Two PostgreSQL retries were surfaced (0.14%, below the 0.2% gate); five consecutive clean-enough runs are still required |
+| 2026-07-14 | Recovery and chaos evidence bundle | GitHub run [`29309192451`](https://github.com/Harshit-repo/noodle/actions/runs/29309192451) | Uploaded `recovery-evidence`, `sandbox-chaos-evidence`, and engine benchmark artifacts | Restore 1.0s with every check true; chaos 41 success/10 intentional cancellations/zero violations; planning medians 0.009-0.019s within 2-3s budgets | Final CI teardown assertion confirmed zero managed sandbox containers |
+| 2026-07-20 | Phases 2–8 implementation tranche | Working tree | Contract, migration, registry, artifact, readiness, release, web, Helm, Compose, and documentation review | Activation, execution protocol/lifecycle, artifact operations, trust, evaluation, adoption, and staged-release capabilities implemented | Real user, production-window, pen-test, and hosted cohort evidence remains external |
+| 2026-07-20 | Final monorepo and web suites | Working tree | `uv run pytest -q`; full Vitest; TypeScript; production build; clean migration | Python 3,243 passed/98 skipped; web 486 passed/1 skipped; build/budget green; fresh database reached migration head | Six new release-automation tests passed separately after the full Python run |
+| 2026-07-20 | Supply-chain and workflow refresh | Working tree | npm audit; pip-audit; workflow parse; current action-major review | Zero npm vulnerabilities; no known Python vulnerabilities; GitHub Actions upgraded to current Node 24-compatible majors | Image scan remains immutable-SHA pinned; signed images require the remote release job |
+| 2026-07-20 | Local critical certification 1–5/5 | Working tree | Five sequential passes of 73 focused tests, Ruff, lock/version/template/scorecard, TypeScript/bundle, YAML, Compose, Helm, evidence, rollout, and diff gates | All five passes green; canary decision `continue` with no persistent breaches | This is local deterministic evidence, not a substitute for five remote CI/live-infrastructure runs |
 
 ---
 
 ## 16. Immediate execution order
 
-The production-critical implementation tranche is complete. The next release
+The production-critical engineering tranche is complete. The remaining release
 sequence is evidence-first:
 
-1. Run the required Linux and Windows lanes on the branch.
-2. Run the Compose chaos/soak and recovery jobs with artifact upload enabled.
-3. Repeat every required lane for five consecutive commits/reruns with no hidden retries.
-4. Review recovery RPO/RTO, duplicate/loss counters, benchmark deltas, and sandbox cleanup evidence.
-5. Only after those gates pass, advance Phase 1 to certified and begin the Phase 2 activation rollout.
+1. Publish the branch through review and run the required Linux, Windows, and PostgreSQL lanes.
+2. Run live Compose chaos/soak, N-1 upgrade, recovery, artifact, and attestation jobs with evidence upload enabled.
+3. Repeat every required remote lane for five consecutive runs with no hidden retries.
+4. Complete threat-model review, penetration testing, assistive-technology/viewport certification, and production restore practice.
+5. Run moderated activation sessions and hosted/self-hosted cohorts; update the scorecard only from measured activation, retention, reliability, ecosystem, and pricing evidence.

@@ -50,6 +50,7 @@ from nodyra.engine.subworkflows import (
 )
 from nodyra.engine.types import (
     EventCallback,
+    ExecutionOptions,
     GraphError,
     NodeError,
     NodeValidationError,
@@ -72,6 +73,7 @@ __all__ = [
     "DATASET_PASSTHROUGH_NODE_TYPES",
     "DEFAULT_NODE_TIMEOUTS",
     "EventCallback",
+    "ExecutionOptions",
     "GraphError",
     "InlineSubworkflow",
     "NodeError",

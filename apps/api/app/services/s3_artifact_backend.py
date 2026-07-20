@@ -18,13 +18,18 @@ startup when ``settings.artifact_storage_backend == "s3"``.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.config import settings
-from app.services.artifact_backends import ArtifactDownload, register_backend
+from app.services.artifact_backends import (
+    ArtifactDownload,
+    ArtifactObjectInfo,
+    register_backend,
+)
 
 if TYPE_CHECKING:
     from app.models import Artifact
@@ -175,15 +180,73 @@ class S3Backend:
         """
         key = self._key(artifact)
         try:
+            from boto3.s3.transfer import TransferConfig  # type: ignore[import-not-found]
+
+            transfer = TransferConfig(
+                multipart_threshold=8 * 1024 * 1024,
+                multipart_chunksize=8 * 1024 * 1024,
+                max_concurrency=4,
+                use_threads=True,
+            )
+            extra_args: dict[str, Any] = {"ContentType": artifact.content_type}
+            if artifact.checksum_sha256:
+                extra_args["Metadata"] = {"sha256": artifact.checksum_sha256}
             self.client.upload_file(
                 str(local_path),
                 self.bucket,
                 key,
-                ExtraArgs={"ContentType": artifact.content_type},
+                ExtraArgs=extra_args,
+                Config=transfer,
             )
         except Exception:  # noqa: BLE001
             log.exception("S3 upload failed for %s -> %s", local_path, key)
             raise
+
+    def inspect(
+        self, artifact: Artifact, *, verify_checksum: bool = False
+    ) -> ArtifactObjectInfo:
+        key = self._key(artifact)
+        try:
+            head = self.client.head_object(Bucket=self.bucket, Key=key)
+        except Exception as exc:  # noqa: BLE001
+            response = getattr(exc, "response", {})
+            code = str((response.get("Error") or {}).get("Code") or "")
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                raise FileNotFoundError(key) from exc
+            raise
+        checksum = (head.get("Metadata") or {}).get("sha256")
+        if verify_checksum:
+            download = self.open_download(artifact)
+            digest = hashlib.sha256()
+            for chunk in download.stream or ():
+                digest.update(chunk)
+            checksum = digest.hexdigest()
+        modified = head.get("LastModified")
+        return ArtifactObjectInfo(
+            key=key,
+            size_bytes=int(head.get("ContentLength") or 0),
+            checksum_sha256=checksum,
+            last_modified=modified.isoformat() if modified else None,
+        )
+
+    def iter_objects(self, *, prefix: str = "") -> Iterator[ArtifactObjectInfo]:
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            for item in page.get("Contents") or []:
+                modified = item.get("LastModified")
+                yield ArtifactObjectInfo(
+                    key=str(item.get("Key") or ""),
+                    size_bytes=int(item.get("Size") or 0),
+                    last_modified=modified.isoformat() if modified else None,
+                )
+
+    def delete_keys(self, keys: Iterable[str]) -> None:
+        pending = [{"Key": key} for key in keys if key]
+        for index in range(0, len(pending), 1000):
+            self.client.delete_objects(
+                Bucket=self.bucket,
+                Delete={"Objects": pending[index : index + 1000], "Quiet": True},
+            )
 
 
 def register_s3_backend() -> S3Backend:

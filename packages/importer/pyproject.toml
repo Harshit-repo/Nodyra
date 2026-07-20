@@ -1,6 +1,6 @@
 [project]
 name = "nodyra-importer"
-version = "0.0.1"
+version = "0.1.0"
 description = "Nodyra workflow importer: .module.py → WorkflowGraph"
 requires-python = ">=3.12"
 dependencies = ["nodyra-core"]

@@ -124,7 +124,7 @@ async def create_org(
     slug = body.slug.strip().lower() or _slugify(body.name)
     if not _SLUG_RE.match(slug):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Slug must be 2-80 lowercase letters, digits, or hyphens.",
         )
     if await session.scalar(select(Organization.id).where(Organization.slug == slug)):
@@ -180,7 +180,7 @@ async def update_org(
     if body.execution_isolation is not None:
         if body.execution_isolation not in ("shared", "dedicated_pool"):
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "execution_isolation must be 'shared' or 'dedicated_pool'.",
             )
         if role != "owner":

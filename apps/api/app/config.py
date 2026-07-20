@@ -366,8 +366,8 @@ class Settings(BaseSettings):
     # PEM-encoded Ed25519 public key used to verify license keys. Blank → use
     # the key baked into app/services/licensing.py. Tests override this.
     license_public_key: str = ""
-    # Community Node Registry (MS4 Slice 4E). When False, the registry feature
-    # is disabled (air-gapped / maximum-security deployments). Default True.
+    # Signed Community Node Registry. When False, registry discovery and
+    # installs are disabled for air-gapped / maximum-security deployments.
     allow_registry: bool = Field(
         default=True,
         validation_alias=AliasChoices(
@@ -379,6 +379,13 @@ class Settings(BaseSettings):
     registry_index_url: str = (
         "https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json"
     )
+    # JSON map of publisher key ID -> PEM or URL-safe base64 Ed25519 public key.
+    # Keys are operator-controlled; keys included in the remote registry index
+    # are never trusted as roots of trust.
+    registry_trusted_publishers: str = "{}"
+    # Development-only escape hatch. Production mode always requires a valid
+    # publisher signature, immutable version, distribution URL, and SHA-256.
+    registry_allow_unverified_install: bool = False
     auth_required: bool = False
     auth_allow_registration: bool = False
     auth_registration_role: str = "viewer"

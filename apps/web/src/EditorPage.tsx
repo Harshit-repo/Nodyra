@@ -4,6 +4,8 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useParams } from "react-router-dom";
 
+import "./editor.css";
+
 import {
   api,
   encodeWebhookPath,
@@ -14,6 +16,7 @@ import {
   subscribeToWorkflowEvents,
   userFriendlyError,
 } from "./api";
+import { classifyActivationFailure, recordActivationEvent } from "./activation";
 import { AiDraftModal } from "./AiDraftModal";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { RunnerPoolSelect } from "./RunnerPoolSelect";
@@ -389,6 +392,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const loadedWorkflowIdRef = useRef<string | null>(null);
   const creatingChildIdsRef = useRef<Set<string>>(new Set());
   const dirtyRef = useRef(false);
+  const activationDirtyRecordedRef = useRef(false);
   const workflowRef = useRef<WorkflowDetail | null>(null);
 
   const setManifests = useEditor((s) => s.setManifests);
@@ -495,6 +499,12 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
 
   useEffect(() => {
     dirtyRef.current = dirty || childDirty;
+    if ((dirty || childDirty) && !activationDirtyRecordedRef.current) {
+      activationDirtyRecordedRef.current = true;
+      recordActivationEvent("workflow_edited");
+    } else if (!dirty && !childDirty) {
+      activationDirtyRecordedRef.current = false;
+    }
   }, [childDirty, dirty]);
 
   useEffect(() => {
@@ -1152,6 +1162,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
         ? ` Updated ${published.updated_deployments} deployment(s).`
         : " Deployments stay pinned until updated.";
       setMessage(`Published v${published.version}.${deployNote}`);
+      recordActivationEvent("workflow_published");
       notify(`Published v${published.version}.`, "success");
     } catch (err) {
       notify(`Could not publish workflow. ${userFriendlyError(err)}`, "error");
@@ -1447,6 +1458,11 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
           // it as a persistent banner (UX-6) — a transient toast is too easy to
           // miss for a run that's genuinely blocked.
           setWaitingRunId(payload.status === "waiting" ? (payload.run_id ?? runId) : null);
+          if (payload.status === "success") {
+            recordActivationEvent("run_succeeded");
+          } else if (["error", "failed", "timed_out"].includes(payload.status ?? "")) {
+            recordActivationEvent("run_failed", classifyActivationFailure(payload.error));
+          }
           notify(
             payload.status === "success"
               ? "Workflow run succeeded."

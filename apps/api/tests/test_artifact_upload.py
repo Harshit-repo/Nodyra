@@ -97,3 +97,58 @@ async def test_upload_artifact_rehomes_to_configured_backend(
             assert not (Path(settings.artifacts_dir) / row.storage_key).exists()
     finally:
         reset_backends_for_tests()
+
+
+async def test_artifact_reconcile_is_dry_run_first_and_repairs_explicitly(
+    client: AsyncClient,
+) -> None:
+    from app.config import settings
+    from app.models import Artifact
+    from app.services import artifacts as artifacts_svc
+    from app.services.artifact_backends import reset_backends_for_tests
+
+    reset_backends_for_tests()
+    try:
+        upload = await client.post(
+            "/artifacts/upload",
+            files={"file": ("integrity.txt", io.BytesIO(b"trusted"), "text/plain")},
+        )
+        assert upload.status_code == 200
+        artifact_id = upload.json()["id"]
+
+        async with artifacts_svc.SessionLocal() as session:
+            artifact = await session.get(Artifact, artifact_id)
+            assert artifact is not None
+            artifact_path = Path(settings.artifacts_dir) / artifact.storage_key
+        artifact_path.unlink()
+        orphan_path = Path(settings.artifacts_dir) / "orphan.bin"
+        orphan_path.write_bytes(b"orphan")
+
+        dry_run = await client.post(
+            "/ops/artifacts/reconcile",
+            params={"verify_checksums": "true"},
+        )
+        assert dry_run.status_code == 200, dry_run.text
+        assert dry_run.json()["counts"]["missing"] >= 1
+        assert dry_run.json()["counts"]["orphan"] >= 1
+        assert dry_run.json()["deleted_orphans"] == 0
+        assert orphan_path.exists()
+
+        repair = await client.post(
+            "/ops/artifacts/reconcile",
+            params={
+                "verify_checksums": "true",
+                "repair_metadata": "true",
+                "delete_orphans": "true",
+            },
+        )
+        assert repair.status_code == 200, repair.text
+        assert repair.json()["deleted_orphans"] >= 1
+        assert not orphan_path.exists()
+
+        async with artifacts_svc.SessionLocal() as session:
+            artifact = await session.get(Artifact, artifact_id)
+            assert artifact is not None
+            assert artifact.artifact_metadata["integrity"]["status"] == "missing"
+    finally:
+        reset_backends_for_tests()

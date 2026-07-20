@@ -20,6 +20,12 @@ import sys
 
 import websockets
 
+from nodyra.execution_protocol import (
+    PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
+    validate_dispatch_envelope,
+    validate_runner_event,
+)
 from nodyra_runner_agent import env_manager
 from nodyra_runner_agent.process_pool import run_workflow_subprocess
 
@@ -38,8 +44,21 @@ def _ws_url(api_url: str, run_id: str, token: str) -> str:
 async def _run_once(api_url: str, run_id: str, token: str) -> None:
     url = _ws_url(api_url, run_id, token)
     async with websockets.connect(url) as ws:
-        await ws.send(json.dumps({"type": "runner_hello",
-                                  "capabilities": {"max_concurrent": 1}}))
+        await ws.send(json.dumps({
+            "type": "runner_hello",
+            "protocol_version": PROTOCOL_VERSION,
+            "protocol_versions": list(SUPPORTED_PROTOCOL_VERSIONS),
+            "capabilities": {
+                "max_concurrent": 1,
+                "protocol_versions": list(SUPPORTED_PROTOCOL_VERSIONS),
+            },
+        }))
+
+        async def send(payload: dict) -> None:
+            versioned = {**payload, "protocol_version": PROTOCOL_VERSION}
+            validate_runner_event(versioned)
+            await ws.send(json.dumps(versioned))
+
         async for raw in ws:
             try:
                 msg = json.loads(raw)
@@ -47,6 +66,7 @@ async def _run_once(api_url: str, run_id: str, token: str) -> None:
                 continue
             if msg.get("type") != "run_assigned":
                 continue
+            validate_dispatch_envelope(msg)
 
             env = msg.get("env") or {}
             python = await env_manager.build_env(
@@ -57,9 +77,7 @@ async def _run_once(api_url: str, run_id: str, token: str) -> None:
             )
 
             async def on_event(event: dict) -> None:
-                await ws.send(json.dumps(
-                    {"type": "run_event", "run_id": run_id, "event": event}
-                ))
+                await send({"type": "run_event", "run_id": run_id, "event": event})
 
             try:
                 status = await run_workflow_subprocess(
@@ -79,9 +97,7 @@ async def _run_once(api_url: str, run_id: str, token: str) -> None:
                 await on_event({"type": "run_error", "error": str(exc)})
                 status = "error"
 
-            await ws.send(json.dumps(
-                {"type": "run_finished", "run_id": run_id, "status": status}
-            ))
+            await send({"type": "run_finished", "run_id": run_id, "status": status})
             return  # single-run: done after one assignment
 
 

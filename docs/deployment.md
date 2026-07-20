@@ -315,10 +315,10 @@ the Community resource caps below.
 |---|---|---|---|
 | Environments | 3 | 10 | unlimited |
 | Runner pools | 1 | 5 | unlimited |
-| Active deployments | 3 | unlimited | unlimited |
-| Seats (users) | 2 | 10 | unlimited |
+| Active deployments | 10 | unlimited | unlimited |
+| Seats (users) | 5 | 10 | unlimited |
 | All nodes, MCP server, webhooks, scheduling | ✅ | ✅ | ✅ |
-| Sandboxed execution (`EXECUTION_SANDBOX`) | — | ✅ | ✅ |
+| Sandboxed execution (`EXECUTION_SANDBOX`) | ✅ | ✅ | ✅ |
 | Observability (`OTEL_ENABLED`) | — | ✅ | ✅ |
 | Multi-tenancy / organizations | — | — | ✅ |
 | SSO / SAML / SCIM, audit logs, org-KEK/KMS | — | — | ✅ |
@@ -345,7 +345,8 @@ set without the matching entitlement is **forced off with a logged warning**
 rather than failing to start. For example, `MULTI_TENANCY_ENABLED=true` on a
 Community instance boots single-tenant and logs `licensing: multi_tenancy_enabled
 requires the Enterprise edition; disabled`. The same applies to
-`EXECUTION_SANDBOX` and `OTEL_ENABLED` (Pro or higher). So enabling multi-tenancy
+`OTEL_ENABLED` (Pro or higher). Sandboxed execution is available in Community;
+so enabling multi-tenancy
 (next section) additionally requires an Enterprise license.
 
 ### Expiry

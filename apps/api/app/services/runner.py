@@ -91,7 +91,7 @@ from app.services.sandbox_policy import resolve_execution_mode, resolve_sandbox_
 from app.services.subworkflows import meta_for_root_run, resolve_subworkflow
 from nodyra.ai_runtime import AgentActionRequest
 from nodyra.context import artifact_store, org_run_limits
-from nodyra.engine import DEFAULT_NODE_TIMEOUTS, execute
+from nodyra.engine import DEFAULT_NODE_TIMEOUTS, ExecutionOptions, execute
 from nodyra.engine.types import set_call_mcp_tool_impl
 from nodyra.models import WorkflowGraph
 from nodyra.process_isolation import (
@@ -1606,14 +1606,16 @@ async def _execute_run_impl(
                         node_registry,
                         cache=deserialize_value(cache),
                         targets=targets,
-                        on_event=on_event,
-                        default_timeouts=_engine_default_timeouts(),
-                        pause_on_approval=True,
-                        agent_action_resume=agent_action_resume,
-                        process_isolator=process_isolator,
-                        subworkflow_runner=resolve_subworkflow,
-                        subworkflow_meta=sub_meta,
-                        run_timeout_seconds=_eff_timeout,
+                        options=ExecutionOptions(
+                            on_event=on_event,
+                            default_timeouts=_engine_default_timeouts(),
+                            pause_on_approval=True,
+                            agent_action_resume=agent_action_resume,
+                            process_isolator=process_isolator,
+                            subworkflow_runner=resolve_subworkflow,
+                            subworkflow_meta=sub_meta,
+                            run_timeout_seconds=_eff_timeout,
+                        ),
                     )
                     result = await coro
                 status = str(result.status)

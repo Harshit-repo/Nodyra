@@ -1,0 +1,119 @@
+name: Promote immutable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Target stage
+        type: choice
+        options: [pilot, canary, broad]
+        required: true
+      release_name:
+        description: Helm release name
+        default: nodyra
+        required: true
+      namespace:
+        description: Kubernetes namespace
+        required: true
+      api_digest:
+        description: API/worker sha256 digest from release evidence
+        required: true
+      web_digest:
+        description: Web sha256 digest from release evidence
+        required: true
+      signals_base64:
+        description: Base64 rollout-signal JSON; required for canary/broad
+        required: false
+
+concurrency:
+  group: promote-${{ inputs.stage }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: nodyra-${{ inputs.stage }}
+    env:
+      KUBECONFIG: ${{ runner.temp }}/kubeconfig
+      RELEASE_NAME: ${{ inputs.release_name }}
+      NAMESPACE: ${{ inputs.namespace }}
+      STAGE: ${{ inputs.stage }}
+      API_DIGEST: ${{ inputs.api_digest }}
+      WEB_DIGEST: ${{ inputs.web_digest }}
+      SIGNALS_BASE64: ${{ inputs.signals_base64 }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate immutable digests and signal requirement
+        run: |
+          [[ "$API_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$WEB_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          if [[ "$STAGE" != "pilot" && -z "$SIGNALS_BASE64" ]]; then
+            echo "canary and broad promotions require captured rollout signals"
+            exit 1
+          fi
+
+      - name: Configure cluster credentials
+        env:
+          KUBECONFIG_BASE64: ${{ secrets.KUBECONFIG_BASE64 }}
+        run: |
+          test -n "$KUBECONFIG_BASE64"
+          printf '%s' "$KUBECONFIG_BASE64" | base64 --decode > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+
+      - name: Promote exact release digests atomically
+        run: |
+          helm upgrade "$RELEASE_NAME" deploy/helm/nodyra \
+            --namespace "$NAMESPACE" \
+            --reuse-values \
+            --set-string image.digest="$API_DIGEST" \
+            --set-string web.imageDigest="$WEB_DIGEST" \
+            --atomic --wait --timeout 10m
+          kubectl rollout status deployment/"$RELEASE_NAME"-api --namespace "$NAMESPACE" --timeout=5m
+          kubectl rollout status deployment/"$RELEASE_NAME"-worker --namespace "$NAMESPACE" --timeout=5m
+          kubectl rollout status deployment/"$RELEASE_NAME"-web --namespace "$NAMESPACE" --timeout=5m
+
+      - name: Evaluate consecutive rollout windows
+        if: inputs.stage != 'pilot'
+        run: |
+          printf '%s' "$SIGNALS_BASE64" | base64 --decode > rollout-signals.json
+          python scripts/evaluate_rollout.py rollout-signals.json --output rollout-decision.json
+
+      - name: Record pilot decision
+        if: inputs.stage == 'pilot'
+        run: |
+          python - <<'PY'
+          import json, os
+          from datetime import UTC, datetime
+          result = {
+              "schema_version": 1,
+              "stage": "pilot",
+              "decision": "continue",
+              "evaluated_at": datetime.now(UTC).isoformat(),
+              "note": "Pilot promotion passed atomic deployment and rollout readiness; 24-hour observation remains required.",
+              "api_digest": os.environ["API_DIGEST"],
+              "web_digest": os.environ["WEB_DIGEST"],
+          }
+          open("rollout-decision.json", "w").write(json.dumps(result, indent=2) + "\n")
+          PY
+
+      - name: Roll back automatically after a failed promotion gate
+        if: failure()
+        run: >-
+          helm rollback "$RELEASE_NAME"
+          --namespace "$NAMESPACE"
+          --wait --timeout 10m
+
+      - name: Publish promotion decision
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rollout-${{ inputs.stage }}-${{ github.run_id }}
+          path: |
+            rollout-decision.json
+            rollout-signals.json
+          if-no-files-found: warn
+          retention-days: 400

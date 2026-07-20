@@ -915,16 +915,47 @@
   background: var(--surface-2);
   color: var(--ink);
 }
+.palette-view-switch {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0 12px 9px;
+  padding: 3px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.palette-view-switch button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 700;
+}
+.palette-view-switch button:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+.palette-view-switch button.active {
+  color: var(--ink);
+  background: var(--surface-3);
+}
+.palette-view-switch > span {
+  margin-left: auto;
+  padding-right: 6px;
+  color: var(--ink-3);
+  font-size: 10px;
+  white-space: nowrap;
+}
 .palette-chips {
   display: flex;
   gap: 6px;
   overflow-x: auto;
   padding: 0 12px 10px;
   flex-wrap: nowrap;
-  scrollbar-width: none;
-}
-.palette-chips::-webkit-scrollbar {
-  display: none;
 }
 .palette-chips button {
   display: inline-flex;
@@ -1176,6 +1207,25 @@
   transition:
     background 110ms ease,
     border-color 110ms ease;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 42px;
+}
+
+.palette-load-more {
+  width: 100%;
+  min-height: 34px;
+  margin-top: 4px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--editor-radius-sm);
+  background: transparent;
+  color: var(--accent-2);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.palette-load-more:hover {
+  border-color: var(--accent-deep);
+  background: var(--surface-2);
 }
 .palette-item:hover {
   background: var(--surface-2);
@@ -1580,7 +1630,7 @@
   overflow: hidden;
   max-width: 400px;
   opacity: 1;
-  transition: max-width 200ms ease, opacity 160ms ease;
+  transition: opacity 160ms ease;
 }
 .canvas-controls--collapsed .canvas-control-group {
   max-width: 0;
@@ -1783,7 +1833,6 @@
   flex-direction: column;
   min-width: 0;
   position: relative;
-  transition: height 140ms ease;
   box-shadow: 0 -14px 34px -30px rgba(0, 0, 0, 0.95);
   animation: port-data-slide-in 180ms ease;
 }
@@ -3696,7 +3745,7 @@ body.is-resizing-vertical {
   font-weight: 700;
   border: 2px solid var(--canvas);
   z-index: 10;
-  animation: status-pop 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: status-pop 180ms ease-out;
 }
 @keyframes status-pop {
   0% {
@@ -6138,7 +6187,7 @@ body.is-resizing {
   border: 1px solid var(--line);
   border-radius: var(--editor-radius-tight);
   cursor: pointer;
-  transition: all 110ms ease;
+  transition: background 110ms ease, border-color 110ms ease, color 110ms ease;
   z-index: 2;
 }
 .textarea-expand:hover {
@@ -6266,7 +6315,7 @@ body.is-resizing {
   border-radius: 4px;
   cursor: pointer;
   font-family: var(--font-sans);
-  transition: all 110ms ease;
+  transition: background 110ms ease, border-color 110ms ease, color 110ms ease;
 }
 .expr-modal-tabs button:hover {
   color: var(--ink);
@@ -6760,7 +6809,7 @@ body.is-resizing {
   overflow: hidden;
   max-width: 0;
   opacity: 0;
-  transition: max-width 180ms ease, opacity 150ms ease;
+  transition: opacity 150ms ease;
 }
 .sticky-section:hover .sticky-section-content {
   max-width: 240px;
@@ -6941,14 +6990,6 @@ th.sortable:hover { background:var(--bg-3); }
   flex-direction: column;
   gap: 12px;
 }
-.chat-body::-webkit-scrollbar { width: 9px; }
-.chat-body::-webkit-scrollbar-thumb {
-  background: var(--surface-3);
-  border-radius: 9px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-
 .chat-empty {
   margin: auto;
   text-align: center;
@@ -8644,7 +8685,7 @@ select.field-input:hover {
   color: var(--ink-3);
   cursor: pointer;
   font-weight: 500;
-  transition: all 0.12s;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 .sc-filter-chip.on {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -8657,9 +8698,6 @@ select.field-input:hover {
   overflow-y: auto;
   min-height: 0;
 }
-.sc-run-list::-webkit-scrollbar { width: 3px; }
-.sc-run-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
-
 .sc-run-row {
   position: relative;
   padding: 9px 12px;
@@ -8790,7 +8828,7 @@ select.field-input:hover {
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--ink-3);
-  transition: all 0.15s;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
   text-align: center;
 }
 .sc-action-btn:hover { color: var(--ink); }
@@ -9159,7 +9197,7 @@ select.field-input:hover {
   cursor: pointer;
   background: transparent;
   font-family: inherit;
-  transition: all 0.15s;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 .run-exec-banner-exit:hover { color: var(--ink); }
 
@@ -9671,10 +9709,6 @@ select.field-input:hover {
 .ndv-resizing .ndv-drag-tip {
   opacity: 0 !important;
 }
-.ndv-modal:not(.ndv-resizing) {
-  transition: height 220ms cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
 /* ── Monaco code editor ─────────────────────────────────────────────── */
 .monaco-editor-wrap {
   border: 1px solid var(--line, #242c3a);
@@ -9880,10 +9914,7 @@ select.field-input:hover {
   background: var(--surface-2, #1f2329);
   min-width: 60px;
 }
-.exec-timeline-seg {
-  height: 100%;
-  transition: width .3s ease;
-}
+.exec-timeline-seg { height: 100%; }
 .exec-timeline-ok { background: #4ade80; }
 .exec-timeline-run { background: #4c9eff; animation: et-pulse 1.2s ease-in-out infinite; }
 .exec-timeline-err { background: #f0747a; }

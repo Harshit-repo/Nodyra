@@ -438,6 +438,41 @@ export interface WorkflowTemplateSummary {
   name: string;
   description: string;
   tags: string[];
+  version: string;
+  creator: string;
+  verified: boolean;
+  credential_free: boolean;
+  prerequisites: string[];
+  expected_result: string;
+  permissions: string[];
+  compatibility: string;
+  rating: number | null;
+  rating_count: number;
+  screenshot_url: string | null;
+}
+
+export type WorkflowImportFormat =
+  | "nodyra_module"
+  | "python_script"
+  | "n8n"
+  | "airflow"
+  | "prefect";
+
+export interface WorkflowImportFinding {
+  source_id: string;
+  source_type: string;
+  status: "exact" | "transformed" | "manual" | "unsupported";
+  target_type: string | null;
+  message: string;
+}
+
+export interface WorkflowImportPreview {
+  source_format: WorkflowImportFormat;
+  importable: boolean;
+  partial: boolean;
+  graph: Record<string, unknown> | null;
+  summary: Record<WorkflowImportFinding["status"], number>;
+  findings: WorkflowImportFinding[];
 }
 
 export interface WorkflowDetail {
@@ -626,6 +661,27 @@ export interface ArtifactInfo {
   metadata: Record<string, unknown>;
   preview: unknown;
   created_at: string;
+}
+
+export interface ArtifactLineage {
+  artifact_id: string;
+  producer: {
+    workflow_id: string | null;
+    workflow_name: string | null;
+    workflow_version_id: string | null;
+    run_id: string | null;
+    node_id: string | null;
+  };
+  schema: unknown;
+  size_bytes: number;
+  checksum_sha256: string | null;
+  retention_deadline: string | null;
+  storage: {
+    backend: string;
+    encryption_status: string;
+    integrity: unknown;
+  };
+  downstream_consumers: unknown[];
 }
 
 export interface DatasetQueryResult {
@@ -1239,6 +1295,30 @@ export interface RegistryPackage {
   nodes: string[];
   install_url: string;
   pypi_package: string;
+  distribution_url?: string;
+  distribution_sha256?: string;
+  lifecycle?: "active" | "deprecated" | "quarantined" | "revoked";
+  compatibility?: Record<string, string>;
+  permissions?: {
+    network?: string[];
+    filesystem?: string[];
+    secrets?: string[];
+    subprocess?: boolean;
+  };
+  downloads?: number;
+  health?: string;
+  advisories?: Array<{ id: string; severity: string; summary: string }>;
+  examples?: Array<{ title: string; url: string }>;
+  trust?: {
+    status: string;
+    installable: boolean;
+    signed: boolean;
+    publisher_key_id: string | null;
+    immutable: boolean;
+    reason: string;
+    locked_spec: string | null;
+  };
+  versions?: Array<Omit<RegistryPackage, "versions">>;
 }
 
 export interface RegistrySearchResult {

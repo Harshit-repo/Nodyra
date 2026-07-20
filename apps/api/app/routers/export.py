@@ -2,7 +2,7 @@ import io
 import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from nodyra_importer import import_module
+from nodyra_importer import MigrationFormat, analyze_migration
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +13,7 @@ from app.db import get_session
 from app.models import Environment, Workflow, WorkflowVersion
 from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
+from app.services.metrics import migration_import_total, migration_preview_total
 from nodyra.models import WorkflowGraph
 from nodyra.sdk import registry as node_registry
 from nodyra_exporter import docker_bundle, slugify, workflow_to_module, workflow_to_script
@@ -22,7 +23,15 @@ router = APIRouter(tags=["export"])
 
 class WorkflowImportRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
-    source: str = Field(description="Content of a .module.py export file")
+    source: str = Field(max_length=2_000_000, description="Workflow source content")
+    source_format: MigrationFormat = "nodyra_module"
+    allow_partial: bool = False
+
+
+class WorkflowImportPreviewRequest(BaseModel):
+    source: str = Field(max_length=2_000_000)
+    source_format: MigrationFormat = "nodyra_module"
+    allow_partial: bool = False
 
 
 class WorkflowImportResponse(BaseModel):
@@ -30,6 +39,26 @@ class WorkflowImportResponse(BaseModel):
     name: str
 
 EMPTY_GRAPH: dict = {"nodes": [], "edges": []}
+
+
+@router.post("/workflows/import/preview")
+@router.post("/import/preview", include_in_schema=False)
+async def preview_workflow_import(body: WorkflowImportPreviewRequest) -> dict:
+    """Return exact/transformed/manual/unsupported findings before persistence."""
+    try:
+        result = analyze_migration(
+            body.source,
+            body.source_format,
+            allow_partial=body.allow_partial,
+        )
+        migration_preview_total.inc(
+            source_format=result.source_format,
+            outcome="importable" if result.importable else "review_required",
+        )
+        return result.as_dict()
+    except ImportError as exc:
+        migration_preview_total.inc(source_format=body.source_format, outcome="invalid")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
 # A3: node types whose params reference another workflow, and the param key
 # holding the referenced workflow id. Exports bundle these graphs so the
@@ -176,10 +205,17 @@ async def export_docker(
 
 
 @router.post(
+    "/workflows/import",
+    response_model=WorkflowImportResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission("workflow:write"))],
+)
+@router.post(
     "/import",
     response_model=WorkflowImportResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_permission("workflow:write"))],
+    include_in_schema=False,
 )
 async def import_workflow(
     body: WorkflowImportRequest,
@@ -193,9 +229,19 @@ async def import_workflow(
     version 1 pinned from the same graph.
     """
     try:
-        graph: WorkflowGraph = import_module(body.source)
+        migration = analyze_migration(
+            body.source,
+            body.source_format,
+            allow_partial=body.allow_partial,
+        )
+        if not migration.importable or migration.graph is None:
+            raise ImportError(
+                "Import is blocked by manual or unsupported findings. Review the compatibility report first."
+            )
+        graph = WorkflowGraph.model_validate(migration.graph)
     except ImportError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        migration_import_total.inc(source_format=body.source_format, outcome="blocked")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
     # Validate the imported graph structure before persisting.
     from nodyra.engine.types import GraphError
@@ -205,8 +251,9 @@ async def import_workflow(
     try:
         _validate_graph(graph, node_registry)
     except GraphError as exc:
+        migration_import_total.inc(source_format=body.source_format, outcome="invalid_graph")
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Invalid workflow graph: {exc}",
         ) from exc
 
@@ -231,4 +278,5 @@ async def import_workflow(
         actor_email=actor.email if actor else None,
     )
     await session.commit()
+    migration_import_total.inc(source_format=body.source_format, outcome="created")
     return WorkflowImportResponse(workflow_id=workflow.id, name=workflow.name)

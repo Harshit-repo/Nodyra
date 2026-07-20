@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +20,7 @@ from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.github_sync import enqueue_github_push
 from app.services.github_sync_jobs import notify_sync_workers
+from app.services.metrics import template_instantiation_total
 from app.services.workflow_events import WORKFLOW_CREATED, publish_workflow_event
 from nodyra.engine.types import GraphError
 from nodyra.engine.validation import _validate_graph
@@ -35,6 +36,17 @@ class TemplateSummary(BaseModel):
     name: str
     description: str
     tags: list[str] = Field(default_factory=list)
+    version: str = "1.0.0"
+    creator: str = "Nodyra"
+    verified: bool = False
+    credential_free: bool = False
+    prerequisites: list[str] = Field(default_factory=list)
+    expected_result: str = ""
+    permissions: list[str] = Field(default_factory=list)
+    compatibility: str = ""
+    rating: float | None = None
+    rating_count: int = 0
+    screenshot_url: str | None = None
 
 
 class InstantiateTemplateRequest(BaseModel):
@@ -74,16 +86,44 @@ async def _global_env_id(session: AsyncSession) -> str | None:
 
 
 @router.get("/templates", response_model=list[TemplateSummary])
-async def list_templates() -> list[TemplateSummary]:
-    return [
+async def list_templates(
+    q: str = Query(default="", max_length=100),
+    tag: str = Query(default="", max_length=50),
+    credential_free: bool | None = None,
+) -> list[TemplateSummary]:
+    summaries = [
         TemplateSummary(
             id=str(template["id"]),
             name=str(template["name"]),
             description=str(template["description"]),
             tags=list(template.get("tags") or []),
+            version=str(template.get("version") or "1.0.0"),
+            creator=str(template.get("creator") or "Nodyra"),
+            verified=bool(template.get("verified", False)),
+            credential_free=bool(template.get("credential_free", False)),
+            prerequisites=list(template.get("prerequisites") or []),
+            expected_result=str(template.get("expected_result") or ""),
+            permissions=list(template.get("permissions") or []),
+            compatibility=str(template.get("compatibility") or ""),
+            rating=float(template["rating"]) if template.get("rating") is not None else None,
+            rating_count=int(template.get("rating_count") or 0),
+            screenshot_url=template.get("screenshot_url"),
         )
         for template in _load_templates().values()
     ]
+    normalized = q.strip().lower()
+    if normalized:
+        summaries = [
+            item for item in summaries
+            if normalized in item.name.lower()
+            or normalized in item.description.lower()
+            or any(normalized in value.lower() for value in item.tags)
+        ]
+    if tag:
+        summaries = [item for item in summaries if tag.lower() in {value.lower() for value in item.tags}]
+    if credential_free is not None:
+        summaries = [item for item in summaries if item.credential_free is credential_free]
+    return summaries
 
 
 @router.post(
@@ -136,4 +176,5 @@ async def instantiate_template(
         operation="create_from_template",
         actor=actor,
     )
+    template_instantiation_total.inc(template_id=template_id, outcome="success")
     return InstantiateTemplateResponse(id=workflow.id, name=workflow.name)

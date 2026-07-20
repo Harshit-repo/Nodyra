@@ -2,7 +2,12 @@
 
 ## Start here
 
-- [Getting started](getting-started.md) — zero to first workflow in ~10 minutes.
+- [Getting started](getting-started.md) — zero to first inspected workflow in
+  about five minutes once images are available.
+- [Architecture chooser](architecture-chooser.md) — trusted local, internal
+  production, multi-tenant, regulated, and air-gapped paths.
+- [Migration guide](migration.md) — static compatibility reports for Nodyra,
+  Python, n8n, Airflow, and Prefect sources.
 - [MCP quickstart](mcp-quickstart.md) — let Claude/Cursor build workflows on
   your instance (61 tools).
 - [Licensing guide](licensing.md) — what's free, what's paid, in plain English.
@@ -14,6 +19,11 @@
 - [Working with datasets](datasetref.md) — DatasetRef table handles,
   records↔dataset conversion, DuckDB SQL, common patterns.
 - [Community nodes](community-nodes.md) — installing and publishing node packs.
+- [Workflow template catalog](workflow-templates.md) — metadata, versioning,
+  verification, screenshots, and compatibility rules.
+- [Copy-paste recipes](recipes.md) — API, dataset, alerting, and CI patterns.
+- [Nodyra Academy](academy.md) — credential-free exercises with a deterministic
+  loopback practice API.
 - [Export modes](export-modes.md) — workflow → Python script / Docker bundle.
 - [GitOps](gitops.md) — two-way GitHub sync for workflow definitions.
 - [MCP reference](mcp.md) — full MCP server/tool documentation.
@@ -30,6 +40,7 @@
 - [Security policy](../SECURITY.md) — trust model, execution postures,
   operator responsibilities, reporting vulnerabilities.
 - [Workers & scaling](deployment/workers.md).
+- [Disposable evaluation profile](hosted-evaluation.md).
 - [Soak testing](soak-testing.md).
 - [Upgrading to Nodyra](upgrading-to-nodyra.md) — migrating from the former product name
   working name.
@@ -47,8 +58,12 @@
   security boundaries.
 - [Continuous integration](ci.md) — CI lanes, flake retry reporting, and
   expected maintainer response.
+- [Release and support policy](release-policy.md) — SemVer, alpha/beta/RC/GA,
+  deprecation, supported versions, and security maintenance.
 - [ADRs](adr/) — architecture decision records.
 - [Status matrix](status-matrix.md) — shipped / beta / scaffolded / planned.
+- [Adoption metrics](adoption-metrics.md) — funnel definitions and pricing
+  experiment contract.
 
 ## Project & strategy (maintainers)
 

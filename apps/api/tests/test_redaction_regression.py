@@ -63,7 +63,7 @@ async def test_secret_redaction_covers_persisted_events_logs_and_artifacts(
     }
 
     async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
-        on_event = kwargs["on_event"]
+        on_event = kwargs["options"].on_event
         await on_event(
             {
                 "type": "node_finished",

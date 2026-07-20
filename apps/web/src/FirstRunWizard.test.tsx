@@ -2,6 +2,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  activationStorageKey,
+  readActivationProgress,
+  writeActivationProgress,
+} from "./activation";
 import { FirstRunWizard, firstRunStorageKey } from "./FirstRunWizard";
 import type { AuthState, UserInfo } from "./types";
 
@@ -38,45 +43,64 @@ describe("FirstRunWizard", () => {
   it("shows setup for a new signed-in user", () => {
     renderWizard();
 
-    expect(screen.getByRole("dialog", { name: "Workspace setup" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Admin confirmed" })).toBeTruthy();
+    expect(
+      screen.getByRole("complementary", { name: "Get to a trusted first run" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "Activation progress" })).toHaveAttribute(
+      "aria-valuenow",
+      "0",
+    );
   });
 
-  it("persists dismissal per user", () => {
+  it("persists a collapsed checklist per user", () => {
     const auth = authFor({ id: "owner-1" });
     renderWizard(auth);
 
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Collapse activation checklist" }),
+    );
 
-    expect(localStorage.getItem(firstRunStorageKey(auth))).toBe("done");
-    expect(screen.queryByRole("dialog", { name: "Workspace setup" })).toBeNull();
+    expect(readActivationProgress(firstRunStorageKey(auth)).collapsed).toBe(true);
+    expect(
+      localStorage.getItem(activationStorageKey(firstRunStorageKey(auth))),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Open activation checklist, 0 of 5 complete" }),
+    ).toBeTruthy();
   });
 
-  it("does not hide setup for a different user", () => {
+  it("does not collapse setup for a different user", () => {
     const first = authFor({ id: "owner-1" });
     const second = authFor({ id: "owner-2", email: "owner2@example.com" });
-    localStorage.setItem(firstRunStorageKey(first), "done");
+    writeActivationProgress(firstRunStorageKey(first), {
+      version: 2,
+      completed: {},
+      successfulRuns: 0,
+      editedAfterRun: false,
+      collapsed: true,
+    });
 
     renderWizard(second);
 
-    expect(screen.getByRole("dialog", { name: "Workspace setup" })).toBeTruthy();
+    expect(
+      screen.getByRole("complementary", { name: "Get to a trusted first run" }),
+    ).toBeTruthy();
   });
 
-  it("steps through credential and template links", () => {
+  it("links every activation step to the relevant product area", () => {
     renderWizard();
 
-    fireEvent.click(screen.getByRole("button", { name: /Continue/i }));
-    expect(screen.getByRole("heading", { name: "Connect a credential" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Choose template/i })).toHaveAttribute(
+      "href",
+      "/?starter=datasetref-filter-export",
+    );
+    expect(screen.getByRole("link", { name: /Open artifacts/i })).toHaveAttribute(
+      "href",
+      "/artifacts",
+    );
     expect(screen.getByRole("link", { name: /Open credentials/i })).toHaveAttribute(
       "href",
       "/credentials",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Continue/i }));
-    expect(screen.getByRole("heading", { name: "Run a template" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Open templates/i })).toHaveAttribute(
-      "href",
-      "/",
     );
   });
 });

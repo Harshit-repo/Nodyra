@@ -328,6 +328,9 @@ async def persist_run_outcome(
         async with session_factory() as session:
             run = await session.get(Run, run_id)
             if run is not None:
+                from app.services.run_lifecycle import require_transition
+
+                require_transition(run.status, status, run_id=run_id)
                 run.status = status
                 run.finished_at = None if status == "waiting" else datetime.now(UTC)
                 # ADR-0003: keep run-owned failures on runs.error so event

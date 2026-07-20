@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-07-20",
+  "review_cadence_days": 31,
+  "categories": [
+    {
+      "id": "architecture",
+      "name": "Architecture and boundaries",
+      "owner": "platform",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "evidence": ["docs/architecture.md", "docs/architecture-chooser.md", "docs/operations/compatibility-matrix.md"],
+      "dimensions": {"automated_gates": true, "operational_evidence": false, "discoverability": true, "failure_recovery": true, "user_outcomes": false}
+    },
+    {
+      "id": "engine",
+      "name": "Execution engine",
+      "owner": "runtime",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "evidence": ["packages/core/nodyra/execution_protocol.py", "docs/adr/0001-run-execution-architecture.md"],
+      "dimensions": {"automated_gates": true, "operational_evidence": false, "discoverability": true, "failure_recovery": true, "user_outcomes": false}
+    },
+    {
+      "id": "artifacts",
+      "name": "Artifacts and data lineage",
+      "owner": "platform",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "evidence": ["apps/api/app/services/artifacts.py", "apps/api/app/services/artifact_reconcile.py", "apps/api/tests/test_artifact_upload.py", "apps/web/src/ArtifactsPage.tsx"],
+      "dimensions": {"automated_gates": true, "operational_evidence": false, "discoverability": true, "failure_recovery": true, "user_outcomes": false}
+    },
+    {
+      "id": "security",
+      "name": "Security and supply chain",
+      "owner": "security",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "evidence": ["SECURITY.md", "docs/security-pentest-checklist.md", "apps/api/app/services/registry_trust.py"],
+      "dimensions": {"automated_gates": true, "operational_evidence": false, "discoverability": true, "failure_recovery": true, "user_outcomes": false}
+    },
+    {
+      "id": "ux",
+      "name": "UX, accessibility, and performance",
+      "owner": "web",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "evidence": ["apps/web/bundle-budgets.json", "apps/web/src/FirstRunWizard.test.tsx", "apps/web/src/i18n.ts", "apps/web/src/productStates.ts"],
+      "dimensions": {"automated_gates": true, "operational_evidence": false, "discoverability": true, "failure_recovery": true, "user_outcomes": false}
+    },
+    {
+      "id": "operations",
+      "name": "Operations and supportability",
+      "owner": "sre",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "evidence": ["docs/operations/production-attestation.md", "docs/operations/alert-runbooks.md", "scripts/generate_support_bundle.py"],
+      "dimensions": {"automated_gates": true, "operational_evidence": false, "discoverability": true, "failure_recovery": true, "user_outcomes": false}
+    },
+    {
+      "id": "ecosystem",
+      "name": "Ecosystem and adoption",
+      "owner": "product",
+      "score": 8,
+      "state": "external_activation_evidence_pending",
+      "evidence": ["docs/community-nodes.md", "docs/workflow-templates.md", "docs/adoption-metrics.md", "docs/hosted-evaluation.md", "packages/importer/tests/test_migration.py"],
+      "dimensions": {"automated_gates": true, "operational_evidence": false, "discoverability": true, "failure_recovery": true, "user_outcomes": false}
+    },
+    {
+      "id": "release",
+      "name": "Release maturity",
+      "owner": "release",
+      "score": 9,
+      "state": "certification_evidence_pending",
+      "evidence": ["docs/release-policy.md", "docs/operations/release-evidence.md", "docs/operations/staged-rollout.md", "apps/api/tests/test_release_automation.py", ".github/workflows/release.yml"],
+      "dimensions": {"automated_gates": true, "operational_evidence": false, "discoverability": true, "failure_recovery": true, "user_outcomes": false}
+    }
+  ]
+}

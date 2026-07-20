@@ -11,7 +11,68 @@ import { isTriggerManifest, useEditor } from "./store";
 
 const FAVORITES_KEY = "nodyra_palette_favorites";
 const RECENTS_KEY = "nodyra_palette_recent";
+const VIEW_KEY = "nodyra_palette_view";
 const MAX_RECENTS = 8;
+const MAX_CORE_NODES = 48;
+
+type PaletteView = "core" | "all";
+
+const CORE_CATEGORIES = new Set([
+  "Triggers",
+  "API",
+  "Logic",
+  "Data",
+  "Transform",
+  "Utility",
+  "General",
+]);
+
+const CORE_NODE_PRIORITY = [
+  "manual_trigger",
+  "webhook_trigger",
+  "schedule_trigger",
+  "respond_to_webhook",
+  "http_request",
+  "code",
+  "set",
+  "set_fields",
+  "filter",
+  "switch",
+  "if",
+  "merge",
+  "limit",
+  "sort",
+  "aggregate",
+  "split_items",
+  "wait",
+  "records_to_dataset",
+  "dataset_to_records",
+  "duckdb_sql",
+  "dataset_filter",
+  "dataset_limit",
+  "dataset_preview",
+  "csv_read",
+  "csv_write",
+  "json_parse",
+  "json_stringify",
+];
+
+function coreManifests(manifests: NodeManifest[]): NodeManifest[] {
+  const priority = new Map(CORE_NODE_PRIORITY.map((id, index) => [id, index]));
+  return manifests
+    .filter(
+      (manifest) =>
+        CORE_CATEGORIES.has(manifest.category) &&
+        !manifest.deprecated &&
+        !manifest.params.some((param) => param.type === "credential"),
+    )
+    .sort((a, b) => {
+      const aRank = priority.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const bRank = priority.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      return aRank === bRank ? browseSort(a, b) : aRank - bRank;
+    })
+    .slice(0, MAX_CORE_NODES);
+}
 
 function readStoredList(key: string): string[] {
   try {
@@ -45,13 +106,39 @@ function searchAliases(node: NodeManifest): string {
   return aliases.join(" ");
 }
 
+type NormalizedNodeSearch = {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  aliases: string;
+};
+
+const SEARCH_INDEX_CACHE = new WeakMap<NodeManifest, NormalizedNodeSearch>();
+
+function normalizedNodeSearch(node: NodeManifest): NormalizedNodeSearch {
+  const cached = SEARCH_INDEX_CACHE.get(node);
+  if (cached) return cached;
+  const normalized = {
+    id: node.id.toLowerCase(),
+    name: node.name.toLowerCase(),
+    category: node.category.toLowerCase(),
+    description: (node.description ?? "").toLowerCase(),
+    aliases: searchAliases(node).toLowerCase(),
+  };
+  SEARCH_INDEX_CACHE.set(node, normalized);
+  return normalized;
+}
+
 function rankMatch(node: NodeManifest, q: string): number {
   if (!q) return 1000;
-  const id = node.id.toLowerCase();
-  const name = node.name.toLowerCase();
-  const cat = node.category.toLowerCase();
-  const desc = (node.description ?? "").toLowerCase();
-  const aliases = searchAliases(node).toLowerCase();
+  const {
+    id,
+    name,
+    category: cat,
+    description: desc,
+    aliases,
+  } = normalizedNodeSearch(node);
   if (id === q) return 0;
   if (name === q) return 1;
   if (id.startsWith(q)) return 10;
@@ -314,6 +401,7 @@ const COLLAPSED_KEY = "nodyra_palette_collapsed";
 const EXPANDED_GROUPS_KEY = "nodyra_palette_expanded_groups";
 const COLLAPSED_QUICK_KEY = "nodyra_palette_collapsed_quick";
 const DEFAULT_EXPANDED_GROUPS: string[] = [];
+const INITIAL_RENDERED_NODES = 60;
 
 export function NodePalette() {
   const manifests = useEditor((s) => s.manifests);
@@ -323,6 +411,9 @@ export function NodePalette() {
   );
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [paletteView, setPaletteView] = useState<PaletteView>(() =>
+    safeGetItem(VIEW_KEY) === "all" ? "all" : "core",
+  );
   const [favorites, setFavorites] = useState<string[]>(() =>
     readStoredList(FAVORITES_KEY),
   );
@@ -343,6 +434,7 @@ export function NodePalette() {
       return new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === "string") : []);
     } catch { return new Set(); }
   });
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const [mcpConnections, setMcpConnections] = useState<MCPConnection[]>([]);
   const [mcpLoading, setMcpLoading] = useState(false);
   const [mcpError, setMcpError] = useState("");
@@ -390,6 +482,13 @@ export function NodePalette() {
     () => manifests.filter((manifest) => !manifest.hidden),
     [manifests],
   );
+
+  const curatedManifests = useMemo(
+    () => coreManifests(visibleManifests),
+    [visibleManifests],
+  );
+
+  const browseManifests = paletteView === "core" ? curatedManifests : visibleManifests;
 
   const manifestsById = useMemo(
     () => new Map(visibleManifests.map((manifest) => [manifest.id, manifest])),
@@ -479,7 +578,7 @@ export function NodePalette() {
 
   const categories = useMemo(() => {
     const names = Array.from(
-      new Set(visibleManifests.map((manifest) => manifest.category)),
+      new Set(browseManifests.map((manifest) => manifest.category)),
     );
     return names.sort((a, b) => {
       const ai = CATEGORY_ORDER.indexOf(a);
@@ -488,11 +587,12 @@ export function NodePalette() {
       const br = bi === -1 ? Number.MAX_SAFE_INTEGER : bi;
       return ar === br ? a.localeCompare(b) : ar - br;
     });
-  }, [visibleManifests]);
+  }, [browseManifests]);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const matched = visibleManifests
+    const source = q ? visibleManifests : browseManifests;
+    const matched = source
       .filter(
         (m) =>
           (categoryFilter === "all" || m.category === categoryFilter) &&
@@ -529,7 +629,7 @@ export function NodePalette() {
       category,
       nodes: byCategory.get(category)!.sort(browseSort),
     }));
-  }, [categoryFilter, query, visibleManifests]);
+  }, [browseManifests, categoryFilter, query, visibleManifests]);
   const matchedCount = groups.reduce((sum, group) => sum + group.nodes.length, 0);
 
   // Flat ordered list mirroring what's rendered — drives the command-palette
@@ -541,7 +641,8 @@ export function NodePalette() {
   const [activeIdx, setActiveIdx] = useState(0);
   useEffect(() => {
     setActiveIdx(0);
-  }, [query, categoryFilter]);
+    setVisibleCounts({});
+  }, [query, categoryFilter, paletteView]);
 
   const addNode = useEditor((s) => s.addNode);
 
@@ -641,7 +742,7 @@ export function NodePalette() {
           <span className="panel-count">
             {query.trim()
               ? `${matchedCount}/${visibleManifests.length}`
-              : visibleManifests.length}
+              : browseManifests.length}
           </span>
           <button
             type="button"
@@ -660,7 +761,7 @@ export function NodePalette() {
           ref={searchRef}
           className="palette-search"
           aria-label="Search nodes"
-          placeholder="Search nodes…"
+          placeholder="Search all nodes…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleSearchKeyDown}
@@ -675,6 +776,39 @@ export function NodePalette() {
             <X size={11} weight="bold" />
           </button>
         )}
+      </div>
+      <div className="palette-view-switch" role="group" aria-label="Node catalog scope">
+        <button
+          type="button"
+          className={paletteView === "core" ? "active" : ""}
+          aria-pressed={paletteView === "core"}
+          onClick={() => {
+            setPaletteView("core");
+            setCategoryFilter("all");
+            setQuery("");
+            safeSetItem(VIEW_KEY, "core");
+          }}
+        >
+          Core
+        </button>
+        <button
+          type="button"
+          className={paletteView === "all" ? "active" : ""}
+          aria-pressed={paletteView === "all"}
+          onClick={() => {
+            setPaletteView("all");
+            setCategoryFilter("all");
+            setQuery("");
+            safeSetItem(VIEW_KEY, "all");
+          }}
+        >
+          All nodes
+        </button>
+        <span>
+          {paletteView === "core"
+            ? `${curatedManifests.length} curated`
+            : `${visibleManifests.length} installed`}
+        </span>
       </div>
       <div ref={chipsRef} className="palette-chips" aria-label="Node categories">
         <button
@@ -715,7 +849,7 @@ export function NodePalette() {
         ))}
       </div>
       <div className="palette-scroll">
-        {showQuickSections && (
+        {showQuickSections && paletteView === "all" && (
           <McpToolsSection
             connections={mcpConnections}
             loading={mcpLoading}
@@ -766,6 +900,8 @@ export function NodePalette() {
               );
             })}
         {groups.map((group) => {
+          const visibleCount = visibleCounts[group.category] ?? INITIAL_RENDERED_NODES;
+          const visibleGroupNodes = group.nodes.slice(0, visibleCount);
           // Subgroup integration nodes by service inside the category — only
           // when browsing (no active query) and at least 2 nodes share an
           // integration prefix. Otherwise render flat.
@@ -773,7 +909,7 @@ export function NodePalette() {
           if (!query.trim()) {
             const integrationBuckets = new Map<string, NodeManifest[]>();
             const standalone: NodeManifest[] = [];
-            for (const node of group.nodes) {
+            for (const node of visibleGroupNodes) {
               const integration = integrationOf(node);
               if (integration) {
                 const arr = integrationBuckets.get(integration) ?? [];
@@ -802,7 +938,7 @@ export function NodePalette() {
               return a.label.localeCompare(b.label);
             });
           }
-          const renderNodes = subgroups.length > 0 ? null : group.nodes;
+          const renderNodes = subgroups.length > 0 ? null : visibleGroupNodes;
           // When searching, always show results. When browsing, collapsed by default.
           const isGroupCollapsed = !query.trim() && !expandedGroups.has(group.category);
           return (
@@ -857,6 +993,23 @@ export function NodePalette() {
                   ))}
                 </div>
               ))}
+              {!isGroupCollapsed && visibleGroupNodes.length < group.nodes.length && (
+                <button
+                  type="button"
+                  className="palette-load-more"
+                  onClick={() =>
+                    setVisibleCounts((current) => ({
+                      ...current,
+                      [group.category]: Math.min(
+                        group.nodes.length,
+                        visibleCount + INITIAL_RENDERED_NODES,
+                      ),
+                    }))
+                  }
+                >
+                  Show {Math.min(INITIAL_RENDERED_NODES, group.nodes.length - visibleCount)} more
+                </button>
+              )}
             </div>
           );
         })}

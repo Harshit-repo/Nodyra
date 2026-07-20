@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "stage": "canary",
+  "windows": [
+    {
+      "ended_at": "2026-07-20T00:00:00Z",
+      "signals": {
+        "api_5xx_ratio": {"canary": 0.001, "stable": 0.001},
+        "run_error_ratio": {"canary": 0.01, "stable": 0.01},
+        "queue_p95_seconds": {"canary": 5.0, "stable": 5.0},
+        "artifact_failure_ratio": {"canary": 0.001, "stable": 0.001},
+        "worker_churn_per_replica_15m": 0,
+        "readiness_failure_minutes": 0,
+        "browser_smoke_pass": true,
+        "bundle_budget_pass": true
+      }
+    },
+    {
+      "ended_at": "2026-07-20T00:05:00Z",
+      "signals": {
+        "api_5xx_ratio": {"canary": 0.001, "stable": 0.001},
+        "run_error_ratio": {"canary": 0.01, "stable": 0.01},
+        "queue_p95_seconds": {"canary": 5.0, "stable": 5.0},
+        "artifact_failure_ratio": {"canary": 0.001, "stable": 0.001},
+        "worker_churn_per_replica_15m": 0,
+        "readiness_failure_minutes": 0,
+        "browser_smoke_pass": true,
+        "bundle_budget_pass": true
+      }
+    }
+  ]
+}

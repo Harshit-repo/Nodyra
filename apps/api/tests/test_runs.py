@@ -848,7 +848,7 @@ async def test_run_timeline_includes_persisted_agent_events(
     workflow_id = await _workflow_with_graph(client)
 
     async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
-        on_event = kwargs["on_event"]
+        on_event = kwargs["options"].on_event
         await on_event({"type": "node_started", "node_id": "agent"})
         await on_event(
             {
@@ -946,7 +946,7 @@ async def test_run_timeline_includes_persisted_guardrail_events(
     workflow_id = await _workflow_with_graph(client)
 
     async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
-        on_event = kwargs["on_event"]
+        on_event = kwargs["options"].on_event
         await on_event({"type": "node_started", "node_id": "agent"})
         await on_event(
             {
@@ -988,7 +988,7 @@ async def test_run_approvals_are_recorded_and_decidable(
     workflow_id = await _workflow_with_graph(client)
 
     async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
-        on_event = kwargs["on_event"]
+        on_event = kwargs["options"].on_event
         await on_event(
             {
                 "type": "agent_tool_approval_required",
@@ -1077,9 +1077,10 @@ async def test_approval_decision_requeues_waiting_run(
     calls: list[object] = []
 
     async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
-        calls.append(kwargs.get("agent_action_resume"))
-        on_event = kwargs["on_event"]
-        if kwargs.get("agent_action_resume"):
+        options = kwargs["options"]
+        calls.append(options.agent_action_resume)
+        on_event = options.on_event
+        if options.agent_action_resume:
             await on_event(
                 {
                     "type": "node_finished",
@@ -1195,9 +1196,9 @@ async def test_approval_reject_resumes_waiting_run(
     resume_payloads: list[object] = []
 
     async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
-        resume = kwargs.get("agent_action_resume")
+        resume = kwargs["options"].agent_action_resume
         resume_payloads.append(resume)
-        on_event = kwargs["on_event"]
+        on_event = kwargs["options"].on_event
         if resume:
             await on_event(
                 {
@@ -1299,7 +1300,7 @@ async def test_waiting_run_emits_non_terminal_run_waiting(
     )
 
     async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
-        on_event = kwargs["on_event"]
+        on_event = kwargs["options"].on_event
         await on_event(
             {
                 "type": "agent_tool_approval_required",

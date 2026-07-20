@@ -23,6 +23,12 @@ import sys
 import uuid
 from typing import Any
 
+from nodyra.execution_protocol import (
+    PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
+    ProtocolError,
+    validate_dispatch_envelope,
+)
 from nodyra_runner_agent import env_manager
 from nodyra_runner_agent.config import AgentConfig, load_config, save_config
 from nodyra_runner_agent.process_pool import run_workflow_subprocess
@@ -64,7 +70,12 @@ class RunnerAgent:
     def _hello_payload(self) -> dict:
         return {
             "type": "runner_hello",
-            "capabilities": {"max_concurrent": self._max_concurrent},
+            "protocol_version": PROTOCOL_VERSION,
+            "protocol_versions": list(SUPPORTED_PROTOCOL_VERSIONS),
+            "capabilities": {
+                "max_concurrent": self._max_concurrent,
+                "protocol_versions": list(SUPPORTED_PROTOCOL_VERSIONS),
+            },
             "cached_env_ids": env_manager.list_cached_env_ids(),
         }
 
@@ -74,7 +85,21 @@ class RunnerAgent:
     async def _on_message(self, msg: dict, ws: Any) -> None:
         mtype = msg.get("type")
         if mtype == "run_assigned":
+            try:
+                validate_dispatch_envelope(msg)
+            except ProtocolError as exc:
+                logger.error("rejecting invalid dispatch: %s", exc)
+                await self._client.send({
+                    "type": "protocol_error",
+                    "run_id": msg.get("run_id"),
+                    "error": str(exc),
+                })
+                return
             run_id = str(msg.get("run_id") or "")
+            existing = self._run_tasks.get(run_id)
+            if existing is not None and not existing.done():
+                logger.info("ignoring duplicate in-flight dispatch for run %s", run_id)
+                return
             task = asyncio.create_task(self._handle_run(msg))
             self._run_tasks[run_id] = task
             task.add_done_callback(lambda _t: self._run_tasks.pop(run_id, None))

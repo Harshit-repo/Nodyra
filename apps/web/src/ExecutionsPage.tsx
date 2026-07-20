@@ -29,6 +29,7 @@ import {
   useWorkflows,
 } from "./queries";
 import { RunApprovalsPanel } from "./RunApprovalsPanel";
+import { productState } from "./productStates";
 import { GraphDiffView } from "./editor/WorkflowDiffView";
 import type {
   NodeRunResult,
@@ -724,8 +725,12 @@ export function ExecutionsPage() {
                         </span>
                       </td>
                       <td>
-                        <span className={`run-pill status-run-${r.status}`}>
-                          {r.status}
+                        <span
+                          className={`run-pill status-run-${r.status}`}
+                          title={productState("run", r.status).explanation}
+                          aria-label={productState("run", r.status).accessibility_text}
+                        >
+                          {productState("run", r.status).label}
                         </span>
                       </td>
                       <td>
@@ -935,8 +940,12 @@ function RunDetailPanel({
           <h2>Run {runId.slice(0, 8)}</h2>
           {run && (
             <div className="exec-detail-sub">
-              <span className={`run-pill status-run-${run.status}`}>
-                {run.status}
+              <span
+                className={`run-pill status-run-${run.status}`}
+                title={productState("run", run.status).explanation}
+                aria-label={productState("run", run.status).accessibility_text}
+              >
+                {productState("run", run.status).label}
               </span>
               <span className="muted"> · {run.trigger_type} · {run.mode}</span>
               {formatLabels(run.required_labels) && (
@@ -1163,8 +1172,12 @@ function NodeRunRow({
               : `iter [${node.iteration_path.join(", ")}]`}
           </span>
         )}
-        <span className={`run-pill status-run-${node.status}`}>
-          {node.status}
+        <span
+          className={`run-pill status-run-${node.status}`}
+          title={productState("run", node.status).explanation}
+          aria-label={productState("run", node.status).accessibility_text}
+        >
+          {productState("run", node.status).label}
         </span>
         {typeof node.duration_ms === "number" && (
           <span className="exec-node-duration">{node.duration_ms}ms</span>

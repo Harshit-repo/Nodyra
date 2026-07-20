@@ -21,6 +21,11 @@ jobs:
       # break on a clean clone while CI's plain `uv sync` silently passes.
       - run: uv lock --check
       - run: uv sync --locked --all-packages
+      - name: Product contracts
+        run: |
+          uv run python scripts/check_versions.py
+          uv run python scripts/validate_templates.py
+          uv run python scripts/evaluate_product_scorecard.py --output product-scorecard-evidence.json
       - run: uv run ruff check .
       - run: uv run python scripts/check_rename.py
       - name: Engine planning performance budgets
@@ -29,7 +34,7 @@ jobs:
           --output engine-planning-benchmark.json
       - name: Upload engine planning trend artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: engine-planning-benchmark
           path: engine-planning-benchmark.json
@@ -285,8 +290,20 @@ jobs:
           MINIO_ROOT_PASSWORD: ci-placeholder
           INTERNAL_API_TOKEN: ci-placeholder
           NODYRA_SECRET_KEY: ci-placeholder
-      - name: helm lint
-        run: helm lint deploy/helm/nodyra
+      - name: helm lint — production baseline
+        run: >-
+          helm lint deploy/helm/nodyra
+          --set api.corsOrigins=https://nodyra.example.com
+          --set-string secret.key=ci-secret-key-at-least-32-bytes-long
+          --set-string secret.internalApiToken=ci-internal-token
+      - name: helm lint — disposable evaluation profile
+        run: >-
+          helm lint deploy/helm/nodyra
+          -f deploy/helm/nodyra/values-evaluation.yaml
+          --set api.corsOrigins=https://eval.example.com
+          --set-string secret.key=ci-secret-key-at-least-32-bytes-long
+          --set-string secret.internalApiToken=ci-internal-token
+          --set evaluation.expiresAt=2030-01-01T00:00:00Z
 
   compose-smoke:
     runs-on: ubuntu-latest
@@ -368,7 +385,7 @@ jobs:
             --max-rto-seconds 3600
       - name: Upload redacted recovery evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: recovery-evidence
           path: recovery-evidence.json
@@ -457,7 +474,7 @@ jobs:
           --report-json sandbox-chaos-evidence.json
       - name: Upload sandbox chaos evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sandbox-chaos-evidence
           path: sandbox-chaos-evidence.json
@@ -525,7 +542,7 @@ jobs:
         working-directory: apps/web
       - run: npm run test:e2e
         working-directory: apps/web
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report

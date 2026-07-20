@@ -10,6 +10,8 @@ No server-initiated streams, no resumability, no ``Mcp-Session-Id``.
 import json
 from typing import Any
 
+from nodyra import __version__ as NODYRA_VERSION
+
 PROTOCOL_VERSION = "2025-11-25"
 SUPPORTED_PROTOCOL_VERSIONS = frozenset(
     {"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
@@ -21,7 +23,7 @@ METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
-SERVER_INFO = {"name": "nodyra", "version": "0.0.1"}
+SERVER_INFO = {"name": "nodyra", "version": NODYRA_VERSION}
 SERVER_INSTRUCTIONS = (
     "Nodyra builds and runs workflow graphs. For workflow creation, first call "
     "get_workflow_authoring_guide, then use search_node_catalog/get_node_contracts "

@@ -1,8 +1,9 @@
 """Shared engine types with no internal dependencies."""
 
 import contextvars
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -51,6 +52,47 @@ if TYPE_CHECKING:
     from nodyra.engine.subworkflows import SubworkflowMeta, SubworkflowRunner
     from nodyra.process_isolation import ProcessIsolator
     from nodyra.sdk import NodeRegistry
+
+
+@dataclass(frozen=True)
+class ExecutionOptions:
+    """Immutable engine policy and host-adapter configuration.
+
+    Graph inputs (cache and targets) stay explicit on ``execute``; execution
+    policy and platform adapters travel as one object so adding a capability
+    does not keep expanding the scheduler's public keyword surface.
+    """
+
+    on_event: EventCallback | None = None
+    default_timeouts: Mapping[str, float] | None = None
+    max_node_output_bytes: int | None = None
+    pause_on_approval: bool = False
+    agent_action_resume: Mapping[str, Any] | None = None
+    max_node_concurrency: int | None = None
+    max_concurrency_per_type: Mapping[str, int] = field(default_factory=dict)
+    run_timeout_seconds: float | None = None
+    process_isolator: "ProcessIsolator | None" = None
+    subworkflow_runner: "SubworkflowRunner | None" = None
+    subworkflow_meta: "SubworkflowMeta | None" = None
+
+    def __post_init__(self) -> None:
+        if self.default_timeouts is not None:
+            object.__setattr__(
+                self,
+                "default_timeouts",
+                MappingProxyType(dict(self.default_timeouts)),
+            )
+        object.__setattr__(
+            self,
+            "max_concurrency_per_type",
+            MappingProxyType(dict(self.max_concurrency_per_type)),
+        )
+        if self.agent_action_resume is not None:
+            object.__setattr__(
+                self,
+                "agent_action_resume",
+                MappingProxyType(dict(self.agent_action_resume)),
+            )
 
 
 @dataclass

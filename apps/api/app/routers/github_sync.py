@@ -145,7 +145,7 @@ async def create_repo(
     try:
         result = await create_github_repo(session, cfg, private=body.private, description=body.description)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     await log_audit(session, "github_repo_created", "org", org_id, cfg.repo)
     await session.commit()
     return GithubCreateRepoResponse(**result)

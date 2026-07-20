@@ -1,4 +1,24 @@
 groups:
+  - name: nodyra-recording
+    interval: 30s
+    rules:
+      - record: nodyra:http_error_ratio:rate5m
+        expr: |
+          sum(rate(nodyra_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(nodyra_http_requests_total[5m])), 1)
+
+      - record: nodyra:http_request_p95_seconds:rate5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(nodyra_http_request_duration_seconds_bucket[5m])) by (le)
+          )
+
+      - record: nodyra:run_error_ratio:rate15m
+        expr: |
+          clamp_min(sum(increase(nodyra_runs_error_total[15m])), 0)
+            / clamp_min(clamp_min(sum(increase(nodyra_runs_total[15m])), 0), 1)
+
   - name: nodyra-api
     rules:
       - alert: NodyraApiScrapeDown
@@ -9,17 +29,28 @@ groups:
         annotations:
           summary: "Nodyra scrape target is down"
           description: "Prometheus cannot scrape {{ $labels.job }} on {{ $labels.instance }}."
+          runbook_url: "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/alert-runbooks.md#nodyraapiscrapedown"
 
       - alert: NodyraHighHttpErrorRate
         expr: |
-          sum(rate(nodyra_http_requests_total{status=~"5.."}[5m]))
-            / clamp_min(sum(rate(nodyra_http_requests_total[5m])), 1) > 0.05
+          nodyra:http_error_ratio:rate5m > 0.05
         for: 10m
         labels:
           severity: warning
         annotations:
           summary: "Nodyra HTTP 5xx rate is above 5%"
           description: "Investigate API logs, database connectivity, and worker dispatch failures."
+          runbook_url: "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/alert-runbooks.md#nodyrahighhttperrorrate"
+
+      - alert: NodyraHttpLatencyBudgetBurn
+        expr: nodyra:http_request_p95_seconds:rate5m > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nodyra API p95 latency exceeds one second"
+          description: "The interactive API latency budget has been exceeded for ten minutes."
+          runbook_url: "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/alert-runbooks.md#nodyrahttplatencybudgetburn"
 
   - name: nodyra-queue
     rules:
@@ -31,6 +62,17 @@ groups:
         annotations:
           summary: "Nodyra queue backlog is growing"
           description: "Queued runs have stayed above 50 for more than 10 minutes."
+          runbook_url: "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/alert-runbooks.md#nodyraqueuebacklog"
+
+      - alert: NodyraQueueLatencyBudgetBurn
+        expr: nodyra_queue_oldest_queued_age_seconds > 120
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Oldest Nodyra run has waited more than two minutes"
+          description: "Queue latency is outside the production dispatch objective."
+          runbook_url: "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/alert-runbooks.md#nodyraqueuelatencybudgetburn"
 
       - alert: NodyraDeadLettersPresent
         expr: nodyra_queue_depth{status="dead_lettered"} > 0
@@ -40,17 +82,19 @@ groups:
         annotations:
           summary: "Nodyra has dead-lettered runs"
           description: "Use the Ops dead-letter view to inspect and replay or retire stuck runs."
+          runbook_url: "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/alert-runbooks.md#nodyradeadletterspresent"
 
       - alert: NodyraNoActiveWorkersWithBacklog
         expr: |
           nodyra_queue_depth{status="queued"} > 0
-            and absent(nodyra_active_runs)
+            and sum(nodyra_process_info{role="worker"}) < 1
         for: 5m
         labels:
           severity: critical
         annotations:
           summary: "Nodyra has queued runs but no active worker metric"
           description: "Check worker replicas, dispatch role, Redis, and Postgres connectivity."
+          runbook_url: "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/alert-runbooks.md#nodyranoactiveworkerswithbacklog"
 
   - name: nodyra-runs
     rules:
@@ -66,3 +110,26 @@ groups:
         annotations:
           summary: "Nodyra p95 run duration exceeds 30 minutes"
           description: "Review recent slow workflows and worker resource pressure."
+          runbook_url: "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/alert-runbooks.md#nodyralongrunningexecutions"
+
+      - alert: NodyraRunErrorBudgetBurn
+        expr: nodyra:run_error_ratio:rate15m > 0.05
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nodyra run error ratio exceeds 5%"
+          description: "Run failures are consuming the production error budget."
+          runbook_url: "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/alert-runbooks.md#nodyrarunerrorbudgetburn"
+
+  - name: nodyra-storage
+    rules:
+      - alert: NodyraArtifactOutputStoreDegraded
+        expr: sum(rate(nodyra_output_store_events_total{event=~"write_failed|read_failed"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nodyra artifact/output storage is degraded"
+          description: "Large output reads or writes have failed continuously for ten minutes."
+          runbook_url: "https://github.com/Harshit-repo/noodle/blob/main/docs/operations/alert-runbooks.md#nodyraartifactoutputstoredegraded"

@@ -27,6 +27,13 @@ explains what you can and cannot do. It is a summary for convenience — the
 - Write tutorials, courses, and videos about Nodyra, including paid ones.
 - Redistribute unmodified copies free of charge with the license intact.
 
+The default Community product posture includes up to five seats, ten active
+deployments, unlimited local workflow drafts, three environments, one
+sandboxed runner, and basic health/metrics visibility. Limits reject new
+activity without deleting existing workflows, runs, or artifacts. Current
+limits are part of an adoption experiment; see
+[the measurement contract](adoption-metrics.md).
+
 ## What you CANNOT do without a commercial agreement
 
 - Offer Nodyra (or a derivative) to third parties as a hosted or managed

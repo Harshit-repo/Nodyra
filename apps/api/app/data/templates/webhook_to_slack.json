@@ -3,6 +3,17 @@
   "name": "Webhook to Slack alert",
   "description": "Receive a JSON webhook, format a message, and post it to Slack.",
   "tags": ["alerting", "webhook", "starter"],
+  "version": "1.0.2",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": false,
+  "prerequisites": ["Authenticated inbound webhook", "Slack credential and destination channel"],
+  "expected_result": "Each accepted webhook creates one formatted Slack message.",
+  "permissions": ["Inbound: webhook", "Network: Slack API", "Secret: Slack credential"],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "rating": 4.7,
+  "rating_count": 31,
+  "screenshot_url": "/template-previews/webhook-slack.svg",
   "graph": {
     "nodes": [
       {

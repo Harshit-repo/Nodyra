@@ -28,6 +28,12 @@ from app.models import Run, Runner, RunnerPool
 from app.services.executors.base import EventCallback
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, run_as_system
 from nodyra.context import call_chain as _call_chain_var
+from nodyra.execution_protocol import (
+    ProtocolError,
+    build_dispatch_envelope,
+    negotiate_protocol,
+    validate_runner_event,
+)
 from nodyra.serialization import serialize_value
 
 logger = logging.getLogger("app.services.remote_dispatch")
@@ -131,7 +137,7 @@ async def assign_agent_run(
     from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org  # noqa: PLC0415
 
     run_org = await _resolve_run_org(run_id)
-    payload = {
+    payload = build_dispatch_envelope({
         "type": "run_assigned",
         "run_id": run_id,
         "env": env_payload,
@@ -144,8 +150,8 @@ async def assign_agent_run(
         "subworkflow_meta": subworkflow_meta or {},
         "artifact_key_prefix": run_org,
         "org_limits": await _org_run_limits_for(run_org),
-    }
-    payload["sandbox_required"] = bool(sandbox_required and runner_caps.get("sandbox"))
+        "sandbox_required": bool(sandbox_required and runner_caps.get("sandbox")),
+    })
     await conn.send(payload)
 
     try:
@@ -239,6 +245,18 @@ async def pick_agent(
 async def handle_agent_message(
     d: Any, session_factory, conn: _AgentConnection, msg: dict
 ) -> None:
+    try:
+        validate_runner_event(msg)
+    except ProtocolError as exc:
+        logger.warning(
+            "rejecting runner protocol message runner_id=%s: %s",
+            conn.runner_id,
+            exc,
+        )
+        await conn.send({"type": "protocol_error", "error": str(exc)})
+        await conn.ws.close(code=1002)
+        return
+
     mtype = msg.get("type")
     run_id = msg.get("run_id")
 
@@ -247,6 +265,14 @@ async def handle_agent_message(
             runner = await session.get(Runner, conn.runner_id)
             if runner is not None:
                 caps = dict(msg.get("capabilities") or {})
+                offered_protocols = msg.get("protocol_versions") or caps.get(
+                    "protocol_versions"
+                )
+                selected_protocol = negotiate_protocol(offered_protocols)
+                caps["protocol_version"] = selected_protocol
+                caps["protocol_versions"] = list(
+                    offered_protocols or [selected_protocol]
+                )
                 # Server-authoritative capability keys are set at provisioning
                 # time (spawn_docker_runner / registration) and MUST survive the
                 # agent's hello — otherwise a Docker-managed sandbox runner would

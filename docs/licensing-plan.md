@@ -39,12 +39,11 @@ individual limits.
 
 | Capability / Limit                     | Community (free) | Pro            | Enterprise     |
 |----------------------------------------|------------------|----------------|----------------|
-| **Active workflows** (enabled)         | 5                | 50             | Unlimited      |
-| **Total workflows** (incl. disabled)   | 25               | Unlimited      | Unlimited      |
-| **Active deployments**                 | 2                | 25             | Unlimited      |
-| **Environments**                       | 2                | 10             | Unlimited      |
-| **Runner pools** (remote)              | 0 (in-proc only) | 3              | Unlimited      |
-| **Team members / users**               | 2                | 15             | Unlimited      |
+| **Workflow drafts**                    | Unlimited        | Unlimited      | Unlimited      |
+| **Active deployments**                 | 10               | Unlimited      | Unlimited      |
+| **Environments**                       | 3                | 10             | Unlimited      |
+| **Runner pools / runners**             | 1 sandboxed      | 5              | Unlimited      |
+| **Team members / users**               | 5                | 10             | Unlimited      |
 | **Concurrent runs ceiling**            | 4                | 25             | Operator-set   |
 | **Schedule granularity (min interval)**| 15 min           | 1 min          | 1 min          |
 | **Credentials stored**                 | 10               | Unlimited      | Unlimited      |
@@ -53,24 +52,28 @@ individual limits.
 | SSO / SAML / OIDC                       | —                | —              | ✓              |
 | SCIM user provisioning                  | —                | —              | ✓              |
 | RBAC (granular roles)                   | basic            | ✓              | ✓              |
-| Audit log export                        | —                | ✓              | ✓              |
+| Basic health and metrics                | ✓                | ✓              | ✓              |
+| Advanced audit export/retention         | —                | ✓              | ✓              |
 | External secrets manager (Vault/KMS)    | —                | —              | ✓              |
 | Git-backed workflow versioning          | —                | ✓              | ✓              |
 | Priority support / SLA                  | —                | email          | ✓              |
 
-> Numbers above are **starting suggestions** — easy to tune. The mechanism is
-> what matters; the exact ceilings are a pricing decision.
+> Community limits above are the current product defaults and an explicit
+> adoption experiment. Change them only with the measurement and rollback
+> contract in `docs/adoption-metrics.md`.
 
 ### Recommended free-tier "count" limits to enforce first (cheapest wins)
 These are simple `COUNT(*) >= limit` checks at create time and give the clearest
 upgrade prompts:
 
-1. **Active workflows** — the headline limit (most-felt by growing users).
-2. **Active deployments** — your original idea; ties directly to "running things".
-3. **Environments** — your original idea.
-4. **Users / team members** — natural "invite your team → upgrade" trigger.
-5. **Runner pools** — remote execution is inherently a scale/Pro feature.
-6. **Credentials** and **code modules** — softer, add later.
+1. **Active deployments** — limits production operation without restricting
+   learning, drafts, or portability.
+2. **Environments** — bounds package-build and runtime cost.
+3. **Users / team members** — keeps Community useful for a real small team.
+4. **Runner pools / runners** — Community retains one sandboxed execution path;
+   scale, dedicated pools, and HA remain paid value.
+5. **Credentials** and **code modules** — do not gate until real abuse/cost data
+   demonstrates a need.
 
 ## 3. License Token Format
 

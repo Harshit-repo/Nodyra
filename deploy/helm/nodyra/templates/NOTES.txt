@@ -16,6 +16,15 @@ WARNING: Ingress TLS is disabled!
 
 {{- end }}
 
+{{- if .Values.evaluation.enabled }}
+
+EVALUATION ENVIRONMENT
+  Expires: {{ .Values.evaluation.expiresAt }}
+  This chart records the expiry but does not delete its namespace. Confirm the
+  platform reaper watches nodyra.io/expires-at before sharing the URL.
+
+{{- end }}
+
 {{- if eq .Values.secret.key "" }}
 
 WARNING: secret.key is empty — using an empty string for NODYRA_SECRET_KEY.

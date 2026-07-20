@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" role="img" aria-labelledby="title desc">
+  <title id="title">Dataset filter and CSV workflow preview</title>
+  <desc id="desc">Five connected workflow steps from manual trigger through sample data and filter to CSV and preview outputs.</desc>
+  <rect width="720" height="360" fill="#0d1118"/>
+  <g fill="none" stroke="#4c9eff" stroke-width="3" opacity=".75"><path d="M124 180h76M304 180h76M484 180h46M620 180v-74M620 180v74"/></g>
+  <g font-family="system-ui,sans-serif" font-size="15" fill="#e9eef6" text-anchor="middle">
+    <g><rect x="24" y="142" width="100" height="76" rx="9" fill="#171d27" stroke="#3a4658"/><text x="74" y="185">Manual</text></g>
+    <g><rect x="200" y="142" width="104" height="76" rx="9" fill="#171d27" stroke="#3a4658"/><text x="252" y="185">Sample</text></g>
+    <g><rect x="380" y="142" width="104" height="76" rx="9" fill="#171d27" stroke="#3a4658"/><text x="432" y="185">Dataset</text></g>
+    <g><rect x="530" y="142" width="104" height="76" rx="9" fill="#142237" stroke="#4c9eff"/><text x="582" y="185">Filter</text></g>
+    <g><rect x="650" y="68" width="58" height="76" rx="9" fill="#171d27" stroke="#3a4658"/><text x="679" y="111">CSV</text></g>
+    <g><rect x="642" y="216" width="66" height="76" rx="9" fill="#171d27" stroke="#3a4658"/><text x="675" y="259">Rows</text></g>
+  </g>
+</svg>

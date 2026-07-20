@@ -2,14 +2,20 @@
 
 > **Nodyra** was previously developed under the working name *Noodle*.
 
-Nodyra is a self-hostable, Python-native workflow automation platform for
-teams that want automation, data movement, and operational runbooks to live
-close to their Python stack.
+Nodyra is an inspectable, Python-native automation platform for internal tools,
+data movement, and operational runbooks. It is built for teams that need every
+step to remain editable, debuggable, versioned, and deployable inside their own
+security boundary.
 
 Every node is a plain Python function registered through the Nodyra SDK. Users
-build workflows on a React Flow canvas, run them in isolated Python
-environments, inspect every node input/output, persist artifacts outside the
-database, and publish versioned workflow releases for production execution.
+build visually or through MCP, run in isolated Python environments, inspect
+exact inputs/outputs and artifact lineage, then publish immutable workflow
+versions for GitOps-friendly production execution.
+
+Start with the [five-minute path](docs/getting-started.md), choose an
+[architecture](docs/architecture-chooser.md), or use a verified in-product
+template. Teams migrating existing automation can generate a static
+[compatibility report](docs/migration.md) before anything is imported or run.
 
 ## Let Claude build your workflows
 
@@ -63,6 +69,9 @@ Nodyra is designed for teams that need more than point-and-click integrations:
 - Self-hostable architecture: FastAPI, PostgreSQL, Redis, React/Vite, a
   durable run queue with standalone dispatch workers, and optional
   Kubernetes packaging.
+- Inspectable operations: deterministic graph execution, per-node evidence,
+  artifact lineage, explicit isolation posture, signed community packages,
+  and versioned release/rollback contracts.
 
 ## Build workflows with an AI agent (MCP)
 

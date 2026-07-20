@@ -1,8 +1,17 @@
-import { DownloadSimple, MagnifyingGlass } from "@phosphor-icons/react";
+import {
+  CaretDown,
+  DownloadSimple,
+  FileArrowUp,
+  MagnifyingGlass,
+  PlayCircle,
+  ShieldCheck,
+} from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
-import { api, errorMessage } from "./api";
+import { api, errorMessage, uploadArtifact } from "./api";
+import { recordActivationEvent } from "./activation";
 import {
   artifactDownloadUrl,
   artifactInlineUrl,
@@ -11,7 +20,8 @@ import {
   type ArtifactRef,
 } from "./editor/artifactValues";
 import { SkeletonRows } from "./Skeleton";
-import type { ArtifactInfo } from "./types";
+import type { ArtifactInfo, ArtifactLineage } from "./types";
+import { formatDateTime, formatNumber, t } from "./i18n";
 
 const PAGE_SIZE = 50;
 const PREVIEW_ROWS = 5;
@@ -24,9 +34,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function formatCreatedAt(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown";
-  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return formatDateTime(value);
 }
 
 function artifactRef(artifact: ArtifactInfo): ArtifactRef {
@@ -199,11 +207,89 @@ function ArtifactPreview({ artifact }: { artifact: ArtifactInfo }) {
   return <span className="artifact-browser-preview-muted">No preview</span>;
 }
 
+function ArtifactLineagePanel({ artifact }: { artifact: ArtifactInfo }) {
+  const lineageQuery = useQuery({
+    queryKey: ["artifact-lineage", artifact.id],
+    queryFn: () => api.getArtifactLineage(artifact.id),
+    staleTime: 60_000,
+  });
+
+  if (lineageQuery.isLoading) {
+    return <p className="artifact-lineage-status" role="status">Loading provenance...</p>;
+  }
+  if (lineageQuery.isError) {
+    return (
+      <div className="artifact-lineage-status artifact-lineage-error" role="alert">
+        <span>Could not load provenance. {errorMessage(lineageQuery.error)}</span>
+        <button className="btn btn-sm" type="button" onClick={() => void lineageQuery.refetch()}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const lineage = lineageQuery.data as ArtifactLineage;
+  const producer = lineage.producer;
+  const schemaSummary = lineage.schema
+    ? JSON.stringify(lineage.schema, null, 2)
+    : "No schema was recorded";
+  const integritySummary = lineage.storage.integrity
+    ? JSON.stringify(lineage.storage.integrity)
+    : "Checksum is the available integrity evidence";
+
+  return (
+    <section className="artifact-lineage-panel" aria-label={`${artifact.name} provenance`}>
+      <dl className="artifact-lineage-grid">
+        <div>
+          <dt>Producer</dt>
+          <dd>
+            {producer.workflow_id ? (
+              <Link to={`/workflows/${producer.workflow_id}`}>
+                {producer.workflow_name || shortId(producer.workflow_id)}
+              </Link>
+            ) : "Browser upload"}
+            {producer.node_id && <small>Node {shortId(producer.node_id)}</small>}
+          </dd>
+        </div>
+        <div>
+          <dt>Run</dt>
+          <dd>{producer.run_id ? <code>{shortId(producer.run_id)}</code> : "Not run-produced"}</dd>
+        </div>
+        <div>
+          <dt>Storage</dt>
+          <dd>{lineage.storage.backend}<small>Encryption: {lineage.storage.encryption_status.replaceAll("_", " ")}</small></dd>
+        </div>
+        <div>
+          <dt>Retention</dt>
+          <dd>{lineage.retention_deadline ? formatCreatedAt(lineage.retention_deadline) : "No expiry recorded"}</dd>
+        </div>
+        <div>
+          <dt>Integrity</dt>
+          <dd>{lineage.checksum_sha256 ? <code title={lineage.checksum_sha256}>sha256:{shortChecksum(lineage.checksum_sha256)}</code> : "No checksum recorded"}<small>{integritySummary}</small></dd>
+        </div>
+        <div>
+          <dt>Consumers</dt>
+          <dd>{lineage.downstream_consumers.length.toLocaleString()} recorded</dd>
+        </div>
+      </dl>
+      <details className="artifact-lineage-schema">
+        <summary>Recorded schema</summary>
+        <pre>{schemaSummary}</pre>
+      </details>
+    </section>
+  );
+}
+
 export function ArtifactsPage() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [kind, setKind] = useState("all");
   const [page, setPage] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [openLineageId, setOpenLineageId] = useState<string | null>(null);
+  const uploadRef = useRef<HTMLInputElement>(null);
+  const inspectionRecordedRef = useRef(false);
 
   useEffect(() => {
     const handle = window.setTimeout(() => setDebouncedQuery(query.trim()), 300);
@@ -235,6 +321,28 @@ export function ArtifactsPage() {
   const pageEnd = Math.min(total, page * PAGE_SIZE + artifacts.length);
   const hasPrevious = page > 0;
   const hasNext = pageEnd < total;
+
+  useEffect(() => {
+    if (artifacts.length === 0 || inspectionRecordedRef.current) return;
+    inspectionRecordedRef.current = true;
+    recordActivationEvent("output_inspected");
+  }, [artifacts.length]);
+
+  async function upload(file: File | undefined): Promise<void> {
+    if (!file || uploading) return;
+    setUploading(true);
+    setUploadError("");
+    try {
+      await uploadArtifact(file);
+      await artifactsQuery.refetch();
+      recordActivationEvent("output_inspected");
+    } catch (error) {
+      setUploadError(errorMessage(error));
+    } finally {
+      setUploading(false);
+      if (uploadRef.current) uploadRef.current.value = "";
+    }
+  }
 
   return (
     <div className="home artifacts-page">
@@ -280,18 +388,84 @@ export function ArtifactsPage() {
             {errorMessage(artifactsQuery.error)}
           </p>
         )}
+        {uploadError && (
+          <p className="error-text" role="alert">
+            Could not upload artifact. {uploadError}
+          </p>
+        )}
 
         {artifactsQuery.isLoading ? (
           <div className="artifact-browser-table" aria-label="Loading artifacts">
             <SkeletonRows count={8} />
           </div>
         ) : artifacts.length === 0 ? (
-          <div className="empty-state">
-            <h2>No artifacts found</h2>
-            <p className="muted">
-              Artifact outputs from runs and uploads will appear here.
-            </p>
-          </div>
+          debouncedQuery || kind !== "all" ? (
+            <div className="empty-state">
+              <h2>No matching artifacts</h2>
+              <p className="muted">Try a different name or remove the kind filter.</p>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => {
+                  setQuery("");
+                  setDebouncedQuery("");
+                  setKind("all");
+                }}
+              >
+                Clear filters
+              </button>
+            </div>
+          ) : (
+            <section className="artifact-empty" aria-labelledby="artifact-empty-title">
+              <div className="artifact-empty-copy">
+                <span className="artifact-empty-icon" aria-hidden="true">
+                  <ShieldCheck size={25} />
+                </span>
+                <div>
+                  <h2 id="artifact-empty-title">Create your first inspectable artifact</h2>
+                  <p>
+                    Run the credential-free data template or upload a supported file.
+                    Nodyra records size, checksum, producer, and retention metadata.
+                  </p>
+                </div>
+              </div>
+              <div className="artifact-empty-actions">
+                <Link className="btn btn-primary" to="/?starter=datasetref-filter-export">
+                  <PlayCircle size={17} weight="fill" aria-hidden="true" />
+                  Run data template
+                </Link>
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => uploadRef.current?.click()}
+                >
+                  <FileArrowUp size={17} aria-hidden="true" />
+                  {uploading ? "Uploading…" : "Upload artifact"}
+                </button>
+                <input
+                  ref={uploadRef}
+                  type="file"
+                  hidden
+                  onChange={(event) => void upload(event.target.files?.[0])}
+                />
+              </div>
+              <dl className="artifact-empty-details">
+                <div>
+                  <dt>Supported uploads</dt>
+                  <dd>CSV, JSON, Parquet, images, reports, and binary files</dd>
+                </div>
+                <div>
+                  <dt>After creation</dt>
+                  <dd>Preview, download, query, trace lineage, and review retention</dd>
+                </div>
+                <div>
+                  <dt>Retention</dt>
+                  <dd><Link to="/settings">Review storage and retention settings</Link></dd>
+                </div>
+              </dl>
+            </section>
+          )
         ) : (
           <>
             <div className="artifact-browser-table" role="table" aria-label="Artifacts">
@@ -302,10 +476,11 @@ export function ArtifactsPage() {
                 <span>Size</span>
                 <span>Run</span>
                 <span>Created</span>
-                <span>Download</span>
+                <span>Actions</span>
               </div>
               {artifacts.map((artifact) => (
-                <div className="artifact-browser-row" role="row" key={artifact.id}>
+                <Fragment key={artifact.id}>
+                <div className="artifact-browser-row" role="row">
                   <span className="artifact-browser-name">
                     <strong>{artifact.name}</strong>
                     {artifact.checksum_sha256 && (
@@ -326,22 +501,42 @@ export function ArtifactsPage() {
                   </span>
                   <span>{formatCreatedAt(artifact.created_at)}</span>
                   <span>
-                    <a
-                      className="btn btn-sm"
-                      href={artifactDownloadUrl(artifactRef(artifact))}
-                      download
-                    >
-                      <DownloadSimple size={15} aria-hidden="true" />
-                      Download
-                    </a>
+                    <span className="artifact-browser-actions">
+                      <button
+                        className="btn btn-sm"
+                        type="button"
+                        aria-expanded={openLineageId === artifact.id}
+                        aria-controls={`artifact-lineage-${artifact.id}`}
+                        onClick={() => setOpenLineageId((current) => current === artifact.id ? null : artifact.id)}
+                      >
+                        <CaretDown size={14} aria-hidden="true" />
+                        {t("artifact.lineage")}
+                      </button>
+                      <a
+                        className="btn btn-sm"
+                        href={artifactDownloadUrl(artifactRef(artifact))}
+                        download
+                        aria-label={`${t("artifact.download")} ${artifact.name}`}
+                        onClick={() => recordActivationEvent("output_inspected")}
+                      >
+                        <DownloadSimple size={15} aria-hidden="true" />
+                        <span className="sr-only">{t("artifact.download")}</span>
+                      </a>
+                    </span>
                   </span>
                 </div>
+                {openLineageId === artifact.id && (
+                  <div id={`artifact-lineage-${artifact.id}`} className="artifact-lineage-row">
+                    <ArtifactLineagePanel artifact={artifact} />
+                  </div>
+                )}
+                </Fragment>
               ))}
             </div>
             <div className="artifact-browser-pagination" aria-label="Artifact pagination">
               <span>
-                Showing {pageStart.toLocaleString()}-{pageEnd.toLocaleString()} of{" "}
-                {total.toLocaleString()}
+                Showing {formatNumber(pageStart)}-{formatNumber(pageEnd)} of{" "}
+                {formatNumber(total)}
               </span>
               <div>
                 <button

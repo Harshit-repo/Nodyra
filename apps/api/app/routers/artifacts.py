@@ -1,7 +1,10 @@
 import asyncio
 import contextlib
+import hashlib
 import logging
+import os
 import uuid
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -12,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
-from app.models import Artifact, Run
+from app.models import Artifact, Run, Workflow
 from app.schemas import (
     ArtifactInfo,
     ArtifactListResponse,
@@ -24,12 +27,40 @@ from app.services.artifact_backends import (
     _resolve_local_path,
     get_backend,
 )
-from app.services.artifacts import atomic_write_bytes, delete_artifact_files
+from app.services.artifacts import delete_artifact_files
 from app.services.datasets_query import DatasetQueryError, run_dataset_query
 from app.tenancy import DEFAULT_ORG_ID, active_org_id
 
 router = APIRouter(tags=["artifacts"])
 logger = logging.getLogger(__name__)
+
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+def _stream_upload_to_path(source, destination: Path, max_bytes: int) -> tuple[int, str]:
+    """Copy an UploadFile spool to disk with constant memory and atomic publish."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.part")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        source.seek(0)
+        with temporary.open("xb") as handle:
+            while True:
+                chunk = source.read(_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if max_bytes > 0 and size > max_bytes:
+                    raise OverflowError(max_bytes)
+                digest.update(chunk)
+                handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        return size, digest.hexdigest()
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _parse_byte_range(value: str, size: int) -> tuple[int, int] | None:
@@ -307,6 +338,44 @@ async def get_artifact_signed_url(
     return {"url": url, "expires_in": expires_in if url else None}
 
 
+@router.get("/artifacts/{artifact_id}/lineage")
+async def get_artifact_lineage(
+    artifact_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Return producer, integrity, retention, and schema provenance."""
+    row = await _get_artifact(session, artifact_id)
+    run = await session.get(Run, row.run_id) if row.run_id else None
+    workflow = await session.get(Workflow, run.workflow_id) if run is not None else None
+    retention_days = workflow.artifact_retention_days if workflow is not None else None
+    retention_deadline = (
+        row.created_at + timedelta(days=retention_days)
+        if retention_days is not None and retention_days > 0
+        else None
+    )
+    metadata = row.artifact_metadata or {}
+    return {
+        "artifact_id": row.id,
+        "producer": {
+            "workflow_id": run.workflow_id if run is not None else None,
+            "workflow_name": workflow.name if workflow is not None else None,
+            "workflow_version_id": run.workflow_version_id if run is not None else None,
+            "run_id": row.run_id,
+            "node_id": row.node_id,
+        },
+        "schema": metadata.get("schema"),
+        "size_bytes": row.size_bytes,
+        "checksum_sha256": row.checksum_sha256,
+        "retention_deadline": retention_deadline,
+        "storage": {
+            "backend": row.storage_backend,
+            "encryption_status": metadata.get("encryption_status", "not_attested"),
+            "integrity": metadata.get("integrity"),
+        },
+        "downstream_consumers": metadata.get("downstream_consumers", []),
+    }
+
+
 @router.post("/artifacts/upload", response_model=ArtifactInfo)
 async def upload_artifact(
     file: UploadFile = File(...),
@@ -315,12 +384,6 @@ async def upload_artifact(
 ) -> ArtifactInfo:
     """Upload a file from the browser and store it as a run-less artifact."""
     max_bytes = settings.max_artifact_bytes
-    content = await file.read(max_bytes + 1 if max_bytes > 0 else -1)
-    if max_bytes > 0 and len(content) > max_bytes:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            f"File exceeds maximum upload size of {max_bytes} bytes",
-        )
 
     # SECURITY: the uploaded filename is attacker-controlled. Reduce it to a
     # bare basename so directory components and ``..`` segments can't escape the
@@ -335,7 +398,18 @@ async def upload_artifact(
     org_segment = active_org_id() or DEFAULT_ORG_ID
     storage_key = f"{org_segment}/uploads/{artifact_id}/{filename}"
     artifact_path = _resolve_local_path(storage_key)
-    await asyncio.to_thread(atomic_write_bytes, artifact_path, content)
+    try:
+        size_bytes, checksum_sha256 = await asyncio.to_thread(
+            _stream_upload_to_path,
+            file.file,
+            artifact_path,
+            max_bytes,
+        )
+    except OverflowError:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"File exceeds maximum upload size of {max_bytes} bytes",
+        ) from None
 
     backend = get_backend()
     storage_backend = "local"
@@ -347,12 +421,13 @@ async def upload_artifact(
             name=filename,
             kind="upload",
             content_type=content_type,
-            size_bytes=len(content),
+            size_bytes=size_bytes,
+            checksum_sha256=checksum_sha256,
             storage_backend=backend.name,
             storage_key=storage_key,
         )
         try:
-            backend.upload_from_local(upload_row, artifact_path)
+            await asyncio.to_thread(backend.upload_from_local, upload_row, artifact_path)
         except Exception:  # noqa: BLE001 - keep the local file as a fallback
             logger.exception(
                 "upload_artifact: failed to rehome upload %s to backend %s; keeping local",
@@ -371,7 +446,8 @@ async def upload_artifact(
         name=filename,
         kind="upload",
         content_type=content_type,
-        size_bytes=len(content),
+        size_bytes=size_bytes,
+        checksum_sha256=checksum_sha256,
         storage_backend=storage_backend,
         storage_key=storage_key,
     )

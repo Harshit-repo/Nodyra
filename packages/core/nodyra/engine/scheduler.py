@@ -28,7 +28,7 @@ from nodyra.engine.node_exec import (
     _install_capture,
     _run_one_node,
 )
-from nodyra.engine.types import EventCallback, GraphError
+from nodyra.engine.types import EventCallback, ExecutionOptions, GraphError
 from nodyra.engine.validation import _validate_connection_kinds
 from nodyra.models import NodeRunResult, NodeStatus, RunResult, RunStatus, WorkflowGraph
 from nodyra.sdk import NodeRegistry
@@ -454,6 +454,7 @@ async def execute(
     *,
     cache: dict[str, dict[str, Any]] | None = None,
     targets: Iterable[str] | None = None,
+    options: ExecutionOptions | None = None,
     on_event: EventCallback | None = None,
     default_timeouts: dict[str, float] | None = None,
     max_node_output_bytes: int | None = None,
@@ -473,6 +474,54 @@ async def execute(
     adapter that enforces cycle/depth invariants (seeded from
     ``subworkflow_meta``) before delegating to the host resolver.
     """
+    if options is not None:
+        legacy_values = (
+            on_event,
+            default_timeouts,
+            max_node_output_bytes,
+            agent_action_resume,
+            max_node_concurrency,
+            max_concurrency_per_type,
+            run_timeout_seconds,
+            process_isolator,
+            subworkflow_runner,
+            subworkflow_meta,
+        )
+        if pause_on_approval or any(value is not None for value in legacy_values):
+            raise TypeError("pass either options=ExecutionOptions(...) or legacy engine keywords")
+    else:
+        options = ExecutionOptions(
+            on_event=on_event,
+            default_timeouts=default_timeouts or {},
+            max_node_output_bytes=max_node_output_bytes,
+            pause_on_approval=pause_on_approval,
+            agent_action_resume=agent_action_resume,
+            max_node_concurrency=max_node_concurrency,
+            max_concurrency_per_type=max_concurrency_per_type or {},
+            run_timeout_seconds=run_timeout_seconds,
+            process_isolator=process_isolator,
+            subworkflow_runner=subworkflow_runner,
+            subworkflow_meta=subworkflow_meta,
+        )
+
+    on_event = options.on_event
+    default_timeouts = (
+        dict(options.default_timeouts)
+        if options.default_timeouts is not None
+        else None
+    )
+    max_node_output_bytes = options.max_node_output_bytes
+    pause_on_approval = options.pause_on_approval
+    agent_action_resume = (
+        dict(options.agent_action_resume) if options.agent_action_resume is not None else None
+    )
+    max_node_concurrency = options.max_node_concurrency
+    max_concurrency_per_type = dict(options.max_concurrency_per_type)
+    run_timeout_seconds = options.run_timeout_seconds
+    process_isolator = options.process_isolator
+    subworkflow_runner = options.subworkflow_runner
+    subworkflow_meta = options.subworkflow_meta
+
     if subworkflow_runner is None:
         return await _execute_impl(
             graph, registry, cache=cache, targets=targets, on_event=on_event,

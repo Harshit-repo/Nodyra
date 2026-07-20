@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
-from app.models import Credential, Environment, Run, RunnerPool, RunQueueEntry, Workflow
+from app.models import Artifact, Credential, Environment, Run, RunnerPool, RunQueueEntry, Workflow
 from app.schemas import (
     DeadLetterEntry,
     DeadLetterListResponse,
@@ -26,7 +26,14 @@ from app.schemas import (
 )
 from app.security import require_permission, require_role
 from app.services import queue as run_queue
+from app.services.artifact_backends import get_backend
+from app.services.artifact_reconcile import reconcile_artifacts
 from app.services.drain_state import is_draining, set_draining
+from app.services.operational_evidence import collect_operational_evidence
+from app.services.production_attestation import build_production_attestation
+from app.services.run_lifecycle import lifecycle_contract
+from nodyra import __version__ as NODYRA_VERSION
+from nodyra.execution_protocol import protocol_manifest
 
 # require_role (not bare current_user): 401s without a token when
 # auth_required is on, but keeps anonymous access on open (auth-off)
@@ -38,7 +45,7 @@ _viewer_dep = Depends(require_role("viewer"))
 router = APIRouter(tags=["ops"])
 
 _started_at = time.time()
-_VERSION = "0.0.1"
+_VERSION = NODYRA_VERSION
 _REPLICA_ID = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
 # P1-11: Module-level cache so Prometheus scrapes don't hammer the DB with
@@ -184,6 +191,74 @@ async def system_status(
         "server_time": datetime.now().astimezone().isoformat(),
         **counts,
     }
+
+
+@router.get("/ops/execution-protocol", dependencies=[_viewer_dep])
+async def execution_protocol() -> dict:
+    """Publish runner compatibility, heartbeat, lease, and payload limits."""
+    return {**protocol_manifest(), "run_lifecycle": lifecycle_contract()}
+
+
+@router.get(
+    "/ops/production-attestation",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def production_attestation(session: AsyncSession = Depends(get_session)) -> dict:
+    """Return structured production checks, live evidence, and remediation."""
+    return await build_production_attestation(session)
+
+
+@router.get(
+    "/ops/evidence-bundle",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def evidence_bundle(session: AsyncSession = Depends(get_session)) -> dict:
+    """Return a bounded, redacted support and security evidence bundle."""
+    return await collect_operational_evidence(session)
+
+
+@router.get("/ops/artifacts/health", dependencies=[_viewer_dep])
+async def artifact_health(
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Storage usage, retention pressure, and configured backend evidence."""
+    total, total_bytes = (
+        await session.execute(select(func.count(Artifact.id), func.coalesce(func.sum(Artifact.size_bytes), 0)))
+    ).one()
+    return {
+        "backend": get_backend().stats(),
+        "artifact_count": int(total or 0),
+        "logical_bytes": int(total_bytes or 0),
+        "default_run_retention_days": settings.run_retention_days,
+    }
+
+
+@router.post(
+    "/ops/artifacts/reconcile",
+    dependencies=[Depends(require_role("owner"))],
+)
+async def artifact_reconcile(
+    backend: str | None = None,
+    prefix: str = "",
+    verify_checksums: bool = False,
+    repair_metadata: bool = False,
+    delete_orphans: bool = False,
+    limit: int = 10_000,
+) -> dict:
+    """Dry-run integrity sweep; mutation requires explicit repair flags."""
+    if delete_orphans and not repair_metadata:
+        raise HTTPException(
+            status_code=400,
+            detail="delete_orphans requires repair_metadata=true",
+        )
+    return await reconcile_artifacts(
+        backend_name=backend,
+        prefix=prefix,
+        verify_checksums=verify_checksums,
+        repair_metadata=repair_metadata,
+        delete_orphans=delete_orphans,
+        limit=limit,
+    )
 
 
 @router.get("/ops/runtime-mode", response_model=RuntimeModeStatus, dependencies=[_viewer_dep])

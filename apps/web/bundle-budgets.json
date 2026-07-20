@@ -1,0 +1,9 @@
+{
+  "entryJavaScriptGzipBytes": 85000,
+  "globalCssGzipBytes": 85000,
+  "routeChunkGzipBytes": 110000,
+  "iconChunkGzipBytes": 125000,
+  "plotlyChunkGzipBytes": 450000,
+  "monacoChunkGzipBytes": 650000,
+  "totalGzipBytes": 1800000
+}

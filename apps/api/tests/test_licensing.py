@@ -23,9 +23,10 @@ async def test_no_key_is_community():
     lic = await licensing.current_license()
     assert lic.edition is Edition.COMMUNITY
     assert lic.valid is True
-    assert not await licensing.has_feature(Feature.SANDBOX)
+    assert await licensing.has_feature(Feature.SANDBOX)
     assert await licensing.resource_limit("environments") == 3
-    assert await licensing.resource_limit("seats") == 2
+    assert await licensing.resource_limit("deployments") == 10
+    assert await licensing.resource_limit("seats") == 5
 
 
 @pytest.mark.asyncio
@@ -174,7 +175,9 @@ async def test_auth_required_exposes_edition(client):
     body = r.json()
     assert body["edition"] == "community"
     assert body["limits"]["environments"] == 3
-    assert "sandbox" not in body["entitlements"]
+    assert body["limits"]["deployments"] == 10
+    assert body["limits"]["seats"] == 5
+    assert "sandbox" in body["entitlements"]
 
 
 @pytest.mark.asyncio
@@ -186,6 +189,6 @@ async def test_reconcile_disables_unlicensed_capabilities(monkeypatch):
     licensing.invalidate_license_cache()
     warnings = await licensing.reconcile_capabilities()
     assert settings.multi_tenancy_enabled is False
-    assert settings.execution_sandbox == "off"
+    assert settings.execution_sandbox == "required"
     assert settings.otel_enabled is False
-    assert len(warnings) == 3
+    assert len(warnings) == 2

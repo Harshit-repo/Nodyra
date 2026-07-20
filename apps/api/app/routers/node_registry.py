@@ -4,31 +4,28 @@ Provides search, browse, and async-install of community node packages
 published on PyPI and indexed in a GitHub-backed registry JSON file.
 """
 
-import logging
-import uuid
+import json
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db import SessionLocal, get_session
-from app.models import Environment, User
+from app.db import get_session
+from app.models import Environment, EnvironmentBuildJob, User
 from app.security import optional_current_user, require_permission
-from app.services.backends import build_environment
-
-logger = logging.getLogger(__name__)
+from app.services.environment_builds import (
+    enqueue_environment_build,
+    notify_environment_build_workers,
+)
+from app.services.metrics import registry_install_total, registry_search_total
+from app.services.registry_trust import assess_registry_package, package_with_trust
+from nodyra_nodes.http_security import assert_public_http_url
 
 router = APIRouter(prefix="/node-registry", tags=["node-registry"])
 
-# ── In-memory install-tracking store ─────────────────────────────────────
-# MVP: dict-based. In production these could be Redis-backed; for the MVP the
-# TTL is long enough that a restart is fine (in-flight installs will be
-# orphaned and the frontend's poll loop will observe success/failure via the
-# environment status instead).
-_INSTALLS: dict[str, dict[str, Any]] = {}
-_INSTALL_TTL_SECONDS = 3600  # 1 hour
+_MAX_REGISTRY_BYTES = 5 * 1024 * 1024
 
 
 async def _fetch_registry_index() -> dict[str, Any]:
@@ -36,10 +33,19 @@ async def _fetch_registry_index() -> dict[str, Any]:
     url = settings.registry_index_url
     if not url:
         return {"packages": []}
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return resp.json()
+    assert_public_http_url(url, context="registry index URL")
+    async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+        async with client.stream("GET", url, headers={"Accept": "application/json"}) as resp:
+            resp.raise_for_status()
+            payload = bytearray()
+            async for chunk in resp.aiter_bytes():
+                payload.extend(chunk)
+                if len(payload) > _MAX_REGISTRY_BYTES:
+                    raise ValueError("Registry index exceeds the 5 MiB safety limit")
+    document = json.loads(payload)
+    if not isinstance(document, dict) or not isinstance(document.get("packages", []), list):
+        raise ValueError("Registry index has an invalid shape")
+    return document
 
 
 def _match_package(pkg: dict[str, Any], query: str) -> bool:
@@ -57,16 +63,46 @@ def _match_package(pkg: dict[str, Any], query: str) -> bool:
     return False
 
 
-# ── Schemas (inline — lean MVP) ──────────────────────────────────────────
-# Full pydantic schemas would be over-engineered for 4 endpoints; plain dicts
-# returned from FastAPI are auto-converted to JSON responses.
+def _package_versions(package: dict[str, Any]) -> list[dict[str, Any]]:
+    base = {key: value for key, value in package.items() if key != "versions"}
+    versions = package.get("versions")
+    if not isinstance(versions, list) or not versions:
+        return [base]
+    merged = [
+        {**base, **version}
+        for version in versions
+        if isinstance(version, dict)
+    ]
+    if not any(item.get("version") == base.get("version") for item in merged):
+        merged.append(base)
+    return merged
+
+
+def _present_package(package: dict[str, Any]) -> dict[str, Any]:
+    base = {key: value for key, value in package.items() if key != "versions"}
+    return {
+        **package_with_trust(base),
+        "versions": [package_with_trust(version) for version in _package_versions(package)],
+    }
+
+
+def _select_package_version(package: dict[str, Any], version: str | None) -> dict[str, Any] | None:
+    versions = _package_versions(package)
+    if not version:
+        current = package.get("version")
+        return next((item for item in versions if item.get("version") == current), versions[0])
+    return next((item for item in versions if item.get("version") == version), None)
+
+
+# Registry responses retain the signed index fields and add server-computed
+# trust metadata. Trust status supplied by the remote index is never accepted.
 
 
 @router.get("")
 @router.get("/search")
 async def search_registry(
     q: str = Query("", description="Search query"),
-    category: str = Query("", description="Category filter (unused in MVP)"),
+    category: str = Query("", max_length=80, description="Category filter"),
     _user: User | None = Depends(optional_current_user),
 ) -> dict[str, Any]:
     """Search the community node registry.
@@ -84,19 +120,43 @@ async def search_registry(
     try:
         index = await _fetch_registry_index()
     except httpx.HTTPStatusError as exc:
+        registry_search_total.inc(outcome="upstream_http_error")
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             f"Registry index unreachable (HTTP {exc.response.status_code}).",
         ) from exc
     except httpx.RequestError as exc:
+        registry_search_total.inc(outcome="upstream_network_error")
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             f"Registry index unreachable: {exc}.",
         ) from exc
+    except ValueError as exc:
+        registry_search_total.inc(outcome="invalid_index")
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Registry index was rejected: {exc}.",
+        ) from exc
+    registry_search_total.inc(outcome="success")
 
-    packages: list[dict[str, Any]] = index.get("packages", [])
+    packages: list[dict[str, Any]] = [
+        _present_package(package)
+        for package in index.get("packages", [])
+        if isinstance(package, dict)
+    ]
     if q:
         packages = [p for p in packages if _match_package(p, q)]
+    if category:
+        expected = category.strip().lower()
+        packages = [
+            package
+            for package in packages
+            if expected in {
+                str(value).lower()
+                for value in package.get("categories", [])
+            }
+            or str(package.get("category") or "").lower() == expected
+        ]
 
     return {"packages": packages}
 
@@ -125,10 +185,15 @@ async def get_package(
             status.HTTP_502_BAD_GATEWAY,
             f"Registry index unreachable: {exc}.",
         ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Registry index was rejected: {exc}.",
+        ) from exc
 
     for pkg in index.get("packages", []):
         if pkg.get("id") == package_id:
-            return pkg
+            return _present_package(pkg)
 
     raise HTTPException(
         status.HTTP_404_NOT_FOUND,
@@ -143,8 +208,8 @@ async def get_package(
 )
 async def install_package(
     body: dict[str, Any],
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
+    user: User | None = Depends(optional_current_user),
 ) -> dict[str, str]:
     """Enqueue a community node package for installation.
 
@@ -161,6 +226,7 @@ async def install_package(
 
     package_id: str | None = body.get("package_id")
     environment_id: str | None = body.get("environment_id")
+    requested_version: str | None = body.get("version")
 
     if not package_id or not environment_id:
         raise HTTPException(
@@ -181,6 +247,11 @@ async def install_package(
             status.HTTP_502_BAD_GATEWAY,
             f"Registry index unreachable: {exc}.",
         ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Registry index was rejected: {exc}.",
+        ) from exc
 
     pkg_meta: dict[str, Any] | None = None
     for pkg in index.get("packages", []):
@@ -194,7 +265,28 @@ async def install_package(
             f"Package {package_id!r} not found in registry.",
         )
 
-    pypi_package = pkg_meta.get("pypi_package") or pkg_meta.get("id", package_id)
+    selected_meta = _select_package_version(pkg_meta, requested_version)
+    if selected_meta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Package version not found.")
+    trust = assess_registry_package(selected_meta)
+    if not trust.installable or not trust.locked_spec:
+        registry_install_total.inc(status="blocked")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "registry_package_not_trusted",
+                "status": trust.status,
+                "reason": trust.reason,
+            },
+        )
+    locked_spec = trust.locked_spec
+    try:
+        assert_public_http_url(str(selected_meta.get("distribution_url")), context="registry distribution URL")
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "registry_distribution_blocked", "reason": str(exc)},
+        ) from exc
 
     # 2. Verify the environment exists
     env = await session.get(Environment, environment_id)
@@ -202,80 +294,54 @@ async def install_package(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "Environment not found."
         )
+    if env.backend != "venv":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Signed registry distributions currently require a venv environment backend.",
+        )
 
     # 3. Add the PyPI package to the environment's packages list
     packages = list(env.packages)
-    if pypi_package not in packages:
-        packages.append(pypi_package)
+    package_name = str(selected_meta.get("pypi_package"))
+    previous_specs = [
+        spec for spec in packages if spec == package_name or spec.startswith(f"{package_name} @ ")
+    ]
+    packages = [spec for spec in packages if spec not in previous_specs]
+    if locked_spec not in packages:
+        packages.append(locked_spec)
         env.packages = packages
         env.status = "pending"
-        await session.commit()
-        await session.refresh(env)
-
-    # 4. Create install tracking record
-    install_id = uuid.uuid4().hex[:16]
-    _INSTALLS[install_id] = {
-        "status": "pending",
-        "error": None,
-        "environment_id": environment_id,
-        "package_id": package_id,
-        "pypi_package": pypi_package,
-    }
-
-    # 5. Kick off async build
-    background.add_task(_install_task, install_id, environment_id)
-
-    return {"install_id": install_id, "status": "pending"}
-
-
-async def _install_task(install_id: str, environment_id: str) -> None:
-    """Background task that tracks install progress."""
-    record = _INSTALLS.get(install_id)
-    if record is None:
-        return
-    try:
-        record["status"] = "installing"
-        await build_environment(environment_id)
-        record["status"] = "ready"
-    except BaseException as exc:  # noqa: BLE001
-        record["status"] = "failed"
-        record["error"] = f"{type(exc).__name__}: {exc}"
-        # Best-effort rollback: remove the package from the environment
-        await _rollback_install(environment_id, record)
-
-
-async def _rollback_install(environment_id: str, record: dict[str, Any]) -> None:
-    """Remove the pypi_package from the environment on install failure."""
-    try:
-        async with SessionLocal() as rollback_session:
-            env = await rollback_session.get(Environment, environment_id)
-            if env is not None:
-                pkg_name = record.get("pypi_package", "")
-                pkgs = list(env.packages)
-                if pkg_name in pkgs:
-                    pkgs.remove(pkg_name)
-                    env.packages = pkgs
-                    env.status = "ready"
-                    await rollback_session.commit()
-    except BaseException:
-        logger.exception("rollback failed")  # best-effort rollback
+    job = await enqueue_environment_build(
+        session,
+        env,
+        reason=f"registry:{package_id}"[:40],
+        requested_by=user,
+    )
+    await session.commit()
+    await session.refresh(job)
+    await notify_environment_build_workers()
+    registry_install_total.inc(status="accepted")
+    return {"install_id": job.id, "status": job.status}
 
 
 @router.get("/installs/{install_id}")
 async def get_install_status(
     install_id: str,
+    session: AsyncSession = Depends(get_session),
     _user: User | None = Depends(optional_current_user),
 ) -> dict[str, Any]:
-    """Poll the status of an in-flight package install."""
-    record = _INSTALLS.get(install_id)
-    if record is None:
+    """Poll the durable environment-build job used for this install."""
+    record = await session.get(EnvironmentBuildJob, install_id)
+    if record is None or await session.get(Environment, record.environment_id) is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "Install record not found or expired."
         )
     return {
         "install_id": install_id,
-        "status": record["status"],
-        "error": record.get("error"),
-        "environment_id": record.get("environment_id"),
-        "package_id": record.get("package_id"),
+        "status": record.status,
+        "error": record.last_error,
+        "environment_id": record.environment_id,
+        "package_id": record.reason.removeprefix("registry:"),
+        "attempts": record.attempts,
+        "max_attempts": record.max_attempts,
     }

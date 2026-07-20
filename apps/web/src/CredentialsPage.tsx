@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { EmptyState } from "./EmptyState";
 
 import { api, userFriendlyError } from "./api";
+import { recordActivationEvent } from "./activation";
 import { useConfirm } from "./ConfirmProvider";
 import {
   CredentialFieldInput,
@@ -113,6 +114,7 @@ function CreateCredentialModal({
       };
       if (type === "nodyra_oauth_success") {
         setOauthStarted("");
+        recordActivationEvent("credential_connected");
         notify(`Connected${msg ? ` — ${msg.replace(/^Connected — /, "")}` : ""}`, "success");
         oauthPopupRef.current = null;
         onCreated();
@@ -361,6 +363,7 @@ function CreateCredentialModal({
         description: description.trim(),
         data,
       });
+      recordActivationEvent("credential_connected");
       onCreated();
     } catch (err) {
       setError(userFriendlyError(err));

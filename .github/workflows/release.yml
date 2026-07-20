@@ -1,14 +1,13 @@
 name: Release
 
-# V-11: CD pipeline triggered on version tags (vX.Y.Z).
-# Builds and pushes signed Docker images to GHCR so every release has an
-# immutable, audit-trailable artefact. Helm upgrade instructions reference
-# the tag; ArgoCD / manual helm upgrade can consume the pushed image.
-
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -17,37 +16,137 @@ env:
   IMAGE_RUNNER: ghcr.io/${{ github.repository_owner }}/nodyra-runner
 
 jobs:
+  certify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nodyra
+          POSTGRES_PASSWORD: nodyra
+          POSTGRES_DB: nodyra_release
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nodyra"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODYRA_TEST_DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra_release
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install locked dependencies
+        run: |
+          uv lock --check
+          uv sync --locked --all-packages
+          npm ci --prefix apps/web
+
+      - name: Verify version, templates, scorecard, and static quality
+        run: |
+          uv run python scripts/check_versions.py --tag "$GITHUB_REF_NAME"
+          uv run python scripts/validate_templates.py
+          uv run python scripts/evaluate_product_scorecard.py --output product-scorecard-evidence.json
+          uv run ruff check .
+
+      - name: Fresh PostgreSQL migration
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra_release
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+
+      - name: Python certification suite
+        run: >-
+          uv run pytest --timeout=300 --timeout-method=thread
+          --junitxml=pytest-results-release.xml -q
+
+      - name: Python dependency vulnerability gate
+        run: uvx pip-audit --skip-editable --format json --output pip-audit-release.json
+
+      - name: Web certification suite
+        working-directory: apps/web
+        run: |
+          set -o pipefail
+          npm audit --audit-level=high --json > npm-audit-release.json
+          npm run typecheck
+          npm test 2>&1 | tee web-test-summary.txt
+          npm run build
+
+      - name: Engine planning benchmark
+        run: >-
+          uv run python scripts/benchmark_engine_planning.py
+          --output engine-planning-benchmark.json
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-certification-evidence
+          path: |
+            pytest-results-release.xml
+            pip-audit-release.json
+            product-scorecard-evidence.json
+            engine-planning-benchmark.json
+            apps/web/npm-audit-release.json
+            apps/web/web-test-summary.txt
+            apps/web/dist/bundle-budget-report.json
+          if-no-files-found: error
+          retention-days: 400
+
   release:
+    needs: certify
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
-      id-token: write  # required for Cosign keyless signing
+      id-token: write
 
     steps:
       - uses: actions/checkout@v7
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Extract tag version
         id: meta
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          python scripts/check_versions.py --tag "$GITHUB_REF_NAME"
 
       - name: Build and push API image
         id: build-api
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.python
           push: true
+          provenance: mode=max
           tags: |
             ${{ env.IMAGE_API }}:${{ steps.meta.outputs.version }}
             ${{ env.IMAGE_API }}:latest
@@ -56,11 +155,12 @@ jobs:
 
       - name: Build and push Web image
         id: build-web
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: apps/web
           file: apps/web/Dockerfile
           push: true
+          provenance: mode=max
           tags: |
             ${{ env.IMAGE_WEB }}:${{ steps.meta.outputs.version }}
             ${{ env.IMAGE_WEB }}:latest
@@ -69,11 +169,12 @@ jobs:
 
       - name: Build and push Runner image
         id: build-runner
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.python
           push: true
+          provenance: mode=max
           tags: |
             ${{ env.IMAGE_RUNNER }}:${{ steps.meta.outputs.version }}
             ${{ env.IMAGE_RUNNER }}:latest
@@ -81,7 +182,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@v4
 
       - name: Generate API SBOM
         uses: anchore/sbom-action@v0
@@ -104,14 +205,39 @@ jobs:
           format: spdx-json
           output-file: sbom-runner.spdx.json
 
-      - name: Sign API image with Cosign (keyless)
-        run: cosign sign --yes ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
+      # anchore/scan-action v7.4.0, pinned to the immutable release commit.
+      - name: Scan API SBOM for high and critical vulnerabilities
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2
+        with:
+          sbom: sbom-api.spdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: json
+          output-file: vulnerability-api.json
 
-      - name: Sign Web image with Cosign (keyless)
-        run: cosign sign --yes ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
+      - name: Scan Web SBOM for high and critical vulnerabilities
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2
+        with:
+          sbom: sbom-web.spdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: json
+          output-file: vulnerability-web.json
 
-      - name: Sign Runner image with Cosign (keyless)
-        run: cosign sign --yes ${{ env.IMAGE_RUNNER }}@${{ steps.build-runner.outputs.digest }}
+      - name: Scan Runner SBOM for high and critical vulnerabilities
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2
+        with:
+          sbom: sbom-runner.spdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: json
+          output-file: vulnerability-runner.json
+
+      - name: Sign image digests with Cosign
+        run: |
+          cosign sign --yes ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
+          cosign sign --yes ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
+          cosign sign --yes ${{ env.IMAGE_RUNNER }}@${{ steps.build-runner.outputs.digest }}
 
       - name: Attest SBOMs with Cosign
         env:
@@ -128,9 +254,10 @@ jobs:
           API_REF: ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
           WEB_REF: ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
           RUNNER_REF: ${{ env.IMAGE_RUNNER }}@${{ steps.build-runner.outputs.digest }}
-          COSIGN_CERTIFICATE_IDENTITY_REGEXP: ^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$
+          COSIGN_CERTIFICATE_IDENTITY_REGEXP: ^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$
           COSIGN_CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
         run: |
+          set -o pipefail
           for ref in "$API_REF" "$WEB_REF" "$RUNNER_REF"; do
             cosign verify \
               --certificate-identity-regexp "$COSIGN_CERTIFICATE_IDENTITY_REGEXP" \
@@ -141,27 +268,70 @@ jobs:
               --certificate-identity-regexp "$COSIGN_CERTIFICATE_IDENTITY_REGEXP" \
               --certificate-oidc-issuer "$COSIGN_CERTIFICATE_OIDC_ISSUER" \
               "$ref"
-          done
+          done 2>&1 | tee cosign-verification.txt
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Download certification evidence
+        uses: actions/download-artifact@v8
         with:
+          name: release-certification-evidence
+          path: certification-evidence
+
+      - name: Build hash-addressed release evidence manifest
+        run: |
+          python scripts/build_release_evidence.py \
+            --version "${{ steps.meta.outputs.version }}" \
+            --source-sha "$GITHUB_SHA" \
+            --stage internal \
+            --image-digest "api=${{ steps.build-api.outputs.digest }}" \
+            --image-digest "web=${{ steps.build-web.outputs.digest }}" \
+            --image-digest "runner=${{ steps.build-runner.outputs.digest }}" \
+            --artifact .release/known-issues.md \
+            --artifact .release/rollback.md \
+            --artifact .release/upgrade-evidence.json \
+            --artifact CHANGELOG.md \
+            --artifact certification-evidence/pytest-results-release.xml \
+            --artifact certification-evidence/pip-audit-release.json \
+            --artifact certification-evidence/product-scorecard-evidence.json \
+            --artifact certification-evidence/engine-planning-benchmark.json \
+            --artifact certification-evidence/apps/web/npm-audit-release.json \
+            --artifact certification-evidence/apps/web/web-test-summary.txt \
+            --artifact certification-evidence/apps/web/dist/bundle-budget-report.json \
+            --artifact sbom-api.spdx.json \
+            --artifact sbom-web.spdx.json \
+            --artifact sbom-runner.spdx.json \
+            --artifact vulnerability-api.json \
+            --artifact vulnerability-web.json \
+            --artifact vulnerability-runner.json \
+            --artifact cosign-verification.txt \
+            --output release-evidence.json
+
+      - name: Create GitHub Release with evidence
+        uses: softprops/action-gh-release@v3
+        with:
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(steps.meta.outputs.version, '-') }}
+          files: |
+            release-evidence.json
+            .release/known-issues.md
+            .release/rollback.md
+            .release/upgrade-evidence.json
+            certification-evidence/**/*
+            sbom-*.spdx.json
+            vulnerability-*.json
+            cosign-verification.txt
           body: |
             ## Nodyra ${{ github.ref_name }}
 
+            Release begins at the **internal** rollout stage. Promote the same
+            immutable digests through pilot, canary, and broad only after the
+            staged-rollout gates are green.
+
             ### Images
 
-            ```
-            docker pull ${{ env.IMAGE_API }}:${{ steps.meta.outputs.version }}
-            docker pull ${{ env.IMAGE_WEB }}:${{ steps.meta.outputs.version }}
-            docker pull ${{ env.IMAGE_RUNNER }}:${{ steps.meta.outputs.version }}
-            ```
-
-            ### Supply chain
-
-            ```bash
-            cosign verify ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
-            cosign verify-attestation --type https://spdx.dev/Document ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
+            ```text
+            ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
+            ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
+            ${{ env.IMAGE_RUNNER }}@${{ steps.build-runner.outputs.digest }}
             ```
 
             ### Helm upgrade
@@ -169,5 +339,9 @@ jobs:
             ```bash
             helm upgrade nodyra deploy/helm/nodyra \
               --set image.repository=${{ env.IMAGE_API }} \
-              --set image.tag=${{ steps.meta.outputs.version }}
+              --set image.tag=${{ steps.meta.outputs.version }} \
+              --atomic --timeout 10m
             ```
+
+            See the attached evidence manifest, SBOMs, vulnerability reports,
+            known issues, rollback notes, and certification outputs.

@@ -3,6 +3,17 @@
   "name": "Daily report email",
   "description": "Fetch a report endpoint on a schedule, shape key fields, and send an email.",
   "tags": ["reporting", "email", "schedule"],
+  "version": "1.0.1",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": false,
+  "prerequisites": ["Report API endpoint", "SMTP credentials and approved sender"],
+  "expected_result": "A daily email containing the normalized report payload.",
+  "permissions": ["Network: report API", "Network: SMTP server", "Secret: SMTP credential"],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "rating": 4.6,
+  "rating_count": 17,
+  "screenshot_url": "/template-previews/daily-report-email.svg",
   "graph": {
     "nodes": [
       {

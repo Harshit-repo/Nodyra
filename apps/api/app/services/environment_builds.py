@@ -394,6 +394,7 @@ async def process_environment_build_job(job_id: str) -> None:
             seconds=settings.environment_build_queue_lease_seconds
         )
         job.started_at = job.started_at or moment
+        registry_build = job.reason.startswith("registry:")
         env.status = "building"
         env.status_detail = ""
         await session.commit()
@@ -411,25 +412,37 @@ async def process_environment_build_job(job_id: str) -> None:
             env = await session.get(Environment, job.environment_id)
             if env is not None and env.status == "ready":
                 await complete_environment_build(session, job_id=job_id)
+                if registry_build:
+                    from app.services.metrics import registry_install_total
+
+                    registry_install_total.inc(status="succeeded")
             else:
                 detail = env.status_detail if env is not None else "environment missing"
                 retryable_failure = True
-                await fail_environment_build(
+                failed_job = await fail_environment_build(
                     session,
                     job_id=job_id,
                     error=detail or "environment build failed",
                     retryable=True,
                 )
+                if registry_build and failed_job is not None and failed_job.status == "failed":
+                    from app.services.metrics import registry_install_total
+
+                    registry_install_total.inc(status="failed")
             await session.commit()
     except Exception as exc:
         retryable_failure = True
         async with SessionLocal() as session:
-            await fail_environment_build(
+            failed_job = await fail_environment_build(
                 session,
                 job_id=job_id,
                 error=f"{type(exc).__name__}: {exc}",
                 retryable=True,
             )
+            if registry_build and failed_job is not None and failed_job.status == "failed":
+                from app.services.metrics import registry_install_total
+
+                registry_install_total.inc(status="failed")
             await session.commit()
         logger.exception("environment build job %s failed unexpectedly", job_id)
     finally:

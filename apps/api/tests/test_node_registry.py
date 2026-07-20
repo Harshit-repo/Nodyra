@@ -1,42 +1,92 @@
 """Tests for the Community Node Registry router (MS4 Slice 4E)."""
 
+import base64
+import json
+
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from httpx import AsyncClient
+
+from app.config import settings
+from app.services.registry_trust import canonical_package_manifest
+
+_PUBLISHER_KEY_ID = "test-publisher"
+_PUBLISHER_PRIVATE_KEY = Ed25519PrivateKey.generate()
+_PUBLISHER_PUBLIC_KEY = base64.urlsafe_b64encode(
+    _PUBLISHER_PRIVATE_KEY.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+).decode().rstrip("=")
+
+
+def _signed_package(
+    package_id: str,
+    name: str,
+    version: str,
+    description: str,
+    nodes: list[str],
+) -> dict:
+    package = {
+        "id": package_id,
+        "name": name,
+        "description": description,
+        "author": "community",
+        "version": version,
+        "nodes": nodes,
+        "install_url": f"https://github.com/community/{package_id}",
+        "pypi_package": package_id,
+        "distribution_url": (
+            f"https://files.pythonhosted.org/packages/{package_id}-{version}-py3-none-any.whl"
+        ),
+        "distribution_sha256": "a" * 64,
+        "publisher_key_id": _PUBLISHER_KEY_ID,
+        "permissions": {"network": []},
+        "compatibility": {"nodyra": ">=0.1,<0.2"},
+        "lifecycle": "active",
+    }
+    package["signature"] = base64.urlsafe_b64encode(
+        _PUBLISHER_PRIVATE_KEY.sign(canonical_package_manifest(package))
+    ).decode().rstrip("=")
+    return package
+
 
 # Sample registry index used by mock responses.
 _SAMPLE_INDEX = {
     "packages": [
-        {
-            "id": "nodyra-stripe-nodes",
-            "name": "Stripe Nodes",
-            "description": "Nodes for Stripe payment operations",
-            "author": "community",
-            "version": "1.2.0",
-            "nodes": ["stripe_charge", "stripe_refund", "stripe_webhook"],
-            "install_url": "https://github.com/author/nodyra-stripe-nodes",
-            "pypi_package": "nodyra-stripe-nodes",
-        },
-        {
-            "id": "nodyra-slack-nodes",
-            "name": "Slack Nodes",
-            "description": "Send messages and interact with Slack",
-            "author": "community",
-            "version": "0.4.1",
-            "nodes": ["slack_send", "slack_listen"],
-            "install_url": "https://github.com/author/nodyra-slack-nodes",
-            "pypi_package": "nodyra-slack-nodes",
-        },
-        {
-            "id": "nodyra-ai-nodes",
-            "name": "AI Nodes",
-            "description": "Extra AI/LLM nodes for advanced workflows",
-            "author": "nodyra-labs",
-            "version": "2.0.0",
-            "nodes": ["ai_embed", "ai_rerank"],
-            "install_url": "https://github.com/nodyra-labs/nodyra-ai-nodes",
-            "pypi_package": "nodyra-ai-nodes",
-        },
+        _signed_package(
+            "nodyra-stripe-nodes",
+            "Stripe Nodes",
+            "1.2.0",
+            "Nodes for Stripe payment operations",
+            ["stripe_charge", "stripe_refund", "stripe_webhook"],
+        ),
+        _signed_package(
+            "nodyra-slack-nodes",
+            "Slack Nodes",
+            "0.4.1",
+            "Send messages and interact with Slack",
+            ["slack_send", "slack_listen"],
+        ),
+        _signed_package(
+            "nodyra-ai-nodes",
+            "AI Nodes",
+            "2.0.0",
+            "Extra AI/LLM nodes for advanced workflows",
+            ["ai_embed", "ai_rerank"],
+        ),
     ]
 }
+
+
+@pytest.fixture(autouse=True)
+def _trust_test_publisher(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        settings,
+        "registry_trusted_publishers",
+        json.dumps({_PUBLISHER_KEY_ID: _PUBLISHER_PUBLIC_KEY}),
+    )
 
 # ── Tests ────────────────────────────────────────────────────────────────
 
@@ -118,6 +168,7 @@ async def test_registry_get_package_by_id(
     assert data["id"] == "nodyra-stripe-nodes"
     assert data["name"] == "Stripe Nodes"
     assert data["pypi_package"] == "nodyra-stripe-nodes"
+    assert data["trust"]["status"] == "verified"
 
 
 async def test_registry_get_package_not_found(
@@ -201,13 +252,17 @@ async def test_registry_install_adds_to_env_packages(
     assert resp.status_code == 202
     data = resp.json()
     assert "install_id" in data
-    assert data["status"] == "pending"
+    assert data["status"] == "queued"
 
     # Verify the package was added to the environment
     env_resp = await client.get(f"/environments/{env_id}")
     assert env_resp.status_code == 200
     env_data = env_resp.json()
-    assert "nodyra-stripe-nodes" in env_data["packages"]
+    assert any(
+        package.startswith("nodyra-stripe-nodes @ https://")
+        and "#sha256=" in package
+        for package in env_data["packages"]
+    )
 
 
 async def test_registry_install_rejects_unknown_package(
@@ -232,6 +287,48 @@ async def test_registry_install_rejects_unknown_package(
         },
     )
     assert resp.status_code == 404
+
+
+async def test_registry_install_rejects_tampered_signature(
+    client: AsyncClient, httpx_mock
+) -> None:
+    package = dict(_SAMPLE_INDEX["packages"][0])
+    package["version"] = "1.2.1"
+    httpx_mock.add_response(
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
+        json={"packages": [package]},
+    )
+    env_id = (await client.post("/environments", json={"name": "Tampered"})).json()["id"]
+
+    resp = await client.post(
+        "/node-registry/install",
+        json={"package_id": package["id"], "environment_id": env_id},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["status"] == "invalid"
+
+
+async def test_production_never_installs_unverified_package(
+    client: AsyncClient, httpx_mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = dict(_SAMPLE_INDEX["packages"][0])
+    package.pop("signature")
+    monkeypatch.setattr(settings, "runtime_mode", "production")
+    monkeypatch.setattr(settings, "registry_allow_unverified_install", True)
+    httpx_mock.add_response(
+        url="https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
+        json={"packages": [package]},
+    )
+    env_id = (await client.post("/environments", json={"name": "Unsigned"})).json()["id"]
+
+    resp = await client.post(
+        "/node-registry/install",
+        json={"package_id": package["id"], "environment_id": env_id},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["status"] == "unverified"
 
 
 async def test_registry_install_status(client: AsyncClient, httpx_mock) -> None:
@@ -263,7 +360,7 @@ async def test_registry_install_status(client: AsyncClient, httpx_mock) -> None:
     assert status_resp.status_code == 200
     status_data = status_resp.json()
     assert status_data["install_id"] == install_id
-    assert status_data["status"] in ("pending", "installing", "ready", "failed")
+    assert status_data["status"] in ("queued", "building", "ready", "failed")
     assert status_data["package_id"] == "nodyra-stripe-nodes"
 
 

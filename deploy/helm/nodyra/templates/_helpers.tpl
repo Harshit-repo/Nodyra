@@ -17,6 +17,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if le (int .Values.runtime.heartbeatTimeoutSeconds) (int .Values.runtime.heartbeatIntervalSeconds) -}}
 {{- fail "runtime.heartbeatTimeoutSeconds must be greater than runtime.heartbeatIntervalSeconds" -}}
 {{- end -}}
+
 - name: DATABASE_URL
   value: {{ .Values.postgres.url | quote }}
 - name: REDIS_URL
@@ -41,6 +42,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
       key: internal-api-token
 - name: AUTH_REQUIRED
   value: {{ .Values.api.authRequired | quote }}
+- name: AUTH_ALLOW_REGISTRATION
+  value: {{ .Values.api.allowRegistration | quote }}
 - name: CORS_ORIGINS
   value: {{ required "api.corsOrigins is required" .Values.api.corsOrigins | quote }}
 - name: PUBLIC_API_URL
@@ -65,4 +68,21 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
   value: {{ .Values.runtime.heartbeatTimeoutSeconds | quote }}
 - name: RUNTIME_NO_PROGRESS_TIMEOUT_SECONDS
   value: {{ .Values.runtime.noProgressTimeoutSeconds | quote }}
+{{- end -}}
+
+{{- define "nodyra.apiImage" -}}
+{{- if .Values.image.digest -}}
+{{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "nodyra.webImage" -}}
+{{- $repository := .Values.web.imageRepository | default (printf "%s-web" .Values.image.repository) -}}
+{{- if .Values.web.imageDigest -}}
+{{- printf "%s@%s" $repository .Values.web.imageDigest -}}
+{{- else -}}
+{{- printf "%s:%s" $repository .Values.image.tag -}}
+{{- end -}}
 {{- end -}}

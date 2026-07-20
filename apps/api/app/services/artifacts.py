@@ -8,6 +8,7 @@ previews, and orchestrating backend deletes.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from collections.abc import Iterable
@@ -192,7 +193,7 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
                     try:
                         target = get_backend(configured_backend)
                         row.storage_backend = configured_backend
-                        target.upload_from_local(row, local_path)
+                        await asyncio.to_thread(target.upload_from_local, row, local_path)
                     except Exception:  # noqa: BLE001
                         # Upload failed; keep the local row so the bytes are
                         # still served via the local backend rather than losing

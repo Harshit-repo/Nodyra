@@ -1,11 +1,12 @@
 {
   "name": "nodyra-web",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && npm run budget",
+    "budget": "node scripts/check-bundle-budget.mjs",
     "preview": "vite preview",
     "typecheck": "tsc",
     "test": "vitest run",

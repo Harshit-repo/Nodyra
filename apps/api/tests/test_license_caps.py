@@ -2,7 +2,7 @@
 
 The suite defaults to an Enterprise license (conftest), so these tests opt back
 down to Community to exercise the caps (environments=3, runners=1,
-deployments=3, seats=2).
+deployments=10, seats=5).
 """
 import pytest
 
@@ -47,11 +47,11 @@ async def test_seats_cap_via_helper(client):
 
     async with licensing.SessionLocal() as s:
         async with s.begin():
-            s.add(User(email="a@x.com", password_hash="x", role="viewer"))
-            s.add(User(email="b@x.com", password_hash="x", role="viewer"))
+            for i in range(5):
+                s.add(User(email=f"user{i}@x.com", password_hash="x", role="viewer"))
 
     async with licensing.SessionLocal() as s:
-        # cap = 2, current = 2 → blocked.
+        # cap = 5, current = 5 → blocked.
         with pytest.raises(LicenseLimitError) as exc:
             await enforce_resource_cap(s, "seats")
     assert exc.value.detail["resource"] == "seats"

@@ -16,6 +16,7 @@ from app import tracing
 from app.config import settings
 from app.exceptions import ServiceError
 from app.logging import bind_request_context, configure_logging, reset_request_context
+from nodyra import __version__ as NODYRA_VERSION
 
 # Install structured JSON logging before anything logs (H4). Operators can opt
 # back into plain text with ``log_json=False``.
@@ -476,7 +477,7 @@ async def _gate_token_valid(token: str, *, client_ip: str = "") -> bool:
 
 app = FastAPI(
     title="Nodyra API",
-    version="0.0.1",
+    version=NODYRA_VERSION,
     lifespan=lifespan,
     dependencies=[Depends(resolve_org)],
 )
@@ -878,4 +879,4 @@ app.include_router(node_registry.router)
 
 @app.get("/")
 async def root() -> dict:
-    return {"name": "Nodyra API", "version": "0.0.1"}
+    return {"name": "Nodyra API", "version": NODYRA_VERSION}

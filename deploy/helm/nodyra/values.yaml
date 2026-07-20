@@ -1,12 +1,15 @@
 image:
   repository: nodyra
-  tag: "0.0.1"
+  tag: "0.1.0"
+  # Digest takes precedence over tag for immutable staged promotion.
+  digest: ""
   pullPolicy: IfNotPresent
 
 api:
   replicas: 1
   port: 8000
   authRequired: true
+  allowRegistration: false
   publicApiUrl: ""
   mcpAuthorizationServerUrl: ""
   mcpOauthIntrospectionUrl: ""
@@ -48,6 +51,31 @@ runtime:
 web:
   replicas: 1
   port: 5173
+  # Blank repository defaults to "<image.repository>-web".
+  imageRepository: ""
+  imageDigest: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# Disposable evaluation guardrails. Enable only in a dedicated namespace.
+# The lifecycle ConfigMap is a contract for the external namespace reaper;
+# Kubernetes does not delete namespaces from an annotation by itself.
+evaluation:
+  enabled: false
+  expiresAt: ""
+  maxPods: "8"
+  requestsCpu: "2"
+  requestsMemory: "4Gi"
+  limitsCpu: "4"
+  limitsMemory: "8Gi"
+  requestsStorage: "5Gi"
+  defaultPublicEgress: true
+  allowedEgressCidrs: []
 
 # External dependencies — point these at your Postgres and Redis.
 postgres:

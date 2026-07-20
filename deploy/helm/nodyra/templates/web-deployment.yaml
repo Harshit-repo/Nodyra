@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: "{{ .Values.image.repository }}-web:{{ .Values.image.tag }}"
+          image: {{ include "nodyra.webImage" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: VITE_API_PROXY
@@ -24,6 +24,8 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.web.port }}
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service

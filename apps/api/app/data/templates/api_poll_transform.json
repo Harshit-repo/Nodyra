@@ -3,6 +3,17 @@
   "name": "API poll and transform",
   "description": "Poll an API on a schedule and normalize the first page of results with Python.",
   "tags": ["api", "python", "schedule"],
+  "version": "1.1.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": ["Outbound HTTPS access to jsonplaceholder.typicode.com"],
+  "expected_result": "A normalized list containing the first ten API posts.",
+  "permissions": ["Network: jsonplaceholder.typicode.com", "Python: deterministic transform"],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "rating": 4.8,
+  "rating_count": 24,
+  "screenshot_url": "/template-previews/api-poll-transform.svg",
   "graph": {
     "nodes": [
       {

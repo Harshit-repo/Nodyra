@@ -7,6 +7,16 @@ export interface WorkflowTemplate {
   graph?: () => WorkflowGraph;
 }
 
+export interface WorkflowTemplateTrust {
+  credential_free: boolean;
+  prerequisites: string[];
+  expected_output: string;
+  expected_runtime: string;
+  permissions: string[];
+  network_egress: string[];
+  artifact_behavior: string;
+}
+
 function node(
   id: string,
   type: string,
@@ -798,4 +808,199 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       ],
     }),
   },
+  {
+    id: "sample-data-quality",
+    name: "Sample data quality check",
+    description:
+      "Generate deterministic order rows, profile completeness with SQL, and preview the result.",
+    graph: () => ({
+      nodes: [
+        node("trigger", "manual_trigger", { data: {} }, 0, 120),
+        node(
+          "sample",
+          "code",
+          {
+            code:
+              "output = [\n" +
+              "    {'order_id': 1, 'region': 'west', 'amount': 120},\n" +
+              "    {'order_id': 2, 'region': 'east', 'amount': None},\n" +
+              "    {'order_id': 3, 'region': 'west', 'amount': 240},\n" +
+              "]",
+          },
+          260,
+          120,
+        ),
+        node("dataset", "records_to_dataset", {}, 520, 120),
+        node(
+          "quality",
+          "duckdb_sql",
+          {
+            sql:
+              "SELECT COUNT(*) AS row_count, COUNT(amount) AS valid_amounts, " +
+              "COUNT(*) - COUNT(amount) AS missing_amounts FROM input",
+          },
+          780,
+          120,
+        ),
+        node("preview", "dataset_preview", { limit: 25 }, 1040, 120),
+      ],
+      edges: [
+        { id: "e1", source: "trigger", source_output: "main", target: "sample", target_input: "input" },
+        { id: "e2", source: "sample", source_output: "main", target: "dataset", target_input: "input" },
+        { id: "e3", source: "dataset", source_output: "main", target: "quality", target_input: "input" },
+        { id: "e4", source: "quality", source_output: "main", target: "preview", target_input: "input" },
+      ],
+    }),
+  },
+  {
+    id: "sample-csv-artifact",
+    name: "Sample CSV artifact",
+    description:
+      "Create deterministic inventory data and write a downloadable CSV artifact without credentials.",
+    graph: () => ({
+      nodes: [
+        node("trigger", "manual_trigger", { data: {} }, 0, 120),
+        node(
+          "sample",
+          "code",
+          {
+            code:
+              "output = [\n" +
+              "    {'sku': 'A-100', 'quantity': 14},\n" +
+              "    {'sku': 'B-200', 'quantity': 7},\n" +
+              "    {'sku': 'C-300', 'quantity': 21},\n" +
+              "]",
+          },
+          280,
+          120,
+        ),
+        node("dataset", "records_to_dataset", {}, 560, 120),
+        node(
+          "csv",
+          "csv_write",
+          { filename: "sample-inventory.csv", delimiter: ",", include_header: true },
+          840,
+          120,
+        ),
+      ],
+      edges: [
+        { id: "e1", source: "trigger", source_output: "main", target: "sample", target_input: "input" },
+        { id: "e2", source: "sample", source_output: "main", target: "dataset", target_input: "input" },
+        { id: "e3", source: "dataset", source_output: "main", target: "csv", target_input: "input" },
+      ],
+    }),
+  },
 ];
+
+const LOCAL_EXECUTION = ["workflow:write", "run:write"];
+
+export const WORKFLOW_TEMPLATE_TRUST: Record<string, WorkflowTemplateTrust> = {
+  "api-code": {
+    credential_free: true,
+    prerequisites: [],
+    expected_output: "A row count, email list, and normalized API records",
+    expected_runtime: "Under 30 seconds",
+    permissions: LOCAL_EXECUTION,
+    network_egress: ["jsonplaceholder.typicode.com"],
+    artifact_behavior: "Outputs remain in run history; no persistent artifact is required",
+  },
+  "webhook-slack": {
+    credential_free: false,
+    prerequisites: ["Slack credential", "Writable Slack channel"],
+    expected_output: "A delivered Slack message for each webhook event",
+    expected_runtime: "Under 30 seconds after webhook receipt",
+    permissions: [...LOCAL_EXECUTION, "credential:read"],
+    network_egress: ["slack.com"],
+    artifact_behavior: "No artifact is created",
+  },
+  "schedule-http": {
+    credential_free: true,
+    prerequisites: [],
+    expected_output: "Five normalized sample API records",
+    expected_runtime: "Under 30 seconds",
+    permissions: LOCAL_EXECUTION,
+    network_egress: ["jsonplaceholder.typicode.com"],
+    artifact_behavior: "Outputs remain in run history",
+  },
+  "datasetref-api-sql": {
+    credential_free: true,
+    prerequisites: [],
+    expected_output: "A queryable DatasetRef containing selected user fields",
+    expected_runtime: "Under 45 seconds",
+    permissions: LOCAL_EXECUTION,
+    network_egress: ["jsonplaceholder.typicode.com"],
+    artifact_behavior: "Creates artifact-backed tabular data and a preview",
+  },
+  "datasetref-filter-export": {
+    credential_free: true,
+    prerequisites: [],
+    expected_output: "Filtered sales rows plus a downloadable CSV artifact",
+    expected_runtime: "Under 30 seconds",
+    permissions: LOCAL_EXECUTION,
+    network_egress: [],
+    artifact_behavior: "Creates a DatasetRef and filtered-sales.csv",
+  },
+  "ml-classification": {
+    credential_free: true,
+    prerequisites: ["ML / Data Science environment"],
+    expected_output: "Classification metrics, predictions, and a registered model",
+    expected_runtime: "Under 3 minutes",
+    permissions: LOCAL_EXECUTION,
+    network_egress: [],
+    artifact_behavior: "Creates model and dataset artifacts",
+  },
+  "ml-regression": {
+    credential_free: true,
+    prerequisites: ["ML / Data Science environment"],
+    expected_output: "Regression metrics, feature ranking, and a saved model",
+    expected_runtime: "Under 3 minutes",
+    permissions: LOCAL_EXECUTION,
+    network_egress: [],
+    artifact_behavior: "Creates model and dataset artifacts",
+  },
+  "webhook-predict": {
+    credential_free: true,
+    prerequisites: ["Run the ML classification template first"],
+    expected_output: "A JSON prediction response from the webhook",
+    expected_runtime: "Under 45 seconds after webhook receipt",
+    permissions: LOCAL_EXECUTION,
+    network_egress: [],
+    artifact_behavior: "Reads the registered model; no new artifact is required",
+  },
+  "chart-dashboard": {
+    credential_free: true,
+    prerequisites: [],
+    expected_output: "An interactive revenue and cost chart",
+    expected_runtime: "Under 30 seconds",
+    permissions: LOCAL_EXECUTION,
+    network_egress: [],
+    artifact_behavior: "Creates an artifact-backed dataset and chart output",
+  },
+  "model-report": {
+    credential_free: true,
+    prerequisites: ["ML / Data Science environment"],
+    expected_output: "A report combining metrics, feature importance, and data",
+    expected_runtime: "Under 3 minutes",
+    permissions: LOCAL_EXECUTION,
+    network_egress: [],
+    artifact_behavior: "Creates model, dataset, chart, and report artifacts",
+  },
+  "sample-data-quality": {
+    credential_free: true,
+    prerequisites: [],
+    expected_output: "Row, valid-value, and missing-value counts",
+    expected_runtime: "Under 30 seconds",
+    permissions: LOCAL_EXECUTION,
+    network_egress: [],
+    artifact_behavior: "Creates an artifact-backed dataset and quality result preview",
+  },
+  "sample-csv-artifact": {
+    credential_free: true,
+    prerequisites: [],
+    expected_output: "A three-row inventory dataset and CSV download",
+    expected_runtime: "Under 30 seconds",
+    permissions: LOCAL_EXECUTION,
+    network_egress: [],
+    artifact_behavior: "Creates sample-inventory.csv with checksum and lineage metadata",
+  },
+};

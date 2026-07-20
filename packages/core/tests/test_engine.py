@@ -3,17 +3,9 @@ import logging
 
 import pytest
 
-from nodyra.engine import GraphError, execute
+from nodyra.engine import ExecutionOptions, GraphError, execute
 from nodyra.models import Edge, GraphNode, NodeStatus, RunStatus, WorkflowGraph
 from nodyra.sdk import NodeRegistry, node
-
-
-def _slow_code_for_default_timeout() -> int:
-    """Module-level so process-isolated execution can pickle it on Windows."""
-    import time
-
-    time.sleep(0.2)
-    return 1
 
 
 def make_registry() -> NodeRegistry:
@@ -468,16 +460,30 @@ async def test_timeout_fails_a_slow_node() -> None:
 async def test_default_timeout_applies_to_code_nodes(monkeypatch) -> None:
     import nodyra.engine as engine_module
 
+    class TimeoutIsolator:
+        observed_timeout: float | None = None
+
+        async def run(self, _fn, _kwargs, *, timeout):  # noqa: ANN001
+            self.observed_timeout = timeout
+            raise TimeoutError
+
+    def code_like() -> int:
+        return 1
+
     reg = NodeRegistry()
     monkeypatch.setitem(engine_module.DEFAULT_NODE_TIMEOUTS, "code", 0.01)
-    node(name="CodeLike", id="code", inputs=[], registry=reg)(
-        _slow_code_for_default_timeout
-    )
+    node(name="CodeLike", id="code", inputs=[], registry=reg)(code_like)
+    isolator = TimeoutIsolator()
 
-    result = await execute(WorkflowGraph(nodes=[GraphNode(id="c", type="code")]), reg)
+    result = await execute(
+        WorkflowGraph(nodes=[GraphNode(id="c", type="code")]),
+        reg,
+        options=ExecutionOptions(process_isolator=isolator),
+    )
     assert result.status == RunStatus.error
     assert result.nodes["c"].status == NodeStatus.error
     assert "timed out" in result.nodes["c"].error
+    assert isolator.observed_timeout == 0.01
 
 
 async def test_node_timing_is_recorded() -> None:

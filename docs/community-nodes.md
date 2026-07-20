@@ -1,172 +1,120 @@
-# Community Node Registry — Developer Guide
+# Community Node Registry
 
-This guide explains how to publish, discover, and install community-contributed
-node packages for the Nodyra workflow platform.
+The registry is Nodyra's signed distribution channel for independently
+versioned node packs. Search results expose maintainer, lifecycle, permissions,
+compatibility, download/health metadata, examples, advisories, and every
+available version. Installs, upgrades, and rollbacks all use the same durable
+environment-build queue.
 
-## Overview
+## Operator trust policy
 
-The Community Node Registry lets anyone publish node packages to PyPI and have
-them listed in a public registry index. Users can browse and install these
-packages directly from the Nodyra UI with one click.
+Production installs are fail-closed. A package is installable only when:
 
-### Architecture
+- the selected version has an immutable HTTPS distribution URL and lowercase
+  SHA-256 digest;
+- the publisher signs the canonical manifest with Ed25519;
+- `REGISTRY_TRUSTED_PUBLISHERS` contains that publisher's public key;
+- permission and compatibility manifests are present;
+- lifecycle is `active`; `deprecated` remains visible but cannot be newly
+  installed, while `quarantined` and `revoked` are blocked.
 
-Two components:
+Configure trusted publisher roots as JSON. The value may be a URL-safe base64
+raw Ed25519 public key or PEM public key:
 
-1. **Registry index** — a curated JSON file
-   (`https://github.com/nodyra-registry/packages`) that lists every available
-   package. New entries are added via pull request and reviewed by a Nodyra
-   maintainer.
-
-2. **Nodyra client** — the Nodyra API plus the Settings UI that fetches the
-   registry index and manages installations.
-
-## Publishing a Node Package
-
-### Step 1: Create your Python package
-
-Your package must be installable from PyPI. The minimal structure:
-
-```
-nodyra-my-nodes/
-  pyproject.toml
-  src/
-    nodyra_my_nodes/
-      __init__.py
-      nodes.py       # your @node-decorated functions
+```env
+REGISTRY_TRUSTED_PUBLISHERS={"nodyra-official":"<base64-public-key>"}
+REGISTRY_ALLOW_UNVERIFIED_INSTALL=false
 ```
 
-### Step 2: Declare the Nodyra entry point
+Unverified installs cannot be enabled in production. For a local-only
+publisher workflow, set `REGISTRY_ALLOW_UNVERIFIED_INSTALL=true` with
+`RUNTIME_MODE=local`; the UI labels the package unverified.
 
-In your `pyproject.toml`, add an entry point under
-`[project.entry-points."nodyra.nodes"]`:
+Nodyra stores a locked PEP 508 requirement:
+
+```text
+nodyra-example @ https://packages.example/nodyra_example-1.2.0-py3-none-any.whl#sha256=<digest>
+```
+
+The environment build downloads that exact artifact. Changing the index later
+does not change an installed version.
+
+## Package contract
+
+A package declares a `nodyra.nodes` entry point and registers decorated nodes:
 
 ```toml
 [project.entry-points."nodyra.nodes"]
-my_nodes = "nodyra_my_nodes:register"
-```
-
-### Step 3: Implement the registration function
-
-```python
-# nodyra_my_nodes/__init__.py
-
-def register():
-    # Importing your node module is sufficient — the @node decorators
-    # auto-register the nodes during import.
-    import nodyra_my_nodes.nodes  # noqa: F401
+example = "nodyra_example:register"
 ```
 
 ```python
-# nodyra_my_nodes/nodes.py
-
-from nodyra import node
-
-@node(
-    id="my_hello",
-    label="Say Hello",
-    inputs=[{"name": "name", "type": "string"}],
-    outputs=[{"name": "greeting", "type": "string"}],
-)
-def say_hello(name: str) -> dict:
-    """Return a friendly greeting."""
-    return {"greeting": f"Hello, {name}!"}
+def register() -> None:
+    import nodyra_example.nodes  # noqa: F401
 ```
 
-### Important
+Keep registration side effects limited to importing node definitions. Do not
+make network calls, read secrets, or mutate the filesystem during discovery.
+Installed Python packages execute with the permissions of the workflow runtime;
+the signature proves publisher and manifest integrity, not code safety.
 
-- Do **NOT** import individual node symbols (e.g. `from nodyra_my_nodes.nodes
-  import say_hello`) in your `register()` function — that would create
-  duplicate imports and could double-register the same node.
-- Just `import nodyra_my_nodes.nodes` at the module level — the `@node`
-  decorator registers the node automatically on import.
+## Signed index entry
 
-### Step 4: Publish to PyPI
-
-```bash
-pip install build twine
-python -m build
-python -m twine upload dist/*
-```
-
-### Step 5: Submit to the registry index
-
-1. Fork `https://github.com/nodyra-registry/packages`
-2. Edit `index.json` to add your package entry:
+Each release is a separate signed object. `signature` is URL-safe base64 over
+the canonical JSON object containing the signed fields below, sorted by key and
+encoded without whitespace.
 
 ```json
 {
-  "packages": [
-    {
-      "id": "nodyra-my-nodes",
-      "name": "My Nodes",
-      "description": "Useful nodes for my integration",
-      "author": "your-npm-username",
-      "version": "0.1.0",
-      "nodes": ["my_hello", "my_goodbye"],
-      "install_url": "https://github.com/your-username/nodyra-my-nodes",
-      "pypi_package": "nodyra-my-nodes"
-    }
-  ]
+  "id": "nodyra-example",
+  "name": "Example nodes",
+  "version": "1.2.0",
+  "pypi_package": "nodyra-example",
+  "distribution_url": "https://packages.example/nodyra_example-1.2.0-py3-none-any.whl",
+  "distribution_sha256": "<64 lowercase hex characters>",
+  "publisher_key_id": "nodyra-official",
+  "permissions": {
+    "network": ["api.example.com:443"],
+    "secrets": ["example_api_key"],
+    "filesystem": "artifacts-only"
+  },
+  "compatibility": {
+    "nodyra": ">=0.1.0,<0.2.0",
+    "python": ">=3.12,<3.15"
+  },
+  "lifecycle": "active",
+  "signature": "<urlsafe-base64-ed25519-signature>"
 }
 ```
 
-3. Open a pull request
+The index may place older signed entries in a `versions` array. Selecting an
+older active version performs an explicit rollback; selecting a newer active
+version performs an upgrade. Never reuse a version or replace its distribution
+bytes.
 
-A Nodyra maintainer will review the submission before merging.
+## Publishing checklist
 
-## Security Model
+1. Build a wheel from a clean, tagged commit and generate its SHA-256 digest.
+2. Review transitive dependencies, requested permissions, license, and source.
+3. Sign the canonical manifest with a protected publisher key.
+4. Submit the package plus release history, examples, health metadata, and any
+   active advisories to the curated index.
+5. Install into a disposable environment, run example workflows, then verify
+   upgrade and rollback to the prior supported version.
 
-**Installed PyPI packages run with full interpreter access.** The AST sandbox
-only applies to code strings created directly by users (code nodes,
-AI-generated node functions). A `nodyra-*` package from PyPI runs compiled
-Python with no sandbox — it can do anything the containing process can do.
+## API and operations
 
-Security relies on **registry governance**, not sandbox containment:
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/node-registry/search?q=...` | Search and return trust-enriched packages |
+| `GET` | `/node-registry/packages/{id}` | Inspect versions and metadata |
+| `POST` | `/node-registry/install` | Install, upgrade, or roll back a selected version |
+| `GET` | `/node-registry/installs/{id}` | Poll the durable build job |
 
-- The GitHub-backed registry index is the security perimeter. Every new package
-  is reviewed by a Nodyra maintainer before inclusion.
-- **Review checklist:**
-  - No unexpected network calls or hard-coded IPs
-  - No file-system writes outside designated paths
-  - No `__import__` tricks or dynamic code execution
-  - All dependencies are pinned or vendored
-- Package source is published on GitHub — users can inspect what they install.
-- The `node_registry:install` permission is **admin-only** and not available
-  for custom roles.
-- Set `ALLOW_REGISTRY=false` in your `.env` (or export
-  `NODYRA_ALLOW_REGISTRY=false`) to disable the registry entirely for
-  air-gapped or maximum-security deployments.
+Monitor `nodyra_registry_search_total` and
+`nodyra_registry_install_total`. Alert on increased blocked/failed outcomes and
+quarantine affected versions before removing their history from the index.
 
-### Future (post-MVP)
-
-Longer-term, packages may be signed with a Nodyra-managed key and signature
-verified on install.
-
-## Configuration
-
-| Environment variable | Default | Description |
-|---|---|---|
-| `ALLOW_REGISTRY` | `true` | Set `false` to disable the registry feature |
-| `REGISTRY_INDEX_URL` | `https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json` | URL of the registry index JSON |
-
-## API Reference
-
-The following endpoints are available:
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/node-registry/search?q=...` | Search registry packages |
-| `GET` | `/node-registry/packages/{id}` | Get single package details |
-| `POST` | `/node-registry/install` | Install a package (async) |
-| `GET` | `/node-registry/installs/{install_id}` | Poll install status |
-
-### Install flow
-
-1. `POST /node-registry/install` with `{"package_id": "...", "environment_id": "..."}`
-2. Returns `202 Accepted` with `{"install_id": "...", "status": "pending"}`
-3. The package's `pypi_package` is added to the environment's package list immediately
-4. A background task rebuilds the environment's virtual environment
-5. Poll `GET /node-registry/installs/{install_id}` to track progress:
-   - `pending` → `installing` → `ready` (success) or `failed` (with error message)
-6. On failure, the package is automatically removed from the environment (rollback)
+Set `ALLOW_REGISTRY=false` for air-gapped deployments. Registry index and
+distribution fetches reject redirects, private IP literals, oversized indexes,
+and unsafe URLs.

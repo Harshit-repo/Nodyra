@@ -12,6 +12,7 @@ specific backend's internals. ``get_backend(name)`` is the single factory.
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 import time
 from collections.abc import Iterable, Iterator
@@ -41,6 +42,14 @@ class ArtifactDownload:
     path: Path | None = None
     stream: Iterator[bytes] | None = None
     redirect_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactObjectInfo:
+    key: str
+    size_bytes: int
+    checksum_sha256: str | None = None
+    last_modified: str | None = None
 
 
 class ArtifactBackend(Protocol):
@@ -97,6 +106,15 @@ class ArtifactBackend(Protocol):
         artifacts dir; remote backends upload and the caller flips
         ``storage_backend`` on the row.
         """
+
+    def inspect(self, artifact: Artifact, *, verify_checksum: bool = False) -> ArtifactObjectInfo:
+        """Read bounded object metadata and optionally verify its full checksum."""
+
+    def iter_objects(self, *, prefix: str = "") -> Iterator[ArtifactObjectInfo]:
+        """Iterate stored objects for integrity reconciliation."""
+
+    def delete_keys(self, keys: Iterable[str]) -> None:
+        """Idempotently remove raw orphan keys selected by reconciliation."""
 
 
 # --- Local filesystem backend ------------------------------------------------
@@ -224,6 +242,49 @@ class LocalBackend:
         # Bytes are already on the local FS; nothing to do.
         return None
 
+    def inspect(self, artifact: Artifact, *, verify_checksum: bool = False) -> ArtifactObjectInfo:
+        path = self._path(artifact)
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        checksum: str | None = None
+        if verify_checksum:
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            checksum = digest.hexdigest()
+        stat = path.stat()
+        return ArtifactObjectInfo(
+            key=artifact.storage_key,
+            size_bytes=stat.st_size,
+            checksum_sha256=checksum,
+            last_modified=str(stat.st_mtime_ns),
+        )
+
+    def iter_objects(self, *, prefix: str = "") -> Iterator[ArtifactObjectInfo]:
+        base = _artifact_base_dir()
+        root = _resolve_local_path(prefix) if prefix else base
+        if not root.exists():
+            return
+        candidates = [root] if root.is_file() else root.rglob("*")
+        for path in candidates:
+            if not path.is_file():
+                continue
+            stat = path.stat()
+            yield ArtifactObjectInfo(
+                key=path.relative_to(base).as_posix(),
+                size_bytes=stat.st_size,
+                last_modified=str(stat.st_mtime_ns),
+            )
+
+    def delete_keys(self, keys: Iterable[str]) -> None:
+        for key in keys:
+            try:
+                _resolve_local_path(key).unlink(missing_ok=True)
+            except (OSError, ValueError):
+                continue
+        invalidate_stats_cache()
+
 
 # --- Registry ----------------------------------------------------------------
 
@@ -283,6 +344,7 @@ def reset_backends_for_tests() -> None:
 __all__ = [
     "ArtifactBackend",
     "ArtifactDownload",
+    "ArtifactObjectInfo",
     "LocalBackend",
     "get_backend",
     "register_backend",

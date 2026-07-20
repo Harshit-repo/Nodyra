@@ -1,4 +1,11 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import {
   CaretLeft,
@@ -17,11 +24,13 @@ import {
   Rows,
   SquaresFour,
   Trash,
+  UploadSimple,
   WarningCircle,
 } from "@phosphor-icons/react";
 import { keepPreviousData } from "@tanstack/react-query";
 
 import { api, userFriendlyError } from "./api";
+import { recordActivationEvent } from "./activation";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Logo } from "./Logo";
 import {
@@ -43,7 +52,13 @@ import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
 import { safeGetItem, safeSetItem } from "./safeStorage";
 import { useCan } from "./permissions";
-import { WORKFLOW_TEMPLATES, type WorkflowTemplate } from "./workflowTemplates";
+import { productState } from "./productStates";
+import { WorkflowImportModal } from "./WorkflowImportModal";
+import {
+  WORKFLOW_TEMPLATES,
+  WORKFLOW_TEMPLATE_TRUST,
+  type WorkflowTemplate,
+} from "./workflowTemplates";
 import type {
   FolderInfo,
   ProviderTriggerStatusCounts,
@@ -58,6 +73,17 @@ const BLANK_TEMPLATE: WorkflowTemplateSummary = {
   name: "Blank workflow",
   description: "Start with an empty canvas.",
   tags: ["blank"],
+  version: "1.0.0",
+  creator: "Nodyra",
+  verified: true,
+  credential_free: true,
+  prerequisites: [],
+  expected_result: "An empty workflow draft ready for authoring.",
+  permissions: [],
+  compatibility: ">=0.1.0,<0.2.0",
+  rating: null,
+  rating_count: 0,
+  screenshot_url: null,
 };
 
 type GalleryTemplate = WorkflowTemplate & { graph: NonNullable<WorkflowTemplate["graph"]> };
@@ -66,7 +92,18 @@ function hasGalleryGraph(template: WorkflowTemplate): template is GalleryTemplat
   return template.id !== "blank" && typeof template.graph === "function";
 }
 
-const TEMPLATE_GALLERY = WORKFLOW_TEMPLATES.filter(hasGalleryGraph).slice(0, 6);
+const TEMPLATE_GALLERY = WORKFLOW_TEMPLATES.filter(hasGalleryGraph)
+  .filter((template) => WORKFLOW_TEMPLATE_TRUST[template.id]?.credential_free)
+  .sort((left, right) => {
+    const activationOrder = ["datasetref-filter-export", "sample-csv-artifact", "sample-data-quality"];
+    const leftIndex = activationOrder.indexOf(left.id);
+    const rightIndex = activationOrder.indexOf(right.id);
+    if (leftIndex === -1 && rightIndex === -1) return left.name.localeCompare(right.name);
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  })
+  .slice(0, 8);
 
 const FOLDER_COLORS: Array<{ value: string; label: string }> = [
   { value: "#4c9eff", label: "Blue" },
@@ -210,6 +247,7 @@ function CreateModal({
               id: templateId,
               name: workflowName,
             });
+      if (templateId !== "blank") recordActivationEvent("template_selected");
       notify(templateId === "blank" ? "Workflow created." : "Template created.", "success");
       onCreated(created.id);
     } catch (err) {
@@ -265,6 +303,22 @@ function CreateModal({
             </button>
           ))}
         </div>
+        {selectedTemplate && "version" in selectedTemplate && (
+          <section className="template-selection-details" aria-label="Selected template details">
+            {selectedTemplate.screenshot_url && (
+              <img src={selectedTemplate.screenshot_url} alt="" loading="lazy" />
+            )}
+            <div>
+              <p>
+                <strong>v{selectedTemplate.version}</strong>
+                {selectedTemplate.verified && <span className="badge badge--success">Verified</span>}
+                {selectedTemplate.credential_free && <span className="badge">Credential-free</span>}
+              </p>
+              <small>By {selectedTemplate.creator} · Compatible {selectedTemplate.compatibility}</small>
+              <span>{selectedTemplate.expected_result}</span>
+            </div>
+          </section>
+        )}
         {templatesQuery.isError && (
           <p className="error-text">
             Could not load templates. Blank workflow is still available.
@@ -285,7 +339,9 @@ function CreateModal({
 }
 
 export function WorkflowsPage() {
+  const requestedStarterId = new URLSearchParams(window.location.search).get("starter");
   const [modal, setModal] = useState(false);
+  const [importModal, setImportModal] = useState(false);
   const [modalTemplateId, setModalTemplateId] = useState("blank");
   const [query, setQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -314,6 +370,7 @@ export function WorkflowsPage() {
     return safeGetItem("nodyra-wf-view") === "list" ? "list" : "grid";
   });
   const [starterBusy, setStarterBusy] = useState<string | null>(null);
+  const requestedStarterHandledRef = useRef(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
@@ -368,7 +425,7 @@ export function WorkflowsPage() {
     setModal(true);
   }
 
-  async function createFromTemplate(template: GalleryTemplate): Promise<void> {
+  const createFromTemplate = useCallback(async (template: GalleryTemplate): Promise<void> => {
     if (starterBusy) return;
     setStarterBusy(template.id);
     try {
@@ -376,6 +433,7 @@ export function WorkflowsPage() {
         name: template.name,
         graph: template.graph(),
       });
+      recordActivationEvent("template_selected");
       notify(`"${template.name}" created.`, "success");
       navigate(`/workflows/${created.id}`);
     } catch (err) {
@@ -383,7 +441,26 @@ export function WorkflowsPage() {
     } finally {
       setStarterBusy(null);
     }
-  }
+  }, [createWorkflowFromStarter, navigate, notify, starterBusy]);
+
+  useEffect(() => {
+    if (!requestedStarterId || !canWrite || requestedStarterHandledRef.current) return;
+
+    requestedStarterHandledRef.current = true;
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("starter");
+    window.history.replaceState({}, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+
+    const template = WORKFLOW_TEMPLATES.find(
+      (candidate): candidate is GalleryTemplate =>
+        candidate.id === requestedStarterId && hasGalleryGraph(candidate),
+    );
+    if (!template) {
+      notify("That starter template is not available in this version.", "error");
+      return;
+    }
+    void createFromTemplate(template);
+  }, [canWrite, createFromTemplate, notify, requestedStarterId]);
 
   async function createWithAi(): Promise<void> {
     if (starterBusy) return;
@@ -701,10 +778,15 @@ export function WorkflowsPage() {
             {workflows && <span className="home-count">{workflows.length}</span>}
           </h1>
           {canWrite && (
-            <button className="btn btn-primary home-create-button" title="New workflow (N)" onClick={() => openCreate()}>
-              <Plus size={17} weight="bold" aria-hidden="true" />
-              New workflow
-            </button>
+            <div className="home-bar-actions">
+              <button className="btn" type="button" onClick={() => setImportModal(true)}>
+                <UploadSimple size={17} aria-hidden="true" /> Import
+              </button>
+              <button className="btn btn-primary home-create-button" title="New workflow (N)" onClick={() => openCreate()}>
+                <Plus size={17} weight="bold" aria-hidden="true" />
+                New workflow
+              </button>
+            </div>
           )}
         </div>
 
@@ -1002,6 +1084,7 @@ export function WorkflowsPage() {
               <div className="wf-template-gallery" aria-label="Workflow templates">
                 {TEMPLATE_GALLERY.map((template) => {
                   const graph = template.graph();
+                  const trust = WORKFLOW_TEMPLATE_TRUST[template.id];
                   return (
                     <article className="wf-template-card" key={template.id}>
                       <div className="wf-template-card-top">
@@ -1010,6 +1093,26 @@ export function WorkflowsPage() {
                       </div>
                       <h3>{template.name}</h3>
                       <p>{template.description}</p>
+                      {trust && (
+                        <dl className="wf-template-trust">
+                          <div>
+                            <dt>Output</dt>
+                            <dd>{trust.expected_output}</dd>
+                          </div>
+                          <div>
+                            <dt>Runtime</dt>
+                            <dd>{trust.expected_runtime}</dd>
+                          </div>
+                          <div>
+                            <dt>Access</dt>
+                            <dd>
+                              {trust.network_egress.length > 0
+                                ? `Network: ${trust.network_egress.join(", ")}`
+                                : "Local only · no credentials"}
+                            </dd>
+                          </div>
+                        </dl>
+                      )}
                       <button
                         className="btn btn-sm btn-ghost"
                         type="button"
@@ -1037,13 +1140,24 @@ export function WorkflowsPage() {
             {pagedVisible.map((wf) => {
               const hookBadge = providerStatusBadge(providerCounts(wf));
               const menuOpen = openMenuId === wf.id;
-              const primaryStatus = wf.last_run_status === "error"
-                ? { className: "run-error", label: "error" }
+              const workflowStateKey = wf.last_run_status === "error"
+                ? "error"
                 : wf.active
-                  ? { className: "on", label: "active" }
+                  ? "active"
                   : wf.has_unpublished_changes
-                    ? { className: "draft", label: "draft" }
-                    : { className: "off", label: "inactive" };
+                    ? "draft"
+                    : "inactive";
+              const workflowState = productState("workflow", workflowStateKey);
+              const primaryStatus = {
+                className: workflowStateKey === "error"
+                  ? "run-error"
+                  : workflowStateKey === "active"
+                    ? "on"
+                    : workflowStateKey === "draft"
+                      ? "draft"
+                      : "off",
+                label: workflowState.label,
+              };
               return (
                 <article
                   key={wf.id}
@@ -1064,7 +1178,11 @@ export function WorkflowsPage() {
                     {selectedIds.has(wf.id) && <Check size={14} weight="bold" />}
                   </button>
                   <div className="wf-card-top">
-                    <span className={`wf-status ${primaryStatus.className}`}>
+                    <span
+                      className={`wf-status ${primaryStatus.className}`}
+                      title={workflowState.explanation}
+                      aria-label={workflowState.accessibility_text}
+                    >
                       {primaryStatus.label}
                     </span>
                     {hookBadge && (
@@ -1257,6 +1375,15 @@ export function WorkflowsPage() {
           onClose={() => setModal(false)}
           onCreated={(id) => navigate(`/workflows/${id}`)}
           initialTemplateId={modalTemplateId}
+        />
+      )}
+      {importModal && canWrite && (
+        <WorkflowImportModal
+          onClose={() => setImportModal(false)}
+          onImported={(id) => {
+            setImportModal(false);
+            navigate(`/workflows/${id}`);
+          }}
         />
       )}
       {pendingDelete && (

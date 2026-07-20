@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "target_version": "0.1.0",
+  "source_version": null,
+  "outcome": "not_applicable",
+  "reason": "0.1.0 is the first aligned Beta release and has no supported N-1 product release.",
+  "required_for_next_release": true
+}

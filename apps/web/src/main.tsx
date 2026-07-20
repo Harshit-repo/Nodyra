@@ -7,11 +7,12 @@ import "@xyflow/react/dist/style.css";
 import App from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 import "./index.css";
-import "./editor.css";
+import { applyLocalePreference } from "./i18n";
 import { applyFontPreference, applyThemePreference, listenForSystemThemeChanges } from "./theme";
 
 applyThemePreference();
 applyFontPreference();
+applyLocalePreference();
 listenForSystemThemeChanges();
 
 // A data router (vs. <BrowserRouter>) so EditorPage can use `useBlocker` to

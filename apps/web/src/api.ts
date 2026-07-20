@@ -10,6 +10,7 @@ import type {
   AgenticBuildRequest,
   AuthState,
   ArtifactInfo,
+  ArtifactLineage,
   AgenticBuildEvent,
   AiWorkflowDraftRequest,
   AiWorkflowDraftResponse,
@@ -447,6 +448,25 @@ export const api = {
         body: JSON.stringify({ name }),
       },
     ),
+  previewWorkflowImport: (body: {
+    source: string;
+    source_format: import("./types").WorkflowImportFormat;
+    allow_partial?: boolean;
+  }) =>
+    request<import("./types").WorkflowImportPreview>("/workflows/import/preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  importWorkflow: (body: {
+    name: string;
+    source: string;
+    source_format: import("./types").WorkflowImportFormat;
+    allow_partial?: boolean;
+  }) =>
+    request<{ workflow_id: string; name: string }>("/workflows/import", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   getWorkflow: (id: string) => request<WorkflowDetail>(`/workflows/${id}`),
   updateWorkflow: (id: string, patch: WorkflowPatch) =>
     request<WorkflowDetail>(`/workflows/${id}`, {
@@ -704,6 +724,8 @@ export const api = {
   },
   getArtifact: (artifactId: string) =>
     request<ArtifactInfo>(`/artifacts/${artifactId}`),
+  getArtifactLineage: (artifactId: string) =>
+    request<ArtifactLineage>(`/artifacts/${artifactId}/lineage`),
   deleteArtifact: (artifactId: string) =>
     request<void>(`/artifacts/${artifactId}`, { method: "DELETE" }),
   queryDataset: (artifactId: string, sql: string, limit = 200) =>
@@ -1117,6 +1139,8 @@ export const api = {
   // --- Ops dashboard --------------------------------------------------------
   getRuntimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),
   runtimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),
+  productionAttestation: () =>
+    request<ProductionAttestation>("/ops/production-attestation"),
   queueStats: () => request<QueueStats>("/ops/queue"),
   queueCapacity: () => request<QueueCapacity>("/ops/capacity"),
   sandboxStatus: () => request<SandboxStatus>("/ops/sandbox"),
@@ -1198,6 +1222,7 @@ export const api = {
   installRegistryPackage: (body: {
     package_id: string;
     environment_id: string;
+    version?: string;
   }) =>
     request<RegistryInstallResponse>("/node-registry/install", {
       method: "POST",
@@ -1333,6 +1358,26 @@ export interface RuntimeModeStatus {
   allow_insecure: boolean;
   otel_enabled: boolean;
   warnings: string[];
+}
+
+export interface ProductionAttestationCheck {
+  id: string;
+  category: string;
+  title: string;
+  status: "pass" | "warning" | "fail";
+  severity: "info" | "warning" | "critical";
+  evidence: Record<string, unknown>;
+  remediation: string | null;
+  last_verified_at: string;
+}
+
+export interface ProductionAttestation {
+  schema_version: number;
+  generated_at: string;
+  production_ready: boolean;
+  insecure_override: boolean;
+  summary: { passed: number; warnings: number; failed: number };
+  checks: ProductionAttestationCheck[];
 }
 
 export interface SandboxStatus {

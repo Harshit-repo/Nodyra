@@ -15,6 +15,8 @@ from typing import Any
 
 import websockets
 
+from nodyra.execution_protocol import PROTOCOL_VERSION, validate_runner_event
+
 logger = logging.getLogger("nodyra_runner")
 
 MessageHandler = Callable[[dict, Any], Awaitable[None]]
@@ -40,7 +42,9 @@ class AgentWSClient:
             logger.warning("send dropped — not connected: %s", msg.get("type"))
             return
         try:
-            await ws.send(json.dumps(msg))
+            payload = {**msg, "protocol_version": PROTOCOL_VERSION}
+            validate_runner_event(payload)
+            await ws.send(json.dumps(payload))
         except Exception:  # noqa: BLE001 - connection died mid-send
             logger.warning("send failed — connection lost")
 

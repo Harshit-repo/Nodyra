@@ -14,6 +14,7 @@ import app.mcp.tools as mcp_tools_module
 import app.routers.chat_public as chat_public_module
 import app.routers.runner_pools as runner_pools_module
 import app.services.agentic_builder as agentic_builder_module
+import app.services.artifact_reconcile as artifact_reconcile_module
 import app.services.artifacts as artifacts_module
 import app.services.backends as backends_module
 import app.services.chat_service as chat_service_module
@@ -374,6 +375,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     licensing_module.invalidate_license_cache()
     originals = {
         agentic_builder_module: agentic_builder_module.SessionLocal,
+        artifact_reconcile_module: artifact_reconcile_module.SessionLocal,
         backends_module: backends_module.SessionLocal,
         artifacts_module: artifacts_module.SessionLocal,
         chat_service_module: chat_service_module.SessionLocal,
@@ -395,6 +397,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         main_module: main_module.SessionLocal,
     }
     agentic_builder_module.SessionLocal = test_session
+    artifact_reconcile_module.SessionLocal = test_session
     backends_module.SessionLocal = test_session
     artifacts_module.SessionLocal = test_session
     chat_service_module.SessionLocal = test_session

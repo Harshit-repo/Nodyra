@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
+from app.config import settings
+
 
 def _escape_label_value(v: str) -> str:
     """Escape a Prometheus label value per the exposition format spec.
@@ -220,6 +222,12 @@ queue_leased = _Gauge(
     "Runs currently leased by this process.",
 )
 
+process_info = _Gauge(
+    "nodyra_process_info",
+    "Nodyra process presence grouped by execution-plane role.",
+)
+process_info.set(1, role=settings.dispatch_role)
+
 node_executions_total = _Counter(
     "nodyra_node_executions_total",
     "Total node executions across all runs.",
@@ -237,6 +245,31 @@ output_store_events_total = _Counter(
 code_validation_blocked_total = _Counter(
     "nodyra_code_validation_blocked_total",
     "Code-node validation rejections, labeled by bounded reason and blocked target.",
+)
+
+registry_search_total = _Counter(
+    "nodyra_registry_search_total",
+    "Community registry search attempts grouped by outcome.",
+)
+
+registry_install_total = _Counter(
+    "nodyra_registry_install_total",
+    "Community registry installs grouped by bounded lifecycle status.",
+)
+
+template_instantiation_total = _Counter(
+    "nodyra_template_instantiation_total",
+    "Workflow template instantiations grouped by template and outcome.",
+)
+
+migration_preview_total = _Counter(
+    "nodyra_migration_preview_total",
+    "Workflow migration compatibility previews grouped by format and outcome.",
+)
+
+migration_import_total = _Counter(
+    "nodyra_migration_import_total",
+    "Workflow migration imports grouped by format and outcome.",
 )
 
 
@@ -273,9 +306,15 @@ def _render_all() -> str:
         active_runs,
         queue_depth,
         queue_leased,
+        process_info,
         node_executions_total,
         output_store_events_total,
         code_validation_blocked_total,
+        registry_search_total,
+        registry_install_total,
+        template_instantiation_total,
+        migration_preview_total,
+        migration_import_total,
     ]
     return "\n\n".join(m.render() for m in metrics) + "\n"
 

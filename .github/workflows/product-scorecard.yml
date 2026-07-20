@@ -1,0 +1,24 @@
+name: Monthly product scorecard
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 1 * *"
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate evidence and 10/10 claims
+        run: python scripts/evaluate_product_scorecard.py --output product-scorecard-evidence.json
+      - name: Publish scorecard evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: product-scorecard-evidence
+          path: product-scorecard-evidence.json
+          retention-days: 400

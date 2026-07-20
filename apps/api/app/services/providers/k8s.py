@@ -17,6 +17,7 @@ from typing import Any
 from app.models import RunnerPool
 from app.services.executors.base import EventCallback
 from app.services.providers.agent import QUEUE_TTL_SECONDS, _AgentConnection
+from nodyra.execution_protocol import build_dispatch_envelope
 
 logger = logging.getLogger("app.services.remote_dispatch")
 
@@ -128,7 +129,7 @@ async def assign_k8s_run(
     d._run_callbacks[run_id] = on_event
     d._k8s_futures[run_id] = future
     # The pod fetches its run payload over the WS once it connects.
-    d._k8s_payloads[run_id] = {
+    d._k8s_payloads[run_id] = build_dispatch_envelope({
         "type": "run_assigned",
         "run_id": run_id,
         "env": env_payload,
@@ -139,7 +140,7 @@ async def assign_k8s_run(
         "pause_on_approval": pause_on_approval,
         "agent_action_resume": agent_action_resume or {},
         "subworkflow_meta": subworkflow_meta or {},
-    }
+    })
 
     try:
         await batch_v1.create_namespaced_job(namespace=namespace, body=job_body)

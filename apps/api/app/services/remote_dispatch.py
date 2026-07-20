@@ -50,6 +50,7 @@ from app.services.providers.agent import (  # noqa: F401
     _AgentConnection,
     _QueuedError,
 )
+from nodyra import __version__ as NODYRA_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -386,7 +387,7 @@ def build_env_payload(
     env_id: str,
     python_version: str,
     packages: list[str],
-    nodyra_version: str = "0.0.1",
+    nodyra_version: str = NODYRA_VERSION,
     runtime_flags: dict | None = None,
 ) -> dict:
     packages_hash = hashlib.sha256(

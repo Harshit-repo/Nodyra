@@ -18,7 +18,6 @@
 .nodyra-shell-content {
   min-width: 0;
   padding-left: var(--nodyra-shell-sidebar-width, 248px);
-  transition: padding-left 180ms ease;
 }
 
 .nodyra-shell-main {
@@ -479,7 +478,6 @@
   overflow: visible;
   background: color-mix(in srgb, var(--surface, #10141c) 96%, transparent);
   border-right: 1px solid var(--line-2, #1a2029);
-  transition: width 180ms ease, padding 180ms ease;
 }
 
 .nodyra-shell-sidebar-head {

@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { ApiError, errorMessage, userFriendlyError } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import { useEntitlements } from "./entitlements";
+import { productState } from "./productStates";
 import {
   useCreateDeploymentMutation,
   useDeleteDeploymentMutation,
@@ -101,8 +102,12 @@ function DeploymentHistory({
           onClick={() => onOpenRun(r.id)}
           title="Open in Executions"
         >
-          <span className={`run-pill ${runStatusClass(r.status)}`}>
-            {r.status}
+          <span
+            className={`run-pill ${runStatusClass(r.status)}`}
+            title={productState("run", r.status).explanation}
+            aria-label={productState("run", r.status).accessibility_text}
+          >
+            {productState("run", r.status).label}
           </span>
           <span className="muted">{r.trigger_type}</span>
           <span className="muted">

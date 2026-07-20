@@ -149,7 +149,7 @@ def _validate_node_types(graph: dict | WorkflowGraph) -> None:
         unknown.add(t)
     if unknown:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"message": "Unknown node types", "unknown": sorted(unknown)},
         )
 
@@ -1053,7 +1053,7 @@ async def update_workflow(
         if schema is not None:
             if schema.get("type") not in (None, "object"):
                 raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
                     "mcp_parameters_schema must describe an object.",
                 )
             schema = {"type": "object", **schema}
@@ -1061,7 +1061,7 @@ async def update_workflow(
                 validator_for(schema).check_schema(schema)
             except SchemaError as exc:
                 raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
                     f"Invalid mcp_parameters_schema: {exc.message}",
                 ) from exc
         workflow.mcp_parameters_schema = schema
@@ -1355,7 +1355,7 @@ async def publish_workflow(
                 )
         if _unauthenticated:
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={
                     "message": (
                         "Webhook auth is required (settings.webhook_require_auth=True). "
