@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -101,7 +101,7 @@ def _select_package_version(package: dict[str, Any], version: str | None) -> dic
 @router.get("")
 @router.get("/search")
 async def search_registry(
-    q: str = Query("", description="Search query"),
+    q: str = Query("", max_length=200, description="Search query"),
     category: str = Query("", max_length=80, description="Category filter"),
     _user: User | None = Depends(optional_current_user),
 ) -> dict[str, Any]:
@@ -129,7 +129,7 @@ async def search_registry(
         registry_search_total.inc(outcome="upstream_network_error")
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            f"Registry index unreachable: {exc}.",
+            "Registry index unreachable.",
         ) from exc
     except ValueError as exc:
         registry_search_total.inc(outcome="invalid_index")
@@ -163,7 +163,7 @@ async def search_registry(
 
 @router.get("/packages/{package_id:path}")
 async def get_package(
-    package_id: str,
+    package_id: str = Path(min_length=1, max_length=200),
     _user: User | None = Depends(optional_current_user),
 ) -> dict[str, Any]:
     """Return a single package's details from the registry."""
@@ -183,7 +183,7 @@ async def get_package(
     except httpx.RequestError as exc:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            f"Registry index unreachable: {exc}.",
+            "Registry index unreachable.",
         ) from exc
     except ValueError as exc:
         raise HTTPException(

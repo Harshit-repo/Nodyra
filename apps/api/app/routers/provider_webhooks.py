@@ -54,9 +54,7 @@ async def _provider_request(request: Request) -> ProviderTriggerRequest:
     )
 
 
-async def _enforce_provider_webhook_rate_limit(
-    subscription_id: str, request: Request
-) -> None:
+async def _enforce_provider_webhook_rate_limit(subscription_id: str, request: Request) -> None:
     """Rate-limit provider webhook ingress per (subscription, caller IP).
 
     Provider callbacks are unauthenticated at the Nodyra layer (auth is the
@@ -80,7 +78,6 @@ async def _enforce_provider_webhook_rate_limit(
         )
 
 
-@router.api_route("/provider-webhook/{subscription_id}", methods=_METHODS)
 async def provider_webhook(subscription_id: str, request: Request) -> Response:
     """Receive a delivery for a lifecycle-managed provider trigger."""
     from app.tenancy import run_as_system
@@ -120,4 +117,13 @@ async def provider_webhook(subscription_id: str, request: Request) -> Response:
         status_code=result.status,
         headers=result.headers,
         media_type="text/plain",
+    )
+
+
+for _method in _METHODS:
+    router.add_api_route(
+        "/provider-webhook/{subscription_id}",
+        provider_webhook,
+        methods=[_method],
+        operation_id=f"provider_webhook_{_method.lower()}",
     )

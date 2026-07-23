@@ -1,6 +1,15 @@
 """Live expression-preview endpoint — faithful to the runtime evaluator."""
 
+import pytest_asyncio
 from httpx import AsyncClient
+
+from app.services import expr_preview
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _stop_preview_worker_after_test():
+    yield
+    await expr_preview.shutdown()
 
 
 async def test_preview_string_concat(client: AsyncClient) -> None:
@@ -79,3 +88,24 @@ async def test_preview_plain_text_passthrough(client: AsyncClient) -> None:
         "/expression-preview", json={"value": "no expression here"}
     )
     assert resp.json()["result"] == "no expression here"
+
+
+async def test_preview_rejects_oversized_expression(client: AsyncClient) -> None:
+    resp = await client.post("/expression-preview", json={"value": "x" * 20_001})
+    assert resp.status_code == 422
+
+
+async def test_api_responses_include_defensive_headers(client: AsyncClient) -> None:
+    resp = await client.get("/health/live")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["cross-origin-opener-policy"] == "same-origin"
+    assert resp.headers["cross-origin-resource-policy"] == "same-site"
+    assert "camera=()" in resp.headers["permissions-policy"]
+
+
+async def test_control_character_query_is_rejected_before_database(
+    client: AsyncClient,
+) -> None:
+    resp = await client.get("/artifacts", params={"workflow_id": "\x00"})
+    assert resp.status_code == 400
+    assert "control characters" in resp.json()["detail"]

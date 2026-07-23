@@ -383,7 +383,6 @@ async def stop_listen_session(path: str) -> None:
     await _stop_listening(path, active_org_id() or DEFAULT_ORG_ID)
 
 
-@router.api_route("/webhook-test/{path:path}", methods=_METHODS)
 async def capture_webhook(path: str, request: Request) -> dict:
     """Editor test URL — only active while a listen session is registered.
 
@@ -454,6 +453,15 @@ async def capture_webhook(path: str, request: Request) -> dict:
         "runs": result.run_ids,
         "x_request_id": req_id,
     }
+
+
+for _method in _METHODS:
+    router.add_api_route(
+        "/webhook-test/{path:path}",
+        capture_webhook,
+        methods=[_method],
+        operation_id=f"capture_webhook_{_method.lower()}",
+    )
 
 
 async def _enforce_webhook_rate_limit(
@@ -570,7 +578,6 @@ async def github_sync_webhook(
     return {"status": "ok", "enqueued": enqueued}
 
 
-@production_router.api_route("/webhook/{path:path}", methods=_METHODS)
 async def trigger_webhook(path: str, request: Request) -> dict:
     """Production webhook — dispatch a run of matching active workflows.
 
@@ -659,3 +666,12 @@ async def trigger_webhook(path: str, request: Request) -> dict:
         "runs": result.run_ids,
         "x_request_id": req_id,
     }
+
+
+for _method in _METHODS:
+    production_router.add_api_route(
+        "/webhook/{path:path}",
+        trigger_webhook,
+        methods=[_method],
+        operation_id=f"trigger_webhook_{_method.lower()}",
+    )

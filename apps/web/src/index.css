@@ -109,12 +109,13 @@
      4.5:1 on every light surface (now ≥4.7:1). */
   --ink-3: #5a6577;
 
-  --accent: #246bdb;
-  --accent-2: #3d82f3;
+  --accent: #174f9f;
+  --accent-2: #1859ae;
   --accent-deep: #1c55ad;
   --accent-glow: rgba(36, 107, 219, 0.14);
 
   --shadow: 0 18px 44px -26px rgba(28, 41, 62, 0.32);
+  --color-error: #b42335;
 }
 
 * {
@@ -865,6 +866,7 @@ textarea:focus-visible,
 .home-bar-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -1402,6 +1404,8 @@ textarea:focus-visible,
   border-radius: var(--radius);
   min-height: 110px;
   padding: 11px 13px;
+  min-width: 0;
+  overflow: hidden;
   cursor: pointer;
   transition:
     border-color 140ms ease,
@@ -1537,6 +1541,7 @@ textarea:focus-visible,
   font-size: 14px;
   margin: 7px 0 5px;
   line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 .wf-meta {
   display: flex;
@@ -2082,11 +2087,11 @@ textarea:focus-visible,
   border: 1px dashed var(--line-2);
   border-radius: 20px;
   background: transparent;
-  color: var(--ink-3);
+  color: var(--ink-2);
   font-size: 11.5px;
   cursor: pointer;
   margin-left: 0;
-  opacity: 0.58;
+  opacity: 1;
   transition:
     border-color 120ms ease,
     color 120ms ease,
@@ -2503,6 +2508,19 @@ textarea:focus-visible,
   gap: 6px;
 }
 
+.activation-privacy label {
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.activation-privacy input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .activation-privacy button {
   padding: 4px;
   border: 0;
@@ -2595,13 +2613,14 @@ textarea:focus-visible,
   }
   .activation-checklist {
     right: 10px;
-    bottom: 10px;
+    bottom: calc(var(--nodyra-shell-mobile-nav-height, 60px) + 10px + env(safe-area-inset-bottom, 0px));
     width: calc(100vw - 20px);
-    max-height: calc(100vh - 20px);
+    max-height: calc(100dvh - var(--nodyra-shell-mobile-nav-height, 60px) - 20px - env(safe-area-inset-bottom, 0px));
   }
   .activation-reopen {
     right: 10px;
-    bottom: 10px;
+    bottom: calc(var(--nodyra-shell-mobile-nav-height, 60px) + 10px + env(safe-area-inset-bottom, 0px));
+    min-height: 44px;
   }
 }
 
@@ -3554,6 +3573,21 @@ kbd {
 .role-viewer {
   color: var(--ink-3);
 }
+:root[data-theme="light"] .role-owner {
+  color: #765000;
+  border-color: #9a6a00;
+  background: #fff4cc;
+}
+:root[data-theme="light"] .role-admin {
+  color: #075f45;
+  border-color: #0a7a59;
+  background: #dcf4eb;
+}
+:root[data-theme="light"] .role-editor {
+  color: #174f9f;
+  border-color: #246bdb;
+  background: #e2ecfb;
+}
 /* ---- security ---- */
 .security-create {
   display: grid;
@@ -3613,6 +3647,28 @@ kbd {
 .security-user-row .muted {
   margin-top: 4px;
   font-size: 12px;
+}
+.security-user-row > *,
+.security-user-row strong,
+.security-user-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.security-access-state {
+  max-width: 720px;
+  padding: 20px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.security-access-state h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+.security-access-state p {
+  margin: 0;
+  color: var(--ink-2);
+  line-height: 1.55;
 }
 
 /* ---- settings ---- */
@@ -3859,6 +3915,8 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 11px;
+  min-width: 0;
+  overflow: hidden;
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease;
@@ -4255,9 +4313,12 @@ kbd {
   display: flex;
   align-items: center;
   gap: 9px;
+  min-width: 0;
 }
 .env-title h3 {
   font-size: 17px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .env-global {
   font-family: var(--font-mono);
@@ -4330,6 +4391,8 @@ kbd {
   color: var(--ink);
   padding: 3px 4px 3px 9px;
   border-radius: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .pkg-chip button {
   border: none;
@@ -5846,6 +5909,10 @@ kbd {
 }
 
 @media (max-width: 760px) {
+  .env-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .template-picker,
   .artifact-browser-filters,
   .home-stat-strip,
@@ -5883,6 +5950,14 @@ kbd {
   .home {
     padding: 0 18px 64px;
   }
+  .home-bar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .home-bar-actions {
+    width: 100%;
+  }
   .home-header {
     align-items: flex-start;
     flex-direction: column;
@@ -5910,6 +5985,16 @@ kbd {
   .credential-form {
     max-height: none;
     overflow: visible;
+  }
+}
+
+@media (max-width: 390px) {
+  .home {
+    padding-inline: 14px;
+  }
+  .home-bar-actions > .btn {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 }
 

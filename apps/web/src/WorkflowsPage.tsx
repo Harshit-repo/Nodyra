@@ -1029,7 +1029,11 @@ export function WorkflowsPage() {
         )}
 
         {!workflows && !error && (
-          <div className="wf-grid" aria-label="Loading workflows">
+          <div
+            className="wf-grid"
+            role="status"
+            aria-label="Loading workflows"
+          >
             {Array.from({ length: 6 }).map((_, index) => (
               <div className="wf-card skeleton-card" key={index}>
                 <span className="skeleton-line short" />

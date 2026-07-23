@@ -7,8 +7,7 @@ export const PASSWORD = "e2e-password-123";
  * Authenticate through the real login UI. The first test to reach a freshly
  * reset E2E database creates the owner; later isolated browser contexts sign
  * in as that same owner. Each isolated context also completes the first-run
- * acknowledgement before returning so callers never interact through the
- * modal overlay.
+ * checklist collapse before returning so callers start from a stable canvas.
  */
 export async function authenticateOwner(page: Page): Promise<void> {
   await page.goto("/");
@@ -29,12 +28,17 @@ export async function authenticateOwner(page: Page): Promise<void> {
     await signIn.click();
   }
 
-  const firstRunDialog = page.getByRole("dialog", { name: "Workspace setup" });
-  await expect(firstRunDialog).toBeVisible();
-  await firstRunDialog
-    .getByRole("button", { name: "Dismiss first-run setup" })
-    .click();
-  await expect(firstRunDialog).toBeHidden();
+  const collapseChecklist = page.getByRole("button", {
+    name: "Collapse activation checklist",
+  });
+  const openChecklist = page.getByRole("button", {
+    name: /Open activation checklist/,
+  });
+  await expect(collapseChecklist.or(openChecklist)).toBeVisible();
+  if (await collapseChecklist.isVisible()) {
+    await collapseChecklist.click();
+    await expect(openChecklist).toBeVisible();
+  }
 
   await expect(
     page.getByRole("button", { name: "New workflow" }).first(),

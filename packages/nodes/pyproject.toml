@@ -12,10 +12,10 @@ dependencies = [
     "markdown>=3.5",
     "beautifulsoup4>=4.12",
     "jsonschema>=4.21",
-    "cryptography>=42.0",
+    "cryptography>=48.0.1",
     "duckdb>=1.0",
     "pyarrow>=15.0",
-    "mcp>=1.9",
+    "mcp>=1.28.1",
     "defusedxml>=0.7.1",
 ]
 

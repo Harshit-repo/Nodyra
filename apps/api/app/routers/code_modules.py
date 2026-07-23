@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -170,6 +170,10 @@ async def create_code_module(
         raise HTTPException(400, "workflow_id is required for scope=workflow")
     if body.scope == "environment" and not body.environment_id:
         raise HTTPException(400, "environment_id is required for scope=environment")
+    if body.scope == "workflow" and await session.get(Workflow, body.workflow_id) is None:
+        raise HTTPException(404, "Workflow not found")
+    if body.scope == "environment" and await session.get(Environment, body.environment_id) is None:
+        raise HTTPException(404, "Environment not found")
 
     module = CodeModule(
         scope=body.scope,
@@ -345,7 +349,7 @@ async def starter_graph(module_id: str, session: AsyncSession = Depends(get_sess
 
 
 class CodeFormatRequest(BaseModel):
-    code: str
+    code: str = Field(max_length=1_000_000)
 
 
 class CodeFormatResult(BaseModel):
@@ -408,7 +412,7 @@ async def format_code(body: CodeFormatRequest) -> CodeFormatResult:
 
 
 class CodeLintRequest(BaseModel):
-    code: str
+    code: str = Field(max_length=1_000_000)
 
 
 class LintDiagnostic(BaseModel):

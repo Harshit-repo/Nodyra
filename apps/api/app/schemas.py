@@ -697,23 +697,28 @@ class DatasetQueryResult(BaseModel):
 
 class CredentialCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    type: str = "generic"
-    scope: str = "global"
-    workflow_id: str | None = None
-    environment_id: str | None = None
-    runner_pool_id: str | None = None
-    description: str = ""
-    data: dict[str, str] = Field(default_factory=dict)
+    type: str = Field(
+        default="generic",
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+    )
+    scope: Literal["global", "workflow", "environment", "runner_pool"] = "global"
+    workflow_id: str | None = Field(default=None, max_length=32)
+    environment_id: str | None = Field(default=None, max_length=32)
+    runner_pool_id: str | None = Field(default=None, max_length=32)
+    description: str = Field(default="", max_length=2_000)
+    data: dict[str, str] = Field(default_factory=dict, max_length=100)
 
 
 class CredentialUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    scope: str | None = None
-    workflow_id: str | None = None
-    environment_id: str | None = None
-    runner_pool_id: str | None = None
-    description: str | None = None
-    data: dict[str, str] | None = None
+    scope: Literal["global", "workflow", "environment", "runner_pool"] | None = None
+    workflow_id: str | None = Field(default=None, max_length=32)
+    environment_id: str | None = Field(default=None, max_length=32)
+    runner_pool_id: str | None = Field(default=None, max_length=32)
+    description: str | None = Field(default=None, max_length=2_000)
+    data: dict[str, str] | None = Field(default=None, max_length=100)
 
 
 class CredentialInfo(BaseModel):
@@ -791,7 +796,11 @@ class CredentialTestRequest(BaseModel):
 
 
 class CredentialTestDraftRequest(BaseModel):
-    type: str
+    type: str = Field(
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+    )
     data: dict[str, str] = Field(default_factory=dict)
     context: dict[str, Any] = Field(default_factory=dict)
 
@@ -1102,18 +1111,18 @@ class DeploymentInfo(BaseModel):
 
 
 class CodeModuleCreate(BaseModel):
-    scope: str = "workflow"
-    workflow_id: str | None = None
-    environment_id: str | None = None
+    scope: Literal["global", "workflow", "environment"] = "workflow"
+    workflow_id: str | None = Field(default=None, max_length=32)
+    environment_id: str | None = Field(default=None, max_length=32)
     name: str = Field(min_length=1, max_length=200)
-    contents: str = ""
+    contents: str = Field(default="", max_length=1_000_000)
     include_undecorated: bool = False
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict = Field(default_factory=dict, max_length=100)
 
 
 class CodeModuleUpdate(BaseModel):
-    name: str | None = None
-    contents: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    contents: str | None = Field(default=None, max_length=1_000_000)
     include_undecorated: bool | None = None
 
 

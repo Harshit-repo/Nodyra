@@ -60,7 +60,8 @@ def _info(cred: Credential, org_kek: bytes | None = None) -> CredentialInfo:
         logger.warning(
             "credential %s (%s) decrypted to empty dict — possible key mismatch "
             "or corrupt ciphertext (B-09)",
-            cred.id, cred.name,
+            cred.id,
+            cred.name,
         )
     type_spec = get_credential_type(cred.type)
     return CredentialInfo(
@@ -257,7 +258,11 @@ async def start_oauth_credential(
     )
 
 
-@router.get("/oauth/callback", name="oauth_callback")
+@router.get(
+    "/oauth/callback",
+    name="oauth_callback",
+    response_class=HTMLResponse,
+)
 async def oauth_callback(
     code: str | None = None,
     state: str | None = None,
@@ -281,7 +286,10 @@ async def oauth_callback(
 
     ip = get_client_ip(request)
     allowed = await _rl.allow(
-        "oauth_callback", ip, limit=20, window_seconds=60,
+        "oauth_callback",
+        ip,
+        limit=20,
+        window_seconds=60,
     )
     if not allowed:
         raise HTTPException(
@@ -304,11 +312,7 @@ async def oauth_callback(
     try:
         payload = decode_oauth_state(state)
         credential_type = str(payload["credential_type"])
-        scopes = [
-            str(scope)
-            for scope in payload.get("scopes", [])
-            if str(scope).strip()
-        ]
+        scopes = [str(scope) for scope in payload.get("scopes", []) if str(scope).strip()]
         token_payload = await exchange_authorization_code(
             type_id=credential_type,
             code=code,
@@ -334,9 +338,7 @@ async def oauth_callback(
     # ``org_id`` is absent for states minted before this fix and for the
     # single-tenant default — fall back to the request's current context.
     state_org_id = payload.get("org_id")
-    org_token = (
-        current_org_id.set(str(state_org_id)) if state_org_id is not None else None
-    )
+    org_token = current_org_id.set(str(state_org_id)) if state_org_id is not None else None
     try:
         await _validate_scope(
             session,
@@ -454,7 +456,16 @@ def _oauth_popup_html(
     return HTMLResponse(
         content=html,
         status_code=200,
-        headers={"Content-Security-Policy": csp},
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": csp,
+            "Cross-Origin-Embedder-Policy": "require-corp",
+            # The callback is intentionally a popup returning from a
+            # cross-origin identity provider. Preserve its opener so the
+            # success/error message can reach the SPA.
+            "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+            "Cross-Origin-Resource-Policy": "same-origin",
+        },
     )
 
 
@@ -516,10 +527,7 @@ async def list_credentials(
 ):
     total = await session.scalar(select(func.count()).select_from(Credential))
     result = await session.scalars(
-        select(Credential)
-        .order_by(Credential.name)
-        .offset(offset)
-        .limit(limit)
+        select(Credential).order_by(Credential.name).offset(offset).limit(limit)
     )
     rows = result.all()
     # B-11: batch-fetch all org KEKs in one query instead of one per unique org.
@@ -590,9 +598,14 @@ async def create_credential(
         encrypted_dek=_enc_dek,
     )
     session.add(cred)
-    await log_audit(session, "create", "credential", detail=body.name,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "create",
+        "credential",
+        detail=body.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.commit()
     await session.refresh(cred)
     invalidate_secret_cache(cred.org_id)
@@ -615,15 +628,10 @@ async def update_credential(
         cred.name = body.name
     scope = body.scope or cred.scope
     workflow_id = body.workflow_id if body.workflow_id is not None else cred.workflow_id
-    environment_id = (
-        body.environment_id if body.environment_id is not None else cred.environment_id
-    )
-    runner_pool_id = (
-        body.runner_pool_id if body.runner_pool_id is not None else cred.runner_pool_id
-    )
+    environment_id = body.environment_id if body.environment_id is not None else cred.environment_id
+    runner_pool_id = body.runner_pool_id if body.runner_pool_id is not None else cred.runner_pool_id
     if body.scope is not None or any(
-        value is not None
-        for value in (body.workflow_id, body.environment_id, body.runner_pool_id)
+        value is not None for value in (body.workflow_id, body.environment_id, body.runner_pool_id)
     ):
         await _validate_scope(
             session,
@@ -642,9 +650,15 @@ async def update_credential(
         cred.encrypted_data, cred.encrypted_dek = await org_keys.encrypt_credential_for(
             cred.org_id, body.data, session
         )
-    await log_audit(session, "update", "credential", cred.id, cred.name,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "update",
+        "credential",
+        cred.id,
+        cred.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.commit()
     await session.refresh(cred)
     if body.data is not None:
@@ -699,9 +713,7 @@ async def test_credential_draft(
     "Test connection" button.
     """
     type_spec = get_credential_type(body.type)
-    test_service = (
-        type_spec.test_service if type_spec and type_spec.test_service else body.type
-    )
+    test_service = type_spec.test_service if type_spec and type_spec.test_service else body.type
     return await test_credential_connection(test_service, body.data, body.context)
 
 
@@ -716,9 +728,15 @@ async def delete_credential(
     actor: User | None = Depends(optional_current_user),
 ):
     cred = await _load(session, cred_id)
-    await log_audit(session, "delete", "credential", cred.id, cred.name,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "delete",
+        "credential",
+        cred.id,
+        cred.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.delete(cred)
     await session.commit()
     invalidate_secret_cache(cred.org_id)

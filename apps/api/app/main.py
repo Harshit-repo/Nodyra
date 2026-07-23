@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -405,13 +406,9 @@ async def lifespan(app: FastAPI):
         if settings.audit_webhook_url and settings.audit_webhook_secret
         else None
     )
-    replica_heartbeat = asyncio.create_task(
-        _as_system(replica_heartbeat_loop)(role="api")
-    )
+    replica_heartbeat = asyncio.create_task(_as_system(replica_heartbeat_loop)(role="api"))
     stuck_detector = (
-        asyncio.create_task(_as_system(stuck_run_detector_loop)())
-        if dispatch_inline
-        else None
+        asyncio.create_task(_as_system(stuck_run_detector_loop)()) if dispatch_inline else None
     )
     yield
     # Graceful drain on shutdown: stop the dispatch loop from leasing new
@@ -422,7 +419,23 @@ async def lifespan(app: FastAPI):
     # (matters for tests that reuse the process).
     _prior_drain = settings.queue_drain
     settings.queue_drain = True
-    for task in (scheduler, retention, reaper, autoscaler, docker_autoscale, broker_reaper, queue_loop, environment_builds, cloud_idle, heartbeat, github_sync, ghost_cleanup, audit_webhook, replica_heartbeat, stuck_detector):
+    for task in (
+        scheduler,
+        retention,
+        reaper,
+        autoscaler,
+        docker_autoscale,
+        broker_reaper,
+        queue_loop,
+        environment_builds,
+        cloud_idle,
+        heartbeat,
+        github_sync,
+        ghost_cleanup,
+        audit_webhook,
+        replica_heartbeat,
+        stuck_detector,
+    ):
         if task is None:
             continue
         task.cancel()
@@ -469,10 +482,7 @@ async def _gate_token_valid(token: str, *, client_ip: str = "") -> bool:
     if not token:
         return False
     async with SessionLocal() as session:
-        return (
-            await _user_from_session_token(token, session, client_ip=client_ip)
-            is not None
-        )
+        return await _user_from_session_token(token, session, client_ip=client_ip) is not None
 
 
 app = FastAPI(
@@ -539,6 +549,22 @@ _MAX_CHUNKED_BODY_READERS = 20
 _chunked_body_readers: int = 0
 
 
+def _json_contains_nul(value: object) -> bool:
+    """Return whether a decoded JSON document contains PostgreSQL-invalid NUL text."""
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, str):
+            if "\x00" in current:
+                return True
+        elif isinstance(current, dict):
+            pending.extend(current.keys())
+            pending.extend(current.values())
+        elif isinstance(current, list):
+            pending.extend(current)
+    return False
+
+
 def _request_body_limit(path: str) -> int:
     if path in {"/artifacts/upload", "/runner-pools/artifact-upload"}:
         artifact_limit = settings.max_artifact_bytes
@@ -557,6 +583,17 @@ async def _body_size_limit(request: Request, call_next):
     route-specific limit and then cached for FastAPI's downstream parser.
     """
     global _chunked_body_readers
+    # PostgreSQL rejects NUL and other C0 controls in text predicates. Reject
+    # them at the HTTP boundary so malformed filters consistently produce a
+    # client error instead of leaking dialect-specific 500 responses.
+    query_params = getattr(request, "query_params", None)
+    if query_params is not None:
+        for key, value in query_params.multi_items():
+            if any(ord(char) < 0x20 or ord(char) == 0x7F for char in f"{key}{value}"):
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Query parameters contain invalid control characters"},
+                )
     limit = _request_body_limit(request.url.path)
     content_length = request.headers.get("content-length")
     if content_length is not None:
@@ -568,7 +605,38 @@ async def _body_size_limit(request: Request, call_next):
                 )
         except ValueError:
             content_length = None
-    if content_length is None:
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    is_json = content_type == "application/json" or content_type.endswith("+json")
+    if is_json:
+        # Read JSON through the same hard cap even when Content-Length is
+        # declared; a client must not be able to lie about that header and make
+        # the downstream parser allocate an unbounded body. Cache the bytes so
+        # FastAPI can parse them normally after this boundary check.
+        chunks: list[bytes] = []
+        total = 0
+        try:
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > limit:
+                    return JSONResponse(
+                        status_code=413,
+                        content={"detail": "Request body too large"},
+                    )
+                chunks.append(chunk)
+        except ClientDisconnect:
+            return Response(status_code=499)
+        request._body = b"".join(chunks)  # noqa: SLF001 - Starlette body cache
+        try:
+            decoded_json = json.loads(request._body) if request._body else None
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            # Preserve FastAPI's standard malformed-JSON response.
+            decoded_json = None
+        if _json_contains_nul(decoded_json):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "JSON strings contain an invalid NUL character"},
+            )
+    elif content_length is None:
         # Transfer-Encoding: chunked has no declared size. Read only up to the
         # route-specific cap, cache the bounded body for downstream parsers, and
         # reject before request.body()/multipart parsing can grow without limit.
@@ -632,7 +700,7 @@ async def _metrics_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
-    """Attach X-Request-ID and Content-Security-Policy to every response.
+    """Attach request correlation and defensive browser headers to every response.
 
     Also binds the request id into the logging context (H4) so every log line
     emitted while handling this request carries ``request_id`` for correlation.
@@ -645,6 +713,14 @@ async def _security_headers(request: Request, call_next):
     finally:
         reset_request_context(tokens)
     response.headers["X-Request-ID"] = req_id
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    )
     # Tight CSP for the API (no HTML rendered here, only JSON).  Relaxed for
     # the docs UI so Swagger/ReDoc can load their CDN assets.
     if "content-security-policy" in response.headers:

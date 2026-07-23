@@ -37,7 +37,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: nodyra-${{ inputs.stage }}
     env:
-      KUBECONFIG: ${{ runner.temp }}/kubeconfig
       RELEASE_NAME: ${{ inputs.release_name }}
       NAMESPACE: ${{ inputs.namespace }}
       STAGE: ${{ inputs.stage }}
@@ -61,8 +60,10 @@ jobs:
           KUBECONFIG_BASE64: ${{ secrets.KUBECONFIG_BASE64 }}
         run: |
           test -n "$KUBECONFIG_BASE64"
+          KUBECONFIG="$RUNNER_TEMP/kubeconfig"
           printf '%s' "$KUBECONFIG_BASE64" | base64 --decode > "$KUBECONFIG"
           chmod 600 "$KUBECONFIG"
+          printf 'KUBECONFIG=%s\n' "$KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Promote exact release digests atomically
         run: |

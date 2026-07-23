@@ -28,9 +28,7 @@ async def test_code_module_crud_and_preview(client: AsyncClient) -> None:
     assert preview["skipped"] == []
     assert preview["syntax_error"] is None
 
-    manifests = (
-        await client.get(f"/code-modules/manifests/workflow/{workflow_id}")
-    ).json()
+    manifests = (await client.get(f"/code-modules/manifests/workflow/{workflow_id}")).json()
     assert len(manifests) == 1
     manifest = manifests[0]
     assert manifest["id"] == f"user:{module['id']}:add"
@@ -41,6 +39,33 @@ async def test_code_module_crud_and_preview(client: AsyncClient) -> None:
     by_name = {p["name"]: p for p in manifest["params"]}
     assert by_name["x"]["default"] == 0 and by_name["x"]["required"] is False
     assert by_name["y"]["default"] == 0 and by_name["y"]["required"] is False
+
+
+async def test_code_module_rejects_missing_scope_target(client: AsyncClient) -> None:
+    response = await client.post(
+        "/code-modules",
+        json={
+            "scope": "workflow",
+            "workflow_id": "missing-workflow",
+            "name": "safe.py",
+            "contents": SIMPLE_MODULE,
+        },
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Workflow not found"
+
+
+async def test_code_module_rejects_oversized_scope_target(client: AsyncClient) -> None:
+    response = await client.post(
+        "/code-modules",
+        json={
+            "scope": "workflow",
+            "workflow_id": "x" * 33,
+            "name": "safe.py",
+            "contents": SIMPLE_MODULE,
+        },
+    )
+    assert response.status_code == 422
 
 
 async def test_uploaded_function_executes_when_workflow_runs(
@@ -89,9 +114,7 @@ async def test_uploaded_function_executes_when_workflow_runs(
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
     assert run["status"] == "success"
     results = {n["node_id"]: n for n in run["node_runs"]}
@@ -104,9 +127,7 @@ async def test_single_input_port_with_all_params_in_inspector(
     """User-function nodes always have exactly one 'input' port and expose
     every function parameter as an inspector field. Required params keep
     required=True so the engine flags them if nothing supplies a value."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Shape"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Shape"})).json()["id"]
     source = (
         "def all_defaults(x: int = 0, y: int = 0) -> int:\n"
         "    return x + y\n"
@@ -130,9 +151,7 @@ async def test_single_input_port_with_all_params_in_inspector(
     ).json()
     manifests = {
         m["id"]: m
-        for m in (
-            await client.get(f"/code-modules/manifests/workflow/{workflow_id}")
-        ).json()
+        for m in (await client.get(f"/code-modules/manifests/workflow/{workflow_id}")).json()
     }
     for fname in ("all_defaults", "mixed", "all_required"):
         m = manifests[f"user:{module['id']}:{fname}"]
@@ -173,18 +192,30 @@ async def test_engine_filters_virtual_input_port_from_call(
     add_id = f"user:{module['id']}:add"
     graph = {
         "nodes": [
-            {"id": "t", "type": "manual_trigger", "params": {"data": "ignored"},
-             "position": {"x": 0, "y": 0}},
-            {"id": "a", "type": add_id, "params": {"x": 4, "y": 6},
-             "position": {"x": 1, "y": 0}},
+            {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {"data": "ignored"},
+                "position": {"x": 0, "y": 0},
+            },
+            {"id": "a", "type": add_id, "params": {"x": 4, "y": 6}, "position": {"x": 1, "y": 0}},
         ],
-        "edges": [{"id": "e", "source": "t", "source_output": "main",
-                   "target": "a", "target_input": "input"}],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "a",
+                "target_input": "input",
+            }
+        ],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
-    run = (await client.get(
-        f"/runs/{(await client.post(f'/workflows/{workflow_id}/run', json={})).json()['run_id']}"
-    )).json()
+    run = (
+        await client.get(
+            f"/runs/{(await client.post(f'/workflows/{workflow_id}/run', json={})).json()['run_id']}"
+        )
+    ).json()
     assert run["status"] == "success"
     a_run = next(n for n in run["node_runs"] if n["node_id"] == "a")
     assert a_run["output"]["main"] == 10
@@ -211,9 +242,7 @@ async def test_preview_surfaces_syntax_errors(client: AsyncClient) -> None:
 async def test_preview_and_manifests_do_not_execute_module_body(
     client: AsyncClient,
 ) -> None:
-    workflow_id = (await client.post("/workflows", json={"name": "Static"})).json()[
-        "id"
-    ]
+    workflow_id = (await client.post("/workflows", json={"name": "Static"})).json()["id"]
     source = (
         "raise RuntimeError('preview executed uploaded source')\n"
         "\n"
@@ -236,12 +265,8 @@ async def test_preview_and_manifests_do_not_execute_module_body(
     assert preview["syntax_error"] is None
     assert preview["registered"] == ["safe"]
 
-    manifests = (
-        await client.get(f"/code-modules/manifests/workflow/{workflow_id}")
-    ).json()
-    assert [manifest["id"] for manifest in manifests] == [
-        f"user:{module['id']}:safe"
-    ]
+    manifests = (await client.get(f"/code-modules/manifests/workflow/{workflow_id}")).json()
+    assert [manifest["id"] for manifest in manifests] == [f"user:{module['id']}:safe"]
     # Both x and y appear as inspector params; the node has one input port.
     assert [p["name"] for p in manifests[0]["inputs"]] == ["input"]
     assert {p["name"] for p in manifests[0]["params"]} == {"x", "y"}
@@ -302,9 +327,7 @@ async def test_global_and_env_modules_visible_to_workflow(
     client: AsyncClient,
 ) -> None:
     """A workflow's palette should include global + its env's + its own modules."""
-    env = (
-        await client.post("/environments", json={"name": "shared", "packages": []})
-    ).json()
+    env = (await client.post("/environments", json={"name": "shared", "packages": []})).json()
     wf = (await client.post("/workflows", json={"name": "consumer"})).json()
     await client.put(
         f"/workflows/{wf['id']}",
@@ -344,15 +367,11 @@ async def test_global_and_env_modules_visible_to_workflow(
         )
     ).json()
 
-    visible = (
-        await client.get(f"/code-modules?visible_to_workflow={wf['id']}")
-    ).json()
+    visible = (await client.get(f"/code-modules?visible_to_workflow={wf['id']}")).json()
     ids = {m["id"] for m in visible}
     assert ids == {glob["id"], envmod["id"], wfmod["id"]}
 
-    manifests = (
-        await client.get(f"/code-modules/manifests/workflow/{wf['id']}")
-    ).json()
+    manifests = (await client.get(f"/code-modules/manifests/workflow/{wf['id']}")).json()
     names = {m["id"].split(":")[-1] for m in manifests}
     assert names == {"g", "e", "w"}
 
@@ -384,9 +403,7 @@ async def test_starter_graph_wires_variable_chain(client: AsyncClient) -> None:
             },
         )
     ).json()
-    graph = (
-        await client.post(f"/code-modules/{module['id']}/starter-graph")
-    ).json()
+    graph = (await client.post(f"/code-modules/{module['id']}/starter-graph")).json()
     by_id = {n["id"]: n for n in graph["nodes"]}
     assert set(by_id) == {"n_fetch", "n_to_frame", "n_summarise"}
 
@@ -402,9 +419,7 @@ async def test_starter_graph_wires_variable_chain(client: AsyncClient) -> None:
 
 
 async def test_starter_graph_from_declared_wires(client: AsyncClient) -> None:
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Wired"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Wired"})).json()["id"]
     source = (
         "from nodyra import node\n"
         "\n"
@@ -427,17 +442,14 @@ async def test_starter_graph_from_declared_wires(client: AsyncClient) -> None:
             },
         )
     ).json()
-    graph = (
-        await client.post(f"/code-modules/{module['id']}/starter-graph")
-    ).json()
+    graph = (await client.post(f"/code-modules/{module['id']}/starter-graph")).json()
     by_id = {n["id"]: n for n in graph["nodes"]}
     assert set(by_id) == {"n_ingest", "n_transform"}
     assert by_id["n_ingest"]["type"] == "user:" + module["id"] + ":ingest"
 
     # The edge comes from the declared wire ingest.rows → transform.rows.
     edges = {
-        (e["source"], e["source_output"], e["target"], e["target_input"])
-        for e in graph["edges"]
+        (e["source"], e["source_output"], e["target"], e["target_input"]) for e in graph["edges"]
     }
     assert ("n_ingest", "rows", "n_transform", "rows") in edges
 
@@ -445,9 +457,7 @@ async def test_starter_graph_from_declared_wires(client: AsyncClient) -> None:
 async def test_preview_explicit_mode_and_undecorated_toggle(
     client: AsyncClient,
 ) -> None:
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Explicit"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Explicit"})).json()["id"]
     source = (
         "from nodyra import node\n"
         "\n"
@@ -470,9 +480,7 @@ async def test_preview_explicit_mode_and_undecorated_toggle(
         )
     ).json()
 
-    preview = (
-        await client.get(f"/code-modules/{module['id']}/preview")
-    ).json()
+    preview = (await client.get(f"/code-modules/{module['id']}/preview")).json()
     assert preview["explicit_mode"] is True
     assert preview["registered"] == ["Main"]
     main_fn = next(f for f in preview["functions"] if f["name"] == "Main")
@@ -483,9 +491,7 @@ async def test_preview_explicit_mode_and_undecorated_toggle(
         f"/code-modules/{module['id']}",
         json={"include_undecorated": True},
     )
-    preview2 = (
-        await client.get(f"/code-modules/{module['id']}/preview")
-    ).json()
+    preview2 = (await client.get(f"/code-modules/{module['id']}/preview")).json()
     assert set(preview2["registered"]) == {"helper", "Main"}
 
 
@@ -564,9 +570,7 @@ async def test_lint_endpoint_reports_syntax_error_as_error(
 async def test_lint_endpoint_clean_code_has_no_diagnostics(
     client: AsyncClient,
 ) -> None:
-    resp = await client.post(
-        "/code-modules/lint", json={"code": "def f():\n    return 1\n"}
-    )
+    resp = await client.post("/code-modules/lint", json={"code": "def f():\n    return 1\n"})
     assert resp.status_code == 200
     assert resp.json()["diagnostics"] == []
 
@@ -577,3 +581,19 @@ async def test_lint_endpoint_empty_input(client: AsyncClient) -> None:
     body = resp.json()
     assert body["diagnostics"] == []
     assert body["linter"] == "none"
+
+
+async def test_create_rejects_unknown_scope(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/code-modules",
+        json={"scope": "not-a-scope", "name": "invalid"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_rejects_oversized_source(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/code-modules",
+        json={"scope": "global", "name": "oversized", "contents": "x" * 1_000_001},
+    )
+    assert resp.status_code == 422

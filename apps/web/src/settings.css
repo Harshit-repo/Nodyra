@@ -239,6 +239,8 @@
 .nodyra-theme-option input,
 .nodyra-font-option input {
   position: absolute;
+  width: 24px;
+  height: 24px;
   opacity: 0;
   pointer-events: none;
 }
@@ -1138,6 +1140,8 @@
 
 .nodyra-mcp-scope input {
   position: absolute;
+  width: 24px;
+  height: 24px;
   opacity: 0;
   pointer-events: none;
 }
@@ -1388,8 +1392,8 @@
     position: static;
     display: flex;
     gap: 7px;
-    margin: 0 -18px;
-    padding: 0 18px 5px;
+    margin: 0 -14px;
+    padding: 0 14px 5px;
     overflow-x: auto;
   }
   .nodyra-settings-nav a { flex: 0 0 auto; border-color: var(--line-2); background: var(--surface); }

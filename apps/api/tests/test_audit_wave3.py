@@ -15,6 +15,7 @@ from app.models import Run, Runner
 # EVT-1 — in-process broker reaps abandoned non-finished (e.g. `waiting`) runs
 # ---------------------------------------------------------------------------
 
+
 def test_broker_reaps_abandoned_waiting_run():
     """A run that ends `waiting` (agent approval) emits no `run_finished`, so it
     never lands in `_finished`. Its buffer must still be reaped once idle past
@@ -54,6 +55,7 @@ def test_broker_keeps_fresh_waiting_run():
 # Dockerfile shell line
 # ---------------------------------------------------------------------------
 
+
 def test_validate_packages_accepts_pep508_and_rejects_shell_metachars():
     from app.services.remote_dispatch import _validate_packages
 
@@ -89,6 +91,7 @@ def test_validate_python_version():
 # RP-1 / RP-2 — runner artifact upload is revocable and run-bound
 # ---------------------------------------------------------------------------
 
+
 async def _pool_with_token(client: AsyncClient) -> tuple[str, str, str]:
     """Create a pool + registration token; return (pool_id, runner_id, token)."""
     pool_id = (await client.post("/runner-pools", json={"name": "p"})).json()["id"]
@@ -102,8 +105,12 @@ async def _make_run(client: AsyncClient, runner_id: str | None = None) -> str:
     wf_id = (await client.post("/workflows", json={"name": "WF"})).json()["id"]
     async with SessionLocal() as session:
         run = Run(
-            workflow_id=wf_id, workflow_version=1, mode="manual",
-            trigger_type="manual", status="running", runner_id=runner_id,
+            workflow_id=wf_id,
+            workflow_version=1,
+            mode="manual",
+            trigger_type="manual",
+            status="running",
+            runner_id=runner_id,
         )
         session.add(run)
         await session.commit()
@@ -116,6 +123,7 @@ async def test_artifact_upload_revoked_when_runner_deleted(client: AsyncClient):
     run_id = await _make_run(client, runner_id=runner_id)
 
     from app.services.runner import SessionLocal
+
     async with SessionLocal() as session:
         runner = await session.get(Runner, runner_id)
         await session.delete(runner)
@@ -124,8 +132,11 @@ async def test_artifact_upload_revoked_when_runner_deleted(client: AsyncClient):
     resp = await client.post(
         "/runner-pools/artifact-upload",
         params={
-            "run_id": run_id, "node_id": "n", "artifact_id": "a1",
-            "name": "f.txt", "storage_key": f"runs/{run_id}/n/a1-f.txt",
+            "run_id": run_id,
+            "node_id": "n",
+            "artifact_id": "a1",
+            "name": "f.txt",
+            "storage_key": f"runs/{run_id}/n/a1-f.txt",
         },
         files={"data": ("f.txt", b"x", "text/plain")},
         headers={"Authorization": f"Bearer {token}"},
@@ -137,17 +148,20 @@ async def test_artifact_upload_rejects_cross_run_runner(client: AsyncClient):
     """RP-2: a runner may not upload to a run assigned to a *different* runner."""
     # Runner A gets a token; the run is assigned to some other runner B.
     pool_id, runner_a, token_a = await _pool_with_token(client)
-    runner_b = (
-        await client.post(f"/runner-pools/{pool_id}/registration-tokens")
-    ).json()["runner_id"]
+    runner_b = (await client.post(f"/runner-pools/{pool_id}/registration-tokens")).json()[
+        "runner_id"
+    ]
     assert runner_b != runner_a
     run_id = await _make_run(client, runner_id=runner_b)
 
     resp = await client.post(
         "/runner-pools/artifact-upload",
         params={
-            "run_id": run_id, "node_id": "n", "artifact_id": "a2",
-            "name": "f.txt", "storage_key": f"runs/{run_id}/n/a2-f.txt",
+            "run_id": run_id,
+            "node_id": "n",
+            "artifact_id": "a2",
+            "name": "f.txt",
+            "storage_key": f"runs/{run_id}/n/a2-f.txt",
         },
         files={"data": ("f.txt", b"x", "text/plain")},
         headers={"Authorization": f"Bearer {token_a}"},
@@ -163,9 +177,14 @@ async def test_artifact_upload_allows_assigned_runner(client: AsyncClient):
     resp = await client.post(
         "/runner-pools/artifact-upload",
         params={
-            "run_id": run_id, "node_id": "n", "artifact_id": "a3",
-            "name": "f.txt", "storage_key": f"runs/{run_id}/n/a3-f.txt",
-            "content_type": "text/plain", "kind": "text", "size_bytes": 1,
+            "run_id": run_id,
+            "node_id": "n",
+            "artifact_id": "a3",
+            "name": "f.txt",
+            "storage_key": f"runs/{run_id}/n/a3-f.txt",
+            "content_type": "text/plain",
+            "kind": "text",
+            "size_bytes": 1,
         },
         files={"data": ("f.txt", b"x", "text/plain")},
         headers={"Authorization": f"Bearer {token}"},
@@ -211,6 +230,13 @@ async def test_chunked_request_body_is_bounded(client: AsyncClient, monkeypatch)
     assert response.status_code == 413
 
 
+async def test_json_nul_is_rejected_before_persistence(client: AsyncClient):
+    """PostgreSQL-invalid NUL text must be a client error on every JSON route."""
+    response = await client.post("/workflows", json={"name": "invalid\x00name"})
+    assert response.status_code == 400
+    assert "NUL" in response.json()["detail"]
+
+
 async def test_chunked_request_client_disconnect_is_not_logged_as_500():
     """A browser navigation abort while the middleware reads the body is noise."""
     from types import SimpleNamespace
@@ -239,9 +265,7 @@ async def test_chunked_request_client_disconnect_is_not_logged_as_500():
     assert main_module._chunked_body_readers == 0
 
 
-async def test_webhook_test_capture_dispatches_in_listening_org(
-    client: AsyncClient, monkeypatch
-):
+async def test_webhook_test_capture_dispatches_in_listening_org(client: AsyncClient, monkeypatch):
     import time
     from types import SimpleNamespace
 
@@ -270,40 +294,68 @@ async def test_webhook_test_capture_dispatches_in_listening_org(
 # RUN-1 — approving a side-effecting AI tool call requires `workflow:run`
 # ---------------------------------------------------------------------------
 
+
 async def test_approval_decision_requires_run_permission(client: AsyncClient):
     from app.config import settings as app_settings
 
     app_settings.auth_required = True
     try:
-        owner = (await client.post("/auth/register", json={
-            "name": "Owner", "company": "N", "email": "run1-owner@n.test",
-            "password": "supersecret",
-        })).json()
+        owner = (
+            await client.post(
+                "/auth/register",
+                json={
+                    "name": "Owner",
+                    "company": "N",
+                    "email": "run1-owner@n.test",
+                    "password": "supersecret",
+                },
+            )
+        ).json()
         oh = {"Authorization": f"Bearer {owner['token']}"}
-        await client.post("/auth/users", headers=oh, json={
-            "name": "V", "email": "run1-viewer@n.test",
-            "password": "supersecret", "role": "viewer",
-        })
-        await client.post("/auth/users", headers=oh, json={
-            "name": "E", "email": "run1-editor@n.test",
-            "password": "supersecret", "role": "editor",
-        })
-        viewer_t = (await client.post("/auth/login", json={
-            "email": "run1-viewer@n.test", "password": "supersecret"})).json()["token"]
-        editor_t = (await client.post("/auth/login", json={
-            "email": "run1-editor@n.test", "password": "supersecret"})).json()["token"]
+        await client.post(
+            "/auth/users",
+            headers=oh,
+            json={
+                "name": "V",
+                "email": "run1-viewer@n.test",
+                "password": "supersecret",
+                "role": "viewer",
+            },
+        )
+        await client.post(
+            "/auth/users",
+            headers=oh,
+            json={
+                "name": "E",
+                "email": "run1-editor@n.test",
+                "password": "supersecret",
+                "role": "editor",
+            },
+        )
+        viewer_t = (
+            await client.post(
+                "/auth/login", json={"email": "run1-viewer@n.test", "password": "supersecret"}
+            )
+        ).json()["token"]
+        editor_t = (
+            await client.post(
+                "/auth/login", json={"email": "run1-editor@n.test", "password": "supersecret"}
+            )
+        ).json()["token"]
 
         body = {"decision": "approve"}
         # Viewer is rejected by the permission gate (before the handler runs).
         denied = await client.post(
-            "/runs/r/approvals/a/decision", json=body,
+            "/runs/r/approvals/a/decision",
+            json=body,
             headers={"Authorization": f"Bearer {viewer_t}"},
         )
         assert denied.status_code == 403
         # Editor clears the gate, then 404s on the missing approval (proving the
         # gate — not the handler — produced the viewer's 403).
         allowed = await client.post(
-            "/runs/r/approvals/a/decision", json=body,
+            "/runs/r/approvals/a/decision",
+            json=body,
             headers={"Authorization": f"Bearer {editor_t}"},
         )
         assert allowed.status_code == 404
@@ -315,17 +367,29 @@ async def test_approval_decision_requires_run_permission(client: AsyncClient):
 # DSQ-2 — free-form data-code nodes go under the unsafe-node deploy gate
 # ---------------------------------------------------------------------------
 
+
 def _safe_graph() -> dict:
-    return {"nodes": [{"id": "t", "type": "manual_trigger", "params": {},
-                       "position": {"x": 0, "y": 0}}], "edges": []}
+    return {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}}
+        ],
+        "edges": [],
+    }
 
 
 def _risky_graph() -> dict:
-    return {"nodes": [
-        {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
-        {"id": "c", "type": "code", "params": {"code": "output = 1"},
-         "position": {"x": 200, "y": 0}},
-    ], "edges": []}
+    return {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "c",
+                "type": "code",
+                "params": {"code": "output = 1"},
+                "position": {"x": 200, "y": 0},
+            },
+        ],
+        "edges": [],
+    }
 
 
 async def test_active_deployment_version_repoint_re_enforces_unsafe_policy(
@@ -344,10 +408,17 @@ async def test_active_deployment_version_repoint_re_enforces_unsafe_policy(
     app_settings.unsafe_node_policy = "require_approval"
     try:
         # Active deployment on the SAFE version activates fine (no findings).
-        dep = (await client.post("/deployments", json={
-            "workflow_id": wf, "name": "d", "active": True,
-            "workflow_version_id": safe_vid,
-        })).json()
+        dep = (
+            await client.post(
+                "/deployments",
+                json={
+                    "workflow_id": wf,
+                    "name": "d",
+                    "active": True,
+                    "workflow_version_id": safe_vid,
+                },
+            )
+        ).json()
         assert "id" in dep, dep
 
         # Publish a RISKY version (adds a code node).

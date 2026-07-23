@@ -374,11 +374,10 @@ class Settings(BaseSettings):
             "NODYRA_ALLOW_REGISTRY", "NOODLE_ALLOW_REGISTRY", "ALLOW_REGISTRY"
         ),
     )
-    # URL of the community registry index JSON. The MVPC uses a GitHub-backed
-    # JSON file — a PR-based registry index hosted in a public repo.
-    registry_index_url: str = (
-        "https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json"
-    )
+    # URL of the community registry index JSON. Empty is a graceful no-package
+    # default until an operator pins an approved mirror; never ship a placeholder
+    # upstream that turns every registry page into a 502.
+    registry_index_url: str = ""
     # JSON map of publisher key ID -> PEM or URL-safe base64 Ed25519 public key.
     # Keys are operator-controlled; keys included in the remote registry index
     # are never trusted as roots of trust.

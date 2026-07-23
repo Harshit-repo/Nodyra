@@ -167,6 +167,7 @@ export function GlobalCommandMenu({
         ref={triggerRef}
         className="nodyra-shell-command-trigger"
         type="button"
+        aria-label="Go to pages and commands"
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => {

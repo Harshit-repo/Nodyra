@@ -251,14 +251,17 @@ async def artifact_reconcile(
             status_code=400,
             detail="delete_orphans requires repair_metadata=true",
         )
-    return await reconcile_artifacts(
-        backend_name=backend,
-        prefix=prefix,
-        verify_checksums=verify_checksums,
-        repair_metadata=repair_metadata,
-        delete_orphans=delete_orphans,
-        limit=limit,
-    )
+    try:
+        return await reconcile_artifacts(
+            backend_name=backend,
+            prefix=prefix,
+            verify_checksums=verify_checksums,
+            repair_metadata=repair_metadata,
+            delete_orphans=delete_orphans,
+            limit=limit,
+        )
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/ops/runtime-mode", response_model=RuntimeModeStatus, dependencies=[_viewer_dep])

@@ -1,5 +1,8 @@
 from httpx import AsyncClient
 
+from app.models import Workflow
+from app.tenancy import DEFAULT_ORG_ID
+
 
 async def test_create_lists_and_fetches_workflow(client: AsyncClient) -> None:
     created = (await client.post("/workflows", json={"name": "My Flow"})).json()
@@ -11,6 +14,51 @@ async def test_create_lists_and_fetches_workflow(client: AsyncClient) -> None:
 
     fetched = (await client.get(f"/workflows/{created['id']}")).json()
     assert fetched["name"] == "My Flow"
+
+
+async def test_legacy_workflow_without_versions_can_be_listed_and_published(
+    client: AsyncClient,
+) -> None:
+    """Upgrades must tolerate rows created before versions were mandatory."""
+    workflow_id = "legacy-workflow-without-version"
+    graph = {
+        "nodes": [
+            {
+                "id": "trigger",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+    from app.services import runner as runner_module
+
+    async with runner_module.SessionLocal() as session:
+        session.add(
+            Workflow(
+                id=workflow_id,
+                org_id=DEFAULT_ORG_ID,
+                name="Legacy workflow",
+                active=False,
+                draft_graph=graph,
+                published_version=1,
+            )
+        )
+        await session.commit()
+
+    listed = await client.get("/workflows")
+    assert listed.status_code == 200
+    item = next(item for item in listed.json()["items"] if item["id"] == workflow_id)
+    assert item["node_count"] == 1
+    assert item["has_unpublished_changes"] is True
+
+    published = await client.post(f"/workflows/{workflow_id}/publish", json={})
+    assert published.status_code == 200
+    assert published.json()["version"] == 1
+
+    versions = await client.get(f"/workflows/{workflow_id}/versions")
+    assert [version["version"] for version in versions.json()] == [1]
 
 
 async def test_saving_a_graph_updates_draft_until_publish(client: AsyncClient) -> None:

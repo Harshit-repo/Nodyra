@@ -1,4 +1,5 @@
 """Tests for POST /artifacts/upload — browser file upload endpoint."""
+
 from __future__ import annotations
 
 import io
@@ -152,3 +153,12 @@ async def test_artifact_reconcile_is_dry_run_first_and_repairs_explicitly(
             assert artifact.artifact_metadata["integrity"]["status"] == "missing"
     finally:
         reset_backends_for_tests()
+
+
+async def test_artifact_reconcile_rejects_non_key_prefix(client: AsyncClient) -> None:
+    response = await client.post(
+        "/ops/artifacts/reconcile",
+        params={"prefix": "https://attacker.invalid/object"},
+    )
+    assert response.status_code == 400
+    assert "relative object key prefix" in response.json()["detail"]

@@ -71,6 +71,7 @@
   display: none;
   align-items: center;
   gap: 8px;
+  min-height: 44px;
   flex: 0 0 auto;
   color: var(--ink, #e9eef6);
   font-family: var(--font-display, system-ui, sans-serif);

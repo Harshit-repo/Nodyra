@@ -33,10 +33,11 @@ if str(API_DIR) not in sys.path:
 
 import boto3  # noqa: E402
 from botocore.exceptions import ClientError  # noqa: E402
+from sqlalchemy import select  # noqa: E402
 
 from app.config import settings  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
-from app.models import Artifact, Credential, Run, Workflow  # noqa: E402
+from app.models import Artifact, Credential, Run, Workflow, WorkflowVersion  # noqa: E402
 from app.services import org_keys  # noqa: E402
 from app.tenancy import DEFAULT_ORG_ID, run_as_system  # noqa: E402
 
@@ -126,6 +127,24 @@ async def seed_fixture(manifest_path: str) -> dict[str, Any]:
                 else:
                     workflow.name = FIXTURE_NAME
                     workflow.draft_graph = FIXTURE_GRAPH
+
+                workflow_version = await session.scalar(
+                    select(WorkflowVersion).where(
+                        WorkflowVersion.workflow_id == WORKFLOW_ID,
+                        WorkflowVersion.version == 1,
+                    )
+                )
+                if workflow_version is None:
+                    session.add(
+                        WorkflowVersion(
+                            workflow_id=WORKFLOW_ID,
+                            version=1,
+                            graph=FIXTURE_GRAPH,
+                            notes="Recovery certification fixture",
+                        )
+                    )
+                else:
+                    workflow_version.graph = FIXTURE_GRAPH
 
                 run = await session.get(Run, RUN_ID)
                 if run is None:

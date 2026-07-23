@@ -1077,7 +1077,7 @@ function McpAccessPanel() {
                 {copied === "headers" ? "Copied" : "Copy"}
               </button>
             </div>
-            <pre>{mcpHeaderSnippet}</pre>
+            <pre tabIndex={0} aria-label="MCP authorization header example">{mcpHeaderSnippet}</pre>
           </div>
           <div className="nodyra-mcp-snippet">
             <div className="nodyra-mcp-snippet-head">
@@ -1091,7 +1091,7 @@ function McpAccessPanel() {
                 {copied === "config" ? "Copied" : "Copy"}
               </button>
             </div>
-            <pre>{mcpJsonConfig}</pre>
+            <pre tabIndex={0} aria-label="Generic MCP JSON configuration">{mcpJsonConfig}</pre>
           </div>
         </div>
 
@@ -1361,7 +1361,7 @@ function McpAgentQuickstart() {
             {copied ? "Copied" : "Copy config"}
           </button>
         </div>
-        <pre>{snippet}</pre>
+        <pre tabIndex={0} aria-label="AI agent MCP JSON configuration">{snippet}</pre>
       </div>
     </SettingsCard>
   );

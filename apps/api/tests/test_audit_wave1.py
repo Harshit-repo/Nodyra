@@ -15,6 +15,7 @@ from app.config import settings
 # SEC-2 — internal API token must be compared in constant time
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_internal_token_constant_time_and_enforced(client, monkeypatch):
     monkeypatch.setattr(settings, "internal_api_token", "s3cret-token")
@@ -53,6 +54,7 @@ def test_internal_uses_compare_digest():
 # SEC-3 — OAuth callback must be reachable when auth_required is on
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_oauth_callback_auth_exempt(client, monkeypatch):
     monkeypatch.setattr(settings, "auth_required", True)
@@ -63,11 +65,22 @@ async def test_oauth_callback_auth_exempt(client, monkeypatch):
     r = await client.get("/credentials/oauth/callback")
     assert r.status_code == 200
     assert "Authentication required" not in r.text
+    assert r.headers["content-type"].startswith("text/html")
+    assert r.headers["cache-control"] == "no-store"
+    assert r.headers["cross-origin-embedder-policy"] == "require-corp"
+    assert r.headers["cross-origin-opener-policy"] == "same-origin-allow-popups"
+
+    schema = (await client.get("/openapi.json")).json()
+    callback_content = schema["paths"]["/credentials/oauth/callback"]["get"]["responses"]["200"][
+        "content"
+    ]
+    assert "text/html" in callback_content
 
 
 # ---------------------------------------------------------------------------
 # REL-1 — CORS headers must be present on error (short-circuit) responses
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_cors_headers_on_401(client, monkeypatch):
@@ -84,6 +97,7 @@ async def test_cors_headers_on_401(client, monkeypatch):
 # ---------------------------------------------------------------------------
 # PERF-2 — derived Fernet is cached and rebuilds when the secret changes
 # ---------------------------------------------------------------------------
+
 
 def test_fernet_cached_and_rekeys(monkeypatch):
     from app.services import crypto
@@ -114,6 +128,7 @@ def test_credential_dek_roundtrip_after_cache():
 # ---------------------------------------------------------------------------
 # REL-2 — runtime worker cancels orphaned sub-workflow callbacks on error
 # ---------------------------------------------------------------------------
+
 
 class _FakeStdin:
     def write(self, data):  # noqa: D401 - sync write like asyncio StreamWriter
@@ -202,6 +217,7 @@ async def test_runtime_run_cancels_callbacks_on_error():
 # ---------------------------------------------------------------------------
 # ART-1 — artifact upload must not allow path traversal via the filename
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_upload_artifact_rejects_path_traversal(client):

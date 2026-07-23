@@ -7,6 +7,8 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage*
+htmlcov/
 
 # uv: the lockfile IS committed for reproducible builds (Docker runs
 # `uv sync --locked`). Do not ignore it.

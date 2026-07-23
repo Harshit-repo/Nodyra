@@ -33,10 +33,16 @@ export function SecurityPage() {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("viewer");
   const [busy, setBusy] = useState(false);
+  const canManageUsers = currentUser?.role === "admin" || currentUser?.role === "owner";
 
   const availableRoles = useMemo(() => ROLE_OPTIONS, []);
 
   function refresh(): void {
+    if (!canManageUsers) {
+      setUsers([]);
+      setError("");
+      return;
+    }
     api
       .listUsers()
       .then(setUsers)
@@ -45,7 +51,7 @@ export function SecurityPage() {
 
   useEffect(() => {
     refresh();
-  }, []);
+  }, [canManageUsers]);
 
   async function createUser(): Promise<void> {
     if (
@@ -109,6 +115,28 @@ export function SecurityPage() {
     }
   }
 
+  if (!canManageUsers) {
+    return (
+      <div className="home">
+        <main className="home-main">
+          <div className="home-bar">
+            <div>
+              <h1>Admin users</h1>
+              <p className="muted">Instance-wide user and role management.</p>
+            </div>
+          </div>
+          <section className="security-access-state" role="status">
+            <h2>User administration is not available in this session</h2>
+            <p>
+              Sign in as an owner or admin to manage users. In local mode, enable
+              authentication before configuring instance access.
+            </p>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="home">
       <main className="home-main">
@@ -163,6 +191,7 @@ export function SecurityPage() {
           />
           <select
             className="field-input"
+            aria-label="Role for invited user"
             value={role}
             onChange={(event) => setRole(event.target.value)}
           >
@@ -231,6 +260,7 @@ export function SecurityPage() {
                 </div>
                 <select
                   className="field-input"
+                  aria-label={`Role for ${user.name || user.email}`}
                   value={user.role}
                   disabled={user.id === currentUser?.id}
                   onChange={(event) =>

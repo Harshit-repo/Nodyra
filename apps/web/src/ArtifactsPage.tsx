@@ -470,18 +470,18 @@ export function ArtifactsPage() {
           <>
             <div className="artifact-browser-table" role="table" aria-label="Artifacts">
               <div className="artifact-browser-row artifact-browser-row-head" role="row">
-                <span>Name</span>
-                <span>Kind</span>
-                <span>Preview</span>
-                <span>Size</span>
-                <span>Run</span>
-                <span>Created</span>
-                <span>Actions</span>
+                <span role="columnheader">Name</span>
+                <span role="columnheader">Kind</span>
+                <span role="columnheader">Preview</span>
+                <span role="columnheader">Size</span>
+                <span role="columnheader">Run</span>
+                <span role="columnheader">Created</span>
+                <span role="columnheader">Actions</span>
               </div>
               {artifacts.map((artifact) => (
                 <Fragment key={artifact.id}>
                 <div className="artifact-browser-row" role="row">
-                  <span className="artifact-browser-name">
+                  <span className="artifact-browser-name" role="cell">
                     <strong>{artifact.name}</strong>
                     {artifact.checksum_sha256 && (
                       <code title={artifact.checksum_sha256}>
@@ -489,18 +489,18 @@ export function ArtifactsPage() {
                       </code>
                     )}
                   </span>
-                  <span>
+                  <span role="cell">
                     <span className="artifact-browser-kind-chip">{artifact.kind}</span>
                   </span>
-                  <span className="artifact-browser-preview">
+                  <span className="artifact-browser-preview" role="cell">
                     <ArtifactPreview artifact={artifact} />
                   </span>
-                  <span>{formatBytes(artifact.size_bytes)}</span>
-                  <span>
+                  <span role="cell">{formatBytes(artifact.size_bytes)}</span>
+                  <span role="cell">
                     <code title={artifact.run_id ?? undefined}>{shortId(artifact.run_id)}</code>
                   </span>
-                  <span>{formatCreatedAt(artifact.created_at)}</span>
-                  <span>
+                  <span role="cell">{formatCreatedAt(artifact.created_at)}</span>
+                  <span role="cell">
                     <span className="artifact-browser-actions">
                       <button
                         className="btn btn-sm"

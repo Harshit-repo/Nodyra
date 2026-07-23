@@ -25,10 +25,10 @@ router = APIRouter(tags=["expressions"])
 class ExpressionPreviewRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    value: str
+    value: str = Field(max_length=20_000)
     json_value: Any = Field(default=None, alias="json")  # $json
-    inputs: dict[str, Any] = Field(default_factory=dict)  # $input
-    nodes: dict[str, Any] = Field(default_factory=dict)  # $node
+    inputs: dict[str, Any] = Field(default_factory=dict, max_length=1_000)  # $input
+    nodes: dict[str, Any] = Field(default_factory=dict, max_length=1_000)  # $node
 
 
 class ExpressionPreviewResponse(BaseModel):

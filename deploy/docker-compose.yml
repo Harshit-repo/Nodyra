@@ -2,7 +2,7 @@ name: nodyra
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.14-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
     environment:
       POSTGRES_USER: nodyra
       # Override in deploy/.env for any host that is not a private dev box.
@@ -21,7 +21,7 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.9-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     ports:
       # Loopback-only: an unauthenticated Redis must never face the network.
       - "127.0.0.1:6379:6379"
@@ -32,7 +32,7 @@ services:
       retries: 10
 
   jaeger:
-    image: jaegertracing/all-in-one:1.57
+    image: jaegertracing/all-in-one:1.57@sha256:8f165334f418ca53691ce358c19b4244226ed35c5d18408c5acf305af2065fb9
     profiles: ["observability"]
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
@@ -40,7 +40,7 @@ services:
       - "127.0.0.1:16686:16686"
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.104.0
+    image: otel/opentelemetry-collector-contrib:0.104.0@sha256:e07e325e303e86f4a87a617491e921b579a92da6d404007394757ac910bf9587
     profiles: ["observability"]
     command: ["--config=/etc/otel-collector.yaml"]
     volumes:
@@ -51,7 +51,7 @@ services:
       - jaeger
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nodyra}
@@ -63,7 +63,7 @@ services:
       - miniodata:/data
 
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nodyra}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}

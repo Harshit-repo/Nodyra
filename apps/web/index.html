@@ -3,20 +3,6 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!--
-      Content-Security-Policy for the SPA.  Allows:
-        - scripts from 'self' only (no inline scripts, no eval)
-        - styles from 'self' + Google Fonts CDN (loaded via <link>)
-        - fonts from Google Fonts CDN
-        - WebSocket connections back to the same host (ws: / wss:)
-        - all REST calls go to the same origin (default-src 'self')
-      The API server adds its own tight CSP for JSON responses; this tag
-      governs the SPA HTML document itself.
-    -->
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data:"
-    />
     <title>Nodyra</title>
     <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />

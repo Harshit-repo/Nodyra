@@ -167,20 +167,22 @@ async def _load(session: AsyncSession, workflow_id: str) -> Workflow:
     return workflow
 
 
-def _latest(workflow: Workflow) -> WorkflowVersion:
-    return workflow.versions[-1]
+def _latest(workflow: Workflow) -> WorkflowVersion | None:
+    return workflow.versions[-1] if workflow.versions else None
 
 
 def _draft_graph(workflow: Workflow) -> dict:
     if workflow.draft_graph is not None:
         return workflow.draft_graph
-    return _latest(workflow).graph or EMPTY_GRAPH
+    latest = _latest(workflow)
+    return latest.graph if latest is not None and latest.graph is not None else EMPTY_GRAPH
 
 
 def _select_graph(workflow: Workflow, *, use_draft: bool) -> dict:
     if use_draft:
         return _draft_graph(workflow)
-    return _latest(workflow).graph or EMPTY_GRAPH
+    latest = _latest(workflow)
+    return latest.graph if latest is not None and latest.graph is not None else EMPTY_GRAPH
 
 
 def _check_info(check: WorkflowCheck) -> WorkflowCheckInfo:
@@ -435,7 +437,11 @@ async def _sync_deployments_to_published_graph(
 
 
 def _has_unpublished_changes(workflow: Workflow) -> bool:
-    return _draft_graph(workflow) != (_latest(workflow).graph or EMPTY_GRAPH)
+    latest = _latest(workflow)
+    published_graph = (
+        latest.graph if latest is not None and latest.graph is not None else EMPTY_GRAPH
+    )
+    return _draft_graph(workflow) != published_graph
 
 
 async def _global_env_id(session: AsyncSession) -> str | None:
@@ -1239,7 +1245,7 @@ async def publish_workflow(
     workflow = await _load(session, workflow_id)
     latest = _latest(workflow)
     graph = _draft_graph(workflow)
-    if graph == (latest.graph or EMPTY_GRAPH):
+    if latest is not None and graph == (latest.graph or EMPTY_GRAPH):
         updated_deployments = 0
         if body.update_deployments:
             updated_deployments = await _sync_deployments_to_published_graph(
@@ -1256,7 +1262,7 @@ async def publish_workflow(
             updated_deployments=updated_deployments,
         )
 
-    next_version = latest.version + 1
+    next_version = latest.version + 1 if latest is not None else 1
     version = WorkflowVersion(
         workflow_id=workflow.id,
         version=next_version,

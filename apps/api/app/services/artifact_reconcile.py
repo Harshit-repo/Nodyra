@@ -17,6 +17,18 @@ from app.tenancy import run_as_system
 _MAX_ISSUE_SAMPLES = 500
 
 
+def _validate_prefix(prefix: str) -> None:
+    """Reject values that are not portable object-store key prefixes."""
+    if len(prefix) > 1_024:
+        raise ValueError("Artifact prefix must be at most 1024 characters")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in prefix):
+        raise ValueError("Artifact prefix contains invalid control characters")
+    if prefix.startswith(("/", "\\")) or "://" in prefix or "\\" in prefix:
+        raise ValueError("Artifact prefix must be a relative object key prefix")
+    if any(part in {".", ".."} for part in prefix.split("/")):
+        raise ValueError("Artifact prefix must not contain traversal segments")
+
+
 def _collect_objects(
     backend: ArtifactBackend, *, prefix: str, limit: int
 ) -> tuple[list[ArtifactObjectInfo], bool]:
@@ -46,7 +58,8 @@ async def reconcile_artifacts(
     """
 
     limit = max(1, min(limit, 100_000))
-    backend = get_backend(backend_name)
+    _validate_prefix(prefix)
+    backend = get_backend(backend_name or None)
     async with SessionLocal() as session:
         with run_as_system():
             statement = select(Artifact).where(Artifact.storage_backend == backend.name)
@@ -60,7 +73,9 @@ async def reconcile_artifacts(
             counts: Counter[str] = Counter()
             checked_at = datetime.now(UTC).isoformat()
 
-            async def inspect(row: Artifact) -> tuple[Artifact, ArtifactObjectInfo | None, str | None]:
+            async def inspect(
+                row: Artifact,
+            ) -> tuple[Artifact, ArtifactObjectInfo | None, str | None]:
                 try:
                     info = await asyncio.to_thread(
                         backend.inspect,
@@ -74,7 +89,9 @@ async def reconcile_artifacts(
                     return row, None, "inspect_error"
 
             for offset in range(0, len(rows), 16):
-                inspected = await asyncio.gather(*(inspect(row) for row in rows[offset : offset + 16]))
+                inspected = await asyncio.gather(
+                    *(inspect(row) for row in rows[offset : offset + 16])
+                )
                 for row, info, error in inspected:
                     issue: str | None = error
                     if info is not None and info.size_bytes != row.size_bytes:
@@ -146,5 +163,6 @@ async def reconcile_artifacts(
         "counts": dict(counts),
         "deleted_orphans": deleted_orphans,
         "issues": issues,
-        "issues_truncated": sum(count for key, count in counts.items() if key != "healthy") > len(issues),
+        "issues_truncated": sum(count for key, count in counts.items() if key != "healthy")
+        > len(issues),
     }

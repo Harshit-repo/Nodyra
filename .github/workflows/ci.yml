@@ -272,6 +272,37 @@ jobs:
           apps/api/app/logging.py
           apps/api/app/security.py
 
+  container-security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build production API image
+        run: docker build --pull -f deploy/Dockerfile.python -t nodyra-api:ci .
+      - name: Build production web image
+        run: docker build --pull -f apps/web/Dockerfile -t nodyra-web:ci apps/web
+      # Full commit pin is intentional: mutable Trivy action tags were involved
+      # in a 2026 supply-chain incident. v0.36.0 is the post-incident release.
+      - name: Scan API image for fixable high/critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.72.0
+          image-ref: nodyra-api:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan web image for fixable high/critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.72.0
+          image-ref: nodyra-web:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
   deploy-config:
     runs-on: ubuntu-latest
     steps:
@@ -311,10 +342,13 @@ jobs:
     env:
       AUTH_REQUIRED: "false"
       POSTGRES_PASSWORD: nodyra
+      MINIO_ROOT_USER: nodyra
       MINIO_ROOT_PASSWORD: nodyra-ci-minio-password
       INTERNAL_API_TOKEN: ci-internal-token
       NODYRA_SECRET_KEY: ci-secret-key-at-least-32-bytes-long
       ARTIFACT_STORAGE_BACKEND: s3
+      EXECUTION_SANDBOX: required
+      SANDBOX_RUNTIME: runc
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v8.3.2
@@ -322,17 +356,19 @@ jobs:
           python-version: "3.12"
       - run: uv sync --locked --all-packages
       - name: Start compose stack
-        run: docker compose -f deploy/docker-compose.yml up -d --build
+        run: >-
+          docker compose -f deploy/docker-compose.yml
+          -f deploy/docker-compose.sandbox.yml up -d --build
       - name: Wait for API readiness
         run: |
           for i in {1..60}; do
             if curl -fsS http://localhost:8000/health/ready; then
               exit 0
             fi
-            docker compose -f deploy/docker-compose.yml ps
+            docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sandbox.yml ps
             sleep 5
           done
-          docker compose -f deploy/docker-compose.yml logs --no-color --tail=300 api worker web
+          docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sandbox.yml logs --no-color --tail=300 api worker web docker-socket-proxy
           exit 1
       - name: REST smoke
         run: curl -fsS http://localhost:8000/templates >/tmp/nodyra-templates.json
@@ -357,7 +393,7 @@ jobs:
           AWS_ACCESS_KEY_ID: nodyra
           AWS_SECRET_ACCESS_KEY: nodyra-ci-minio-password
         run: |
-          docker compose -f deploy/docker-compose.yml exec -T postgres \
+          docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sandbox.yml exec -T postgres \
             pg_dump -U nodyra -Fc nodyra > recovery.dump
           uv run python scripts/recovery_fixture.py copy-bucket \
             --manifest recovery-manifest.json \
@@ -372,9 +408,9 @@ jobs:
           AWS_SECRET_ACCESS_KEY: nodyra-ci-minio-password
         run: |
           restore_started=$(date +%s)
-          docker compose -f deploy/docker-compose.yml exec -T postgres \
+          docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sandbox.yml exec -T postgres \
             createdb -U nodyra nodyra_restore
-          docker compose -f deploy/docker-compose.yml exec -T postgres \
+          docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sandbox.yml exec -T postgres \
             pg_restore -U nodyra -d nodyra_restore --no-owner --no-privileges \
             < recovery.dump
           restore_seconds=$(($(date +%s)-restore_started))
@@ -398,10 +434,15 @@ jobs:
         run: uv run python scripts/proof_point_demos.py --base-url http://localhost:8000
       - name: Compose logs
         if: always()
-        run: docker compose -f deploy/docker-compose.yml logs --no-color --tail=300 api worker web
+        run: >-
+          docker compose -f deploy/docker-compose.yml
+          -f deploy/docker-compose.sandbox.yml
+          logs --no-color --tail=300 api worker web docker-socket-proxy
       - name: Stop compose stack
         if: always()
-        run: docker compose -f deploy/docker-compose.yml down -v
+        run: >-
+          docker compose -f deploy/docker-compose.yml
+          -f deploy/docker-compose.sandbox.yml down -v
 
   sandbox-soak:
     # Heavy Docker lane: run nightly and on demand, not on every PR push.
@@ -413,6 +454,7 @@ jobs:
       EXECUTION_SANDBOX: required
       SANDBOX_RUNTIME: runc
       POSTGRES_PASSWORD: nodyra
+      MINIO_ROOT_USER: nodyra
       MINIO_ROOT_PASSWORD: nodyra-ci-minio-password
       INTERNAL_API_TOKEN: ci-internal-token
       NODYRA_SECRET_KEY: ci-secret-key-at-least-32-bytes-long

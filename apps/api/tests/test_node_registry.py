@@ -21,6 +21,15 @@ _PUBLISHER_PUBLIC_KEY = base64.urlsafe_b64encode(
 ).decode().rstrip("=")
 
 
+@pytest.fixture(autouse=True)
+def _registry_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        settings,
+        "registry_index_url",
+        "https://raw.githubusercontent.com/nodyra-registry/packages/main/index.json",
+    )
+
+
 def _signed_package(
     package_id: str,
     name: str,

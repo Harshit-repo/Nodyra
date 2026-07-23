@@ -28,6 +28,9 @@ EXEMPT_LINES = {
 EXEMPT_LINE_PATTERNS = (
     re.compile(r"NOODLE_[A-Z0-9_]+"),
     re.compile(r"noodle_token"),
+    # Canonical repository links keep the historical GitHub slug. Renaming the
+    # remote would break releases, runbooks, and existing clones.
+    re.compile(r"https://github\.com/Harshit-repo/noodle(?:[/#?]|\b)", re.IGNORECASE),
 )
 
 

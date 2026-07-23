@@ -266,6 +266,56 @@ async def test_checkpoint_cleared_on_terminal_status_error() -> None:
     assert mock_run.finished_at is not None
 
 
+@pytest.mark.asyncio
+async def test_fast_queued_run_persists_success_and_releases_lease() -> None:
+    """A fast worker may finish before the Run row's running update is visible."""
+    from collections import deque
+    from unittest.mock import patch
+
+    from app.services import run_persistence
+    from app.services.run_persistence import persist_run_outcome
+
+    mock_run = MagicMock()
+    mock_run.status = "queued"
+    mock_run.finished_at = None
+    mock_run.checkpoint = None
+    mock_run.batch_id = None
+
+    mock_session = MagicMock()
+    mock_session.get = AsyncMock(return_value=mock_run)
+    mock_session.commit = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=MagicMock())
+    mock_session.__aenter__.return_value = mock_session
+
+    mock_queue = MagicMock()
+    mock_queue.complete = AsyncMock()
+    mock_queue.wait_for_approval = AsyncMock()
+    mock_queue.cancel = AsyncMock()
+    mock_queue.fail = AsyncMock()
+
+    with (
+        patch.object(run_persistence, "_extract_webhook_response", return_value=None),
+        patch.object(run_persistence, "RunApproval", spec_set=True),
+        patch.object(run_persistence, "run_queue", mock_queue),
+        patch.object(run_persistence.settings, "multi_tenancy_enabled", False),
+    ):
+        await persist_run_outcome(
+            lambda: mock_session,
+            run_id="fast-queued-run",
+            status="success",
+            graph_dict={"nodes": [], "edges": []},
+            node_events={},
+            node_run_records={},
+            run_events=deque(),
+            output_cap=256 * 1024,
+        )
+
+    assert mock_run.status == "success"
+    assert mock_run.finished_at is not None
+    mock_queue.complete.assert_awaited_once_with(mock_session, run_id="fast-queued-run")
+    mock_session.commit.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # Checkpoint preserved on "waiting" status
 # ---------------------------------------------------------------------------

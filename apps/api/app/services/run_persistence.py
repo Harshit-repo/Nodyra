@@ -330,7 +330,30 @@ async def persist_run_outcome(
             if run is not None:
                 from app.services.run_lifecycle import require_transition
 
-                require_transition(run.status, status, run_id=run_id)
+                current_status = run.status
+                # The durable worker can lease and finish a very short run before
+                # the control-plane transaction that marks the Run row ``running``
+                # becomes visible. Validate the *legal intermediate path* instead
+                # of weakening the public lifecycle with queued -> success (or
+                # waiting -> success) transitions. This keeps the state machine
+                # strict while making outcome persistence race-safe.
+                if current_status == status:
+                    # Persistence is retryable. In particular, a waiting outcome
+                    # may be replayed while an approval checkpoint is being saved.
+                    pass
+                elif current_status in ("pending", "queued") and status in (
+                    "success",
+                    "timed_out",
+                    "waiting",
+                ):
+                    require_transition(current_status, "running", run_id=run_id)
+                    require_transition("running", status, run_id=run_id)
+                elif current_status == "waiting" and status in ("success", "timed_out"):
+                    require_transition("waiting", "queued", run_id=run_id)
+                    require_transition("queued", "running", run_id=run_id)
+                    require_transition("running", status, run_id=run_id)
+                else:
+                    require_transition(current_status, status, run_id=run_id)
                 run.status = status
                 run.finished_at = None if status == "waiting" else datetime.now(UTC)
                 # ADR-0003: keep run-owned failures on runs.error so event
@@ -490,6 +513,26 @@ async def persist_run_outcome(
                     _r.status = status
                     _r.finished_at = datetime.now(UTC)
                     _r.checkpoint = None
-                    await _s.commit()
+                # Outcome details are best-effort, but a failed bulk event write
+                # must never strand a durable queue lease. Mirror the terminal
+                # queue state in the fallback transaction as well.
+                if status == "success":
+                    await run_queue.complete(_s, run_id=run_id)
+                elif status == "waiting":
+                    await run_queue.wait_for_approval(_s, run_id=run_id)
+                elif status == "cancelled":
+                    await run_queue.cancel(_s, run_id=run_id)
+                else:
+                    await run_queue.fail(
+                        _s,
+                        run_id=run_id,
+                        retryable=False,
+                        error=(
+                            _r.error
+                            if _r is not None and _r.error
+                            else f"run finished with status={status}"
+                        ),
+                    )
+                await _s.commit()
         except Exception:  # noqa: BLE001
             logger.exception("run_id=%s minimal status fallback also failed", run_id)

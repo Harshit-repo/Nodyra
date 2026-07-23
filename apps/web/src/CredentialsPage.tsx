@@ -785,6 +785,7 @@ export function CredentialsPage() {
               />
               <select
                 className="field-input"
+                aria-label="Filter credentials by type"
                 value={typeFilter}
                 onChange={(e) => setTypeFilter(e.target.value)}
               >
@@ -797,6 +798,7 @@ export function CredentialsPage() {
               </select>
               <select
                 className="field-input"
+                aria-label="Filter credentials by scope"
                 value={scopeFilter}
                 onChange={(e) => setScopeFilter(e.target.value)}
               >
