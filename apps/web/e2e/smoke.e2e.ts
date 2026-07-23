@@ -31,16 +31,19 @@ test("create a workflow and add a Manual Trigger from the palette", async () => 
   await expect(page).toHaveURL(/\/workflows\/[0-9a-f]+/);
 
   // Palette search + Enter drops the top match onto the canvas.
-  const saved = page.waitForResponse(
-    (response) =>
-      response.request().method() === "PUT" &&
-      /\/api\/workflows\/[0-9a-f]+$/.test(new URL(response.url()).pathname),
-  );
-  const search = page.getByPlaceholder("Search nodes…");
+  const search = page.getByRole("textbox", { name: "Search nodes" });
   await search.fill("Manual Trigger");
   await search.press("Enter");
   await expect(page.locator(".react-flow__node")).toHaveCount(1);
-  expect((await saved).ok()).toBe(true);
+  const [saved] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        /\/api\/workflows\/[0-9a-f]+$/.test(new URL(response.url()).pathname),
+    ),
+    page.keyboard.press("Control+S"),
+  ]);
+  expect(saved.ok()).toBe(true);
 });
 
 test("run the workflow and observe node success", async () => {

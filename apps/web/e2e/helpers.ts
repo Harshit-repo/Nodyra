@@ -40,6 +40,12 @@ export async function authenticateOwner(page: Page): Promise<void> {
     await expect(openChecklist).toBeVisible();
   }
 
+  // The editor tour deliberately captures keyboard input. Keep general
+  // workflow E2E tests deterministic; the tour itself has dedicated tests.
+  await page.evaluate(() => {
+    window.localStorage.setItem("nodyra-editor-tour-v1", "true");
+  });
+
   await expect(
     page.getByRole("button", { name: "New workflow" }).first(),
   ).toBeVisible();
@@ -63,16 +69,19 @@ export async function createDraftWorkflow(
   await nameInput.press("Enter");
   await expect(page).toHaveURL(/\/workflows\/[0-9a-f]+/);
 
-  const saved = page.waitForResponse(
-    (response) =>
-      response.request().method() === "PUT" &&
-      /\/api\/workflows\/[0-9a-f]+$/.test(new URL(response.url()).pathname),
-  );
-  const search = page.getByPlaceholder("Search nodes…");
+  const search = page.getByRole("textbox", { name: "Search nodes" });
   await search.fill("Manual Trigger");
   await search.press("Enter");
   await expect(page.locator(".react-flow__node")).toHaveCount(1);
-  expect((await saved).ok()).toBe(true);
+  const [saved] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        /\/api\/workflows\/[0-9a-f]+$/.test(new URL(response.url()).pathname),
+    ),
+    page.keyboard.press("Control+S"),
+  ]);
+  expect(saved.ok()).toBe(true);
 }
 
 /** Publish the current editor draft through the review dialog. */
