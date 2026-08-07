@@ -1,5 +1,5 @@
 # Stage 1: Build the production bundle
-FROM node:22.23.1-bookworm-slim AS builder
+FROM node:26.5.1-bookworm-slim AS builder
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --ignore-scripts
