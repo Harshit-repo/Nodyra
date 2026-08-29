@@ -18,7 +18,7 @@ from nodyra.models import (
 from nodyra.sdk import NodeDef, NodeRegistry, node, registry
 from nodyra.serialization import deserialize_value, serialize_value
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "Edge",

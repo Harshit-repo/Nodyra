@@ -300,8 +300,11 @@ Important boundaries:
 - Preview and manifest generation are AST-only.
 - Runtime execution happens in the workflow environment subprocess.
 - The Code node and uploaded modules can execute arbitrary Python.
-- Multi-tenant SaaS isolation would require additional sandboxing such as
-  containers, gVisor, Firecracker, or remote runner isolation.
+- Sandboxed execution ships: per-run hardened containers, preferring kata,
+  then gVisor (runsc), then runc. It is **off by default** for single-tenant
+  installs; `MULTI_TENANCY_ENABLED=true` promotes it to `required` and refuses
+  to boot without it. Set `EXECUTION_SANDBOX=required` yourself on any
+  single-tenant deployment whose workflow authors are not the host owners.
 
 ### Recommended Production Controls
 
@@ -312,8 +315,9 @@ Important boundaries:
 - Terminate TLS at a reverse proxy or ingress.
 - Restrict API, Redis, Postgres, and MinIO network access.
 - Back up Postgres and artifact volumes together.
-- Treat workflow authors as trusted automation engineers unless stronger
-  runtime sandboxing is added.
+- With `EXECUTION_SANDBOX=off`, treat workflow authors as trusted automation
+  engineers: their code runs in the worker process on the host. Set
+  `EXECUTION_SANDBOX=required` before that assumption stops holding.
 
 ## Deployment
 
@@ -637,7 +641,7 @@ Nodyra is **fair-code** licensed:
   [Nodyra Sustainable Use License](LICENSE) — free to use, modify, and
   self-host for internal business and personal purposes. Offering Nodyra to
   third parties as a hosted or managed service requires a commercial agreement.
-- Enterprise-gated features (multi-tenancy, SSO/SAML/OIDC, SCIM, audit-log
+- Enterprise-gated features (multi-tenancy, SSO/SAML/OIDC, audit-log
   export, external KMS, license enforcement) are covered by the
   [Nodyra Enterprise License](LICENSE.enterprise) and require a valid license
   key.

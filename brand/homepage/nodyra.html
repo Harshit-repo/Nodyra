@@ -376,6 +376,11 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .price-custom{font-family:var(--font-display);font-size:28px;font-weight:800;color:var(--ink);line-height:1;margin-bottom:0}
 .price-cycle{font-size:13px;color:var(--ink-3);margin-top:5px;margin-bottom:16px}
 .price-tagline{font-size:13px;color:var(--ink-2);line-height:1.6;padding-bottom:20px;border-bottom:1px solid var(--line-2);margin-bottom:20px}
+/* Resource caps, straight from TIER_DEFAULTS in app/services/licensing.py. */
+.price-limits{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding-bottom:20px;border-bottom:1px solid var(--line-2);margin-bottom:20px}
+.price-limit{display:flex;flex-direction:column;gap:2px;min-width:0}
+.price-limit-n{font-family:var(--font-display);font-size:19px;font-weight:800;color:var(--ink);line-height:1;font-variant-numeric:tabular-nums}
+.price-limit-l{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);line-height:1.3}
 .price-features{display:flex;flex-direction:column;gap:9px;flex:1}
 .price-feat{display:flex;align-items:flex-start;gap:9px;font-size:13px;color:var(--ink-2)}
 .price-feat-check{flex-shrink:0;width:16px;height:16px;color:var(--ok);margin-top:1px}
@@ -625,9 +630,8 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
       <a href="#runners">Runners</a>
       <a href="#enterprise">Enterprise</a>
       <a href="#pricing">Pricing</a>
-      <!-- TODO: replace REPLACE-ORG/REPLACE-REPO with the final GitHub location -->
-      <a href="https://github.com/REPLACE-ORG/REPLACE-REPO/tree/main/docs" rel="noopener">Docs</a>
-      <a href="https://github.com/REPLACE-ORG/REPLACE-REPO" rel="noopener">GitHub</a>
+      <a href="https://github.com/Harshit-repo/noodle/tree/main/docs" rel="noopener">Docs</a>
+      <a href="https://github.com/Harshit-repo/noodle" rel="noopener">GitHub</a>
     </nav>
     <div class="nav-cta">
       <a href="#pricing" class="btn" style="font-size:13px">View pricing</a>
@@ -904,10 +908,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
               <path d="M9 9h6M9 12h6M9 15h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </div>
-          <span class="pro-badge">Pro</span>
         </div>
         <h3>Sandboxed execution</h3>
-        <p>Run untrusted code in isolated Docker containers with CPU, memory, and network limits. Safe multi-tenant execution.</p>
+        <p>Run untrusted code in isolated Docker containers with CPU, memory and network limits &mdash; kata or gVisor where available. Off by default for single-tenant installs; one setting makes it required, and multi-tenancy turns it on for you.</p>
       </div>
       <div class="bento-card reveal">
         <div class="bento-head">
@@ -930,7 +933,6 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
               <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </div>
-          <span class="pro-badge">Pro</span>
         </div>
         <h3>Runner Pools</h3>
         <p>Agent (outbound WebSocket), Docker, or Kubernetes providers. Bind Python environments to a pool for isolated remote execution.</p>
@@ -1500,7 +1502,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             <div class="ent-check-icon" aria-hidden="true">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </div>
-            Immutable audit log — exportable to your SIEM
+            Append-only audit log — exported as NDJSON
           </div>
         </div>
       </div>
@@ -1526,7 +1528,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </svg>
         </div>
         <h3>Encrypted Credential Vault</h3>
-        <p>All secrets stored with Fernet AES-128-CBC, scoped per environment. No credential ever leaves its environment.</p>
+        <p>Envelope encryption throughout: every credential gets its own data key, wrapped by a per-organisation key, wrapped by a master key derived with HKDF-SHA256. Bring your own KMS &mdash; HashiCorp Vault, AWS KMS or GCP KMS &mdash; and the master key never touches Nodyra's storage at all.</p>
       </div>
       <div class="ent-card reveal">
         <div class="ent-card-icon" aria-hidden="true">
@@ -1547,8 +1549,8 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             <polyline points="10 9 9 9 8 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           </svg>
         </div>
-        <h3>Immutable Audit Log</h3>
-        <p>Every run, edit, and access event recorded with user, timestamp, and delta. Exportable to any SIEM or S3 bucket.</p>
+        <h3>Append-Only Audit Log</h3>
+        <p>Every run, edit, and access event recorded with actor, timestamp and delta. Nothing in the product updates an audit row. Stream the whole log out as NDJSON from a single endpoint and pipe it into Splunk, Datadog or object storage; a retention window you set is the only thing that ever removes an entry.</p>
       </div>
       <div class="ent-card reveal">
         <div class="ent-card-icon" aria-hidden="true">
@@ -1578,7 +1580,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
   <div class="wrap">
     <p class="eyebrow reveal">Pricing</p>
     <h2 class="section-h reveal">Start free. Scale when you need to.</h2>
-    <p class="reveal" style="margin-top:16px;font-size:16px;color:var(--ink-2);max-width:48ch;line-height:1.65">All features are license-gated and verified offline. An expired license soft-downgrades to Community — your workflows never stop running.</p>
+    <p class="reveal" style="margin-top:16px;font-size:16px;color:var(--ink-2);max-width:52ch;line-height:1.65">Community is the whole platform, not a demo &mdash; sandboxing included. Paid tiers raise the limits and add the things a team of teams needs.</p>
 
     <div class="pricing-grid">
 
@@ -1586,16 +1588,21 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
       <div class="price-card reveal">
         <div class="price-tier-name">Community</div>
         <div class="price-amount"><span>Free</span></div>
-        <div class="price-cycle">forever · fair-code licensed</div>
+        <div class="price-cycle">forever &middot; fair-code licensed</div>
         <div class="price-tagline">The full Nodyra platform, self-hosted. Free for internal business and personal use under the Sustainable Use License.</div>
+        <div class="price-limits"><div class="price-limit"><span class="price-limit-n">5</span><span class="price-limit-l">users</span></div><div class="price-limit"><span class="price-limit-n">3</span><span class="price-limit-l">environments</span></div><div class="price-limit"><span class="price-limit-n">1</span><span class="price-limit-l">runner</span></div><div class="price-limit"><span class="price-limit-n">10</span><span class="price-limit-l">deployments</span></div></div>
         <div class="price-features">
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Unlimited local workflows
+            Every one of the 512 nodes
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Python nodes — full language access
+            Python nodes &mdash; full language access
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Sandboxed execution (Docker-isolated)
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1611,15 +1618,23 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Webhook + HTTP triggers
+            Webhook, HTTP &amp; cron triggers
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Workflow versioning + diff view
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Encrypted credential vault
           </div>
           <div class="price-feat price-feat-muted">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            Sandboxed execution
+            Observability &mdash; traces &amp; timelines
           </div>
           <div class="price-feat price-feat-muted">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            Runner Pools (agent, Docker, K8s)
+            Git sync (workflows as code)
           </div>
         </div>
         <a href="#cta" class="btn price-btn">Get started free</a>
@@ -1630,8 +1645,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
         <span class="price-featured-tag">Most popular</span>
         <div class="price-tier-name price-tier-name-featured">Pro</div>
         <div class="price-amount"><sup>$</sup><span>49</span></div>
-        <div class="price-cycle">per month · per instance</div>
-        <div class="price-tagline">Sandboxed execution, runner pools, observability, and the full security suite.</div>
+        <div class="price-cycle">per month &middot; per instance</div>
+        <div class="price-tagline">For a team running Nodyra in production: full run visibility, GitOps, and room to grow.</div>
+        <div class="price-limits"><div class="price-limit"><span class="price-limit-n">10</span><span class="price-limit-l">users</span></div><div class="price-limit"><span class="price-limit-n">10</span><span class="price-limit-l">environments</span></div><div class="price-limit"><span class="price-limit-n">5</span><span class="price-limit-l">runners</span></div><div class="price-limit"><span class="price-limit-n">&infin;</span><span class="price-limit-l">deployments</span></div></div>
         <div class="price-features">
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1639,35 +1655,31 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Sandboxed execution (Docker-isolated)
+            Observability &mdash; traces, logs, timelines
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Runner Pools (agent, Docker, K8s)
+            Git sync &mdash; workflows as code in your repo
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Observability — traces, logs, timelines
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            RBAC + Encrypted credential vault
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Audit log export
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Cron triggers + retry policies
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Workflow versioning + diff view
+            Higher limits on every resource
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             Email support
+          </div>
+          <div class="price-feat price-feat-muted">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            SSO (SAML 2.0 + OIDC)
+          </div>
+          <div class="price-feat price-feat-muted">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Audit log export
+          </div>
+          <div class="price-feat price-feat-muted">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Custom roles (advanced RBAC)
           </div>
         </div>
         <a href="#cta" class="btn btn-primary price-btn">Join the waitlist</a>
@@ -1677,8 +1689,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
       <div class="price-card reveal">
         <div class="price-tier-name">Enterprise</div>
         <div class="price-custom">Custom</div>
-        <div class="price-cycle">volume pricing · annual contract</div>
-        <div class="price-tagline">Dedicated support, SLA, air-gap deployment, and custom auth integrations.</div>
+        <div class="price-cycle">volume pricing &middot; annual contract</div>
+        <div class="price-tagline">For regulated and air-gapped environments: single sign-on, your own key management, and an auditable trail.</div>
+        <div class="price-limits"><div class="price-limit"><span class="price-limit-n">&infin;</span><span class="price-limit-l">users</span></div><div class="price-limit"><span class="price-limit-n">&infin;</span><span class="price-limit-l">environments</span></div><div class="price-limit"><span class="price-limit-n">&infin;</span><span class="price-limit-l">runners</span></div><div class="price-limit"><span class="price-limit-n">&infin;</span><span class="price-limit-l">deployments</span></div></div>
         <div class="price-features">
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1686,7 +1699,27 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Dedicated support + SLA
+            SSO &mdash; SAML 2.0 + OIDC
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Audit log export
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Custom roles (advanced RBAC)
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            External KMS &mdash; Vault, AWS, GCP
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Multi-tenancy with row-level isolation
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Dedicated runner pools
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1694,26 +1727,17 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            SSO (SAML 2.0 + OIDC) + SCIM provisioning
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Multi-instance volume licensing
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Onboarding, training &amp; SOC 2 docs
+            Dedicated support + SLA
           </div>
         </div>
-        <a href="mailto:sharma.har97@gmail.com" class="btn price-btn">Contact sales →</a>
+        <a href="mailto:sharma.har97@gmail.com" class="btn price-btn">Contact sales &rarr;</a>
       </div>
     </div>
 
     <p class="price-note reveal">
-      All paid features are license-gated, verified offline — no phone-home, air-gap friendly.<br>
-      An expired license soft-downgrades to Community; your workflows never stop running.<br>
-      <!-- TODO: replace REPLACE-ORG/REPLACE-REPO with the final GitHub location -->
-      Nodyra is <a href="https://github.com/REPLACE-ORG/REPLACE-REPO/blob/main/LICENSE" rel="noopener">fair-code</a>: the source is public, self-hosting is free for your own use, and hosting Nodyra for others requires a commercial license.
+      Paid tiers are unlocked by a signed licence file that is verified offline &mdash; no phone-home, air-gap friendly.<br>
+      When a licence expires, Nodyra reverts to Community rather than stopping: your workflows keep running.<br>
+      Nodyra is <a href="https://github.com/Harshit-repo/noodle/blob/main/LICENSE" rel="noopener">fair-code</a>: the source is public, self-hosting is free for your own use, and hosting Nodyra for others requires a commercial licence.
     </p>
   </div>
 </section>
@@ -1789,15 +1813,14 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
         <a href="#runners">Runners</a>
         <a href="#enterprise">Enterprise</a>
         <a href="#pricing">Pricing</a>
-        <!-- TODO: replace REPLACE-ORG/REPLACE-REPO with the final GitHub location -->
-        <a href="https://github.com/REPLACE-ORG/REPLACE-REPO/tree/main/docs" rel="noopener">Docs</a>
-        <a href="https://github.com/REPLACE-ORG/REPLACE-REPO" rel="noopener">GitHub</a>
-        <a href="https://github.com/REPLACE-ORG/REPLACE-REPO/blob/main/LICENSE" rel="noopener">License</a>
+        <a href="https://github.com/Harshit-repo/noodle/tree/main/docs" rel="noopener">Docs</a>
+        <a href="https://github.com/Harshit-repo/noodle" rel="noopener">GitHub</a>
+        <a href="https://github.com/Harshit-repo/noodle/blob/main/LICENSE" rel="noopener">License</a>
         <a href="#cta">Get early access</a>
       </nav>
     </div>
     <div class="foot-copy">
-      <span>© 2026 Nodyra &nbsp;·&nbsp; Fair-code: <a href="https://github.com/REPLACE-ORG/REPLACE-REPO/blob/main/LICENSE" rel="noopener" style="color:inherit">Sustainable Use License</a> &nbsp;·&nbsp; Pro &amp; Enterprise features license-gated</span>
+      <span>© 2026 Nodyra &nbsp;·&nbsp; Fair-code: <a href="https://github.com/Harshit-repo/noodle/blob/main/LICENSE" rel="noopener" style="color:inherit">Sustainable Use License</a> &nbsp;·&nbsp; Pro &amp; Enterprise features license-gated</span>
       <span>Built with Python &amp; caffeine</span>
     </div>
   </div>

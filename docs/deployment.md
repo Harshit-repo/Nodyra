@@ -321,7 +321,7 @@ the Community resource caps below.
 | Sandboxed execution (`EXECUTION_SANDBOX`) | ✅ | ✅ | ✅ |
 | Observability (`OTEL_ENABLED`) | — | ✅ | ✅ |
 | Multi-tenancy / organizations | — | — | ✅ |
-| SSO / SAML / SCIM, audit logs, org-KEK/KMS | — | — | ✅ |
+| SSO / SAML / OIDC, audit logs, org-KEK/KMS | — | — | ✅ |
 
 `unlimited` is represented internally as `0` (the same convention as the
 per-org quota overrides).
