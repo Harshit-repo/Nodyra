@@ -193,7 +193,15 @@ def ai_calculator_tool(
 # Code Execution Tool
 # ---------------------------------------------------------------------------
 
-_DANGEROUS_CALLS = {"eval", "exec", "compile", "__import__"}
+_DANGEROUS_CALLS = {
+    "eval",
+    "exec",
+    "compile",
+    "__import__",
+    "getattr",
+    "setattr",
+    "globals",
+}
 _DANGEROUS_ATTRS = {
     "__class__",
     "__bases__",
@@ -211,8 +219,8 @@ def _ast_security_check(code: str, allowed_modules: set[str]) -> None:
     *allowed_modules*.  Passing an empty set blocks all imports; passing a
     non-empty set allows only the listed roots.
 
-    Dangerous builtins (eval/exec/compile/__import__) and dunder attribute
-    access are always blocked regardless of the allowlist.
+    Dangerous introspection/execution builtins and dunder attribute access are
+    always blocked regardless of the allowlist.
     """
     try:
         tree = ast.parse(code)

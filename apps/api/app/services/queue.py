@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import logging
 import socket
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, or_, select, update
@@ -216,6 +217,7 @@ async def enqueue(
         existing.priority = priority
         existing.attempts = 0
         existing.leased_by = None
+        existing.lease_token = None
         existing.lease_expires_at = None
         existing.last_error = None
         existing.available_at = available_at or _now(None)
@@ -310,7 +312,11 @@ async def _org_fair_order(
                 RunQueueEntry.queue_reason != "org_quota_exceeded",
             )
             .values(queue_reason="org_quota_exceeded")
-            .execution_options(synchronize_session=False)
+            # This scheduler pass intentionally evaluates every tenant in one
+            # system-wide query.  Bypass the ORM tenant criterion here just as
+            # the grouped reads above do; Postgres RLS remains active unless
+            # the caller is running under the explicit system context.
+            .execution_options(skip_org_filter=True, synchronize_session=False)
         )
     allowed.sort()
     return [org_id for _, _, org_id in allowed]
@@ -410,18 +416,51 @@ async def lease(
 
     entry.status = "leased"
     entry.leased_by = worker_id
+    entry.lease_token = uuid.uuid4().hex
     entry.lease_expires_at = moment + timedelta(seconds=_lease_seconds(lease_seconds))
     entry.attempts += 1
     await session.flush()
     return entry
 
 
-async def mark_running(session: AsyncSession, *, run_id: str) -> bool:
-    """Transition a leased entry to ``running`` once execution actually starts."""
+def _lease_matches(entry: RunQueueEntry, lease_token: str | None) -> bool:
+    """Return whether ``lease_token`` may mutate ``entry``.
+
+    ``None`` is retained for administrative/legacy transitions. Execution
+    paths always pass their token and therefore fail closed after a re-lease.
+    """
+    return lease_token is None or entry.lease_token == lease_token
+
+
+def _clear_lease(entry: RunQueueEntry) -> None:
+    entry.leased_by = None
+    entry.lease_token = None
+    entry.lease_expires_at = None
+
+
+async def mark_running(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    lease_token: str | None = None,
+    lease_seconds: int | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Transition an owned attempt to ``running``.
+
+    A direct/synchronous execution supplies a fresh token while the queue row
+    is still unowned; a leased worker must present the token assigned by
+    :func:`lease`. Repeating the transition with the same token is idempotent.
+    """
     entry = await _get(session, run_id)
-    if entry is None or entry.status not in ("leased", "queued"):
+    if entry is None or entry.status not in ("leased", "queued", "running"):
         return False
+    if entry.lease_token is not None and not _lease_matches(entry, lease_token):
+        return False
+    if lease_token is not None:
+        entry.lease_token = lease_token
     entry.status = "running"
+    entry.lease_expires_at = _now(now) + timedelta(seconds=_lease_seconds(lease_seconds))
     return True
 
 
@@ -429,38 +468,45 @@ async def heartbeat(
     session: AsyncSession,
     *,
     run_id: str,
+    lease_token: str | None = None,
     lease_seconds: int | None = None,
     now: datetime | None = None,
 ) -> bool:
     """Extend the lease on an active entry. Returns ``False`` if there is no
     leasable entry (already completed/cancelled or missing)."""
     entry = await _get(session, run_id)
-    if entry is None or entry.status not in ("leased", "running"):
+    if (
+        entry is None
+        or entry.status not in ("leased", "running")
+        or not _lease_matches(entry, lease_token)
+    ):
         return False
     entry.lease_expires_at = _now(now) + timedelta(seconds=_lease_seconds(lease_seconds))
     return True
 
 
-async def complete(session: AsyncSession, *, run_id: str) -> bool:
+async def complete(
+    session: AsyncSession, *, run_id: str, lease_token: str | None = None
+) -> bool:
     """Mark a run's queue entry completed."""
     entry = await _get(session, run_id)
-    if entry is None:
+    if entry is None or not _lease_matches(entry, lease_token):
         return False
     entry.status = "completed"
-    entry.leased_by = None
-    entry.lease_expires_at = None
+    _clear_lease(entry)
     return True
 
 
-async def wait_for_approval(session: AsyncSession, *, run_id: str) -> bool:
+async def wait_for_approval(
+    session: AsyncSession, *, run_id: str, lease_token: str | None = None
+) -> bool:
     """Park a run until an operator approval explicitly resumes it."""
     entry = await _get(session, run_id)
-    if entry is None:
+    if entry is None or not _lease_matches(entry, lease_token):
         return False
     entry.status = "waiting"
     entry.queue_reason = "agent_approval"
-    entry.leased_by = None
-    entry.lease_expires_at = None
+    _clear_lease(entry)
     return True
 
 
@@ -479,8 +525,7 @@ async def resume_waiting(
     _append_attempt(entry, event="approval_resume", error=None, ts=moment)
     entry.status = "queued"
     entry.queue_reason = "approval_resume"
-    entry.leased_by = None
-    entry.lease_expires_at = None
+    _clear_lease(entry)
     entry.available_at = moment
     entry.replay_seed = replay_seed
     return entry
@@ -493,6 +538,7 @@ async def fail(
     retryable: bool,
     error: str,
     now: datetime | None = None,
+    lease_token: str | None = None,
 ) -> RunQueueEntry | None:
     """Record a failed attempt.
 
@@ -506,13 +552,12 @@ async def fail(
     to ``attempts_log`` so the ops UI can render retry history.
     """
     entry = await _get(session, run_id)
-    if entry is None:
+    if entry is None or not _lease_matches(entry, lease_token):
         return None
 
     moment = _now(now)
     entry.last_error = error
-    entry.leased_by = None
-    entry.lease_expires_at = None
+    _clear_lease(entry)
 
     if retryable and entry.attempts < entry.max_attempts:
         backoff = min(
@@ -582,8 +627,7 @@ async def replay(
     entry.status = "queued"
     entry.attempts = 0
     entry.last_error = None
-    entry.leased_by = None
-    entry.lease_expires_at = None
+    _clear_lease(entry)
     entry.available_at = moment
     if cache is not None or targets is not None:
         seed: dict = {}
@@ -597,14 +641,15 @@ async def replay(
     return entry
 
 
-async def cancel(session: AsyncSession, *, run_id: str) -> bool:
+async def cancel(
+    session: AsyncSession, *, run_id: str, lease_token: str | None = None
+) -> bool:
     """Cancel a run's queue entry regardless of current state."""
     entry = await _get(session, run_id)
-    if entry is None:
+    if entry is None or not _lease_matches(entry, lease_token):
         return False
     entry.status = "cancelled"
-    entry.leased_by = None
-    entry.lease_expires_at = None
+    _clear_lease(entry)
     return True
 
 
@@ -640,8 +685,7 @@ async def requeue_expired_leases(session: AsyncSession, *, now: datetime | None 
         if _as_aware(entry.lease_expires_at) > moment:
             continue
         acted += 1
-        entry.leased_by = None
-        entry.lease_expires_at = None
+        _clear_lease(entry)
         if entry.attempts < entry.max_attempts:
             entry.status = "queued"
             entry.available_at = moment
@@ -918,10 +962,13 @@ async def run_queue_dispatch_loop() -> None:  # pragma: no cover
                             exclude_local = True
                             continue
                         run_id = entry.run_id
+                        lease_token = entry.lease_token
                         await session.commit()
                     if is_local:
                         local_budget -= 1
-                    task = asyncio.create_task(_execute_queued_entry(run_id))
+                    task = asyncio.create_task(
+                        _execute_queued_entry(run_id, lease_token=lease_token)
+                    )
                     in_flight.add(task)
                     task.add_done_callback(in_flight.discard)
             except asyncio.CancelledError:

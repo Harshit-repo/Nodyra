@@ -144,7 +144,7 @@ _ALLOWED_EXPR_NODES = frozenset({
 _BLOCKED_NAMES = frozenset({
     "__class__", "__bases__", "__subclasses__", "__mro__",
     "__globals__", "__builtins__", "__import__", "__loader__",
-    "exec", "eval", "compile", "open", "__code__",
+    "exec", "eval", "compile", "open", "getattr", "setattr", "globals", "__code__",
     "__reduce__", "__reduce_ex__", "__init_subclass__",
 })
 

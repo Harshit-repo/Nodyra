@@ -7,7 +7,7 @@ from typing import Any
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from app.models import ProviderTriggerSubscription, ScheduleState
+from app.models import ProviderTriggerSubscription, ScheduleOccurrence, ScheduleState
 from app.services import provider_triggers, triggers
 from nodyra_nodes.integrations_v2.providers.github import triggers as github_triggers
 
@@ -632,6 +632,107 @@ async def test_schedule_tick_honours_cron(client: AsyncClient) -> None:
     runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"]
     assert len(runs) == 1
     assert runs[0]["trigger_type"] == "schedule"
+
+
+async def test_schedule_occurrence_retries_and_recovers_committed_run(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """A dispatch crash cannot lose a due occurrence or create a second run."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Durable schedule"})
+    ).json()["id"]
+    graph = {
+        "nodes": [
+            {
+                "id": "sched",
+                "type": "schedule_trigger",
+                "params": {"interval": "minutes", "every": 1},
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+    await triggers._tick()
+
+    async with triggers.SessionLocal() as session:
+        state = await session.get(ScheduleState, workflow_id)
+        assert state is not None
+        state.last_fired = datetime.now(UTC) - timedelta(hours=1)
+        await session.commit()
+
+    real_start_run = triggers.start_run
+
+    async def fail_before_commit(*args, **kwargs):
+        raise RuntimeError("temporary admission failure")
+
+    monkeypatch.setattr(triggers, "start_run", fail_before_commit)
+    await triggers._tick()
+
+    async with triggers.SessionLocal() as session:
+        occurrence = (
+            await session.scalars(
+                select(ScheduleOccurrence).where(
+                    ScheduleOccurrence.workflow_id == workflow_id
+                )
+            )
+        ).one()
+        assert occurrence.status == "pending"
+        assert occurrence.attempts == 1
+        assert occurrence.next_attempt_at is not None
+        occurrence.next_attempt_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+
+    monkeypatch.setattr(triggers, "start_run", real_start_run)
+    await triggers._tick()
+
+    async with triggers.SessionLocal() as session:
+        occurrence = (
+            await session.scalars(
+                select(ScheduleOccurrence).where(
+                    ScheduleOccurrence.workflow_id == workflow_id
+                )
+            )
+        ).one()
+        assert occurrence.status == "dispatched"
+        assert occurrence.attempts == 2
+        assert occurrence.run_id is not None
+        committed_run_id = occurrence.run_id
+
+        # Simulate process death after start_run committed but before the outbox
+        # acknowledgement. Recovery must resolve the unique dispatch key.
+        occurrence.status = "dispatching"
+        occurrence.run_id = None
+        occurrence.dispatched_at = None
+        occurrence.dispatch_token = "abandoned"
+        occurrence.dispatch_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+
+    calls = 0
+
+    async def must_not_start_again(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("existing run should satisfy recovered occurrence")
+
+    monkeypatch.setattr(triggers, "start_run", must_not_start_again)
+    await triggers._tick()
+    assert calls == 0
+
+    async with triggers.SessionLocal() as session:
+        occurrence = (
+            await session.scalars(
+                select(ScheduleOccurrence).where(
+                    ScheduleOccurrence.workflow_id == workflow_id
+                )
+            )
+        ).one()
+        assert occurrence.status == "dispatched"
+        assert occurrence.run_id == committed_run_id
+
+    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"]
+    assert len(runs) == 1
 
 
 def test_is_due_unknown_timezone_does_not_fire() -> None:

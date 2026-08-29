@@ -156,6 +156,19 @@ def test_ast_blocks_eval() -> None:
         _ast_security_check("eval('1')", set())
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "getattr(object, '__subclasses__')",
+        "setattr(target, 'value', 1)",
+        "globals()",
+    ],
+)
+def test_ast_blocks_dynamic_introspection_calls(source: str) -> None:
+    with pytest.raises(PermissionError):
+        _ast_security_check(source, set())
+
+
 def test_ast_blocks_dunder_import_call() -> None:
     with pytest.raises(PermissionError):
         _ast_security_check("__import__('os')", set())

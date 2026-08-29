@@ -9,7 +9,6 @@ import {
 } from "react";
 
 const AUTH_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
-const AUTH_MAX_RETRIES = AUTH_RETRY_DELAYS_MS.length;
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
@@ -136,9 +135,9 @@ export default function App() {
   const retryRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
 
-  // Bootstrap the auth state, retrying with exponential backoff while the backend
-  // is still starting (network error / 5xx). Gives up after AUTH_MAX_RETRIES to
-  // prevent infinite request storms on persistent server failures.
+  // Bootstrap auth with capped exponential backoff. Only a genuine legacy 404
+  // may fall back to no-auth; every other failure stays fail-closed and keeps
+  // probing at most once per minute so recovery needs no page reload.
   const loadAuth = useCallback(() => {
     api
       .authRequired()
@@ -148,10 +147,15 @@ export default function App() {
         setApiReachable(true);
       })
       .catch((err: unknown) => {
-        if (shouldRetryAuthError(err) && retryCountRef.current < AUTH_MAX_RETRIES) {
+        if (shouldRetryAuthError(err)) {
           setApiReachable(false);
-          const delay = AUTH_RETRY_DELAYS_MS[retryCountRef.current] ?? 60000;
-          retryCountRef.current += 1;
+          setAuth(null);
+          const retryIndex = Math.min(
+            retryCountRef.current,
+            AUTH_RETRY_DELAYS_MS.length - 1,
+          );
+          const delay = AUTH_RETRY_DELAYS_MS[retryIndex] ?? 60000;
+          retryCountRef.current = retryIndex + 1;
           retryRef.current = window.setTimeout(loadAuth, delay);
         } else {
           setAuth(NO_AUTH_FALLBACK);
@@ -197,8 +201,13 @@ export default function App() {
     api
       .authRequired()
       .then(setAuth)
-      .catch(() => setAuth(NO_AUTH_FALLBACK));
-  }, []);
+      .catch(() => {
+        setAuth(null);
+        setApiReachable(false);
+        retryCountRef.current = 0;
+        loadAuth();
+      });
+  }, [loadAuth]);
 
   useEffect(() => {
     if (!auth?.user) return;

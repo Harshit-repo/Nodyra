@@ -344,6 +344,79 @@ async def test_heartbeat_extends_lease(session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_released_attempt_token_cannot_mutate_replacement_lease(session) -> None:
+    """A worker from an expired lease is fenced after another worker leases it."""
+    from app.services import queue
+
+    start = datetime.now(UTC)
+    session.add(RunQueueEntry(run_id="fenced", workflow_id="wf", max_attempts=3))
+    await session.commit()
+
+    first = await queue.lease(
+        session, worker_id="worker-a", lease_seconds=3, now=start
+    )
+    await session.commit()
+    assert first is not None and first.lease_token
+    stale_token = first.lease_token
+
+    await queue.requeue_expired_leases(
+        session, now=start + timedelta(seconds=4)
+    )
+    await session.commit()
+    second = await queue.lease(
+        session,
+        worker_id="worker-b",
+        lease_seconds=30,
+        now=start + timedelta(seconds=5),
+    )
+    await session.commit()
+    assert second is not None and second.lease_token
+    assert second.lease_token != stale_token
+    current_token = second.lease_token
+
+    assert (
+        await queue.heartbeat(
+            session, run_id="fenced", lease_token=stale_token
+        )
+        is False
+    )
+    assert (
+        await queue.complete(session, run_id="fenced", lease_token=stale_token)
+        is False
+    )
+    assert (
+        await queue.fail(
+            session,
+            run_id="fenced",
+            lease_token=stale_token,
+            retryable=False,
+            error="stale",
+        )
+        is None
+    )
+    await session.refresh(second)
+    assert second.status == "leased"
+    assert second.lease_token == current_token
+
+    assert (
+        await queue.mark_running(
+            session, run_id="fenced", lease_token=current_token
+        )
+        is True
+    )
+    assert (
+        await queue.complete(
+            session, run_id="fenced", lease_token=current_token
+        )
+        is True
+    )
+    await session.commit()
+    await session.refresh(second)
+    assert second.status == "completed"
+    assert second.lease_token is None
+
+
+@pytest.mark.asyncio
 async def test_lease_provider_filter_separates_agent_and_local(session) -> None:
     """A1: the dispatch-loop provider filter keeps the WS-terminating control
     replica ({agent, kubernetes}) and the worker ({local, docker}) from

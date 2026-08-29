@@ -331,6 +331,7 @@ class RemoteDispatcher:
                         continue
                     entry.status = "queued"
                     entry.leased_by = None
+                    entry.lease_token = None
                     entry.lease_expires_at = None
                     entry.available_at = datetime.now(UTC)
                     entry.queue_reason = "runner_offline"

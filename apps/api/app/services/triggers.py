@@ -11,13 +11,16 @@ it and drives ``/internal/scheduler/tick`` externally).
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Collection
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal
@@ -25,12 +28,14 @@ from app.models import (
     Deployment,
     ProviderTriggerSubscription,
     Run,
+    ScheduleOccurrence,
     ScheduleState,
     Workflow,
     WorkflowVersion,
 )
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
+from app.tenancy import run_as_org, run_as_system
 
 logger = logging.getLogger(__name__)
 
@@ -1092,6 +1097,183 @@ async def _poll_subscriptions(now: datetime) -> None:
                     await session.commit()
 
 
+@asynccontextmanager
+async def _scheduler_session():
+    """Open an explicitly cross-tenant session for scheduler bookkeeping."""
+    with run_as_system():
+        async with SessionLocal() as session:
+            yield session
+
+
+def _for_update(session: AsyncSession, stmt, *, skip_locked: bool = False):
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        return stmt.with_for_update(skip_locked=skip_locked)
+    return stmt
+
+
+@dataclass(frozen=True, slots=True)
+class _ClaimedScheduleOccurrence:
+    id: str
+    org_id: str
+    workflow_id: str
+    workflow_version_id: str | None
+    workflow_version: int
+    deployment_id: str | None
+    graph: dict
+    trigger_node_id: str | None
+    trigger_type: str
+    parameters: dict
+    dispatch_token: str
+    attempts: int
+
+
+async def _claim_schedule_occurrence(now: datetime) -> _ClaimedScheduleOccurrence | None:
+    """Lease the oldest dispatchable occurrence, recovering an expired claim."""
+    async with _scheduler_session() as session:
+        stmt = (
+            select(ScheduleOccurrence)
+            .where(
+                or_(
+                    and_(
+                        ScheduleOccurrence.status == "pending",
+                        or_(
+                            ScheduleOccurrence.next_attempt_at.is_(None),
+                            ScheduleOccurrence.next_attempt_at <= now,
+                        ),
+                    ),
+                    and_(
+                        ScheduleOccurrence.status == "dispatching",
+                        or_(
+                            ScheduleOccurrence.dispatch_expires_at.is_(None),
+                            ScheduleOccurrence.dispatch_expires_at <= now,
+                        ),
+                    ),
+                )
+            )
+            .order_by(ScheduleOccurrence.created_at, ScheduleOccurrence.id)
+            .limit(1)
+            .execution_options(skip_org_filter=True)
+        )
+        row = await session.scalar(_for_update(session, stmt, skip_locked=True))
+        if row is None:
+            return None
+        token = uuid.uuid4().hex
+        row.status = "dispatching"
+        row.dispatch_token = token
+        row.dispatch_expires_at = now + timedelta(minutes=5)
+        row.attempts += 1
+        row.next_attempt_at = None
+        await session.commit()
+        return _ClaimedScheduleOccurrence(
+            id=row.id,
+            org_id=row.org_id,
+            workflow_id=row.workflow_id,
+            workflow_version_id=row.workflow_version_id,
+            workflow_version=row.workflow_version,
+            deployment_id=row.deployment_id,
+            graph=dict(row.graph),
+            trigger_node_id=row.trigger_node_id,
+            trigger_type=row.trigger_type,
+            parameters=dict(row.parameters or {}),
+            dispatch_token=token,
+            attempts=row.attempts,
+        )
+
+
+async def _existing_occurrence_run(occurrence_id: str) -> str | None:
+    async with _scheduler_session() as session:
+        return await session.scalar(
+            select(Run.id)
+            .where(Run.deduplication_key == f"schedule-occurrence:{occurrence_id}")
+            .execution_options(skip_org_filter=True)
+        )
+
+
+async def _finish_schedule_occurrence(
+    occurrence: _ClaimedScheduleOccurrence,
+    *,
+    now: datetime,
+    run_id: str | None = None,
+    error: Exception | None = None,
+) -> None:
+    """Complete or release a claim, fenced by its dispatch token."""
+    async with _scheduler_session() as session:
+        stmt = (
+            select(ScheduleOccurrence)
+            .where(ScheduleOccurrence.id == occurrence.id)
+            .execution_options(skip_org_filter=True, populate_existing=True)
+        )
+        row = await session.scalar(_for_update(session, stmt))
+        if row is None or row.dispatch_token != occurrence.dispatch_token:
+            await session.rollback()
+            return
+        row.dispatch_token = None
+        row.dispatch_expires_at = None
+        if run_id is not None:
+            row.status = "dispatched"
+            row.run_id = run_id
+            row.dispatched_at = now
+            row.next_attempt_at = None
+            row.last_error = None
+        else:
+            row.last_error = str(error or "schedule dispatch failed")[:2000]
+            if occurrence.attempts >= 10:
+                row.status = "failed"
+                row.next_attempt_at = None
+            else:
+                row.status = "pending"
+                delay = min(300, 2 ** min(occurrence.attempts, 8))
+                row.next_attempt_at = now + timedelta(seconds=delay)
+        await session.commit()
+
+
+async def _dispatch_schedule_occurrences(now: datetime, *, limit: int = 100) -> int:
+    """Dispatch durable occurrences; failures remain retryable for later ticks."""
+    dispatched = 0
+    for _ in range(limit):
+        occurrence = await _claim_schedule_occurrence(now)
+        if occurrence is None:
+            break
+        run_id = await _existing_occurrence_run(occurrence.id)
+        error: Exception | None = None
+        if run_id is None:
+            try:
+                with run_as_org(occurrence.org_id):
+                    run_id = await start_run(
+                        occurrence.workflow_id,
+                        occurrence.graph,
+                        occurrence.workflow_version,
+                        workflow_version_id=occurrence.workflow_version_id,
+                        deployment_id=occurrence.deployment_id,
+                        mode="production",
+                        trigger_type=occurrence.trigger_type,
+                        parameters=occurrence.parameters or None,
+                        trigger_node_id=occurrence.trigger_node_id,
+                        deduplication_key=f"schedule-occurrence:{occurrence.id}",
+                    )
+            except Exception as exc:  # noqa: BLE001 - durable retry boundary
+                error = exc
+                # Handles a crash/race after start_run committed but before the
+                # occurrence was marked dispatched: the unique key is truth.
+                run_id = await _existing_occurrence_run(occurrence.id)
+        await _finish_schedule_occurrence(
+            occurrence,
+            now=now,
+            run_id=run_id,
+            error=error,
+        )
+        if run_id is None:
+            logger.warning(
+                "schedule occurrence %s dispatch failed (attempt %d): %s",
+                occurrence.id,
+                occurrence.attempts,
+                error,
+            )
+        else:
+            dispatched += 1
+    return dispatched
+
+
 async def _tick() -> None:
     """One pass of the scheduler.
 
@@ -1101,19 +1283,29 @@ async def _tick() -> None:
     which preserves the zero-config default for legacy graphs.
     """
     now = datetime.now(UTC)
-    due_workflow: list[tuple[str, dict, int, str | None, str]] = []
-    due_deployment: list[tuple[str, dict, int, str | None, str, dict, str | None]] = []
+    due_workflows = 0
+    due_deployments = 0
 
-    async with SessionLocal() as session:
+    async with _scheduler_session() as session:
+        workflow_stmt = select(Workflow).where(Workflow.active.is_(True))
         workflows = (
-            await session.scalars(
-                select(Workflow).where(Workflow.active.is_(True))
-            )
+            await session.scalars(_for_update(session, workflow_stmt))
         ).all()
+        deployment_stmt = select(Deployment).where(Deployment.active.is_(True))
         deployments = (
-            await session.scalars(select(Deployment).where(Deployment.active.is_(True)))
+            await session.scalars(_for_update(session, deployment_stmt))
         ).all()
-        states = {s.workflow_id: s for s in (await session.scalars(select(ScheduleState))).all()}
+        states = {
+            s.workflow_id: s
+            for s in (
+                await session.scalars(
+                    _for_update(
+                        session,
+                        select(ScheduleState).execution_options(skip_org_filter=True),
+                    )
+                )
+            ).all()
+        }
 
         wf_by_id = {wf.id: wf for wf in workflows}
         # Latest version per active workflow in one grouped query — never the
@@ -1165,17 +1357,23 @@ async def _tick() -> None:
                     if isinstance(chosen_trigger, dict)
                     else getattr(chosen_trigger, "id", None)
                 )
-                due_deployment.append(
-                    (
-                        workflow.id,
-                        graph,
-                        version.version,
-                        version.id,
-                        deployment.id,
-                        deployment.default_parameters or {},
-                        trigger_id,
+                session.add(
+                    ScheduleOccurrence(
+                        org_id=workflow.org_id,
+                        source_type="deployment",
+                        source_id=deployment.id,
+                        workflow_id=workflow.id,
+                        workflow_version_id=version.id,
+                        workflow_version=version.version,
+                        deployment_id=deployment.id,
+                        graph=dict(graph),
+                        trigger_node_id=trigger_id,
+                        trigger_type="deployment",
+                        parameters=dict(deployment.default_parameters or {}),
+                        scheduled_for=now,
                     )
                 )
+                due_deployments += 1
 
         # --- 2. Fallback: workflows that are active and have no deployment
         # use their in-graph schedule_trigger as before.
@@ -1202,56 +1400,36 @@ async def _tick() -> None:
                 continue
             if _is_due(params, state.last_fired, now):
                 state.last_fired = now
-                due_workflow.append(
-                    (
-                        workflow.id,
-                        graph,
-                        latest.version,
-                        latest.id,
-                        schedule["id"],
+                session.add(
+                    ScheduleOccurrence(
+                        org_id=workflow.org_id,
+                        source_type="workflow",
+                        source_id=workflow.id,
+                        workflow_id=workflow.id,
+                        workflow_version_id=latest.id,
+                        workflow_version=latest.version,
+                        deployment_id=None,
+                        graph=dict(graph),
+                        trigger_node_id=schedule["id"],
+                        trigger_type="schedule",
+                        parameters={},
+                        scheduled_for=now,
                     )
                 )
+                due_workflows += 1
 
         await session.commit()
 
-    if due_workflow or due_deployment:
+    if due_workflows or due_deployments:
         logger.info(
             "scheduler tick: %d workflow schedule(s), %d deployment(s) due",
-            len(due_workflow),
-            len(due_deployment),
+            due_workflows,
+            due_deployments,
         )
 
-    # Dispatch outside the state transaction; start_run opens its own session.
-    for workflow_id, graph, version, version_id, trigger_id in due_workflow:
-        await start_run(
-            workflow_id,
-            graph,
-            version,
-            workflow_version_id=version_id,
-            mode="production",
-            trigger_type="schedule",
-            trigger_node_id=trigger_id,
-        )
-    for (
-        workflow_id,
-        graph,
-        version,
-        version_id,
-        deployment_id,
-        params,
-        trigger_id,
-    ) in due_deployment:
-        await start_run(
-            workflow_id,
-            graph,
-            version,
-            workflow_version_id=version_id,
-            deployment_id=deployment_id,
-            mode="production",
-            trigger_type="deployment",
-            parameters=params or None,
-            trigger_node_id=trigger_id,
-        )
+    # Occurrences are committed before dispatch and claimed with a separate
+    # lease, so process death here cannot lose or duplicate a scheduled run.
+    await _dispatch_schedule_occurrences(now)
 
     # --- 3. Fire poll hooks for due provider trigger subscriptions.
     await _poll_subscriptions(now)

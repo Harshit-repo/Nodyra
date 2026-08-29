@@ -11,7 +11,9 @@ hook and from Code nodes that want to write datasets directly.
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -49,6 +51,30 @@ def _duckdb():
     return duckdb
 
 
+def _bounded_env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def _new_duckdb_conn(database: str = ":memory:"):
+    """Create a resource-bounded connection for dataset operations."""
+    conn = _duckdb().connect(database)
+    memory_mb = _bounded_env_int(
+        "NODYRA_DUCKDB_MEMORY_MB", 256, minimum=64, maximum=4096
+    )
+    temp_mb = _bounded_env_int(
+        "NODYRA_DUCKDB_TEMP_MB", 512, minimum=64, maximum=16384
+    )
+    threads = _bounded_env_int("NODYRA_DUCKDB_THREADS", 1, minimum=1, maximum=8)
+    conn.execute(f"SET threads={threads}")
+    conn.execute(f"SET memory_limit='{memory_mb}MB'")
+    conn.execute(f"SET max_temp_directory_size='{temp_mb}MB'")
+    return conn
+
+
 def _duckdb_conn():
     """Get a thread-local DuckDB in-memory connection, reusing it across calls.
 
@@ -59,7 +85,7 @@ def _duckdb_conn():
     """
     conn = getattr(_duckdb_conn_local, "conn", None)
     if conn is None:
-        conn = _duckdb().connect(":memory:")
+        conn = _new_duckdb_conn()
         _duckdb_conn_local.conn = conn
     return conn
 
@@ -238,10 +264,9 @@ def read_dataset(ref: dict[str, Any]):
     Creates a fresh connection because the caller typically holds the returned
     relation for the lifetime of a node execution.
     """
-    duckdb = _duckdb()
     _ensure_dataset(ref)
     path = dataset_path_for_ref(ref)
-    conn = duckdb.connect(":memory:")
+    conn = _new_duckdb_conn()
     return conn, conn.from_parquet(str(path))
 
 
@@ -655,40 +680,46 @@ def duckdb_sql(input: Any = None, sql: str = "SELECT * FROM input") -> dict[str,
     if head not in ("select", "with"):
         raise ValueError("duckdb_sql only allows SELECT / WITH queries")
 
-    duckdb = _duckdb()
     src = str(dataset_path_for_ref(ref)).replace("'", "''")
     out_path, out_partial = reserve_artifact_path(
         "dataset.parquet",
         content_type="application/vnd.apache.parquet",
         kind="dataset",
     )
-    # Sandboxed query connection: eagerly materialize the wired dataset into
-    # an in-memory TABLE, then latch OFF all external access before the
-    # author's SELECT runs. ``enable_external_access`` is one-way in DuckDB,
-    # so once false the query cannot touch the host filesystem or network.
-    # A fresh connection is required because mutating ``enable_external_access``
-    # would permanently taint the shared thread-local connection for subsequent
-    # nodes (e.g. ``_preview_from_table`` during finalize).
-    sandbox = duckdb.connect(":memory:")
+    # Persist the sandbox database in a private temporary file. This lets the
+    # untrusted SELECT materialize into a bounded DuckDB table without turning
+    # its entire result into a Python/Arrow object, which could bypass DuckDB's
+    # memory limit. A separate trusted connection copies only that table to the
+    # reserved artifact path after the external-access latch has done its job.
+    fd, db_name = tempfile.mkstemp(suffix=".duckdb")
+    os.close(fd)
+    db_path = Path(db_name)
+    db_path.unlink(missing_ok=True)
     try:
-        sandbox.execute(f"CREATE TABLE input AS SELECT * FROM read_parquet('{src}')")
-        sandbox.execute("SET enable_external_access=false")
-        result = sandbox.execute(query).arrow()
-    finally:
-        sandbox.close()
+        sandbox = _new_duckdb_conn(str(db_path))
+        try:
+            sandbox.execute(f"CREATE TABLE input AS SELECT * FROM read_parquet('{src}')")
+            sandbox.execute("SET enable_external_access=false")
+            sandbox.execute(f"CREATE TABLE _dsq_result AS {query}")
+        finally:
+            sandbox.close()
 
-    # Write the result out with a fresh connection: the sandboxed query ran
-    # above with external access disabled, and sandbox conn is now closed.
-    writer = duckdb.connect(":memory:")
-    try:
-        writer.register("_dsq_result", result)
-        writer.execute(
-            f"COPY _dsq_result TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
-            "(FORMAT PARQUET, COMPRESSION ZSTD)"
-        )
+        writer = _new_duckdb_conn(str(db_path))
+        try:
+            writer.execute(
+                f"COPY _dsq_result TO "
+                f"'{str(out_path).replace(chr(39), chr(39) * 2)}' "
+                "(FORMAT PARQUET, COMPRESSION ZSTD)"
+            )
+        finally:
+            writer.close()
+        return _finalize_parquet(out_path, out_partial)
+    except Exception:
+        out_path.unlink(missing_ok=True)
+        raise
     finally:
-        writer.close()
-    return _finalize_parquet(out_path, out_partial)
+        db_path.unlink(missing_ok=True)
+        Path(f"{db_path}.wal").unlink(missing_ok=True)
 
 
 @node(

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import time
 from collections.abc import Iterable
 from typing import Any
+from urllib.parse import quote, quote_plus
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -153,8 +155,27 @@ async def load_secret_values_for_org(
 def redact_text(text: str, secret_values: Iterable[str] = ()) -> str:
     redacted = text
     for secret in secret_values:
-        if secret:
-            redacted = redacted.replace(secret, REDACTED)
+        usable = _usable_secret(secret)
+        if usable is None:
+            continue
+
+        raw = usable.encode("utf-8")
+        base64_value = base64.b64encode(raw).decode("ascii")
+        urlsafe_base64_value = base64.urlsafe_b64encode(raw).decode("ascii")
+        variants = {
+            usable,
+            base64_value,
+            base64_value.rstrip("="),
+            urlsafe_base64_value,
+            urlsafe_base64_value.rstrip("="),
+            quote(usable, safe=""),
+            quote_plus(usable, safe=""),
+        }
+        # Replace longer representations first so overlapping variants cannot
+        # leave a partially encoded secret behind.
+        for variant in sorted(variants, key=len, reverse=True):
+            if len(variant) >= 4:
+                redacted = redacted.replace(variant, REDACTED)
     return redacted
 
 

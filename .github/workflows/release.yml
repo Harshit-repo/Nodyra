@@ -86,7 +86,7 @@ jobs:
         working-directory: apps/web
         run: |
           set -o pipefail
-          npm audit --audit-level=high --json > npm-audit-release.json
+          npm audit --audit-level=moderate --json > npm-audit-release.json
           npm run typecheck
           npm test 2>&1 | tee web-test-summary.txt
           npm run build

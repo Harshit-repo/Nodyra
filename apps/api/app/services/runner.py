@@ -9,8 +9,10 @@ Sub-workflow semantics (cycle/depth/inline) live in the engine
 """
 
 import asyncio
+import contextlib
 import logging
 import time
+import uuid
 from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -500,6 +502,7 @@ async def _start_run_impl(
         deployment_id,
     )
 
+    inline_lease_token: str | None = None
     async with SessionLocal() as session:
         # Resolve runner pool with a clear precedence chain:
         #   1. Deployment override (most specific)
@@ -740,7 +743,7 @@ async def _start_run_impl(
             attributes={"nodyra.run_id": run_id, "nodyra.workflow_id": workflow_id},
         ):
             trace_carrier = tracing.inject_context()
-            entry = await run_queue.enqueue(
+            await run_queue.enqueue(
                 session,
                 run_id=run_id,
                 workflow_id=workflow_id,
@@ -763,7 +766,14 @@ async def _start_run_impl(
                 # for observability/completion bookkeeping, but make it
                 # non-leaseable before commit so a dispatch loop woken by a
                 # nearby enqueue cannot execute the same run a second time.
-                entry.status = "running"
+                inline_lease_token = uuid.uuid4().hex
+                claimed = await run_queue.mark_running(
+                    session,
+                    run_id=run_id,
+                    lease_token=inline_lease_token,
+                )
+                if not claimed:  # pragma: no cover - enqueue owns this row
+                    raise RuntimeError(f"Could not claim newly enqueued run {run_id}")
         await session.commit()
         if queue_locally:
             await run_queue.notify_queue_workers()
@@ -782,6 +792,9 @@ async def _start_run_impl(
     if queue_locally:
         return run_id
 
+    if inline_lease_token is None:  # pragma: no cover - guarded by queue_locally
+        raise RuntimeError(f"Immediate run {run_id} has no execution lease")
+
     if settings.run_synchronously:
         current = asyncio.current_task()
         if current is not None:
@@ -797,6 +810,7 @@ async def _start_run_impl(
                 runner_pool_id=runner_pool_id,
                 run_execution_mode=run.execution_mode,
                 trace_carrier=trace_carrier,
+                lease_token=inline_lease_token,
             )
         finally:
             _active_runs.pop(run_id, None)
@@ -812,6 +826,7 @@ async def _start_run_impl(
                 runner_pool_id=runner_pool_id,
                 run_execution_mode=run.execution_mode,
                 trace_carrier=trace_carrier,
+                lease_token=inline_lease_token,
             )
         )
         _active_runs[run_id] = task
@@ -847,31 +862,53 @@ async def cancel_run(run_id: str) -> str | None:
         pass
 
     task = _active_runs.get(run_id)
-    if task is not None and not task.done():
+    task_cancel_requested = task is not None and not task.done()
+    if task_cancel_requested:
         task.cancel()
-        return "cancelling"
 
     # Sandbox runs: hard-kill the container directly when no awaiting task
     # was found (e.g. a queue-driven worker awaiting pool.dispatch).
-    try:
-        if await sandbox_pool.pool.cancel(run_id):
-            return "cancelling"
-    except Exception:  # noqa: BLE001 - container teardown is best-effort
-        pass
+    if not task_cancel_requested:
+        try:
+            await sandbox_pool.pool.cancel(run_id)
+        except Exception:  # noqa: BLE001 - container teardown is best-effort
+            pass
 
     from app.tenancy import run_as_system
 
     async with SessionLocal() as session:
         with run_as_system():
-            run = await session.get(Run, run_id)
-        if run is None:
-            return None
-        if run.status in ("running", "queued", "waiting"):
-            await run_queue.cancel(session, run_id=run_id)
-            await session.flush()
-            run.status = "cancelled"
-            run.finished_at = datetime.now(UTC)
-            await session.commit()
+            # Persist cancellation even when an in-memory task exists. A run is
+            # exposed as "running" before its task finishes preflight, so a
+            # cancellation can otherwise land before _execute_run_impl's
+            # CancelledError handler exists and leave the row stuck forever.
+            # Lock queue then run, matching outcome persistence's lock order.
+            entry_stmt = (
+                select(RunQueueEntry)
+                .where(RunQueueEntry.run_id == run_id)
+                .execution_options(populate_existing=True, skip_org_filter=True)
+            )
+            entry = await session.scalar(
+                _lock_for_update_if_supported(session, entry_stmt)
+            )
+            run_stmt = (
+                select(Run)
+                .where(Run.id == run_id)
+                .execution_options(populate_existing=True)
+            )
+            run = await session.scalar(_lock_for_update_if_supported(session, run_stmt))
+            if run is None:
+                return None
+            changed = run.status in ("running", "queued", "waiting")
+            if changed:
+                if entry is not None and entry.status in run_queue.ACTIVE_STATUSES:
+                    await run_queue.cancel(session, run_id=run_id)
+                run.status = "cancelled"
+                run.finished_at = datetime.now(UTC)
+                run.checkpoint = None
+                await session.commit()
+
+        if changed:
             broker.publish(
                 run_id,
                 {
@@ -915,6 +952,56 @@ async def shutdown_active_runs(timeout: float = 5.0) -> None:
         )
 
 
+async def _lease_heartbeat_loop(
+    run_id: str,
+    lease_token: str,
+    *,
+    owner_task: asyncio.Task,
+    lease_lost: asyncio.Event,
+) -> None:
+    """Renew one execution lease and cancel its worker if ownership is lost.
+
+    A transient database failure is tolerated only while enough time remains
+    to renew before the current lease expires. Once that safety window closes,
+    execution is stopped fail-closed so another worker cannot overlap it.
+    """
+    lease_seconds = max(3, int(settings.queue_lease_seconds))
+    interval = max(1.0, lease_seconds / 3)
+    renewal_deadline = time.monotonic() + max(interval, lease_seconds - interval)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            async with SessionLocal() as session:
+                renewed = await run_queue.heartbeat(
+                    session,
+                    run_id=run_id,
+                    lease_token=lease_token,
+                    lease_seconds=lease_seconds,
+                )
+                if renewed:
+                    await session.commit()
+                else:
+                    await session.rollback()
+            if not renewed:
+                logger.error(
+                    "run_id=%s execution lease lost token=%s", run_id, lease_token
+                )
+                lease_lost.set()
+                owner_task.cancel("execution lease lost")
+                return
+            renewal_deadline = time.monotonic() + max(
+                interval, lease_seconds - interval
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - tolerate only within the lease window
+            logger.exception("run_id=%s lease heartbeat failed", run_id)
+            if time.monotonic() >= renewal_deadline:
+                lease_lost.set()
+                owner_task.cancel("execution lease renewal deadline exceeded")
+                return
+
+
 async def _execute_run(
     run_id: str,
     workflow_id: str,
@@ -927,17 +1014,60 @@ async def _execute_run(
     run_execution_mode: str | None = None,
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
     trace_carrier: dict | None = None,
+    lease_token: str | None = None,
 ) -> None:
     """Tracing wrapper: opens the run.execute span (parented on ``trace_carrier``
     when given, else ambient context) around the real executor. A plain
     pass-through when tracing is off."""
+    # Production dispatchers always supply a persisted lease token. The private
+    # tokenless path remains solely for backwards-compatible direct invocations
+    # (notably lightweight unit tests) and deliberately skips queue ownership.
+    fenced_attempt = lease_token is not None
+    attempt_token = lease_token or uuid.uuid4().hex
     org_id = await _resolve_run_org(run_id)
     org_token = None
+    heartbeat_task: asyncio.Task | None = None
+    lease_lost = asyncio.Event()
     if settings.multi_tenancy_enabled:
         from app.tenancy import current_org_id
 
         org_token = current_org_id.set(org_id)
     try:
+        if fenced_attempt:
+            # Claim or re-affirm the attempt before loading credentials or
+            # invoking user code. A stale dispatcher exits without side effects.
+            try:
+                async with SessionLocal() as session:
+                    claimed = await run_queue.mark_running(
+                        session,
+                        run_id=run_id,
+                        lease_token=attempt_token,
+                    )
+                    if claimed:
+                        await session.commit()
+                    else:
+                        await session.rollback()
+            except Exception:  # noqa: BLE001 - lease sweep will recover the run
+                logger.exception("run_id=%s failed to claim execution attempt", run_id)
+                return
+            if not claimed:
+                logger.warning(
+                    "run_id=%s stale or terminal execution attempt refused token=%s",
+                    run_id,
+                    attempt_token,
+                )
+                return
+
+            owner_task = asyncio.current_task()
+            if owner_task is not None:
+                heartbeat_task = asyncio.create_task(
+                    _lease_heartbeat_loop(
+                        run_id,
+                        attempt_token,
+                        owner_task=owner_task,
+                        lease_lost=lease_lost,
+                    )
+                )
         if not tracing.enabled():
             await _execute_run_impl(
                 run_id,
@@ -951,6 +1081,8 @@ async def _execute_run(
                 agent_action_resume=agent_action_resume,
                 trace_org=org_id,
                 run_org_id=org_id,
+                lease_token=attempt_token,
+                lease_lost=lease_lost,
             )
             return
         attrs = {"nodyra.run_id": run_id, "nodyra.workflow_id": workflow_id}
@@ -972,10 +1104,16 @@ async def _execute_run(
                 agent_action_resume=agent_action_resume,
                 trace_org=org_id,
                 run_org_id=org_id,
+                lease_token=attempt_token,
+                lease_lost=lease_lost,
             )
             if sp is not None:
                 sp.set_attribute("nodyra.status", status)
     finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
         if org_token is not None:
             current_org_id.reset(org_token)
 
@@ -1017,6 +1155,7 @@ class _QueuedRunStart:
     replay_seed: dict | None
     trace_carrier: dict | None
     prior_queue_status: str
+    lease_token: str
 
 
 async def _prepare_run_context(
@@ -1124,6 +1263,7 @@ async def _mark_queued_run_started(
     session: AsyncSession,
     *,
     run_id: str,
+    lease_token: str | None = None,
 ) -> _QueuedRunStart | None:
     """Atomically promote a queued run and queue entry to running.
 
@@ -1132,6 +1272,7 @@ async def _mark_queued_run_started(
     overwrite a cancellation and Postgres does not see inverted row-update
     ordering under load.
     """
+    attempt_token = lease_token or uuid.uuid4().hex
     entry_stmt = (
         select(RunQueueEntry)
         .where(RunQueueEntry.run_id == run_id)
@@ -1140,11 +1281,14 @@ async def _mark_queued_run_started(
     entry = await session.scalar(_lock_for_update_if_supported(session, entry_stmt))
     if entry is None or entry.status not in ("queued", "leased"):
         return None
+    if entry.lease_token is not None and entry.lease_token != attempt_token:
+        return None
 
     start_state = _QueuedRunStart(
         replay_seed=dict(entry.replay_seed) if entry.replay_seed else None,
         trace_carrier=dict(entry.trace_context) if entry.trace_context else None,
         prior_queue_status=entry.status,
+        lease_token=attempt_token,
     )
     run_stmt = select(Run).where(Run.id == run_id).execution_options(populate_existing=True)
     run = await session.scalar(_lock_for_update_if_supported(session, run_stmt))
@@ -1152,6 +1296,7 @@ async def _mark_queued_run_started(
         return None
 
     entry.status = "running"
+    entry.lease_token = attempt_token
     entry.replay_seed = None
     await session.flush()
     run.status = "running"
@@ -1173,6 +1318,8 @@ async def _execute_run_impl(
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
     trace_org: str | None = None,
     run_org_id: str | None = None,
+    lease_token: str,
+    lease_lost: asyncio.Event,
 ) -> str:
     node_events: dict[str, dict] = {}
     # Distinct NodeRun records keyed by (node_id, iteration_path). Non-loop nodes
@@ -1270,6 +1417,7 @@ async def _execute_run_impl(
                         completed_node_ids,
                         last_node_id=clean["node_id"],
                         _accumulated=_accumulated_checkpoint,
+                        lease_token=lease_token,
                     )
                     checkpoint_debouncer.mark_persisted()
                     if was_truncated and not checkpoint_truncated_warned:
@@ -1315,17 +1463,6 @@ async def _execute_run_impl(
 
     workflow_modules: list[dict] = []
     try:
-        # Mark the durable queue entry as running. Inside the outer try so a
-        # cancel arriving here still routes through the terminal state writer.
-        try:
-            async with SessionLocal() as session:
-                await run_queue.mark_running(session, run_id=run_id)
-                await session.commit()
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - queue ledger must never block execution
-            logger.exception("queue mark_running failed run_id=%s", run_id)
-
         # Load secrets, resolve credentials, and gather code modules in one
         # DB session via the extracted helper (keeps _execute_run_impl readable).
         prep = await _prepare_run_context(
@@ -1404,6 +1541,7 @@ async def _execute_run_impl(
                             run_id=run_id,
                             retryable=True,
                             error=str(queued_exc) or "no runner capacity",
+                            lease_token=lease_token,
                         )
                         run = await session.get(Run, run_id)
                         if run is not None:
@@ -1630,14 +1768,25 @@ async def _execute_run_impl(
                 for module_id in loaded_module_ids:
                     unregister_module(module_id, node_registry)
     except asyncio.CancelledError:
-        status = "cancelled"
-        broker.publish(
-            run_id,
-            redact_value(
-                {"type": "run_cancelled", "run_id": run_id, "error": "Run cancelled"},
-                secret_values,
-            ),
-        )
+        if lease_lost.is_set():
+            status = "error"
+            broker.publish(
+                run_id,
+                {
+                    "type": "run_lease_lost",
+                    "run_id": run_id,
+                    "error": "Execution lease ownership was lost; stale attempt stopped",
+                },
+            )
+        else:
+            status = "cancelled"
+            broker.publish(
+                run_id,
+                redact_value(
+                    {"type": "run_cancelled", "run_id": run_id, "error": "Run cancelled"},
+                    secret_values,
+                ),
+            )
     except Exception as exc:  # noqa: BLE001 - report any execution failure
         status = "error"
         logger.exception("run_id=%s execution failed: %s", run_id, exc)
@@ -1661,7 +1810,11 @@ async def _execute_run_impl(
             }
         )
 
-    if checkpoint_debouncer.has_deferred and last_checkpoint_node_id is not None:
+    if (
+        not lease_lost.is_set()
+        and checkpoint_debouncer.has_deferred
+        and last_checkpoint_node_id is not None
+    ):
         try:
             was_truncated = await _save_checkpoint(
                 run_id,
@@ -1669,6 +1822,7 @@ async def _execute_run_impl(
                 completed_node_ids,
                 last_node_id=last_checkpoint_node_id,
                 _accumulated=_accumulated_checkpoint,
+                lease_token=lease_token,
             )
             checkpoint_debouncer.mark_persisted()
             if was_truncated and not checkpoint_truncated_warned:
@@ -1697,7 +1851,7 @@ async def _execute_run_impl(
 
     # SessionLocal / start_run are resolved from this module's globals at call
     # time so the test-suite swaps (conftest, monkeypatch) keep applying.
-    await run_persistence.persist_run_outcome(
+    persisted = await run_persistence.persist_run_outcome(
         SessionLocal,
         run_id=run_id,
         status=status,
@@ -1706,14 +1860,22 @@ async def _execute_run_impl(
         node_run_records=node_run_records,
         run_events=run_events,
         output_cap=output_cap,
+        lease_token=lease_token,
     )
 
-    try:
-        await persist_artifact_refs(run_id, artifact_refs)
-    except Exception:  # noqa: BLE001 - artifact refs are best-effort
-        logger.exception("run_id=%s failed to persist artifact refs", run_id)
+    if persisted:
+        try:
+            await persist_artifact_refs(run_id, artifact_refs)
+        except Exception:  # noqa: BLE001 - artifact refs are best-effort
+            logger.exception("run_id=%s failed to persist artifact refs", run_id)
+    else:
+        logger.warning(
+            "run_id=%s stale attempt discarded terminal side effects token=%s",
+            run_id,
+            lease_token,
+        )
 
-    if status in ("error", "timed_out"):
+    if persisted and status in ("error", "timed_out"):
         await run_alerts.dispatch_error_handlers(
             SessionLocal,
             start_run,
@@ -1731,7 +1893,9 @@ async def _execute_run_impl(
     return status
 
 
-async def _execute_queued_entry(run_id: str) -> None:
+async def _execute_queued_entry(
+    run_id: str, lease_token: str | None = None
+) -> None:
     """Re-attempt dispatch of a queued run after a queue worker leases its entry.
 
     Reloads the run row, recomputes targets from the workflow graph (using
@@ -1739,6 +1903,7 @@ async def _execute_queued_entry(run_id: str) -> None:
     ``_execute_run``. ``_execute_run`` handles queue lifecycle transitions
     (mark_running / complete / fail / cancel) end-to-end.
     """
+    attempt_token = lease_token or uuid.uuid4().hex
     async with SessionLocal() as session:
         run = await session.get(Run, run_id)
         if run is None or run.status != "queued":
@@ -1795,7 +1960,11 @@ async def _execute_queued_entry(run_id: str) -> None:
         )
         pinned_cache: dict = {row.node_id: row.payload for row in pinned_rows.all()}
 
-        queue_start = await _mark_queued_run_started(session, run_id=run_id)
+        queue_start = await _mark_queued_run_started(
+            session,
+            run_id=run_id,
+            lease_token=attempt_token,
+        )
         if queue_start is None:
             await session.rollback()
             return
@@ -1901,4 +2070,5 @@ async def _execute_queued_entry(run_id: str) -> None:
         run_execution_mode=run_execution_mode,
         agent_action_resume=agent_action_resume,
         trace_carrier=lease_carrier,
+        lease_token=queue_start.lease_token,
     )

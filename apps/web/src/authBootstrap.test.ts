@@ -17,8 +17,10 @@ describe("shouldRetryAuthError", () => {
     expect(shouldRetryAuthError(new ApiError(404, "404 not found", null))).toBe(false);
   });
 
-  it("does not retry on other 4xx", () => {
-    expect(shouldRetryAuthError(new ApiError(400, "400 bad", null))).toBe(false);
+  it("fails closed and retries on non-404 4xx", () => {
+    expect(shouldRetryAuthError(new ApiError(400, "400 bad", null))).toBe(true);
+    expect(shouldRetryAuthError(new ApiError(401, "401 unauthorized", null))).toBe(true);
+    expect(shouldRetryAuthError(new ApiError(403, "403 forbidden", null))).toBe(true);
   });
 
   it("exposes a no-auth fallback shape", () => {

@@ -6,10 +6,10 @@ import logging
 import time
 from datetime import UTC, datetime
 
-from sqlalchemy import update
+from sqlalchemy import exists, select, update
 
 from app.db import SessionLocal
-from app.models import Run
+from app.models import Run, RunQueueEntry
 from nodyra.serialization import (
     _approx_json_length,
     serialize_value,
@@ -73,6 +73,7 @@ async def _save_checkpoint(
     last_node_id: str,
     *,
     _accumulated: dict[str, dict] | None = None,
+    lease_token: str | None = None,
 ) -> bool:
     """Persist execution state to ``Run.checkpoint`` after a node completes.
 
@@ -126,8 +127,20 @@ async def _save_checkpoint(
 
     try:
         async with SessionLocal() as session:
+            stmt = update(Run).where(Run.id == run_id)
+            if lease_token is not None:
+                # Atomic attempt fence: a worker whose lease expired must not
+                # overwrite the checkpoint produced by the replacement worker.
+                owned_attempt = exists(
+                    select(RunQueueEntry.id).where(
+                        RunQueueEntry.run_id == run_id,
+                        RunQueueEntry.status == "running",
+                        RunQueueEntry.lease_token == lease_token,
+                    )
+                )
+                stmt = stmt.where(owned_attempt)
             await session.execute(
-                update(Run).where(Run.id == run_id).values(checkpoint=payload)
+                stmt.values(checkpoint=payload).execution_options(skip_org_filter=True)
             )
             await session.commit()
     except Exception:  # noqa: BLE001

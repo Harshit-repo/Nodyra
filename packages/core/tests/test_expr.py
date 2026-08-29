@@ -26,6 +26,9 @@ def test_expression_validator_blocks_sandbox_escape() -> None:
         "x.__class__",
         "().__class__.__bases__[0].__subclasses__()",
         "__import__",
+        "getattr",
+        "setattr",
+        "globals",
         "[c for c in ().__class__.__bases__[0].__subclasses__()]",
     ]
     for expr in escapes:
@@ -131,6 +134,21 @@ def test_code_validation_metric_hook_failure_does_not_bypass_rejection() -> None
             raise AssertionError("blocked name was accepted")
     finally:
         set_code_validation_blocked_hook(previous)
+
+
+def test_code_validator_blocks_dynamic_introspection_builtins() -> None:
+    import ast
+
+    for source in (
+        "output = getattr(object, '__subclasses__')",
+        "setattr(target, 'value', 1)",
+        "output = globals()",
+    ):
+        try:
+            _CodeValidator().visit(ast.parse(source, mode="exec"))
+        except ValueError:
+            continue
+        raise AssertionError(f"dynamic introspection was not blocked: {source!r}")
 
 
 def test_alias_inside_string_literal_is_not_rewritten() -> None:

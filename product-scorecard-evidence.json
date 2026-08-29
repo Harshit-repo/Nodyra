@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "evaluated_at": "2026-08-29T11:14:03.275933+00:00",
+  "review_age_days": 40,
+  "valid": true,
+  "errors": [],
+  "categories": [
+    {
+      "id": "architecture",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "dimensions_green": 3,
+      "missing_evidence": []
+    },
+    {
+      "id": "engine",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "dimensions_green": 3,
+      "missing_evidence": []
+    },
+    {
+      "id": "artifacts",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "dimensions_green": 3,
+      "missing_evidence": []
+    },
+    {
+      "id": "security",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "dimensions_green": 3,
+      "missing_evidence": []
+    },
+    {
+      "id": "ux",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "dimensions_green": 3,
+      "missing_evidence": []
+    },
+    {
+      "id": "operations",
+      "score": 9,
+      "state": "implementation_complete_evidence_pending",
+      "dimensions_green": 3,
+      "missing_evidence": []
+    },
+    {
+      "id": "ecosystem",
+      "score": 8,
+      "state": "external_activation_evidence_pending",
+      "dimensions_green": 3,
+      "missing_evidence": []
+    },
+    {
+      "id": "release",
+      "score": 9,
+      "state": "certification_evidence_pending",
+      "dimensions_green": 3,
+      "missing_evidence": []
+    }
+  ]
+}
