@@ -21,8 +21,8 @@ from app.schemas import (
     PackageUsagePackage,
     PageResponse,
 )
-from app.security import optional_current_user, require_permission
-from app.services.audit import log_audit
+from app.security import audit_recorder, optional_current_user, require_permission
+from app.services.audit import AuditRecorder, log_audit
 from app.services.environment_builds import (
     enqueue_environment_build,
     notify_environment_build_workers,
@@ -351,6 +351,7 @@ async def add_package(
     env_id: str,
     body: PackageRequest,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
     actor: User | None = Depends(optional_current_user),
 ):
     env = await _load(session, env_id)
@@ -369,6 +370,7 @@ async def add_package(
         await session.refresh(env)
         await session.refresh(build_job)
         await notify_environment_build_workers()
+        await audit("add_package", "environment", env.id, f"package={body.package}")
     return _to_info(env, await _pool_name(session, env.runner_pool_id), build_job)
 
 
@@ -439,6 +441,7 @@ async def set_packages(
     env_id: str,
     body: PackageListRequest,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
     actor: User | None = Depends(optional_current_user),
 ):
     """Replace the env's full package list (dedup by canonical name, last wins).
@@ -466,6 +469,7 @@ async def set_packages(
         await session.refresh(env)
         await session.refresh(build_job)
         await notify_environment_build_workers()
+        await audit("set_packages", "environment", env.id, f"packages={packages}")
     return _to_info(env, await _pool_name(session, env.runner_pool_id), build_job)
 
 
@@ -478,6 +482,7 @@ async def remove_package(
     env_id: str,
     package: str,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
     actor: User | None = Depends(optional_current_user),
 ):
     env = await _load(session, env_id)
@@ -495,6 +500,7 @@ async def remove_package(
         await session.refresh(env)
         await session.refresh(build_job)
         await notify_environment_build_workers()
+        await audit("remove_package", "environment", env.id, f"package={package}")
     return _to_info(env, await _pool_name(session, env.runner_pool_id), build_job)
 
 
@@ -506,6 +512,7 @@ async def remove_package(
 async def rebuild_environment(
     env_id: str,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
     actor: User | None = Depends(optional_current_user),
 ):
     env = await _load(session, env_id)
@@ -519,6 +526,7 @@ async def rebuild_environment(
     await session.refresh(env)
     await session.refresh(build_job)
     await notify_environment_build_workers()
+    await audit("rebuild", "environment", env.id, f"build_job={build_job.id}")
     return _to_info(env, await _pool_name(session, env.runner_pool_id), build_job)
 
 
@@ -578,12 +586,13 @@ async def get_environment_build_job(
     dependencies=[Depends(require_permission("environment:write"))],
 )
 async def delete_environment(
-    env_id: str, session: AsyncSession = Depends(get_session)
+    env_id: str, session: AsyncSession = Depends(get_session), audit: AuditRecorder = Depends(audit_recorder)
 ):
     env = await _load(session, env_id)
     if env.is_global:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "The global environment cannot be deleted"
         )
+    await audit("delete", "environment", env.id, f"name={env.name}")
     await session.delete(env)
     await session.commit()

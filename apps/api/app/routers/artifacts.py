@@ -22,13 +22,18 @@ from app.schemas import (
     DatasetQueryRequest,
     DatasetQueryResult,
 )
-from app.security import require_permission
+from app.security import audit_recorder, require_permission
 from app.services.artifact_backends import (
     _resolve_local_path,
     get_backend,
 )
 from app.services.artifacts import delete_artifact_files
-from app.services.datasets_query import DatasetQueryError, run_dataset_query
+from app.services.audit import AuditRecorder
+from app.services.datasets_query import (
+    DatasetQueryControl,
+    DatasetQueryError,
+    run_dataset_query,
+)
 from app.tenancy import DEFAULT_ORG_ID, active_org_id
 
 router = APIRouter(tags=["artifacts"])
@@ -292,6 +297,11 @@ async def download_artifact(
 @router.post(
     "/artifacts/{artifact_id}/query",
     response_model=DatasetQueryResult,
+    # Executes a user-supplied DuckDB query. Tenancy is already enforced by
+    # _get_artifact, but role was not checked at all, so this was reachable by
+    # any authenticated principal regardless of what they are allowed to read.
+    # workflow:read is the viewer floor — reading a dataset is a read.
+    dependencies=[Depends(require_permission("workflow:read"))],
 )
 async def query_artifact(
     artifact_id: str,
@@ -302,8 +312,6 @@ async def query_artifact(
 
     The Parquet file is exposed as the ``dataset`` and ``input`` views.
     """
-    import asyncio
-
     row = await _get_artifact(session, artifact_id)
     is_parquet = (
         row.kind == "dataset"
@@ -315,8 +323,37 @@ async def query_artifact(
             status.HTTP_400_BAD_REQUEST,
             "SQL query is only supported for Parquet-backed datasets",
         )
+    control = DatasetQueryControl()
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            run_dataset_query,
+            row,
+            payload.sql,
+            payload.limit,
+            control=control,
+            memory_mb=settings.dataset_query_memory_mb,
+            temp_mb=settings.dataset_query_temp_mb,
+        )
+    )
     try:
-        result = await asyncio.to_thread(run_dataset_query, row, payload.sql, payload.limit)
+        result = await asyncio.wait_for(
+            asyncio.shield(task),
+            timeout=settings.dataset_query_timeout_seconds,
+        )
+    except TimeoutError as exc:
+        control.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+        except (TimeoutError, DatasetQueryError):
+            # DuckDB normally interrupts immediately. If native cleanup takes
+            # longer, retain the task so its exception is consumed on exit.
+            task.add_done_callback(
+                lambda done: done.exception() if not done.cancelled() else None
+            )
+        raise HTTPException(
+            status.HTTP_408_REQUEST_TIMEOUT,
+            "Dataset query exceeded the configured time limit",
+        ) from exc
     except DatasetQueryError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return DatasetQueryResult(**result)
@@ -462,8 +499,12 @@ async def upload_artifact(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_permission("artifact:delete"))],
 )
-async def delete_artifact(artifact_id: str, session: AsyncSession = Depends(get_session)) -> None:
+async def delete_artifact(artifact_id: str, session: AsyncSession = Depends(get_session), audit: AuditRecorder = Depends(audit_recorder)) -> None:
     row = await _get_artifact(session, artifact_id)
+    await audit(
+        "delete", "artifact", row.id,
+        f"run={row.run_id} node={row.node_id} name={row.name} bytes={row.size_bytes}",
+    )
     delete_artifact_files([row])
     await session.delete(row)
     await session.commit()

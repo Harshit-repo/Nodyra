@@ -1,5 +1,7 @@
 import asyncio
+import functools
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -13,6 +15,30 @@ from app.services.sandbox_pool import pool as sandbox_pool
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/health", tags=["health"])
+
+
+@functools.cache
+def _expected_schema_head() -> str:
+    """The migration revision this code expects the database to be at.
+
+    Read from the shipped Alembic scripts rather than a hardcoded constant, so
+    the value can never drift from the migrations in the same image. Alembic's
+    ``ScriptDirectory`` is imported lazily: it is a dev/deploy-time dependency
+    and readiness must not hard-fail if it is trimmed from a slim image.
+    """
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        api_root = Path(__file__).resolve().parents[2]  # …/apps/api
+        config = Config(str(api_root / "alembic.ini"))
+        config.set_main_option("script_location", str(api_root / "alembic"))
+        heads = ScriptDirectory.from_config(config).get_heads()
+    except Exception:  # noqa: BLE001 — never let probe wiring crash the probe
+        logger.exception("readiness: could not resolve expected schema head")
+        return "unknown"
+    # A branched history has no single head; skip the check rather than guess.
+    return heads[0] if len(heads) == 1 else "unknown"
 
 
 @router.get("/live")
@@ -35,15 +61,39 @@ async def readiness_checks() -> tuple[bool, dict[str, str]]:
     checks: dict[str, str] = {}
     healthy = True
 
+    # Connectivity AND schema. A reachable database whose migrations have not
+    # run is NOT ready: the Helm chart migrates in a separate job, so a lagging
+    # or failed job would otherwise let this pod go Ready and serve 500s on
+    # every write. ``SELECT 1`` alone cannot see that (F-04).
+    expected_head = _expected_schema_head()
     try:
         async with asyncio.timeout(5):
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
-        checks["database"] = "ok"
+                actual_head = (
+                    await conn.scalar(text("SELECT version_num FROM alembic_version"))
+                    if expected_head != "unknown"
+                    else None
+                )
     except Exception:  # noqa: BLE001
         healthy = False
         logger.exception("readiness: database check failed")
         checks["database"] = "error: unreachable"
+    else:
+        if expected_head == "unknown" or str(actual_head or "") == expected_head:
+            checks["database"] = "ok"
+        else:
+            healthy = False
+            logger.error(
+                "readiness: schema at %r, expected %r — migrations have not run",
+                actual_head,
+                expected_head,
+            )
+            # Revision ids are non-sensitive and make the failure actionable;
+            # no DSN, host, or driver text is included.
+            checks["database"] = (
+                f"error: schema at {actual_head or 'none'}, expected {expected_head}"
+            )
 
     # H7: Redis is only a hard dependency when it actually backs the run queue
     # or a split dispatch topology. A single-process deployment

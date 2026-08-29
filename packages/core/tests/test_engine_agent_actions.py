@@ -775,3 +775,70 @@ async def test_agent_tool_dispatch_propagates_cancellation() -> None:
 
 async def _collect(events: list[dict[str, Any]], event: dict[str, Any]) -> None:
     events.append(event)
+
+
+# ── Duplicate tool-call ids (F-27) ──────────────────────────────────────────
+#
+# Approvals are recorded as a set of tool_call_ids and matched with
+# ``call.id in approved_call_ids``. If one request carries two calls sharing an
+# id, approving the first authorises the second — which may be a different,
+# side-effecting tool. Model-generated ids are normally unique, but they are
+# generated from a context an attacker can influence through injected content,
+# so "normally unique" is not a security property.
+#
+# Duplicate ids are malformed anyway: ``completed_by_id`` is keyed on the id, so
+# two calls sharing one collapse to a single replayed result on resume.
+
+
+async def test_duplicate_tool_call_ids_are_refused():
+    """One approval must never authorise a second, different tool."""
+    from nodyra.ai_runtime import AgentActionRequest, ToolCall
+    from nodyra.engine.agent import _dispatch_agent_action_request
+
+    request = AgentActionRequest(
+        messages_so_far=[],
+        step=0,
+        max_steps=3,
+        tool_calls=[
+            ToolCall(id="call_1", name="safe_read", arguments={}),
+            ToolCall(id="call_1", name="delete_everything", arguments={}),
+        ],
+        approved_tool_call_ids=["call_1"],
+    )
+
+    async def _emit(_event):
+        return None
+
+    with pytest.raises(ValueError, match="duplicate tool_call id"):
+        await _dispatch_agent_action_request(
+            request,
+            agent_node_id="agent",
+            tool_values=[],
+            emit=_emit,
+        )
+
+
+async def test_distinct_ids_are_unaffected():
+    """The guard must not reject an ordinary multi-call step."""
+    from nodyra.ai_runtime import AgentActionRequest, ToolCall
+    from nodyra.engine.agent import _dispatch_agent_action_request
+
+    request = AgentActionRequest(
+        messages_so_far=[],
+        step=0,
+        max_steps=3,
+        tool_calls=[
+            ToolCall(id="call_1", name="unknown_a", arguments={}),
+            ToolCall(id="call_2", name="unknown_b", arguments={}),
+        ],
+    )
+
+    async def _emit(_event):
+        return None
+
+    response = await _dispatch_agent_action_request(
+        request, agent_node_id="agent", tool_values=[], emit=_emit
+    )
+    # Both are unknown tools, so both come back as recoverable errors — the
+    # point is that the request was dispatched at all.
+    assert len(response.tool_results) == 2

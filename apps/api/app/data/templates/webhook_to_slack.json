@@ -2,7 +2,7 @@
   "id": "webhook_to_slack",
   "name": "Webhook to Slack alert",
   "description": "Receive a JSON webhook, format a message, and post it to Slack.",
-  "tags": ["alerting", "webhook", "starter"],
+  "tags": ["alerting", "webhook", "notifications"],
   "version": "1.0.2",
   "creator": "Nodyra maintainers",
   "verified": true,

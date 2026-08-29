@@ -64,7 +64,25 @@ async def _request(
     params: dict[str, Any] | None = None,
     auth: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
+    """Make one credential-test request, refusing targets a tenant must not reach.
+
+    The URL here comes out of the credential the user just typed — a webhook
+    credential's ``webhook_url``, a self-hosted model's ``base_url`` — and the
+    request is issued by the API server from inside the deployment's network.
+    Without this guard, "Test connection" was a full SSRF primitive: point a
+    credential at ``http://169.254.169.254/…``, press Test, and the status code
+    and selected response fields come back in the result.
+
+    ``assert_public_http_url`` is the same check every node's HTTP egress uses,
+    and it honours the same ``NODYRA_ALLOW_PRIVATE_EGRESS`` switch — so a
+    single-tenant operator who legitimately tests an internal endpoint opts out
+    once, globally, rather than through a second flag that only covers this path.
+    """
     import httpx
+
+    from nodyra_nodes.http_security import assert_public_http_url
+
+    assert_public_http_url(url, context="credential connection test")
 
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.request(

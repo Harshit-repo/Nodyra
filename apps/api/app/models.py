@@ -869,6 +869,13 @@ class NodeRun(Base):
         ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=False
     )
     node_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Immutable identity of the execution attempt that produced this row.
+    # The queue lease token is propagated into persistence so retrying the
+    # same attempt can replace its rows idempotently while a later attempt
+    # keeps an independent history.
+    attempt_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="legacy", server_default="legacy"
+    )
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -880,11 +887,26 @@ class NodeRun(Base):
     # Loop iteration coordinates (outermost first), or NULL for non-loop nodes.
     # A looped body node produces one NodeRun per iteration_path.
     iteration_path: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # SHA-256 of the canonical iteration path. JSON/JSONB is not a portable
+    # btree key, so this gives SQLite and PostgreSQL the same uniqueness
+    # contract for loop iterations.
+    iteration_key: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", server_default=""
+    )
 
     run: Mapped[Run] = relationship(back_populates="node_runs")
 
     # Composite index for fast per-run, per-node lookup during replay/retry.
-    __table_args__ = (Index("ix_node_runs_run_id_node_id", "run_id", "node_id"),)
+    __table_args__ = (
+        Index("ix_node_runs_run_id_node_id", "run_id", "node_id"),
+        UniqueConstraint(
+            "run_id",
+            "attempt_id",
+            "node_id",
+            "iteration_key",
+            name="uq_node_runs_attempt_node_iteration",
+        ),
+    )
 
 
 class RunEvent(Base):
@@ -897,6 +919,9 @@ class RunEvent(Base):
         ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=False
     )
     event_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    attempt_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="legacy", server_default="legacy"
+    )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     ts: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -910,6 +935,12 @@ class RunEvent(Base):
     __table_args__ = (
         Index("ix_run_events_run_id_sequence", "run_id", "sequence"),
         Index("ix_run_events_run_id_ts", "run_id", "ts"),
+        UniqueConstraint(
+            "run_id",
+            "attempt_id",
+            "sequence",
+            name="uq_run_events_attempt_sequence",
+        ),
     )
 
 
@@ -1155,6 +1186,85 @@ class ScheduleState(Base):
     last_fired: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ScheduleOccurrence(Base):
+    """Transactional outbox row for one due schedule occurrence.
+
+    The scheduler advances ``last_fired`` and inserts this immutable execution
+    snapshot in the same transaction. Dispatch is leased and retryable, closing
+    the crash window where an occurrence could previously be acknowledged but
+    never become a run.
+    """
+
+    __tablename__ = "schedule_occurrences"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    workflow_id: Mapped[str] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    workflow_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    deployment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deployments.id", ondelete="SET NULL"), nullable=True
+    )
+    graph: Mapped[dict] = mapped_column(POSTGRES_JSON, nullable=False)
+    trigger_node_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    trigger_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    parameters: Mapped[dict] = mapped_column(POSTGRES_JSON, nullable=False, default=dict)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    dispatch_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    dispatch_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dispatched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_type",
+            "source_id",
+            "scheduled_for",
+            name="uq_schedule_occurrences_source_time",
+        ),
+        UniqueConstraint("run_id", name="uq_schedule_occurrences_run_id"),
+        Index(
+            "ix_schedule_occurrences_dispatch",
+            "status",
+            "next_attempt_at",
+            "created_at",
+        ),
+    )
+
+
 class WorkflowVersion(Base):
     """An immutable snapshot of a workflow's graph. Every save creates one."""
 
@@ -1308,6 +1418,10 @@ class RunQueueEntry(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     leased_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Rotated for every execution attempt. All heartbeats, checkpoints and
+    # terminal writes compare this token before mutating state, fencing a
+    # worker whose lease expired and was handed to another worker.
+    lease_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -1428,4 +1542,76 @@ class SSOConfig(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class LicenseSubscription(Base):
+    """Vendor-side registry of paid subscriptions (the license issuer).
+
+    Rows exist only on the instance running as the license server
+    (``license_issuer_enabled``); a customer's own deployment never has this
+    table populated. It is what turns manual key minting into a subscription:
+    without a registry a key is self-contained and unrevokable, so a cancelled
+    customer keeps their entitlement until it expires.
+
+    ``refresh_token`` lets a customer's instance fetch a renewed key before the
+    current one lapses, so a healthy subscription never expires into Community
+    mid-run. It is a bearer secret — stored as a SHA-256 digest, never in the
+    clear.
+    """
+
+    __tablename__ = "license_subscriptions"
+    __table_args__ = (
+        Index("ix_license_subscriptions_status_expires", "status", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
+    # Stripe identifiers. Nullable so a subscription can be created manually
+    # (enterprise contracts, trials) without going through checkout.
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="stripe")
+    provider_customer_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    provider_subscription_id: Mapped[str | None] = mapped_column(
+        Text, nullable=True, unique=True, index=True
+    )
+
+    customer_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    customer_email: Mapped[str] = mapped_column(Text, nullable=False, default="", index=True)
+
+    tier: Mapped[str] = mapped_column(String(32), nullable=False, default="pro")
+    seats: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Extra Feature grants beyond the tier default, e.g. ["sso"].
+    extra_features: Mapped[list] = mapped_column(POSTGRES_JSON, nullable=False, default=list)
+
+    # active | past_due | cancelled. Only "active" mints a key.
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # SHA-256 of the refresh token handed to the customer's instance.
+    refresh_token_hash: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    refresh_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ProcessedWebhookEvent(Base):
+    """Idempotency ledger for inbound billing webhooks.
+
+    Stripe retries a webhook until it gets a 2xx, and can deliver the same event
+    more than once even on success. Without this, a retried
+    ``checkout.session.completed`` would mint a second licence for one payment.
+    """
+
+    __tablename__ = "processed_webhook_events"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # provider event id
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="stripe")
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )

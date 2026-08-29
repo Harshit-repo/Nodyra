@@ -23,9 +23,9 @@ from app.schemas import (
     CredentialUpdate,
     PageResponse,
 )
-from app.security import get_client_ip, optional_current_user, require_permission
+from app.security import audit_recorder, get_client_ip, optional_current_user, require_permission
 from app.services import org_keys
-from app.services.audit import log_audit
+from app.services.audit import AuditRecorder, log_audit
 from app.services.credential_tests import (
     available_test_services,
     test_credential_connection,
@@ -205,6 +205,7 @@ async def start_oauth_credential(
     body: CredentialOAuthStartRequest,
     request: Request,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
     actor: User | None = Depends(optional_current_user),
 ) -> CredentialOAuthStartResponse:
     await _validate_scope(
@@ -248,6 +249,13 @@ async def start_oauth_credential(
         )
     except OAuthError as exc:
         raise _oauth_http_error(exc) from exc
+    # Starting an OAuth grant binds a third-party identity to this workspace;
+    # the resulting token becomes a stored credential. Never record the state
+    # value or the redirect target's query string.
+    await audit(
+        "oauth_start", "credential", body.credential_type,
+        f"scope={body.scope} scopes={sorted(scopes)}",
+    )
     return CredentialOAuthStartResponse(
         authorization_url=authorization_url,
         state=state,
@@ -675,6 +683,7 @@ async def test_credential(
     cred_id: str,
     body: CredentialTestRequest,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ):
     cred = await _load(session, cred_id)
     if (
@@ -694,6 +703,11 @@ async def test_credential(
     type_spec = get_credential_type(cred.type)
     test_service = type_spec.test_service if type_spec and type_spec.test_service else cred.type
     result = await test_credential_connection(test_service, data, body.context)
+    # Decrypts the stored secret and sends it to the provider, so this is a
+    # use of the credential and belongs in the trail alongside reads.
+    await audit(
+        "test", "credential", cred.id, f"type={cred.type} service={test_service}"
+    )
     cred.last_used_at = datetime.now(UTC)
     await session.commit()
     return result

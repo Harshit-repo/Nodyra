@@ -114,7 +114,10 @@ NOTION_ARCHIVE_PAGE_SPEC = OperationSpec(
     provider="notion",
     resource="page",
     operation="archive",
-    description="Archive a Notion page.",
+    description=(
+        "Archive a Notion page by id, removing it from its database or parent "
+        "while keeping it recoverable from the Notion trash."
+    ),
     icon="brand:notion",
     params=(
         _credentials_param(),
@@ -128,7 +131,10 @@ NOTION_QUERY_DATABASE_SPEC = OperationSpec(
     provider="notion",
     resource="database",
     operation="query",
-    description="Query a Notion database.",
+    description=(
+        "Read pages from a Notion database, optionally filtered and sorted. "
+        "Returns page properties as structured rows; results are paginated."
+    ),
     icon="brand:notion",
     tool_side_effecting=False,
     params=(

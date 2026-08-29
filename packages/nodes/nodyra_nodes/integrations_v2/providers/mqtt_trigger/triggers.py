@@ -145,8 +145,11 @@ MQTT_TRIGGER_SPEC = ProviderTriggerSpec(
         OperationParamSpec(
             name="qos",
             type="number",
+            # Numeric default against string choices left the dropdown with
+            # nothing selected: the editor compares the option values it was
+            # given, and 1 != "1". The runtime coerces with int() either way.
             default=1,
-            choices=["0", "1", "2"],
+            choices=[0, 1, 2],
             description="Quality of Service level (0, 1, or 2).",
         ),
         OperationParamSpec(

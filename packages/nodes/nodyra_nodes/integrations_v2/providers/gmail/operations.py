@@ -42,7 +42,10 @@ GMAIL_SEND_SPEC = OperationSpec(
     provider="gmail",
     resource="message",
     operation="send",
-    description="Send an email via Gmail.",
+    description=(
+        "Send an email from the authenticated Gmail account. The message is "
+        "delivered immediately to the named recipients and cannot be recalled."
+    ),
     icon="brand:gmail",
     params=(
         _credentials_param(),

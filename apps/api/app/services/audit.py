@@ -159,3 +159,64 @@ async def log_audit(
         },
     )
     enqueue_audit_webhook(event)
+
+
+# ── Injectable recorder ─────────────────────────────────────────────────────
+# Many privileged endpoints (drain, dead-letter replay, registry installs, pool
+# lifecycle) neither take a session nor resolve an actor, so recording an event
+# meant threading two more dependencies through each one. ``AuditRecorder`` is
+# that plumbing done once: declare it as a dependency and call it in one line.
+# It owns its own commit because these handlers often have nothing else to
+# commit — an audit event that rolls back is not an audit trail.
+
+
+class AuditRecorder:
+    """Records audit events for a request, with the actor already resolved.
+
+    ORDERING — call this *before* triggering work that runs through a different
+    session. The recorder commits the request's session, so calling it after
+    something like ``cancel_run`` (which tears a run down through its own
+    session) puts a write transaction in the way of that teardown; on SQLite
+    that is enough to make the teardown never land. Auditing the request rather
+    than its outcome is also the better record: what an auditor needs is that
+    this operator asked for this, which is true regardless of what happened
+    next.
+
+    For plain create/update/delete handlers the opposite holds — call it
+    alongside the mutation so the event and the row commit together.
+    """
+
+    __slots__ = ("_session", "_actor")
+
+    def __init__(self, session: AsyncSession, actor: Any | None) -> None:
+        self._session = session
+        self._actor = actor
+
+    async def __call__(
+        self,
+        action: str,
+        target_type: str,
+        target_id: str = "",
+        detail: str = "",
+    ) -> None:
+        # The whole write is guarded, not just the commit: an audit outage must
+        # never fail the action it observes. The endpoint has already done its
+        # work by the time we are called, so raising here would report failure
+        # for an operation that actually succeeded.
+        try:
+            await log_audit(
+                self._session,
+                action,
+                target_type,
+                target_id,
+                detail,
+                actor_id=getattr(self._actor, "id", None),
+                actor_email=getattr(self._actor, "email", None),
+            )
+            await self._session.commit()
+        except Exception:  # noqa: BLE001
+            _audit_logger.exception("audit: could not persist event %s", action)
+            try:
+                await self._session.rollback()
+            except Exception:  # noqa: BLE001
+                pass

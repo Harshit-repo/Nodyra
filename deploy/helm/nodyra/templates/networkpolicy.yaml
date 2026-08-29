@@ -1,0 +1,56 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+  Production baseline network policy. Off by default because it is only correct
+  once the operator knows where Postgres and Redis actually live — a policy that
+  silently blocks the database is worse than none.
+
+  Note the asymmetry: the API is reachable from the ingress controller and the
+  web pods, while workers accept no ingress at all. Workers dial out; nothing
+  dials in. Egress stays open unless allowedEgressCIDRs is set, because
+  workflows call arbitrary third-party APIs by design — that is the product.
+  Narrowing it is a deployment decision, not a default.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "nodyra.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-api
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.api.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-worker
+  labels:
+    {{- include "nodyra.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-worker
+  # Ingress with no rules is deny-all: nothing should ever dial a worker.
+  policyTypes: [Ingress{{ if .Values.networkPolicy.allowedEgressCIDRs }}, Egress{{ end }}]
+  ingress: []
+  {{- if .Values.networkPolicy.allowedEgressCIDRs }}
+  egress:
+    # DNS must be allowed explicitly or every hostname lookup fails.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- range .Values.networkPolicy.allowedEgressCIDRs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+    {{- end }}
+  {{- end }}
+{{- end }}

@@ -20,6 +20,12 @@ spec:
         app: {{ .Release.Name }}-api
     spec:
       terminationGracePeriodSeconds: 60
+      serviceAccountName: {{ include "nodyra.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "nodyra.podSecurityContext" . | nindent 8 }}
+      volumes:
+        {{- include "nodyra.scratchVolumes" . | nindent 8 }}
       containers:
         - name: api
           image: {{ include "nodyra.apiImage" . | quote }}
@@ -43,6 +49,21 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.api.port }}
+          securityContext:
+            {{- include "nodyra.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            {{- include "nodyra.scratchVolumeMounts" . | nindent 12 }}
+          {{- if .Values.startupProbe.enabled }}
+          # Boot wires dependencies and warms pools before answering readiness.
+          # Without this, a slow start is killed by livenessProbe rather than
+          # waited out; liveness only begins once startup has succeeded.
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /health/live

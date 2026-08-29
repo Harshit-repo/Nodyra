@@ -30,9 +30,18 @@ from app.services.artifact_backends import (
 from app.services.artifact_backends import (
     _resolve_local_path as _artifact_path,  # noqa: F401
 )
-from app.services.redaction import load_secret_values, redact_value
+from app.services.redaction import (
+    load_secret_values,
+    load_secret_values_for_org,
+    redact_value,
+)
 from app.tenancy import run_as_system
-from nodyra.artifacts import ARTIFACT_MARKER, LocalArtifactStore, is_artifact_ref
+from nodyra.artifacts import (
+    ARTIFACT_MARKER,
+    LocalArtifactStore,
+    is_artifact_ref,
+    sanitize_name,
+)
 
 
 def artifact_base_dir() -> Path:
@@ -102,6 +111,25 @@ def path_for_artifact(artifact: Artifact) -> Path:
     return backend.path_for_artifact(artifact)
 
 
+def canonical_storage_keys(
+    *, run_id: str, node_id: str, artifact_id: str, name: str, org_id: str | None
+) -> list[str]:
+    """Every storage key a ref for this run is allowed to carry.
+
+    Mirrors ``LocalArtifactStore._storage_key``. Two forms are legal because the
+    org prefix was introduced later and a store built without an org id (single
+    tenant, or a runtime that had no org context) still writes the unprefixed
+    key. Both address bytes inside this run's own directory, which is the whole
+    point of the check.
+    """
+    suffix = (
+        f"runs/{run_id}/{sanitize_name(node_id)}/"
+        f"{artifact_id}-{sanitize_name(name)}"
+    )
+    cleaned = str(org_id or "").strip("/")
+    return [f"{cleaned}/{suffix}", suffix] if cleaned else [suffix]
+
+
 def _row_from_ref(
     ref: dict[str, Any],
     run_id: str,
@@ -112,10 +140,22 @@ def _row_from_ref(
     artifact_id = str(ref["artifact_id"])
     node_id = str(ref.get("node_id") or "unknown")
     name = str(ref.get("name") or "artifact")
-    storage_key = str(
-        ref.get("storage_key")
-        or f"runs/{run_id}/{node_id}/{artifact_id}-{name}"
+    # SECURITY (F-06): the ref is produced by the run's own Python — user code.
+    # A crafted ``storage_key`` stays inside the artifact root (the backend's
+    # traversal guard sees to that) but could otherwise address ANOTHER run's,
+    # and therefore another tenant's, bytes; the row would then be stamped with
+    # the attacker's org and served by the normal download route. Accept the
+    # supplied key only when it is one this run could legitimately have
+    # written, else fall back to the canonical key.
+    allowed = canonical_storage_keys(
+        run_id=run_id,
+        node_id=node_id,
+        artifact_id=artifact_id,
+        name=name,
+        org_id=org_id,
     )
+    supplied = str(ref.get("storage_key") or "").strip()
+    storage_key = supplied if supplied in allowed else allowed[0]
     return Artifact(
         id=artifact_id,
         run_id=run_id,
@@ -158,9 +198,17 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
         # falls back to the default org, so all reads here must opt out and then
         # stamp rows from the owning Run explicitly.
         with run_as_system():
-            secret_values = await load_secret_values(session)
+            # Resolve the owning org FIRST so redaction only ever decrypts this
+            # tenant's credentials. Loading the all-orgs list here used to pull
+            # every organization's plaintext secrets into one process cache for
+            # a single run's redaction (F-02).
             run_org_id = await session.scalar(
                 select(Run.org_id).where(Run.id == run_id)
+            )
+            secret_values = (
+                await load_secret_values_for_org(run_org_id, session)
+                if run_org_id
+                else await load_secret_values(session)
             )
             existing = set(
                 (

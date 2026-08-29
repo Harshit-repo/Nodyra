@@ -1,0 +1,48 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":dependencyDashboard"],
+  "timezone": "Australia/Sydney",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 5,
+  "labels": ["dependencies"],
+  "lockFileMaintenance": { "enabled": true, "schedule": ["before 6am on monday"] },
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"],
+    "prPriority": 10
+  },
+  "osvVulnerabilityAlerts": true,
+  "packageRules": [
+    {
+      "description": "Security fixes land immediately, outside the weekly window. This is the rule that would have caught the undici/react-router advisories that turned CI red (F-01).",
+      "matchDatasources": ["npm", "pypi"],
+      "isVulnerabilityAlert": true,
+      "automerge": true,
+      "automergeType": "pr",
+      "schedule": ["at any time"]
+    },
+    {
+      "description": "Patch and dev-dependency bumps automerge once every CI lane is green; the suite is thorough enough to trust it.",
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Group the Python workspace so uv.lock is regenerated once, not per package — a split bump would fail `uv lock --check`.",
+      "matchManagers": ["pep621"],
+      "groupName": "python dependencies"
+    },
+    {
+      "description": "Pin GitHub Actions to a commit SHA. Mutable action tags were the vector in the 2026 Trivy supply-chain incident; the release workflow already pins by hand.",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true
+    },
+    {
+      "description": "Major upgrades to the runtime frame of the product get reviewed by a human, never automerged.",
+      "matchPackageNames": ["react", "react-dom", "fastapi", "sqlalchemy", "pydantic", "vite", "python"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "needs-review"]
+    }
+  ]
+}

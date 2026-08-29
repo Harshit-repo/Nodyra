@@ -77,3 +77,7 @@ apps/web/playwright-report/
 /*.png
 .tmp/
 .fable5-tmp/
+
+# Benchmark and evidence artifacts written by CI scripts into the workspace.
+engine-planning-benchmark.json
+engine-throughput-benchmark.json

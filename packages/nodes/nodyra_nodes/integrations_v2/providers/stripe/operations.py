@@ -288,7 +288,10 @@ STRIPE_LIST_PRODUCTS_SPEC = OperationSpec(
     provider="stripe",
     resource="product",
     operation="list",
-    description="List Stripe products.",
+    description=(
+        "List products from the Stripe catalogue, optionally limited to active "
+        "ones. Returns each product id, name and metadata."
+    ),
     icon="brand:stripe",
     tool_side_effecting=False,
     params=(
@@ -344,7 +347,11 @@ STRIPE_LIST_INVOICES_SPEC = OperationSpec(
     provider="stripe",
     resource="invoice",
     operation="list",
-    description="List Stripe invoices.",
+    description=(
+        "List invoices from Stripe, optionally narrowed to one customer or "
+        "status (draft, open, paid, void). Returns amounts in the smallest "
+        "currency unit."
+    ),
     icon="brand:stripe",
     tool_side_effecting=False,
     params=(

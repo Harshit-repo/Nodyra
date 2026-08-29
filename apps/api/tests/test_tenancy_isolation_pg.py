@@ -315,3 +315,53 @@ async def test_multi_tenant_startup_rejects_rls_bypass_role(pg, monkeypatch):
             await assert_safe_postgres_role(admin_engine)
     finally:
         await admin_engine.dispose()
+
+
+async def test_every_org_scoped_table_has_an_rls_policy(pg):
+    """F-03 drift gate: the ORM filter and Postgres RLS must cover the SAME set
+    of tables.
+
+    Four org-scoped tables (environment_build_jobs, memberships,
+    workflow_checks, workflow_revisions) shipped with an ``org_id`` but no
+    policy, leaving them protected by a single layer. The gap was silent
+    because nothing compared the two layers. This test is that comparison: add
+    an org-scoped model without a policy and it fails here rather than in
+    production.
+    """
+    import app.models  # noqa: F401 — populate the mapper registry
+    from app.tenancy import org_scoped_models
+
+    expected = {model.__tablename__ for model in org_scoped_models()}
+    assert expected, "no org-scoped models discovered — the check would be vacuous"
+
+    db = await asyncpg.connect(pg["admin"])
+    try:
+        rows = await db.fetch(
+            "SELECT c.relname AS table_name, c.relrowsecurity, c.relforcerowsecurity, "
+            "       count(p.polname) AS policies "
+            "FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "LEFT JOIN pg_policy p ON p.polrelid = c.oid "
+            "WHERE n.nspname = 'public' AND c.relkind = 'r' "
+            "GROUP BY c.relname, c.relrowsecurity, c.relforcerowsecurity"
+        )
+    finally:
+        await db.close()
+
+    state = {r["table_name"]: r for r in rows}
+    present = expected & set(state)
+    assert present, "expected org-scoped tables to exist in the migrated schema"
+
+    missing_policy = sorted(t for t in present if state[t]["policies"] == 0)
+    assert not missing_policy, (
+        f"org-scoped tables with no RLS policy: {missing_policy}. "
+        "Add one in a migration (see 0093_rls_coverage_gap)."
+    )
+
+    not_enabled = sorted(t for t in present if not state[t]["relrowsecurity"])
+    assert not not_enabled, f"RLS not enabled on: {not_enabled}"
+
+    # FORCE matters: without it the table owner — which the app role often is
+    # in single-database deployments — bypasses its own policy.
+    not_forced = sorted(t for t in present if not state[t]["relforcerowsecurity"])
+    assert not not_forced, f"RLS enabled but not FORCEd on: {not_forced}"

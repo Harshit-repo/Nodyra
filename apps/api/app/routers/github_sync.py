@@ -18,8 +18,8 @@ from app.schemas import (
     GithubSyncConfigCreate,
     GithubSyncConfigInfo,
 )
-from app.security import require_permission
-from app.services.audit import log_audit
+from app.security import audit_recorder, require_permission
+from app.services.audit import AuditRecorder, log_audit
 from app.services.github_sync import create_github_repo, enqueue_github_push, validate_repo_access
 from app.services.github_sync_jobs import notify_sync_workers
 from app.services.licensing import Feature, require_feature
@@ -177,6 +177,7 @@ async def manual_github_pull(
     workflow_id: str,
     _: None = Depends(require_permission("workflow:write")),
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> dict:
     workflow = await session.get(Workflow, workflow_id)
     if workflow is None:
@@ -191,6 +192,9 @@ async def manual_github_pull(
     )
     session.add(job)
     await session.commit()
+    # A pull overwrites the workflow graph from an external repository —
+    # inbound code movement, so who triggered it matters.
+    await audit("github_pull", "workflow", workflow_id, f"job={job.id} origin=manual")
     notify_sync_workers()
     return {"status": "queued", "job_id": job.id}
 

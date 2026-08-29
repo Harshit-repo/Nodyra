@@ -1912,7 +1912,11 @@ def hash_node(input: Any = None, algorithm: str = "sha256") -> str:
 
 @node(name="UUID", id="uuid", category="Transform", icon="tag")
 def uuid_v4(input: Any = None) -> str:  # noqa: ARG001 - input ignored
-    """Generate a new UUID4."""
+    """Generate a random UUID4 identifier.
+
+    Returns a fresh, collision-resistant id for correlating records, naming
+    files, or de-duplicating retried work. A new value on every call.
+    """
     import uuid
 
     return str(uuid.uuid4())

@@ -264,6 +264,12 @@ class Settings(BaseSettings):
     artifact_s3_endpoint: str = ""
     max_artifact_bytes: int = 50 * 1024 * 1024
     max_artifacts_per_run: int = 100
+    # Interactive dataset explorer guardrails. DuckDB is isolated per request,
+    # restricted to one worker thread, and interrupted when this wall-clock
+    # budget expires. Memory/temp limits are applied before Parquet is loaded.
+    dataset_query_timeout_seconds: float = Field(default=15.0, gt=0.0, le=300.0)
+    dataset_query_memory_mb: int = Field(default=256, ge=64, le=4096)
+    dataset_query_temp_mb: int = Field(default=512, ge=64, le=16384)
     # Overall wall-clock cap for a single workflow run. 0 (default) means *no*
     # cap — long-running data workflows run until they finish or the run is
     # cancelled. Set a positive value (or a per-workflow ``run_timeout_seconds``
@@ -366,6 +372,48 @@ class Settings(BaseSettings):
     # PEM-encoded Ed25519 public key used to verify license keys. Blank → use
     # the key baked into app/services/licensing.py. Tests override this.
     license_public_key: str = ""
+
+    # ---- License issuer (vendor side) --------------------------------------
+    # Only the ONE instance the vendor runs as its license server sets these.
+    # A customer's deployment leaves them blank and never exposes the issuer
+    # routes at all — the router is not mounted when this is off.
+    license_issuer_enabled: bool = False
+    # PEM-encoded Ed25519 PRIVATE key that signs license keys. Read from the
+    # environment (or a mounted secret) and never persisted: possession of it
+    # is possession of unlimited free Enterprise licences.
+    license_signing_key: str = ""
+    # Stripe secret key and webhook signing secret. Blank disables the Stripe
+    # paths while leaving manual subscription management working, so an
+    # enterprise contract can be entered by hand without a payment provider.
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    # Maps a Stripe price id to the edition it grants, e.g.
+    # {"price_1AbcPro": "pro", "price_1XyzEnt": "enterprise"}.
+    stripe_price_tiers: dict[str, str] = Field(default_factory=dict)
+    # How long an issued key is valid. Deliberately longer than the billing
+    # period so a failed refresh degrades slowly rather than at the instant a
+    # renewal is late.
+    license_validity_days: int = 45
+    # Where checkout returns the customer.
+    billing_success_url: str = ""
+    billing_cancel_url: str = ""
+
+    # ---- License refresh (customer side) ------------------------------------
+    # A customer's instance polls this to renew its key before expiry. Blank
+    # (the default) disables the loop entirely — an air-gapped deployment keeps
+    # working offline exactly as before, which is the whole point of offline
+    # verification.
+    license_server_url: str = ""
+    # Bearer secret issued alongside the licence at checkout.
+    license_refresh_token: str = ""
+    # Renew once the key is inside this window of expiry.
+    license_refresh_window_days: int = 14
+    # Per-IP cap on POST /billing/license. That endpoint is unauthenticated by
+    # necessity (a customer instance is a machine with no user) and every call
+    # costs a database lookup plus an Ed25519 signature, so without a cap an
+    # anonymous caller can spend the licence server's CPU for free. A healthy
+    # instance renews roughly once a fortnight; 30/minute is enormous headroom.
+    license_refresh_rate_limit_per_minute: int = 30
     # Signed Community Node Registry. When False, registry discovery and
     # installs are disabled for air-gapped / maximum-security deployments.
     allow_registry: bool = Field(
@@ -395,6 +443,14 @@ class Settings(BaseSettings):
     # login.  Rotating IPs (mobile, VPN) will cause re-auth; set False where
     # that friction is unacceptable.
     auth_bind_token_to_ip: bool = False
+    # Pre-JWT session tokens (``base64url(json).hex(HMAC)``) were accepted
+    # unconditionally with no way to turn them off. They are signed with the
+    # same secret and carry an ``exp``, so they are not forgeable — but they
+    # skip the issuer/audience validation every JWT gets, and an accept path
+    # nothing produces any more is surface with no user. Default off; set True
+    # only for the one release in which tokens minted before the JWT migration
+    # are still inside their TTL.
+    auth_accept_legacy_tokens: bool = False
     # Per-IP sliding-window cap on /auth/login + /auth/register attempts.
     # Tunes brute-force friction; set ``auth_rate_limit_enabled=False`` to
     # disable entirely (e.g. when fronted by a WAF that already throttles).
@@ -434,6 +490,12 @@ class Settings(BaseSettings):
     # HashiCorp Vault Transit engine settings (used when kms_provider="vault").
     vault_url: str | None = None
     vault_token: str | None = None
+    # Vault Transit receives the PLAINTEXT org KEK and sends it back, so the
+    # transport is not incidental — over http:// the one secret this provider
+    # exists to protect crosses the network in the clear, alongside the Vault
+    # token in a request header. Plaintext is refused unless an operator on a
+    # trusted network opts in explicitly. Loopback never needs the opt-in.
+    vault_allow_insecure_transport: bool = False
     vault_transit_mount: str = "transit"
     vault_transit_key: str = "nodyra-master"
     # AWS KMS settings (used when kms_provider="aws").
@@ -701,6 +763,10 @@ class Settings(BaseSettings):
             )
         if self.kms_provider == "vault" and not self.vault_token:
             errors.append("kms_provider=vault requires VAULT_TOKEN to be set.")
+        if self.kms_provider == "vault" and self.vault_url:
+            errors.extend(_vault_transport_errors(
+                self.vault_url, self.vault_allow_insecure_transport
+            ))
         if self.kms_provider == "aws" and not self.aws_kms_key_id:
             errors.append(
                 "kms_provider=aws requires AWS_KMS_KEY_ID to be set (key ID, ARN, or alias)."
@@ -787,3 +853,29 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def _vault_transport_errors(vault_url: str, allow_insecure: bool) -> list[str]:
+    """Refuse a Vault URL that would carry key material in the clear.
+
+    Loopback is exempt: a Vault on the same host never crosses a network, and
+    demanding the opt-in there would only train operators to set it everywhere.
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(vault_url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return [
+            f"VAULT_URL={vault_url!r} is not a usable http(s) URL "
+            "(expected e.g. https://vault.internal:8200)."
+        ]
+    if parts.scheme == "https" or allow_insecure:
+        return []
+    if parts.hostname in ("localhost", "127.0.0.1", "::1"):
+        return []
+    return [
+        f"VAULT_URL={vault_url!r} uses plaintext http. Vault Transit receives "
+        "the org KEK itself, so the key and the Vault token would both cross "
+        "the network unencrypted. Use https, or set "
+        "VAULT_ALLOW_INSECURE_TRANSPORT=true to accept that on a trusted network."
+    ]

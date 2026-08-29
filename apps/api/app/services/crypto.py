@@ -1,16 +1,18 @@
 """Encryption, password hashing, and signed tokens.
 
-Credentials are encrypted at rest with Fernet. Passwords use PBKDF2-HMAC.
-Session tokens are HMAC-signed — no third-party JWT dependency needed.
+Credentials are encrypted at rest with Fernet. Passwords use Argon2id, with
+historical PBKDF2 hashes still verified and transparently upgraded on the
+owner's next successful sign-in. Session tokens are standard HS256 JWTs.
 """
 
 import base64
+import functools
 import hashlib
 import hmac
 import json
 import logging
-import os
 import time
+from typing import TYPE_CHECKING
 
 import jwt as _jwt  # PyJWT
 from cryptography.fernet import Fernet, InvalidToken
@@ -19,9 +21,26 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from app.config import settings
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import argon2
+
 _logger = logging.getLogger(__name__)
 
-_PBKDF2_ROUNDS = 600_000  # OWASP 2025 recommendation for PBKDF2-HMAC-SHA256
+# Historical PBKDF2 parameters. Kept only so hashes written before the Argon2id
+# migration still verify; nothing new is produced with them.
+_PBKDF2_ROUNDS = 600_000
+
+
+@functools.cache
+def _password_hasher() -> "argon2.PasswordHasher":
+    """Process-wide Argon2id hasher.
+
+    Constructed lazily and cached: PasswordHasher is stateless and thread-safe,
+    but building one per call would repeat parameter validation on every login.
+    """
+    import argon2
+
+    return argon2.PasswordHasher()
 
 
 class CredentialDecryptError(RuntimeError):
@@ -227,43 +246,84 @@ def decrypt_credential(
         return {}
 
 
-def hash_password(password: str) -> str:
-    """Hash a password with PBKDF2-HMAC-SHA256.
+def _verify_pbkdf2(password: str, stored: str) -> bool:
+    """Verify a historical PBKDF2 hash.
 
-    Format: ``rounds:salt_b64:digest_b64`` — rounds are stored in-band so
-    ``_PBKDF2_ROUNDS`` can be increased without breaking existing hashes.
-    """
-    salt = os.urandom(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ROUNDS)
-    return (
-        f"{_PBKDF2_ROUNDS}:"
-        f"{base64.b64encode(salt).decode()}:"
-        f"{base64.b64encode(digest).decode()}"
-    )
-
-
-def verify_password(password: str, stored: str) -> bool:
-    """Verify a password against a stored PBKDF2 hash.
-
-    Handles both the legacy ``salt:digest`` format (200k rounds implied) and the
-    current ``rounds:salt:digest`` format so existing passwords survive a rounds
-    increase.
+    Two formats existed: ``rounds:salt_b64:digest_b64`` (rounds in-band) and the
+    original ``salt_b64:digest_b64`` with 200k rounds implied. Both must keep
+    verifying — a migration that locks users out does not get deployed.
     """
     try:
         parts = stored.split(":")
         if len(parts) == 3:
             rounds_str, salt_b64, digest_b64 = parts
             rounds = int(rounds_str)
-        else:
-            # Legacy format: salt:digest (200k rounds)
+        elif len(parts) == 2:
             salt_b64, digest_b64 = parts
             rounds = 200_000
+        else:
+            return False
         salt = base64.b64decode(salt_b64)
         expected = base64.b64decode(digest_b64)
     except (ValueError, TypeError):
         return False
+    if not salt or not expected:
+        return False
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, rounds)
     return hmac.compare_digest(digest, expected)
+
+
+def hash_password(password: str) -> str:
+    """Hash a password with Argon2id.
+
+    Argon2id is the OWASP first choice: PBKDF2 is only compute-hard, so a GPU
+    or ASIC evaluates it thousands of times in parallel, while Argon2id's
+    memory cost makes that parallelism expensive. Parameters come from
+    ``argon2.PasswordHasher``'s defaults, which track the RFC 9106 second
+    recommended option and are revised upstream as hardware moves.
+
+    The returned string is the standard PHC format (``$argon2id$v=19$...``),
+    which carries its own parameters — so raising the cost later leaves
+    existing hashes verifiable, exactly as the in-band PBKDF2 rounds did.
+    """
+    return _password_hasher().hash(password)
+
+
+def verify_password(password: str, stored: str) -> bool:
+    """Verify a password against an Argon2id or historical PBKDF2 hash.
+
+    Never raises: a corrupt or truncated hash is a failed verification, not a
+    500 on the login path.
+    """
+    if not stored:
+        return False
+    if stored.startswith("$argon2"):
+        try:
+            return _password_hasher().verify(stored, password)
+        except Exception:  # noqa: BLE001 — any failure is a non-match
+            return False
+    return _verify_pbkdf2(password, stored)
+
+
+def needs_rehash(stored: str) -> bool:
+    """True when ``stored`` should be replaced after a successful verification.
+
+    Covers both the PBKDF2 → Argon2id migration and later increases to the
+    Argon2 cost parameters. Callers re-hash on the owner's next successful
+    sign-in, so the upgrade is invisible and nobody is logged out.
+
+    A hash this function cannot parse is reported as needing a rehash: it is
+    either corrupt or from a format we no longer produce, and replacing it on
+    the next successful login is the right outcome either way.
+    """
+    if not stored:
+        return True
+    if stored.startswith("$argon2"):
+        try:
+            return bool(_password_hasher().check_needs_rehash(stored))
+        except Exception:  # noqa: BLE001
+            return True
+    return True
 
 
 # ── JWT token functions (P1-2: standard JWT replaces self-rolled HMAC) ──────
@@ -350,7 +410,14 @@ def _legacy_verify_and_decode(body: str, signature: str) -> dict | None:
 
 def _is_legacy_token(token: str) -> bool:
     """Heuristic: a legacy token has exactly one '.' with a 64-char hex suffix.
-    A JWT has two '.' separators."""
+    A JWT has two '.' separators.
+
+    Returns False outright when ``auth_accept_legacy_tokens`` is off (the
+    default), so every caller's legacy branch is skipped and the token falls
+    through to JWT validation, which rejects it.
+    """
+    if not settings.auth_accept_legacy_tokens:
+        return False
     return token.count(".") == 1 and len(token.rsplit(".", 1)[1]) == 64
 
 

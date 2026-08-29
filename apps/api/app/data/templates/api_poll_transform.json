@@ -23,7 +23,7 @@
           "every": 1,
           "interval": "hours",
           "cron": "",
-          "timezone": "UTC"
+          "tz": "UTC"
         },
         "position": {"x": 0, "y": 40}
       },

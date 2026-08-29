@@ -16,10 +16,23 @@ from nodyra.sdk import node
 
 
 def _resolve_output(path: Path, output_dir: Path) -> Path:
-    resolved = output_dir.resolve() / path
-    resolved = resolved.resolve()
-    if not str(resolved).startswith(str(output_dir.resolve())):
-        raise ValueError(f"archive_extract: member '{path}' would extract outside target directory")
+    """Resolve an archive member under ``output_dir``, or refuse it.
+
+    Containment is checked with ``Path.relative_to``, not a string prefix. A
+    prefix comparison treats ``/tmp/out-evil/x`` as inside ``/tmp/out`` — the
+    target really is a literal prefix of it — so a member named
+    ``../out-evil/payload`` escaped into a sibling directory whose name merely
+    started with the target's. ``relative_to`` compares path components, which
+    is the actual parent/child question.
+    """
+    base = output_dir.resolve()
+    resolved = (base / path).resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError:
+        raise ValueError(
+            f"archive_extract: member '{path}' would extract outside target directory"
+        ) from None
     return resolved
 
 

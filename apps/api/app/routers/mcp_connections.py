@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.models import AuditEvent, MCPConnection
 from app.schemas import MCPToolCallAuditInfo, PageResponse
-from app.security import require_permission
+from app.security import optional_current_user, require_permission
+from app.services.audit import log_audit
 from app.services.mcp_client import (
     _load_conn_with_secret,
     discover_tools,
@@ -70,6 +71,7 @@ async def list_mcp_connections(
 async def create_mcp_connection(
     body: dict[str, Any],
     session: AsyncSession = Depends(get_session),
+    actor: Any | None = Depends(optional_current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
@@ -109,6 +111,16 @@ async def create_mcp_connection(
         allowed_tools=_validated_allowed_tools(body.get("allowed_tools")),
     )
     session.add(conn)
+    await session.flush()
+    await log_audit(
+        session,
+        "create",
+        "mcp_connection",
+        conn.id,
+        f"url={conn.url} transport={conn.transport} auth={conn.auth_type}",
+        actor_id=getattr(actor, "id", None),
+        actor_email=getattr(actor, "email", None),
+    )
     await session.commit()
     await session.refresh(conn)
     return _row_to_dict(conn)
@@ -133,6 +145,7 @@ async def update_mcp_connection(
     connection_id: str,
     body: dict[str, Any],
     session: AsyncSession = Depends(get_session),
+    actor: Any | None = Depends(optional_current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
@@ -176,6 +189,15 @@ async def update_mcp_connection(
     if "allowed_tools" in body:
         conn.allowed_tools = _validated_allowed_tools(body["allowed_tools"])
 
+    await log_audit(
+        session,
+        "update",
+        "mcp_connection",
+        conn.id,
+        "fields=" + ",".join(sorted(body)),
+        actor_id=getattr(actor, "id", None),
+        actor_email=getattr(actor, "email", None),
+    )
     await session.commit()
     await session.refresh(conn)
     return _row_to_dict(conn)
@@ -185,6 +207,7 @@ async def update_mcp_connection(
 async def delete_mcp_connection(
     connection_id: str,
     session: AsyncSession = Depends(get_session),
+    actor: Any | None = Depends(optional_current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> None:
     org_id = _org()
@@ -196,6 +219,15 @@ async def delete_mcp_connection(
     )
     if conn is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
+    await log_audit(
+        session,
+        "delete",
+        "mcp_connection",
+        conn.id,
+        f"name={conn.name} url={conn.url}",
+        actor_id=getattr(actor, "id", None),
+        actor_email=getattr(actor, "email", None),
+    )
     await session.delete(conn)
     await session.commit()
 
@@ -204,6 +236,7 @@ async def delete_mcp_connection(
 async def sync_mcp_connection(
     connection_id: str,
     session: AsyncSession = Depends(get_session),
+    actor: Any | None = Depends(optional_current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
@@ -218,6 +251,15 @@ async def sync_mcp_connection(
         tools = tools[:500]
     conn.tool_cache = tools
     conn.last_synced_at = datetime.now(UTC)
+    await log_audit(
+        session,
+        "sync",
+        "mcp_connection",
+        conn.id,
+        f"tools_discovered={len(tools)}",
+        actor_id=getattr(actor, "id", None),
+        actor_email=getattr(actor, "email", None),
+    )
     await session.commit()
     return {"tools_discovered": len(tools), "tools": tools}
 

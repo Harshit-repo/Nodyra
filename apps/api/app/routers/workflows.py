@@ -55,6 +55,7 @@ from app.schemas import (
 )
 from app.security import (
     _user_from_session_token,
+    get_client_ip,
     optional_current_user,
     require_permission,
     resolve_org_for,
@@ -780,7 +781,16 @@ async def _workflow_ws_principal(websocket: WebSocket) -> tuple[User | None, str
         if not token:
             token = websocket.cookies.get(settings.session_cookie_name, "")
         if user is None and token:
-            user = await _user_from_session_token(token, session)
+            # Enforce ``auth_bind_token_to_ip`` here as well. The HTTP
+            # ``auth_gate`` middleware does it for every route, but middleware
+            # does not run for WebSocket connections — so a token pinned to
+            # another address, refused everywhere else, still opened a live
+            # event stream. Pinning is only worth anything if every door
+            # checks it.
+            client_ip = (
+                get_client_ip(websocket) if settings.auth_bind_token_to_ip else ""
+            )
+            user = await _user_from_session_token(token, session, client_ip=client_ip)
             if user is None:
                 await websocket.close(code=1008)
                 return None

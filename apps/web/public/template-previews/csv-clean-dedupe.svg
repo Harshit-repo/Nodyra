@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 120" width="480" height="120" role="img" aria-label="Clean and de-duplicate a CSV workflow shape">
+<rect width="480" height="120" fill="#F5F6F8"/>
+<rect x="6" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#9B7328" stroke-width="1.5"/>
+<rect x="6" y="40" width="4" height="40" rx="2" fill="#9B7328"/>
+<text x="44" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">manual trig</text>
+<line x1="82" y1="60" x2="104" y2="60" stroke="#C3C9D4" stroke-width="1.5"/>
+<rect x="104" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#1F6B48" stroke-width="1.5"/>
+<rect x="104" y="40" width="4" height="40" rx="2" fill="#1F6B48"/>
+<text x="142" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">read csv fi</text>
+<line x1="180" y1="60" x2="202" y2="60" stroke="#C3C9D4" stroke-width="1.5"/>
+<rect x="202" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#2E4A7D" stroke-width="1.5"/>
+<rect x="202" y="40" width="4" height="40" rx="2" fill="#2E4A7D"/>
+<text x="240" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">string norm</text>
+<line x1="278" y1="60" x2="300" y2="60" stroke="#C3C9D4" stroke-width="1.5"/>
+<rect x="300" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#2E4A7D" stroke-width="1.5"/>
+<rect x="300" y="40" width="4" height="40" rx="2" fill="#2E4A7D"/>
+<text x="338" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">remove dupl</text>
+<line x1="376" y1="60" x2="398" y2="60" stroke="#C3C9D4" stroke-width="1.5"/>
+<rect x="398" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#1F6B48" stroke-width="1.5"/>
+<rect x="398" y="40" width="4" height="40" rx="2" fill="#1F6B48"/>
+<text x="436" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">csv write</text>
+</svg>

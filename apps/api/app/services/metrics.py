@@ -228,6 +228,46 @@ process_info = _Gauge(
 )
 process_info.set(1, role=settings.dispatch_role)
 
+# Resource gauges. Without these there is no way to alert on a slow memory or
+# descriptor leak: the symptom is a pod OOM-killed hours later with nothing in
+# the metrics to explain it. Sampled on scrape rather than on a timer, so an
+# unscraped process pays nothing.
+process_resident_bytes = _Gauge(
+    "nodyra_process_resident_bytes",
+    "Resident set size of this process, sampled at scrape time.",
+)
+
+process_open_fds = _Gauge(
+    "nodyra_process_open_fds",
+    "Open file descriptors (handles on Windows) held by this process.",
+)
+
+process_threads = _Gauge(
+    "nodyra_process_threads",
+    "Threads in this process. Growth here usually means an executor leak.",
+)
+
+
+def sample_process_resources() -> None:
+    """Refresh the resource gauges from the live process.
+
+    Best-effort: psutil can raise on a process whose /proc entry is being torn
+    down, and a metrics scrape must never fail because of it.
+    """
+    try:
+        import psutil
+
+        proc = psutil.Process()
+        process_resident_bytes.set(float(proc.memory_info().rss))
+        process_threads.set(float(proc.num_threads()))
+        try:
+            process_open_fds.set(float(proc.num_fds()))
+        except AttributeError:
+            # Windows has no num_fds; handles are the equivalent signal.
+            process_open_fds.set(float(proc.num_handles()))
+    except Exception:  # noqa: BLE001 — observability must not break the scrape
+        pass
+
 node_executions_total = _Counter(
     "nodyra_node_executions_total",
     "Total node executions across all runs.",
@@ -307,6 +347,9 @@ def _render_all() -> str:
         queue_depth,
         queue_leased,
         process_info,
+        process_resident_bytes,
+        process_open_fds,
+        process_threads,
         node_executions_total,
         output_store_events_total,
         code_validation_blocked_total,
@@ -321,4 +364,5 @@ def _render_all() -> str:
 
 def get_metrics_text() -> str:
     """Return the current metrics snapshot in Prometheus text format."""
+    sample_process_resources()
     return _render_all()

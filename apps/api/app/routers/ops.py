@@ -24,10 +24,11 @@ from app.schemas import (
     QueueStats,
     RuntimeModeStatus,
 )
-from app.security import require_permission, require_role
+from app.security import audit_recorder, require_permission, require_role
 from app.services import queue as run_queue
 from app.services.artifact_backends import get_backend
 from app.services.artifact_reconcile import reconcile_artifacts
+from app.services.audit import AuditRecorder
 from app.services.drain_state import is_draining, set_draining
 from app.services.operational_evidence import collect_operational_evidence
 from app.services.production_attestation import build_production_attestation
@@ -244,12 +245,21 @@ async def artifact_reconcile(
     repair_metadata: bool = False,
     delete_orphans: bool = False,
     limit: int = 10_000,
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> dict:
     """Dry-run integrity sweep; mutation requires explicit repair flags."""
     if delete_orphans and not repair_metadata:
         raise HTTPException(
             status_code=400,
             detail="delete_orphans requires repair_metadata=true",
+        )
+    if repair_metadata or delete_orphans:
+        await audit(
+            "reconcile",
+            "artifacts",
+            backend or settings.artifact_storage_backend,
+            f"repair_metadata={repair_metadata} delete_orphans={delete_orphans} "
+            f"prefix={prefix or '*'}",
         )
     try:
         return await reconcile_artifacts(
@@ -382,13 +392,22 @@ async def drain_status() -> dict:
     "/ops/drain",
     dependencies=[Depends(require_permission("ops:drain"))],
 )
-async def set_drain(payload: DrainRequest) -> dict:
+async def set_drain(
+    payload: DrainRequest,
+    audit: AuditRecorder = Depends(audit_recorder),
+) -> dict:
     """Toggle drain mode. While true the dispatch loop stops leasing new
     queue entries; leased/running entries continue to completion. Used by
     deploy scripts to drain a replica before sending SIGTERM, avoiding
     avoidable ``cancelled`` runs (see "Production-readiness gaps" #2 in
     docs/architecture-improvement-plan.md).
     """
+    await audit(
+        "drain" if payload.draining else "undrain",
+        "queue",
+        socket.gethostname(),
+        f"draining={payload.draining}",
+    )
     try:
         draining = await set_draining(payload.draining)
     except Exception as exc:  # noqa: BLE001 - do not claim an unpropagated drain
@@ -432,7 +451,10 @@ async def sandbox_status() -> dict:
     "/ops/pool/resize",
     dependencies=[Depends(require_permission("ops:pool:resize"))],
 )
-async def pool_resize(payload: dict) -> dict:
+async def pool_resize(
+    payload: dict,
+    audit: AuditRecorder = Depends(audit_recorder),
+) -> dict:
     """Manually resize the global pool concurrency ceiling.
 
     Body: ``{"max_slots": 16}``.  The autoscaler still runs and may
@@ -443,6 +465,7 @@ async def pool_resize(payload: dict) -> dict:
     from app.services.runtime_pool import pool as _rt_pool
 
     new_max = await _rt_pool.resize(target)
+    await audit("resize", "runtime_pool", socket.gethostname(), f"max_slots={new_max}")
     return {"max_slots": new_max}
 
 
@@ -519,6 +542,7 @@ async def list_dead_letter(
 )
 async def replay_dead_letter(
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> DeadLetterReplayResponse:
     """Bulk-replay every dead-letter entry currently on the queue.
 
@@ -539,6 +563,12 @@ async def replay_dead_letter(
         else:
             replayed.append(entry.run_id)
     await session.commit()
+    await audit(
+        "replay",
+        "dead_letter",
+        "",
+        f"replayed={len(replayed)} skipped={len(skipped)}",
+    )
     return DeadLetterReplayResponse(replayed=replayed, skipped=skipped)
 
 

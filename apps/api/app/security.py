@@ -688,3 +688,17 @@ def require_instance_permission(
         return user
 
     return dependency
+
+
+async def audit_recorder(
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
+):
+    """Dependency: an :class:`AuditRecorder` bound to this request's actor.
+
+    Lives here rather than in ``services.audit`` because it needs
+    ``optional_current_user``, and ``security`` already owns actor resolution.
+    """
+    from app.services.audit import AuditRecorder  # noqa: PLC0415 - avoid a cycle
+
+    return AuditRecorder(session, actor)

@@ -26,6 +26,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useBlocker } from "react-router-dom";
 
 import { api, errorMessage, type SandboxStatus } from "./api";
+import { PlanComparison } from "./PlanComparison";
 import { useConfirm } from "./ConfirmProvider";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { useWorkspaceAccessContext } from "./WorkspaceAccess";
@@ -805,6 +806,7 @@ function LicensePanel() {
               )}
             </div>
           </div>
+          <PlanComparison />
         </>
       )}
     </SettingsCard>

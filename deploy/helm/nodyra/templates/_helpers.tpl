@@ -86,3 +86,64 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- printf "%s:%s" $repository .Values.image.tag -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Pod-level security context.
+
+The API image drops to uid 10001 via gosu in its entrypoint, but a pod with no
+securityContext still *starts* as root and is rejected outright by a namespace
+running the `restricted` Pod Security Standard. Declaring it here makes the
+non-root identity the pod's contract rather than an entrypoint detail, and lets
+the chart install unchanged into a hardened namespace.
+
+fsGroup matters because the container no longer runs the root branch of
+python-entrypoint.sh (the chown), so the kubelet must set volume ownership.
+*/}}
+{{- define "nodyra.podSecurityContext" -}}
+runAsNonRoot: true
+runAsUser: {{ .Values.securityContext.runAsUser }}
+runAsGroup: {{ .Values.securityContext.runAsGroup }}
+fsGroup: {{ .Values.securityContext.fsGroup }}
+seccompProfile:
+  type: RuntimeDefault
+{{- end -}}
+
+{{- define "nodyra.containerSecurityContext" -}}
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
+capabilities:
+  drop:
+    - ALL
+{{- end -}}
+
+{{/*
+Writable scratch for a read-only root filesystem. These paths are ephemeral
+either way — before this chart set readOnlyRootFilesystem they lived on the
+container's writable layer, which is discarded on restart just the same — so
+mounting them as emptyDir changes durability not at all.
+*/}}
+{{- define "nodyra.scratchVolumes" -}}
+- name: envs
+  emptyDir: {}
+- name: artifacts
+  emptyDir: {}
+- name: tmp
+  emptyDir: {}
+{{- end -}}
+
+{{- define "nodyra.scratchVolumeMounts" -}}
+- name: envs
+  mountPath: /app/envs
+- name: artifacts
+  mountPath: /app/artifacts
+- name: tmp
+  mountPath: /tmp
+{{- end -}}
+
+{{- define "nodyra.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+{{- printf "%s-nodyra" .Release.Name -}}
+{{- else -}}
+{{- .Values.serviceAccount.name | default "default" -}}
+{{- end -}}
+{{- end -}}

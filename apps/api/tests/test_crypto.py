@@ -182,14 +182,18 @@ def test_decrypt_credential_strict_allows_genuinely_empty_payload() -> None:
 # hash_password / verify_password
 # ---------------------------------------------------------------------------
 
-def test_hash_password_returns_salted_string() -> None:
+def test_hash_password_returns_a_parameterised_argon2id_hash() -> None:
+    """PHC format carries its own parameters, so raising the cost later leaves
+    existing hashes verifiable — the role the in-band PBKDF2 rounds used to play.
+    Full coverage of the format and the PBKDF2 upgrade path lives in
+    test_password_hashing.py."""
     h = hash_password("mysecret")
-    assert ":" in h
-    parts = h.split(":")
-    assert len(parts) == 3  # rounds:salt:digest
-    assert int(parts[0]) >= 600_000  # rounds
-    assert len(parts[1]) > 0  # base64 salt
-    assert len(parts[2]) > 0  # base64 digest
+    assert h.startswith("$argon2id$")
+    fields = h.split("$")
+    assert fields[2].startswith("v=")  # version
+    assert "m=" in fields[3] and "t=" in fields[3] and "p=" in fields[3]
+    assert len(fields[4]) > 0  # salt
+    assert len(fields[5]) > 0  # digest
 
 
 def test_hash_password_produces_different_hashes() -> None:
