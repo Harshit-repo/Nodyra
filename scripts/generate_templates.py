@@ -330,8 +330,8 @@ TEMPLATES: list[dict] = [
             ],
             "edges": [
                 {"source": "hook", "target": "validate"},
-                {"source": "validate", "target": "accepted", "sourceHandle": "main"},
-                {"source": "validate", "target": "rejected", "sourceHandle": "invalid"},
+                {"source": "validate", "target": "accepted", "source_output": "main"},
+                {"source": "validate", "target": "rejected", "source_output": "invalid"},
             ],
         },
     },
@@ -393,7 +393,7 @@ TEMPLATES: list[dict] = [
             "edges": [
                 {"source": "start", "target": "expand"},
                 {"source": "expand", "target": "each"},
-                {"source": "each", "target": "fetch", "sourceHandle": "item"},
+                {"source": "each", "target": "fetch", "source_output": "item"},
                 {"source": "fetch", "target": "collect"},
             ],
         },
@@ -552,7 +552,7 @@ TEMPLATES: list[dict] = [
                 _node(
                     "threshold",
                     "if",
-                    {"field": "amount", "operator": "gt", "value": "100"},
+                    {"field": "amount", "operator": "greater than", "value": "100"},
                     280,
                 ),
                 _node(
@@ -572,8 +572,8 @@ TEMPLATES: list[dict] = [
             ],
             "edges": [
                 {"source": "start", "target": "threshold"},
-                {"source": "threshold", "target": "high_value", "sourceHandle": "true"},
-                {"source": "threshold", "target": "standard", "sourceHandle": "false"},
+                {"source": "threshold", "target": "high_value", "source_output": "true"},
+                {"source": "threshold", "target": "standard", "source_output": "false"},
             ],
         },
     },

@@ -101,7 +101,7 @@
       {
         "source": "each",
         "target": "fetch",
-        "sourceHandle": "item"
+        "source_output": "item"
       },
       {
         "source": "fetch",

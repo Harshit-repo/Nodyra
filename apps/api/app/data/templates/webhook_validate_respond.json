@@ -75,12 +75,12 @@
       {
         "source": "validate",
         "target": "accepted",
-        "sourceHandle": "main"
+        "source_output": "main"
       },
       {
         "source": "validate",
         "target": "rejected",
-        "sourceHandle": "invalid"
+        "source_output": "invalid"
       }
     ]
   }

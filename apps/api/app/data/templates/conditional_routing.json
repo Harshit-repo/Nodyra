@@ -38,7 +38,7 @@
         "type": "if",
         "params": {
           "field": "amount",
-          "operator": "gt",
+          "operator": "greater than",
           "value": "100"
         },
         "position": {
@@ -77,12 +77,12 @@
       {
         "source": "threshold",
         "target": "high_value",
-        "sourceHandle": "true"
+        "source_output": "true"
       },
       {
         "source": "threshold",
         "target": "standard",
-        "sourceHandle": "false"
+        "source_output": "false"
       }
     ]
   }
