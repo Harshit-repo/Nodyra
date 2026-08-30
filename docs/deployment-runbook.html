@@ -321,9 +321,9 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 60px;color:var(--ink-3);fon
       </div>
 
       <div class="item"><input type="checkbox" class="chk" id="cb-app-license" data-id="app-license">
-        <div><label class="it" for="cb-app-license">Install the licence key, if you are on a paid tier<span class="stamp s-human">yours</span></label>
+        <div><label class="it" for="cb-app-license">Install the licence key, if you are on a paid tier<span class="stamp s-proven">proven</span></label>
         <p class="iw">Set <code>NODYRA_LICENSE_KEY</code>, or store it in system settings &mdash; the environment variable wins. Verification is a signature check done entirely offline: no phone-home, air-gap friendly. Leave it blank and you get Community, which is a working product, not a crippled one.</p>
-        <p class="ev ev-human">Needs your licence key; Community was exercised here.</p></div>
+        <p class="ev">Verified end to end with a throwaway keypair and <code>license_public_key</code> overriding the baked one. No key resolves to Community (5 seats, 3 environments, 1 runner, 10 deployments). A signed Pro key raises it to 10/10/5/unlimited and grants exactly <code>observability</code>, <code>git_sync</code> and <code>sandbox</code> &mdash; not SSO, audit-log export or advanced RBAC. A payload edited to say <code>enterprise</code> is refused, a corrupted signature is refused, and an expired key <b>soft-downgrades to Community rather than failing closed</b>. The same Pro key is refused against the real production public key, so those acceptances were signature checks and not a no-op.</p></div>
       </div>
 
       <div class="item"><input type="checkbox" class="chk" id="cb-app-owner" data-id="app-owner" data-gate="1">
@@ -451,7 +451,7 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 60px;color:var(--ink-3);fon
 (function(){
   var KEY = "nodyra-runbook-v1";
   var boxes = Array.prototype.slice.call(document.querySelectorAll(".chk"));
-  var PREVERIFIED = ["app-env", "app-migrate", "app-owner", "d2-audit", "d2-bundle", "d2-retention", "inf-backup", "inf-docker", "inf-pg", "inf-redis", "inf-s3", "rel-mode", "rel-ready", "rel-restore", "rel-smoke", "sec-cors", "sec-egress", "sec-insecure", "sec-internal", "sec-key", "sec-kms"];
+  var PREVERIFIED = ["app-license", "app-env", "app-migrate", "app-owner", "d2-audit", "d2-bundle", "d2-retention", "inf-backup", "inf-docker", "inf-pg", "inf-redis", "inf-s3", "rel-mode", "rel-ready", "rel-restore", "rel-smoke", "sec-cors", "sec-egress", "sec-insecure", "sec-internal", "sec-key", "sec-kms"];
   var state = {};
   PREVERIFIED.forEach(function(id){ state[id] = true; });
   try { var saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {};
