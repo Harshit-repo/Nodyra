@@ -96,8 +96,13 @@ jobs:
           uv run python scripts/benchmark_engine_planning.py
           --output engine-planning-benchmark.json
 
+      # Diagnostic, not a gate. A full Actions artifact-storage quota made
+      # this step fail the whole certify job, which skipped release even
+      # though certification itself had passed. Losing the evidence copy is
+      # a nuisance; blocking a verified release on it is not correct.
       - name: Upload certification evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: release-certification-evidence

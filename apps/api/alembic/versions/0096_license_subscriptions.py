@@ -28,6 +28,19 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # The ORM declares extra_features as POSTGRES_JSON, which is JSONB on
+    # PostgreSQL. Creating it as plain JSON here left the database disagreeing
+    # with the model: SQLite cannot tell the two apart, so only alembic check
+    # against real PostgreSQL catches it.
+    if op.get_bind().dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        json_type = JSONB()
+        json_default = sa.text("'[]'::jsonb")
+    else:
+        json_type = sa.JSON()
+        json_default = sa.text("'[]'")
+
     op.create_table(
         "license_subscriptions",
         sa.Column("id", sa.Text(), primary_key=True),
@@ -42,9 +55,9 @@ def upgrade() -> None:
         sa.Column("seats", sa.Integer(), nullable=False, server_default="0"),
         sa.Column(
             "extra_features",
-            sa.JSON(),
+            json_type,
             nullable=False,
-            server_default=sa.text("'[]'"),
+            server_default=json_default,
         ),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="active"),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),

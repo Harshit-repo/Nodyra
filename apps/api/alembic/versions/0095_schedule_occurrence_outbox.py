@@ -16,6 +16,17 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # ScheduleOccurrence.graph and .parameters are POSTGRES_JSON in the ORM,
+    # which is JSONB on PostgreSQL. Plain sa.JSON here made the database
+    # disagree with the model; SQLite treats them identically, so the
+    # mismatch only surfaces under alembic check against PostgreSQL.
+    if op.get_bind().dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        json_type = JSONB()
+    else:
+        json_type = sa.JSON()
+
     op.create_table(
         "schedule_occurrences",
         sa.Column("id", sa.String(length=32), nullable=False),
@@ -26,10 +37,10 @@ def upgrade() -> None:
         sa.Column("workflow_version_id", sa.String(length=32), nullable=True),
         sa.Column("workflow_version", sa.Integer(), nullable=False),
         sa.Column("deployment_id", sa.String(length=32), nullable=True),
-        sa.Column("graph", sa.JSON(), nullable=False),
+        sa.Column("graph", json_type, nullable=False),
         sa.Column("trigger_node_id", sa.String(length=120), nullable=True),
         sa.Column("trigger_type", sa.String(length=20), nullable=False),
-        sa.Column("parameters", sa.JSON(), nullable=False),
+        sa.Column("parameters", json_type, nullable=False),
         sa.Column("scheduled_for", sa.DateTime(timezone=True), nullable=False),
         sa.Column("status", sa.String(length=20), server_default="pending", nullable=False),
         sa.Column("attempts", sa.Integer(), server_default="0", nullable=False),
