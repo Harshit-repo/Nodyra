@@ -349,7 +349,16 @@ async def test_released_attempt_token_cannot_mutate_replacement_lease(session) -
     from app.services import queue
 
     start = datetime.now(UTC)
-    session.add(RunQueueEntry(run_id="fenced", workflow_id="wf", max_attempts=3))
+    # available_at defaults to the *database's* now(), which lands after the
+    # start captured above, so the available_at <= now predicate matches
+    # nothing and lease() returns None. SQLite hides this because
+    # CURRENT_TIMESTAMP truncates to whole seconds; PostgreSQL does not. Pin it,
+    # as every other time-sensitive test in this file does.
+    session.add(
+        RunQueueEntry(
+            run_id="fenced", workflow_id="wf", max_attempts=3, available_at=start
+        )
+    )
     await session.commit()
 
     first = await queue.lease(
