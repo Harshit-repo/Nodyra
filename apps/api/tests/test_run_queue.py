@@ -33,6 +33,40 @@ TEST_DATABASE_URL = os.environ.get("NODYRA_TEST_DATABASE_URL")
 SQLITE_TMP_DIR = Path(__file__).resolve().parents[3] / ".tmp" / "pytest-sqlite"
 
 
+@pytest.fixture(autouse=True)
+def _available_at_from_the_client_clock():
+    """Stop the queue tests racing the database's clock.
+
+    ``RunQueueEntry.available_at`` carries ``server_default=func.now()``, so the
+    *database* stamps it. ``lease()`` then filters ``available_at <= now`` with
+    ``now`` taken from the *client*. Those are two different clocks that agree
+    only to within a few milliseconds, and the ordering flips on scheduling
+    jitter: measured on this checkout, 4 of 20 inserts landed available_at
+    between 1.3ms and 5.1ms in the client's future, and every one of those makes
+    the row invisible to the very next lease() call.
+
+    That is a test problem, not a product one — a real worker polls again a
+    second later and picks the row up — but here each lease is a single shot, so
+    roughly one insert in five is a coin flip. It never appeared on SQLite
+    because CURRENT_TIMESTAMP truncates to whole seconds, so available_at is
+    always comfortably in the past.
+
+    Filling available_at from the same clock lease() reads makes the comparison
+    self-consistent. Tests that set it themselves are untouched.
+    """
+    from datetime import UTC, datetime
+
+    def _fill(_mapper, _connection, target: RunQueueEntry) -> None:
+        if target.available_at is None:
+            target.available_at = datetime.now(UTC)
+
+    event.listen(RunQueueEntry, "before_insert", _fill)
+    try:
+        yield
+    finally:
+        event.remove(RunQueueEntry, "before_insert", _fill)
+
+
 @pytest_asyncio.fixture
 async def session_maker() -> AsyncIterator[async_sessionmaker]:
     if TEST_DATABASE_URL:
