@@ -47,7 +47,7 @@
         "id": "shape",
         "type": "code",
         "params": {
-          "code": "matches = input if isinstance(input, list) else [input]\noutput = [{'order': m.get('order'),\n           'total': float(m.get('total', 0) or 0)}\n          for m in matches if m]"
+          "code": "matches = input if isinstance(input, list) else [input]\noutput = [{'order': m[0], 'total': float(m[1] or 0)}\n          for m in matches if m]"
         },
         "position": {
           "x": 560,

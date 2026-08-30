@@ -455,12 +455,14 @@ TEMPLATES: list[dict] = [
                 "shape",
                 "code",
                 {
-                    "code": (
-                        "matches = input if isinstance(input, list) else [input]\n"
-                        "output = [{'order': m.get('order'),\n"
-                        "           'total': float(m.get('total', 0) or 0)}\n"
-                        "          for m in matches if m]"
-                    )
+                        # regex_extract is re.findall, so a two-group pattern yields tuples,
+                        # not dicts — named groups included. The original code called .get()
+                        # on a tuple, so every run of this template died with AttributeError.
+                        "code": (
+                            "matches = input if isinstance(input, list) else [input]\n"
+                            "output = [{\'order\': m[0], \'total\': float(m[1] or 0)}\n"
+                            "          for m in matches if m]"
+                        )
                 },
             ),
         ),
