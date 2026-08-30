@@ -74,7 +74,16 @@ jobs:
           uv run alembic upgrade head
           uv run alembic check
 
+      # The certification suite must run in the same environment ci.yml uses.
+      # Without these, settings fall back to the default PostgreSQL DSN, whose
+      # database does not exist here, and the run queue and licence lookups
+      # fail against a database that was never created. ci.yml sets
+      # NODYRA_TEST_DATABASE_URL job-wide; this job creates nodyra_release.
       - name: Python certification suite
+        env:
+          NODYRA_TEST_DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra_release
+          DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra_release
+          REDIS_URL: redis://localhost:6379/0
         run: >-
           uv run pytest --timeout=300 --timeout-method=thread
           --junitxml=pytest-results-release.xml -q

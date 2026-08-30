@@ -1,0 +1,105 @@
+{
+  "id": "csv_clean_dedupe",
+  "name": "Clean and de-duplicate a CSV",
+  "description": "Read a CSV, normalise its text columns, drop duplicate rows by a key column, and write the cleaned file back out.",
+  "tags": [
+    "data",
+    "csv",
+    "cleanup",
+    "starter"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "A CSV file readable by the Nodyra process"
+  ],
+  "expected_result": "A cleaned CSV artifact with duplicate rows removed.",
+  "permissions": [
+    "Filesystem: the input path you configure"
+  ],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "screenshot_url": "/template-previews/csv-clean-dedupe.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "manual_trigger",
+        "params": {
+          "data": {}
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "read",
+        "type": "read_csv_file",
+        "params": {
+          "path": "data/input.csv",
+          "has_header": true
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "normalise",
+        "type": "string_normalize",
+        "params": {
+          "columns": "email",
+          "case": "lower",
+          "trim": true
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      },
+      {
+        "id": "dedupe",
+        "type": "remove_duplicates",
+        "params": {
+          "field": "email"
+        },
+        "position": {
+          "x": 840,
+          "y": 40
+        }
+      },
+      {
+        "id": "write",
+        "type": "csv_write",
+        "params": {
+          "filename": "cleaned.csv",
+          "include_header": true
+        },
+        "position": {
+          "x": 1120,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "start",
+        "target": "read"
+      },
+      {
+        "source": "read",
+        "target": "normalise"
+      },
+      {
+        "source": "normalise",
+        "target": "dedupe"
+      },
+      {
+        "source": "dedupe",
+        "target": "write"
+      }
+    ]
+  }
+}

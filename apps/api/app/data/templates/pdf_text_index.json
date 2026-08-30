@@ -1,0 +1,70 @@
+{
+  "id": "pdf_text_index",
+  "name": "Extract text from a PDF",
+  "description": "Read a PDF from disk, extract its text page by page, and emit one record per page ready for search or summarisation.",
+  "tags": [
+    "pdf",
+    "documents",
+    "extraction"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "A PDF readable by the Nodyra process"
+  ],
+  "expected_result": "One record per page with its text content.",
+  "permissions": [
+    "Filesystem: the PDF path you configure"
+  ],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "screenshot_url": "/template-previews/pdf-text-index.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "manual_trigger",
+        "params": {
+          "data": {}
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "extract",
+        "type": "pdf_extract_text_v2",
+        "params": {
+          "path": "data/document.pdf"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "pages",
+        "type": "code",
+        "params": {
+          "code": "text = (input or {}).get('text', '') if isinstance(input, dict) else str(input or '')\npages = [p for p in text.split('\\f') if p.strip()]\noutput = [{'page': i + 1, 'text': p.strip()}\n          for i, p in enumerate(pages)]"
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "start",
+        "target": "extract"
+      },
+      {
+        "source": "extract",
+        "target": "pages"
+      }
+    ]
+  }
+}

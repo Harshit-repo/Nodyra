@@ -1,0 +1,75 @@
+{
+  "id": "http_health_check",
+  "name": "HTTP health check with alert",
+  "description": "Poll an endpoint on a schedule, and fail the run loudly when it stops returning 200 so your alerting sees it.",
+  "tags": [
+    "monitoring",
+    "http",
+    "schedule",
+    "starter"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "Outbound HTTPS to the endpoint you are checking"
+  ],
+  "expected_result": "A green run each time the endpoint is healthy, and a failed run carrying the status code when it is not.",
+  "permissions": [
+    "Network: the URL you configure"
+  ],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "screenshot_url": "/template-previews/http-health-check.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "every_5_min",
+        "type": "schedule_trigger",
+        "params": {
+          "interval": "minutes",
+          "every": 5
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "probe",
+        "type": "http_request",
+        "params": {
+          "url": "https://httpbin.org/status/200",
+          "method": "GET",
+          "timeout_seconds": 10,
+          "max_retries": 1
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "check",
+        "type": "code",
+        "params": {
+          "code": "status = (input or {}).get('status_code', 0)\nif status != 200:\n    raise ValueError(f'health check failed: HTTP {status}')\noutput = {'status_code': status, 'healthy': True}"
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "every_5_min",
+        "target": "probe"
+      },
+      {
+        "source": "probe",
+        "target": "check"
+      }
+    ]
+  }
+}

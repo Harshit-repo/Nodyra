@@ -1,0 +1,89 @@
+{
+  "id": "conditional_routing",
+  "name": "Route records by value",
+  "description": "Split incoming records down two paths on a threshold, so high and low value items get different handling.",
+  "tags": [
+    "logic",
+    "routing",
+    "branching",
+    "starter"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [],
+  "expected_result": "Records above the threshold take one branch; the rest take the other.",
+  "permissions": [],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "screenshot_url": "/template-previews/conditional-routing.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "manual_trigger",
+        "params": {
+          "data": {
+            "amount": 250,
+            "customer": "Acme"
+          }
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "threshold",
+        "type": "if",
+        "params": {
+          "field": "amount",
+          "operator": "gt",
+          "value": "100"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "high_value",
+        "type": "code",
+        "params": {
+          "code": "output = {**(input or {}), 'route': 'review'}"
+        },
+        "position": {
+          "x": 560,
+          "y": -40
+        }
+      },
+      {
+        "id": "standard",
+        "type": "code",
+        "params": {
+          "code": "output = {**(input or {}), 'route': 'auto-approve'}"
+        },
+        "position": {
+          "x": 560,
+          "y": 120
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "start",
+        "target": "threshold"
+      },
+      {
+        "source": "threshold",
+        "target": "high_value",
+        "sourceHandle": "true"
+      },
+      {
+        "source": "threshold",
+        "target": "standard",
+        "sourceHandle": "false"
+      }
+    ]
+  }
+}

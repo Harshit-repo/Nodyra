@@ -156,3 +156,41 @@ def test_the_catalog_covers_more_than_one_kind_of_work() -> None:
     """Twelve variations on 'call an API' is one template, listed twelve times."""
     tags = {tag for _, t in ALL for tag in t["tags"]}
     assert len(tags) >= 12, f"catalog spans only {len(tags)} distinct tags: {sorted(tags)}"
+
+
+def test_every_template_is_actually_committed():
+    """A local checkout is not the product; the repository is.
+
+    `.gitignore` carried a broad `data/` rule for runtime state, and
+    `apps/api/app/data/templates/` matched it. Twelve generated templates sat on
+    disk, `git add -A` said nothing — ignored files are not reported — and CI
+    checked out three. Every test above passed locally and the catalogue
+    shipped a quarter full.
+
+    Counting files cannot catch that, because locally the files are there. The
+    only question that distinguishes the two worlds is whether git tracks them.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "ls-files", "--", str(TEMPLATE_DIR)],
+        capture_output=True,
+        text=True,
+        cwd=TEMPLATE_DIR,
+    )
+    if result.returncode != 0:
+        pytest.skip("not a git checkout")
+
+    tracked = {
+        Path(line).name
+        for line in result.stdout.splitlines()
+        if line.endswith(".json")
+    }
+    on_disk = {p.name for p in TEMPLATE_DIR.glob("*.json")}
+    untracked = sorted(on_disk - tracked)
+
+    assert not untracked, (
+        f"{len(untracked)} template(s) exist locally but are not committed, so "
+        f"they do not ship: {untracked}. Check .gitignore — a broad rule may be "
+        f"swallowing them silently."
+    )

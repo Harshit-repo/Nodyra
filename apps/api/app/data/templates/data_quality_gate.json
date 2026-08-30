@@ -1,0 +1,88 @@
+{
+  "id": "data_quality_gate",
+  "name": "Data quality gate",
+  "description": "Profile an incoming dataset, flag statistical outliers, and stop the run before bad data reaches anything downstream.",
+  "tags": [
+    "data-quality",
+    "validation",
+    "etl"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "A CSV file readable by the Nodyra process"
+  ],
+  "expected_result": "A profile report plus a separate outliers collection; the run fails when outliers exceed your threshold.",
+  "permissions": [
+    "Filesystem: the input path you configure"
+  ],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "screenshot_url": "/template-previews/data-quality-gate.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "manual_trigger",
+        "params": {
+          "data": {}
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "read",
+        "type": "read_csv_file",
+        "params": {
+          "path": "data/metrics.csv",
+          "has_header": true
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "outliers",
+        "type": "outlier_detect_statistical",
+        "params": {
+          "column": "value",
+          "method": "zscore",
+          "threshold": 3.0
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      },
+      {
+        "id": "profile",
+        "type": "data_profile_report",
+        "params": {
+          "title": "Incoming metrics"
+        },
+        "position": {
+          "x": 840,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "start",
+        "target": "read"
+      },
+      {
+        "source": "read",
+        "target": "outliers"
+      },
+      {
+        "source": "outliers",
+        "target": "profile"
+      }
+    ]
+  }
+}

@@ -12,8 +12,10 @@ org_limits convention).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import logging
 import time
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -24,10 +26,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException
 from fastapi import status as _http_status
 from sqlalchemy import func, select
-from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.config import settings as boot_settings
 from app.db import SessionLocal
+
+logger = logging.getLogger(__name__)
 
 # Production public key. Verifies license keys signed offline with the matching
 # PRIVATE key (kept out of the repo — see docs/licensing-internal.md and the
@@ -198,7 +201,18 @@ async def _db_license_key() -> str | None:
         async with SessionLocal() as session:
             row = await session.get(SystemSetting, "singleton")
             return getattr(row, "license_key", None) if row is not None else None
-    except (OSError, OperationalError, ProgrammingError):
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        # This is a lookup, not a gate: "we could not reach the database"
+        # and "no key is stored" have the same correct answer, Community.
+        # The narrower tuple (OSError, OperationalError, ProgrammingError)
+        # missed driver errors raised while the connection is still being
+        # established, before SQLAlchemy classifies them — asyncpg's
+        # InvalidCatalogNameError for a database that does not exist yet
+        # being the ordinary case on a fresh deployment. Letting that
+        # escape turns every entitlement check into a 500.
+        logger.debug("license key lookup failed; assuming none", exc_info=True)
         return None
 
 

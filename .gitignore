@@ -40,6 +40,11 @@ Thumbs.db
 envs/
 apps/api/envs/
 data/
+# ...but apps/api/app/data is shipped source, not runtime data. The broad
+# rule above silently swallowed twelve generated workflow templates: they
+# existed locally, git add -A said nothing, and CI checked out three.
+!apps/api/app/data/
+!apps/api/app/data/**
 *.db
 *.log
 .superpowers/

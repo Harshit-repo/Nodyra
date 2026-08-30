@@ -1,0 +1,88 @@
+{
+  "id": "scheduled_dataset_snapshot",
+  "name": "Nightly dataset snapshot",
+  "description": "On a nightly schedule, pull a dataset from an API, keep only the rows that changed, and write a dated Excel snapshot.",
+  "tags": [
+    "schedule",
+    "snapshot",
+    "excel",
+    "etl"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "Outbound HTTPS to the API you are calling"
+  ],
+  "expected_result": "A dated Excel artifact per nightly run.",
+  "permissions": [
+    "Network: the API URL you configure"
+  ],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "screenshot_url": "/template-previews/scheduled-dataset-snapshot.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "nightly",
+        "type": "schedule_trigger",
+        "params": {
+          "interval": "cron",
+          "cron": "0 2 * * *"
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "fetch",
+        "type": "http_request",
+        "params": {
+          "url": "https://jsonplaceholder.typicode.com/posts",
+          "method": "GET"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "recent",
+        "type": "code",
+        "params": {
+          "code": "rows = (input or {}).get('body') or input or []\noutput = rows[:50]"
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      },
+      {
+        "id": "snapshot",
+        "type": "write_excel_file",
+        "params": {
+          "sheet_name": "snapshot"
+        },
+        "position": {
+          "x": 840,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "nightly",
+        "target": "fetch"
+      },
+      {
+        "source": "fetch",
+        "target": "recent"
+      },
+      {
+        "source": "recent",
+        "target": "snapshot"
+      }
+    ]
+  }
+}

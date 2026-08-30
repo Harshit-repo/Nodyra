@@ -1,0 +1,69 @@
+{
+  "id": "text_extract_regex",
+  "name": "Extract fields from raw text",
+  "description": "Pull structured fields out of unstructured text with a regular expression, then reshape them into records.",
+  "tags": [
+    "text",
+    "regex",
+    "parsing",
+    "transform"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [],
+  "expected_result": "Structured records extracted from the input text.",
+  "permissions": [],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "screenshot_url": "/template-previews/text-extract-regex.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "manual_trigger",
+        "params": {
+          "data": {
+            "text": "order=A-1001 total=42.50\norder=A-1002 total=17.00"
+          }
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "extract",
+        "type": "regex_extract",
+        "params": {
+          "pattern": "order=(?P<order>[A-Z]-\\d+) total=(?P<total>[\\d.]+)"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "shape",
+        "type": "code",
+        "params": {
+          "code": "matches = input if isinstance(input, list) else [input]\noutput = [{'order': m.get('order'),\n           'total': float(m.get('total', 0) or 0)}\n          for m in matches if m]"
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "start",
+        "target": "extract"
+      },
+      {
+        "source": "extract",
+        "target": "shape"
+      }
+    ]
+  }
+}

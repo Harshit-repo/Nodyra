@@ -1,0 +1,87 @@
+{
+  "id": "webhook_validate_respond",
+  "name": "Validate a webhook payload and reply",
+  "description": "Accept an inbound webhook, validate it against a JSON schema, and answer 200 or 422 so the caller learns immediately what was wrong.",
+  "tags": [
+    "webhook",
+    "validation",
+    "api"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "An inbound webhook URL reachable by the caller"
+  ],
+  "expected_result": "Valid payloads return 200; invalid ones return the validation errors rather than failing silently.",
+  "permissions": [
+    "Inbound: webhook"
+  ],
+  "compatibility": ">=0.1.0,<0.2.0",
+  "screenshot_url": "/template-previews/webhook-validate-respond.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "hook",
+        "type": "webhook_trigger",
+        "params": {
+          "path": "validated-intake",
+          "response_mode": "Last Node"
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "validate",
+        "type": "schema_validate",
+        "params": {
+          "schema_json": "{\"type\": \"object\", \"required\": [\"email\", \"amount\"], \"properties\": {\"email\": {\"type\": \"string\"}, \"amount\": {\"type\": \"number\"}}}",
+          "on_error": "split"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "accepted",
+        "type": "no_op",
+        "params": {},
+        "position": {
+          "x": 560,
+          "y": -40
+        }
+      },
+      {
+        "id": "rejected",
+        "type": "code",
+        "params": {
+          "code": "output = {'accepted': False,\n          'errors': input if input is not None else []}"
+        },
+        "position": {
+          "x": 560,
+          "y": 120
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "hook",
+        "target": "validate"
+      },
+      {
+        "source": "validate",
+        "target": "accepted",
+        "sourceHandle": "main"
+      },
+      {
+        "source": "validate",
+        "target": "rejected",
+        "sourceHandle": "invalid"
+      }
+    ]
+  }
+}
