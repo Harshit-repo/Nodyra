@@ -194,7 +194,7 @@ Rated on what is demonstrated, not on what is written down.
 | Docs & website | 9 | A public repository, so the links and the fair-code claim stop being false. The first-run guide is now correct and gated. |
 | Billing & licensing | 8 | One real Stripe transaction, including a failed card. |
 | Operability | 8 | Alerting wired, and a soak run kept as evidence. |
-| Testing & CI | 6 | A green CI run, and something that opens the product. The suite passed while *fifteen* bugs were live, six of them making it unusable out of the box. No test in the repository starts the shipped stack or renders a page, which is why none of them saw it. |
+| Testing & CI | 7 | A green CI run. There is now a first-run gate (scripts/first_run_smoke.py, wired as the CI job first-run) that installs the base compose stack and walks register -> instantiate -> run -> download -> verify checksum. Proven from a completely empty stack; six of the eleven first-run bugs would have failed it. What is unproven is CI itself, which has not run in a fortnight. |
 | Packaging & environments | 9 | A periodic fresh-resolve run in CI. The 89 unbounded declarations are bounded and gated; what is left needs CI to be working. |
 | Release process | 5 | A tag that points at working code, and a release job that has completed once. |
 
