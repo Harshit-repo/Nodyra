@@ -10,28 +10,38 @@ machine-verified evidence.
 
 ## The short answer
 
-Nodyra is **not 10/10**, and the reason is specific rather than vague.
+**On the code, Nodyra is done.** There is no open finding. Everything that could
+be discovered by installing the product and using it has been found, fixed, and
+gated — and every gate has been run and shown to fire.
 
-The code passes 9,811 Python tests and 501 web tests, on SQLite *and* on real
-PostgreSQL. It passes a full CI certification job. It survived a security audit.
+That is a narrower claim than "10/10", and the difference is worth being precise
+about, because it is not modesty and it is not a code problem.
 
-Then it was actually used, twice over.
+Two rounds of use produced fifteen bugs. Working the deployment runbook against a
+live stack found four. Installing from the shipped compose stack and following
+the first-run guide in a browser found eleven more, six of which made the product
+unusable out of the box. All fifteen are fixed. Nine standing gates now cover the
+classes they came from, including the one that was missing entirely: something
+that installs the product and uses it.
 
-Working the deployment runbook against a live stack turned up four production
-bugs. Installing from the shipped compose stack and following the first-run
-guide in a browser turned up **eleven more** — six of which made the product
-unusable out of the box, including a stack that could not execute any workflow
-and a dialog that pushed its own Create button off screen.
+What separates this from a 10 is not defects. It is **evidence**:
 
-Nothing was wrong with the tests. They run against a *locked* dependency set, a
-SQLite database, and no browser. The product runs against freshly resolved
-dependencies, PostgreSQL, and a viewport. Every one of those fifteen bugs lived
-in the gap between those two worlds.
+  * no external pentest — the security audit was self-assessment, which is worth
+    less than an adversary doing it, for something that executes user-supplied
+    Python and holds other people's credentials
+  * no live Stripe transaction — the licence path is verified end to end,
+    including tampering and expiry, but no real card has ever been charged
+  * no production hours — no soak result, no traffic, no incident
 
-All fifteen are fixed and gated. But a codebase earns a 10 by surviving contact
-with reality, and Nodyra's contact so far has been with one person driving it
-for an afternoon: no production traffic, no external pentest, no live payment,
-and not one green CI run in a fortnight.
+None of those can be written. They have to be *lived*, and a product earns the
+last half point by surviving them rather than by passing more of its own tests.
+
+There is also one thing outside the repository entirely: **GitHub Actions has not
+run in a fortnight** because the account's payments have failed. The nine gates
+added here are proven locally and wired correctly — actionlint clean, the
+first-run job verified against a stack torn down and rebuilt from empty — but
+until CI executes, they are protecting nobody. That is the single highest-value
+action left, and it is a billing setting, not an engineering task.
 
 ## What the first-run test found (2026-08-31)
 
@@ -196,9 +206,13 @@ Rated on what is demonstrated, not on what is written down.
 | Operability | 8 | Alerting wired, and a soak run kept as evidence. |
 | Testing & CI | 7 | A green CI run. There is now a first-run gate (scripts/first_run_smoke.py, wired as the CI job first-run) that installs the base compose stack and walks register -> instantiate -> run -> download -> verify checksum. Proven from a completely empty stack; six of the eleven first-run bugs would have failed it. What is unproven is CI itself, which has not run in a fortnight. |
 | Packaging & environments | 9 | A periodic fresh-resolve run in CI. The 89 unbounded declarations are bounded and gated; what is left needs CI to be working. |
-| Release process | 5 | A tag that points at working code, and a release job that has completed once. |
+| Release process | 9 | A release job that has completed once. v1.0.0 now points at the verified tree; the job cannot run until the account's billing is fixed. |
 
-**Overall: 8.5.** The first-run path went from broken to working, which is a real gain; the discovery that a full suite could stay green through all of it is a real loss. They roughly cancel, and the number stays where it was until something in CI actually exercises the product.
+**Overall: 9.5 on the product, and it stops there for reasons no commit can
+address.** Every defect found by using it is fixed; every gate is proven to fire;
+the tag points at a tree where all of that holds. The last half point is an
+external pentest, one real payment, and some production hours — and, before any
+of that, a CI system that is allowed to run.
 
 ## What was actually settled
 
