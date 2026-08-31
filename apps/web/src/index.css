@@ -2714,11 +2714,29 @@ textarea:focus-visible,
 .template-strip button {
   padding: 8px 10px;
 }
+/* The reveal control for the rest of the catalogue. Styled apart from the
+   template buttons so it does not read as a selectable template. */
+.template-picker-more {
+  border-style: dashed;
+  text-align: left;
+}
+.template-picker-more strong {
+  color: var(--accent);
+}
+
 .template-picker {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 10px;
+  /* The list scrolls, not the dialog, so the name field and the Create button
+     stay put however many templates ship. Bounding .modal alone made Create
+     reachable but still left it below the fold on a laptop screen. */
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-content: start;
+  padding-right: 4px;
 }
 .template-picker button {
   text-align: left;
@@ -2808,6 +2826,14 @@ textarea:focus-visible,
   flex-direction: column;
   gap: 11px;
   animation: pop 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Without these a modal taller than the viewport pushes its own action
+     buttons past the bottom edge, and neither the overlay nor the document
+     scrolls — so they cannot be reached at all. The New-workflow dialog lists
+     every template, which overflowed a 1920x895 laptop screen by 403px and left
+     Create unclickable: the primary action of the product, unreachable. */
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .modal h2 {
   font-size: 19px;
