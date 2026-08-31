@@ -363,6 +363,53 @@ jobs:
           --set-string secret.internalApiToken=ci-internal-token
           --set evaluation.expiresAt=2030-01-01T00:00:00Z
 
+  # The documented first run, against the compose file the docs actually name.
+  #
+  # compose-smoke above starts the stack with -f deploy/docker-compose.sandbox.yml.
+  # That overlay mounts a Docker socket, so it has always tested a topology no
+  # getting-started reader runs, and it stops after /health/ready and
+  # GET /templates without executing anything. Eleven first-run bugs reached a
+  # release tag underneath it, six of them making the product unusable out of
+  # the box — including a base stack that could not run any workflow at all.
+  #
+  # This job runs what the guide tells a new user to run, and then behaves like
+  # that user: register, create from the starter template, run it, download the
+  # artifact, verify its checksum.
+  first-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8.3.2
+      - name: Write deploy/.env the way the guide says
+        run: |
+          cp deploy/.env.example deploy/.env
+          python - <<'PY'
+          import re, secrets
+          from pathlib import Path
+          path = Path("deploy/.env")
+          text = path.read_text()
+          for key, value in {
+              "INTERNAL_API_TOKEN": secrets.token_hex(32),
+              "NODYRA_SECRET_KEY": secrets.token_hex(32),
+              "MINIO_ROOT_PASSWORD": secrets.token_hex(16),
+          }.items():
+              text = re.sub(rf"^{key}=.*$", f"{key}={value}", text, count=1, flags=re.M)
+          path.write_text(text)
+          PY
+      - name: Start the base stack only
+        run: docker compose -f deploy/docker-compose.yml up -d --build
+      - name: Walk the first-run path
+        run: uv run python scripts/first_run_smoke.py --base-url http://localhost:8000
+      - name: Diagnose on failure
+        if: failure()
+        run: |
+          docker compose -f deploy/docker-compose.yml ps
+          docker compose -f deploy/docker-compose.yml logs --no-color --tail=200 api worker web
+      - name: Tear down
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down -v
+
   compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30

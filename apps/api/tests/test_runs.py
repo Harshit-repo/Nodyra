@@ -1722,12 +1722,17 @@ async def test_debug_snapshot_404_for_unknown_run(client: AsyncClient) -> None:
 
 
 async def test_run_blocked_when_node_package_missing(client: AsyncClient) -> None:
+    # Was written against duckdb_sql, but duckdb is a hard dependency of
+    # nodyra-nodes and therefore importable in every environment — so blocking
+    # that run was wrong, and the starter template it blocked now runs. Use a
+    # requirement that genuinely is not bundled, which keeps the check this test
+    # exists for: pre-flight must still refuse a run whose packages are absent.
     env = (await client.post("/environments", json={"name": "bare", "packages": []})).json()
-    wf = (await client.post("/workflows", json={"name": "needs-duckdb"})).json()
+    wf = (await client.post("/workflows", json={"name": "needs-playwright"})).json()
     graph = {
         "nodes": [
             {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
-            {"id": "q", "type": "duckdb_sql", "params": {}, "position": {"x": 1, "y": 0}},
+            {"id": "q", "type": "browser_screenshot", "params": {}, "position": {"x": 1, "y": 0}},
         ],
         "edges": [
             {
@@ -1745,7 +1750,7 @@ async def test_run_blocked_when_node_package_missing(client: AsyncClient) -> Non
     )
     resp = await client.post(f"/workflows/{wf['id']}/run")
     assert resp.status_code == 400
-    assert "duckdb" in resp.json()["detail"].lower()
+    assert "playwright" in resp.json()["detail"].lower()
 
 
 # --- #14: list_runs must not eagerly load node_run details --------------------
