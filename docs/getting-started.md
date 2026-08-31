@@ -12,14 +12,22 @@ available. A first local build can take longer depending on network and CPU.
 
 ## 2. Start Nodyra with Docker Compose
 
-Create `deploy/.env` with strong local secrets:
+Copy the example environment file and fill in the three required secrets:
 
 ```bash
-INTERNAL_API_TOKEN=replace-with-a-long-random-token
-NODYRA_SECRET_KEY=replace-with-a-long-random-secret
-AUTH_REQUIRED=true
-AUTH_ALLOW_REGISTRATION=false
+cp deploy/.env.example deploy/.env
 ```
+
+```bash
+# in deploy/.env — all three are required; compose refuses to start without them
+INTERNAL_API_TOKEN=$(openssl rand -hex 32)
+NODYRA_SECRET_KEY=$(openssl rand -hex 32)
+MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)   # at least 8 characters
+```
+
+Do not hand-write `deploy/.env` from scratch: `docker compose` hard-requires
+`MINIO_ROOT_PASSWORD` as well, and fails before starting anything if it is
+missing. Copying the example is the supported path.
 
 Start the stack:
 

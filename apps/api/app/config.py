@@ -262,6 +262,13 @@ class Settings(BaseSettings):
     artifact_s3_bucket: str = ""
     artifact_s3_region: str = ""
     artifact_s3_endpoint: str = ""
+    # Address the *browser* should use for presigned artifact URLs. The signing
+    # endpoint above is often internal — deploy/docker-compose.yml uses
+    # http://minio:9000, which only resolves inside the compose network — so a
+    # 307 to it sends the browser somewhere it cannot reach. Empty (the default)
+    # keeps signing and serving on the same endpoint, which is correct for real
+    # S3 or any already-public host.
+    artifact_s3_public_endpoint: str = ""
     max_artifact_bytes: int = 50 * 1024 * 1024
     max_artifacts_per_run: int = 100
     # Interactive dataset explorer guardrails. DuckDB is isolated per request,

@@ -15,6 +15,7 @@ dependency out of core.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -161,6 +162,16 @@ def finalize_artifact_ref(
     store._written += 1  # noqa: SLF001
     ref = dict(partial)
     ref["size_bytes"] = size
+    # The buffered path (LocalArtifactStore.write_bytes) hashes the payload it
+    # already holds. This path exists so a large parquet or CSV is never held in
+    # memory, so hash it back off disk in chunks — same guarantee, same peak
+    # memory. Without this every streamed artifact reached the database with a
+    # NULL checksum, and "verify its checksum" had nothing to verify.
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    ref["checksum_sha256"] = digest.hexdigest()
     if metadata:
         ref["metadata"] = metadata
     if preview is not None:

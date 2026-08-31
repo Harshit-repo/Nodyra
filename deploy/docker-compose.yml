@@ -11,7 +11,7 @@ services:
     ports:
       # Loopback-only: host tools (psql) can connect, the network cannot.
       # Services on the compose network reach postgres:5432 directly.
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -24,7 +24,7 @@ services:
     image: redis:7.4.9-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     ports:
       # Loopback-only: an unauthenticated Redis must never face the network.
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -37,7 +37,7 @@ services:
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
-      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.104.0@sha256:e07e325e303e86f4a87a617491e921b579a92da6d404007394757ac910bf9587
@@ -46,7 +46,7 @@ services:
     volumes:
       - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
     ports:
-      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:${OTEL_HTTP_PORT:-4318}:4318"
     depends_on:
       - jaeger
 
@@ -57,8 +57,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nodyra}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - miniodata:/data
 
@@ -121,6 +121,9 @@ services:
       ARTIFACT_S3_BUCKET: ${ARTIFACT_S3_BUCKET:-nodyra-artifacts}
       ARTIFACT_S3_REGION: ${ARTIFACT_S3_REGION:-us-east-1}
       ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
+      # Presigned URLs are followed by the browser, which cannot resolve
+      # the internal "minio" hostname. Point it at the published port.
+      ARTIFACT_S3_PUBLIC_ENDPOINT: ${ARTIFACT_S3_PUBLIC_ENDPOINT:-http://localhost:${MINIO_PORT:-9000}}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-nodyra}}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}}
       AWS_EC2_METADATA_DISABLED: "true"
@@ -148,7 +151,7 @@ services:
     ports:
       # The demo intentionally disables auth, so public ports must stay local.
       # Production ingress should terminate TLS and proxy to this service.
-      - "${NODYRA_BIND_HOST:-127.0.0.1}:8000:8000"
+      - "${NODYRA_BIND_HOST:-127.0.0.1}:${NODYRA_API_PORT:-8000}:8000"
     volumes:
       - envdata:/app/envs
       - artifactdata:/app/artifacts
@@ -188,6 +191,9 @@ services:
       ARTIFACT_S3_BUCKET: ${ARTIFACT_S3_BUCKET:-nodyra-artifacts}
       ARTIFACT_S3_REGION: ${ARTIFACT_S3_REGION:-us-east-1}
       ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
+      # Presigned URLs are followed by the browser, which cannot resolve
+      # the internal "minio" hostname. Point it at the published port.
+      ARTIFACT_S3_PUBLIC_ENDPOINT: ${ARTIFACT_S3_PUBLIC_ENDPOINT:-http://localhost:${MINIO_PORT:-9000}}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-nodyra}}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}}
       AWS_EC2_METADATA_DISABLED: "true"
@@ -230,7 +236,7 @@ services:
     environment:
       VITE_API_PROXY: http://api:8000
     ports:
-      - "${NODYRA_BIND_HOST:-127.0.0.1}:5173:5173"
+      - "${NODYRA_BIND_HOST:-127.0.0.1}:${NODYRA_WEB_PORT:-5173}:5173"
     depends_on:
       - api
 

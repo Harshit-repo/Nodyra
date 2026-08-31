@@ -89,7 +89,11 @@ from app.services.remote_dispatch import (
 )
 from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
-from app.services.sandbox_policy import resolve_execution_mode, resolve_sandbox_overrides
+from app.services.sandbox_policy import (
+    resolve_execution_mode,
+    resolve_sandbox_overrides,
+    sandbox_fallback_allowed,
+)
 from app.services.subworkflows import meta_for_root_run, resolve_subworkflow
 from nodyra.ai_runtime import AgentActionRequest
 from nodyra.context import artifact_store, org_run_limits
@@ -1483,6 +1487,26 @@ async def _execute_run_impl(
             run_override=run_execution_mode,
             workflow_mode=prep.execution_mode,
         )
+
+        # EXECUTION_SANDBOX=auto is documented as "containers when a Docker
+        # daemon is reachable, else fall back to subprocess". resolve_execution_mode
+        # cannot make that call — it deliberately never imports the docker SDK —
+        # so the availability half happens here, once, before any branch reads
+        # the mode. Only "auto" degrades; sandbox_fallback_allowed() keeps
+        # "required" and strict multi-tenancy failing closed.
+        if (
+            effective_execution_mode == "sandboxed"
+            and not sandbox_executor.active
+            and sandbox_fallback_allowed()
+        ):
+            logger.warning(
+                "EXECUTION_SANDBOX=auto but no sandbox is active on this worker; "
+                "running run_id=%s on the subprocess pool. Mount a Docker socket "
+                "(see deploy/docker-compose.sandbox.yml) or set "
+                "EXECUTION_SANDBOX=required to refuse instead.",
+                run_id,
+            )
+            effective_execution_mode = "standard"
 
         if settings.use_subprocess_runner:
             if runner_pool_id:

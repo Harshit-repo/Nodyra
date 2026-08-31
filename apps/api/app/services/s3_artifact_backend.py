@@ -37,7 +37,20 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def _client() -> Any:
+def browser_endpoint(cfg: Any = None) -> str:
+    """The endpoint a presigned URL should point at for a browser.
+
+    Falls back to the signing endpoint, so deployments whose S3 is already
+    reachable from the browser are unaffected.
+    """
+    cfg = cfg if cfg is not None else settings
+    public = (getattr(cfg, "artifact_s3_public_endpoint", "") or "").strip()
+    if public:
+        return public
+    return (getattr(cfg, "artifact_s3_endpoint", "") or "").strip()
+
+
+def _client(*, endpoint_override: str = "") -> Any:
     """Lazy boto3 client. Raises a friendly error when the dep is missing."""
     try:
         import boto3  # type: ignore[import-not-found]
@@ -49,7 +62,7 @@ def _client() -> Any:
         ) from exc
 
     kwargs: dict[str, Any] = {}
-    endpoint = (settings.artifact_s3_endpoint or "").strip()
+    endpoint = (endpoint_override or settings.artifact_s3_endpoint or "").strip()
     if endpoint:
         kwargs["endpoint_url"] = endpoint
     region = (settings.artifact_s3_region or "").strip()
@@ -127,8 +140,14 @@ class S3Backend:
         )
 
     def signed_url(self, artifact: Artifact, *, expires_in: int = 300) -> str | None:
+        # Sign against the address the *browser* will use. Signing is scoped to
+        # the host, so presigning with the internal endpoint and rewriting the
+        # string afterwards would invalidate the signature — the client has to
+        # be built against the public endpoint instead.
+        public = (settings.artifact_s3_public_endpoint or "").strip()
+        client = _client(endpoint_override=public) if public else self.client
         try:
-            return self.client.generate_presigned_url(
+            return client.generate_presigned_url(
                 "get_object",
                 Params={
                     "Bucket": self.bucket,

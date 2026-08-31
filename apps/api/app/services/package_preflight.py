@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata as metadata
 import re
 import sys
 
@@ -34,6 +35,32 @@ def _requirement_applies(req: str) -> bool:
     return _marker_applies(marker.strip())
 
 
+def bundled_packages() -> frozenset[str]:
+    """Distributions every environment has because the node library needs them.
+
+    nodyra-nodes is installed in every workflow environment by
+    construction, so its own dependencies are always importable there. Nodes
+    still *declare* those packages as requirements — duckdb, for instance — and
+    without this the pre-flight check demanded they also appear in the
+    environment's package list, refusing runs that would have succeeded.
+
+    Read from installed metadata rather than hard-coded, so removing a
+    dependency from nodyra-nodes makes the check start requiring it again
+    without anyone remembering to edit this file.
+    """
+    try:
+        requires = metadata.requires("nodyra-nodes") or []
+    except metadata.PackageNotFoundError:  # pragma: no cover - source checkout
+        return frozenset()
+    names: set[str] = set()
+    for raw in requires:
+        try:
+            names.add(canonicalize_name(Requirement(raw).name))
+        except InvalidRequirement:
+            continue
+    return frozenset(names)
+
+
 def find_missing_packages(graph: dict, env_packages: list[str]) -> dict[str, list[str]]:
     """Return {missing_specifier: [node ids needing it]} for a graph + env.
 
@@ -43,7 +70,9 @@ def find_missing_packages(graph: dict, env_packages: list[str]) -> dict[str, lis
     reqs_by_type = {
         m.id: m.requirements for m in node_registry.manifests() if m.requirements
     }
+    # Declared in the environment, plus whatever ships with the node library.
     have = {canonical_package_name(p) for p in env_packages if p.strip()}
+    have |= bundled_packages()
     missing: dict[str, list[str]] = {}
     nodes = (graph or {}).get("nodes") or [] if isinstance(graph, dict) else []
     for n in nodes:

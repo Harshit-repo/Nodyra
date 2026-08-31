@@ -1,6 +1,6 @@
+import { useMemo } from "react";
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from "@xyflow/react";
 import { Plus, X } from "@phosphor-icons/react";
-import { useShallow } from "zustand/react/shallow";
 
 import { EdgePreview, edgePreviewValue, type EdgePreviewValue } from "./EdgePreview";
 import { useEditor } from "./store";
@@ -108,24 +108,29 @@ export function NodyraEdge({
   const onEdgesChange = useEditor((s) => s.onEdgesChange);
   const openNdv = useEditor((s) => s.openNdv);
   const sourcePort = sourceHandleId ?? "main";
-  const { edgeType, preview } = useEditor(
-    useShallow((s): {
-      edgeType: { icon: string; label: string };
-      preview: EdgePreviewValue;
-    } => {
-      const empty = {
+  const sourceOutputs = useEditor((s) => (source ? s.runOutputs[source] : undefined));
+  // Derive OUTSIDE the selector. deriveEdgeType and edgePreviewValue both build
+  // a fresh object every call, and useShallow only compares one level deep — so
+  // returning them from the selector compared two new objects by reference,
+  // reported "changed" on every render, and looped until React threw
+  // "Maximum update depth exceeded". Selecting the stored value keeps the
+  // comparison referentially stable; useMemo does the allocating.
+  const { edgeType, preview } = useMemo((): {
+    edgeType: { icon: string; label: string };
+    preview: EdgePreviewValue;
+  } => {
+    if (!source) {
+      return {
         edgeType: { icon: "", label: "" },
         preview: { hasValue: false, value: undefined },
       };
-      if (!source) return empty;
-      const outputs = s.runOutputs[source];
-      const previewValue = edgePreviewValue(outputs, sourcePort);
-      return {
-        edgeType: deriveEdgeType(previewValue.hasValue ? previewValue.value : undefined),
-        preview: previewValue,
-      };
-    }),
-  );
+    }
+    const previewValue = edgePreviewValue(sourceOutputs, sourcePort);
+    return {
+      edgeType: deriveEdgeType(previewValue.hasValue ? previewValue.value : undefined),
+      preview: previewValue,
+    };
+  }, [source, sourceOutputs, sourcePort]);
   // While an agent uses a connected sub-node, animate the wire so data appears
   // to flow from the model / memory / tool into the agent (n8n-style).
   const agentFlowClass = useEditor((s) =>
