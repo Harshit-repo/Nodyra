@@ -15,7 +15,7 @@
   "prerequisites": [],
   "expected_result": "Records above the threshold take one branch; the rest take the other.",
   "permissions": [],
-  "compatibility": ">=0.1.0,<0.2.0",
+  "compatibility": ">=1.0.0,<2.0.0",
   "screenshot_url": "/template-previews/conditional-routing.svg",
   "graph": {
     "nodes": [

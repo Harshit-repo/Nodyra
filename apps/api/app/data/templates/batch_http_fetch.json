@@ -19,7 +19,7 @@
   "permissions": [
     "Network: the URLs you supply at run time"
   ],
-  "compatibility": ">=0.1.0,<0.2.0",
+  "compatibility": ">=1.0.0,<2.0.0",
   "screenshot_url": "/template-previews/batch-http-fetch.svg",
   "graph": {
     "nodes": [

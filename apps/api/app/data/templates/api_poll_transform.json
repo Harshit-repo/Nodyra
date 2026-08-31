@@ -2,15 +2,24 @@
   "id": "api_poll_transform",
   "name": "API poll and transform",
   "description": "Poll an API on a schedule and normalize the first page of results with Python.",
-  "tags": ["api", "python", "schedule"],
+  "tags": [
+    "api",
+    "python",
+    "schedule"
+  ],
   "version": "1.1.0",
   "creator": "Nodyra maintainers",
   "verified": true,
   "credential_free": true,
-  "prerequisites": ["Outbound HTTPS access to jsonplaceholder.typicode.com"],
+  "prerequisites": [
+    "Outbound HTTPS access to jsonplaceholder.typicode.com"
+  ],
   "expected_result": "A normalized list containing the first ten API posts.",
-  "permissions": ["Network: jsonplaceholder.typicode.com", "Python: deterministic transform"],
-  "compatibility": ">=0.1.0,<0.2.0",
+  "permissions": [
+    "Network: jsonplaceholder.typicode.com",
+    "Python: deterministic transform"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
   "rating": 4.8,
   "rating_count": 24,
   "screenshot_url": "/template-previews/api-poll-transform.svg",
@@ -25,7 +34,10 @@
           "cron": "",
           "tz": "UTC"
         },
-        "position": {"x": 0, "y": 40}
+        "position": {
+          "x": 0,
+          "y": 40
+        }
       },
       {
         "id": "fetch",
@@ -39,7 +51,10 @@
           "timeout_seconds": 30,
           "max_retries": 1
         },
-        "position": {"x": 280, "y": 40}
+        "position": {
+          "x": 280,
+          "y": 40
+        }
       },
       {
         "id": "transform",
@@ -47,7 +62,10 @@
         "params": {
           "code": "rows = input or []\noutput = [\n    {\n        'id': row.get('id'),\n        'title': row.get('title'),\n        'summary': (row.get('body') or '')[:120],\n    }\n    for row in rows[:10]\n]"
         },
-        "position": {"x": 560, "y": 40}
+        "position": {
+          "x": 560,
+          "y": 40
+        }
       }
     ],
     "edges": [

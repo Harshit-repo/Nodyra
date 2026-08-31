@@ -23,7 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = ROOT / "apps" / "api" / "app" / "data" / "templates"
 PREVIEW_DIR = ROOT / "apps" / "web" / "public" / "template-previews"
 
-COMPATIBILITY = ">=0.1.0,<0.2.0"
+# Derived from VERSION so a release bump cannot leave every template
+# advertising itself as incompatible with the build it ships in. The create
+# dialog shows this string to the user on the first screen.
+_VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text().strip()
+_MAJOR = _VERSION.split(".")[0]
+COMPATIBILITY = f">={_MAJOR}.0.0,<{int(_MAJOR) + 1}.0.0"
 CREATOR = "Nodyra maintainers"
 
 # Node type → the accent used in its preview thumbnail. Grouped by role so a

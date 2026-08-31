@@ -19,7 +19,7 @@
   "permissions": [
     "Network: the API URL you configure"
   ],
-  "compatibility": ">=0.1.0,<0.2.0",
+  "compatibility": ">=1.0.0,<2.0.0",
   "screenshot_url": "/template-previews/json-api-to-csv.svg",
   "graph": {
     "nodes": [

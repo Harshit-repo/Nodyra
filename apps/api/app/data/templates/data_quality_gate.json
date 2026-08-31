@@ -18,7 +18,7 @@
   "permissions": [
     "Filesystem: the input path you configure"
   ],
-  "compatibility": ">=0.1.0,<0.2.0",
+  "compatibility": ">=1.0.0,<2.0.0",
   "screenshot_url": "/template-previews/data-quality-gate.svg",
   "graph": {
     "nodes": [

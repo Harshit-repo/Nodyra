@@ -19,7 +19,7 @@
   "permissions": [
     "Network: the URL you configure"
   ],
-  "compatibility": ">=0.1.0,<0.2.0",
+  "compatibility": ">=1.0.0,<2.0.0",
   "screenshot_url": "/template-previews/http-health-check.svg",
   "graph": {
     "nodes": [

@@ -194,3 +194,36 @@ def test_every_template_is_actually_committed():
         f"they do not ship: {untracked}. Check .gitignore — a broad rule may be "
         f"swallowing them silently."
     )
+
+
+def test_every_template_declares_compatibility_with_this_build():
+    """A template that says it does not work here is a lie on the first screen.
+
+    Every template shipped ``compatibility: ">=0.1.0,<0.2.0"`` while VERSION had
+    moved to 1.0.0, so the New-workflow dialog told users "Compatible
+    >=0.1.0,<0.2.0" on a 1.0.0 install — for all sixteen. Nothing enforces the
+    range, so nothing broke; the product simply advertised itself as
+    incompatible with itself.
+
+    Pinned to the major version rather than the exact one, so a patch release
+    does not invalidate the catalogue.
+    """
+    from packaging.specifiers import SpecifierSet
+    from packaging.version import Version
+
+    version_file = Path(__file__).resolve().parents[3] / "VERSION"
+    current = Version(version_file.read_text(encoding="utf-8").strip())
+
+    offenders = []
+    for name, template in _templates():
+        spec = str(template.get("compatibility") or "")
+        if not spec:
+            offenders.append(f"{name}: no compatibility declared")
+            continue
+        if current not in SpecifierSet(spec):
+            offenders.append(f"{name}: {spec!r} excludes the current {current}")
+
+    assert not offenders, (
+        "templates advertise incompatibility with the build they ship in: "
+        + "; ".join(offenders)
+    )

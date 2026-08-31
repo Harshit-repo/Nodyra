@@ -15,7 +15,7 @@
   "prerequisites": [],
   "expected_result": "Structured records extracted from the input text.",
   "permissions": [],
-  "compatibility": ">=0.1.0,<0.2.0",
+  "compatibility": ">=1.0.0,<2.0.0",
   "screenshot_url": "/template-previews/text-extract-regex.svg",
   "graph": {
     "nodes": [

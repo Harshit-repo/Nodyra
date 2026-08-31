@@ -2,15 +2,26 @@
   "id": "daily_report_email",
   "name": "Daily report email",
   "description": "Fetch a report endpoint on a schedule, shape key fields, and send an email.",
-  "tags": ["reporting", "email", "schedule"],
+  "tags": [
+    "reporting",
+    "email",
+    "schedule"
+  ],
   "version": "1.0.1",
   "creator": "Nodyra maintainers",
   "verified": true,
   "credential_free": false,
-  "prerequisites": ["Report API endpoint", "SMTP credentials and approved sender"],
+  "prerequisites": [
+    "Report API endpoint",
+    "SMTP credentials and approved sender"
+  ],
   "expected_result": "A daily email containing the normalized report payload.",
-  "permissions": ["Network: report API", "Network: SMTP server", "Secret: SMTP credential"],
-  "compatibility": ">=0.1.0,<0.2.0",
+  "permissions": [
+    "Network: report API",
+    "Network: SMTP server",
+    "Secret: SMTP credential"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
   "rating": 4.6,
   "rating_count": 17,
   "screenshot_url": "/template-previews/daily-report-email.svg",
@@ -25,7 +36,10 @@
           "cron": "",
           "tz": "UTC"
         },
-        "position": {"x": 0, "y": 40}
+        "position": {
+          "x": 0,
+          "y": 40
+        }
       },
       {
         "id": "fetch",
@@ -39,7 +53,10 @@
           "timeout_seconds": 30,
           "max_retries": 1
         },
-        "position": {"x": 280, "y": 40}
+        "position": {
+          "x": 280,
+          "y": 40
+        }
       },
       {
         "id": "shape",
@@ -51,7 +68,10 @@
           },
           "keep_only_set": true
         },
-        "position": {"x": 560, "y": 40}
+        "position": {
+          "x": 560,
+          "y": 40
+        }
       },
       {
         "id": "email",
@@ -67,7 +87,10 @@
           "body_format": "text",
           "body": "{{ $json.body }}"
         },
-        "position": {"x": 840, "y": 40}
+        "position": {
+          "x": 840,
+          "y": 40
+        }
       }
     ],
     "edges": [

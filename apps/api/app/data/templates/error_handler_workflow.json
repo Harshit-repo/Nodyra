@@ -16,7 +16,7 @@
   ],
   "expected_result": "One structured failure record per upstream failure.",
   "permissions": [],
-  "compatibility": ">=0.1.0,<0.2.0",
+  "compatibility": ">=1.0.0,<2.0.0",
   "screenshot_url": "/template-previews/error-handler-workflow.svg",
   "graph": {
     "nodes": [
