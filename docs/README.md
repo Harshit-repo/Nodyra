@@ -2,6 +2,11 @@
 
 ## Start here
 
+- [Launch readiness](launch-readiness.md) — what is left before launch, who
+  has to do each part, and an honest per-area score. Start here if you are
+  deciding whether to ship.
+- [Deployment runbook](deployment-runbook.html) — role-split checklist; 22 of
+  30 gates carry machine-verified evidence.
 - [Getting started](getting-started.md) — zero to first inspected workflow in
   about five minutes once images are available.
 - [Architecture chooser](architecture-chooser.md) — trusted local, internal

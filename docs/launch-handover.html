@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nodyra Launch Handover</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600;6..72,700&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#FBFAF8; --card:#FFFFFF; --sunk:#F2F1ED;
+  --ink:#1A1A1F; --ink-2:#4E4E58; --ink-3:#84848F;
+  --rule:#E2E0DA; --rule-2:#EEECE7;
+  --accent:#1D3F94;
+  --stop:#A32A1E; --stop-bg:#FBEDEB;
+  --warn:#8A5A08; --warn-bg:#FBF3E4;
+  --done:#1F5C42; --done-bg:#E7F1EC;
+  --f-disp:"Newsreader",Georgia,serif;
+  --f-body:"Public Sans",system-ui,-apple-system,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#131317; --card:#1A1A20; --sunk:#212129;
+    --ink:#EDECE9; --ink-2:#A9A9B4; --ink-3:#77777F;
+    --rule:#2A2A33; --rule-2:#23232B;
+    --accent:#8AA6EB;
+    --stop:#E8897C; --stop-bg:#2C1714;
+    --warn:#DCA63F; --warn-bg:#2A2011;
+    --done:#5FBE96; --done-bg:#122318;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#131317; --card:#1A1A20; --sunk:#212129;
+  --ink:#EDECE9; --ink-2:#A9A9B4; --ink-3:#77777F;
+  --rule:#2A2A33; --rule-2:#23232B;
+  --accent:#8AA6EB;
+  --stop:#E8897C; --stop-bg:#2C1714;
+  --warn:#DCA63F; --warn-bg:#2A2011;
+  --done:#5FBE96; --done-bg:#122318;
+}
+
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+.wrap{max-width:830px;margin:0 auto;padding:0 26px}
+code{font-family:var(--f-mono);font-size:.85em;background:var(--sunk);padding:.12em .38em;border-radius:3px;word-break:break-word}
+a{color:var(--accent)}
+
+header{padding:54px 0 30px;border-bottom:1px solid var(--rule);margin-bottom:34px}
+.eyebrow{font-family:var(--f-mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin:0 0 14px}
+h1{font-family:var(--f-disp);font-size:clamp(34px,6vw,52px);font-weight:600;letter-spacing:-.02em;line-height:1.04;margin:0;text-wrap:balance}
+.standfirst{font-size:17px;color:var(--ink-2);margin:16px 0 0;max-width:60ch;line-height:1.55}
+
+h2{font-family:var(--f-disp);font-size:27px;font-weight:600;letter-spacing:-.015em;margin:52px 0 6px;line-height:1.2}
+h2 .n{font-family:var(--f-mono);font-size:12px;font-weight:400;color:var(--ink-3);letter-spacing:.1em;display:block;margin-bottom:9px;text-transform:uppercase}
+.lede{color:var(--ink-2);margin:0 0 22px;max-width:64ch}
+
+.verdict{background:var(--card);border:1px solid var(--rule);border-radius:10px;padding:26px 28px;margin:0 0 8px}
+.verdict-top{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;margin-bottom:14px}
+.score{font-family:var(--f-disp);font-size:52px;font-weight:700;line-height:1;letter-spacing:-.03em}
+.score span{font-size:24px;color:var(--ink-3);font-weight:400}
+.verdict-label{font-family:var(--f-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.verdict p{margin:0 0 12px}
+.verdict p:last-child{margin-bottom:0}
+
+.task{background:var(--card);border:1px solid var(--rule);border-left:3px solid var(--rule);border-radius:0 9px 9px 0;padding:17px 20px;margin-bottom:11px}
+.task-blocking{border-left-color:var(--stop)}
+.task-soon{border-left-color:var(--warn)}
+.task-ops{border-left-color:var(--accent)}
+.task h3{font-size:16px;font-weight:600;margin:0 0 7px;line-height:1.35;display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}
+.task h3 .who{font-family:var(--f-mono);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;padding:2.5px 7px;border-radius:4px;font-weight:500;white-space:nowrap}
+.w-stop{background:var(--stop-bg);color:var(--stop)}
+.w-warn{background:var(--warn-bg);color:var(--warn)}
+.w-ops{background:var(--sunk);color:var(--ink-2)}
+.task p{margin:0;font-size:14px;color:var(--ink-2)}
+.task p + p{margin-top:8px}
+.task b{color:var(--ink);font-weight:600}
+pre{background:var(--sunk);border:1px solid var(--rule-2);border-radius:6px;padding:11px 13px;margin:11px 0 0;overflow-x:auto;font-family:var(--f-mono);font-size:12.5px;line-height:1.6;color:var(--ink)}
+
+.scroller{overflow-x:auto;margin:0 0 10px;border:1px solid var(--rule);border-radius:9px;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+th,td{text-align:left;padding:11px 15px;border-bottom:1px solid var(--rule-2);vertical-align:top}
+th{font-family:var(--f-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:500;background:var(--sunk)}
+tr:last-child td{border-bottom:none}
+td.num{font-family:var(--f-disp);font-weight:700;font-size:17px;font-variant-numeric:tabular-nums;white-space:nowrap;width:1%}
+.n-hi{color:var(--done)} .n-mid{color:var(--warn)} .n-lo{color:var(--stop)}
+td.what{color:var(--ink-2)}
+
+.done-list{background:var(--done-bg);border:1px solid var(--done);border-radius:9px;padding:18px 22px;margin:0 0 10px}
+.done-list h3{font-family:var(--f-disp);font-size:17px;margin:0 0 10px;color:var(--done);font-weight:600}
+.done-list ul{margin:0;padding-left:19px;color:var(--ink-2);font-size:14px}
+.done-list li{margin-bottom:6px}
+.done-list li:last-child{margin-bottom:0}
+.done-list b{color:var(--ink)}
+
+footer{margin:56px 0 70px;padding-top:22px;border-top:1px solid var(--rule);font-family:var(--f-mono);font-size:12px;color:var(--ink-3);line-height:1.8}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">Handover &middot; 31 August 2026 &middot; branch <code>fable5-nodyra-full-test-bugfix-production-plan</code></p>
+    <h1>What&rsquo;s left before Nodyra launches</h1>
+    <p class="standfirst">Twelve commits, four production bugs found by running the software rather than testing it, and one honest answer about the score.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="verdict">
+    <div class="verdict-top">
+      <span class="score">8.5<span>/10</span></span>
+      <span class="verdict-label">Where it actually stands</span>
+    </div>
+    <p><b>No, Nodyra is not 10/10 &mdash; and the reason is specific rather than vague.</b> Yesterday the code passed 9,811 tests, a full CI certification, and my own audit. Then I ran the deployment runbook against a real stack, and inside one afternoon that turned up four production bugs: every freshly built environment failed to start, and two of sixteen starter templates were broken, one of them silently.</p>
+    <p>Nothing was wrong with the tests. They ran against a locked dependency set and a SQLite database; the product runs against freshly resolved dependencies and PostgreSQL. The gap between those two worlds is where all four bugs lived.</p>
+    <p>That gap is now much narrower &mdash; templates are executed, not just parsed; contributors are told what SQLite hides; the suite passes on PostgreSQL. But a codebase earns a 10 by surviving contact with reality, and Nodyra has not yet had any: <b>no production traffic, no external pentest, no live payment, and not one green CI run</b> in a fortnight.</p>
+  </div>
+
+  <h2><span class="n">Do these first</span>Blocking</h2>
+  <p class="lede">Nothing ships until these are resolved. Two of the three are administrative, not engineering.</p>
+
+  <div class="task task-blocking">
+    <h3>Fix GitHub billing <span class="who w-stop">only you</span></h3>
+    <p>This is one root cause behind three symptoms, not three problems. Every CI run has failed for a fortnight, the artifact-storage quota is exhausted, and the release job that would publish your v1.0.0 images <b>never started at all</b>:</p>
+    <pre>The job was not started because recent account payments have failed
+or your spending limit needs to be increased.</pre>
+    <p>Settings &rarr; Billing &amp; plans. Nothing in the repository needs to change; once it clears, re-run the release. <b>Until this is fixed you have no working CI</b>, which means none of the gates added this session are actually running on your behalf.</p>
+  </div>
+
+  <div class="task task-blocking">
+    <h3>Move the v1.0.0 tag &mdash; it marks a broken release <span class="who w-stop">I can do this</span></h3>
+    <p>The tag points at <code>2dbbb213</code>. The two fixes that matter most landed <em>after</em> it: <b>every freshly built workflow environment failed to start</b>, and two starter templates were broken. As it stands, v1.0.0 is a release in which a new user&rsquo;s first workflow cannot run.</p>
+    <p>Nothing was ever published from it &mdash; the release job never started &mdash; so moving the tag costs nothing and misleads no one. Say the word and I will push the five outstanding commits and re-tag.</p>
+  </div>
+
+  <div class="task task-blocking">
+    <h3>Decide whether the repository goes public <span class="who w-stop">only you</span></h3>
+    <p><code>Harshit-repo/noodle</code> is private, while the launch page says <b>&ldquo;the source is public&rdquo;</b> and links into it. Every Docs, GitHub and License link on the site will 404 for visitors, including the one the fair-code notice depends on.</p>
+    <p>Fair-code requires public source, so this is a precondition for the pricing page being true &mdash; not a nice-to-have. The repository is also still named <code>noodle</code> while the product is Nodyra; GitHub redirects survive a rename, so the links will keep working either way.</p>
+  </div>
+
+  <h2><span class="n">Before the first paying customer</span>Unproven in the real world</h2>
+  <p class="lede">Each of these is a thing no amount of local verification can settle.</p>
+
+  <div class="task task-soon">
+    <h3>Bound the 72 unbounded dependencies <span class="who w-warn">engineering</span></h3>
+    <p>This is the highest-leverage engineering work left, and it is the general form of the worst bug found this session.</p>
+    <p><code>packages/nodes</code> declared <code>mcp&gt;=1.28.1</code> with no upper bound. Your lockfile pins 1.28.1, so the dev venv and CI never saw anything else &mdash; but a <b>workflow environment resolves its dependencies fresh</b> and got 2.1.1, which had removed a symbol the code imports. Result: <code>import nodyra_nodes</code> raised, the runtime never started, and every environment was broken while every test stayed green.</p>
+    <p>I fixed that import. <b>There are 71 more declarations shaped exactly the same way</b> &mdash; <code>fastapi&gt;=0.110</code>, <code>cryptography&gt;=48.0.1</code>, <code>duckdb&gt;=1.0</code>, <code>boto3&gt;=1.34</code> and so on. Any of them can break every new environment on any day a maintainer cuts a major release. The fix is upper bounds plus a periodic resolve-fresh check in CI; it needs judgement per package, which is why I have not done it unilaterally.</p>
+  </div>
+
+  <div class="task task-soon">
+    <h3>Put one real charge through Stripe <span class="who w-warn">only you</span></h3>
+    <p>The subscription system is built and its licence path is verified end to end &mdash; a signed key raises the tier, a tampered payload is refused, an expired key soft-downgrades rather than failing closed. What has <b>never happened is a real transaction</b>: no live Stripe account, no webhook delivered by Stripe itself, no card declined and recovered.</p>
+    <p>Do it in test mode first, then once for real with your own card, and cancel it. Until then the billing path is theory.</p>
+  </div>
+
+  <div class="task task-soon">
+    <h3>Commission an external pentest <span class="who w-warn">only you</span></h3>
+    <p>Nodyra executes user-supplied Python and holds other people&rsquo;s credentials. I closed a full audit this session &mdash; Argon2id, a login timing oracle, SAML entity expansion, credential-test SSRF, plaintext Vault transport, a WebSocket authorisation gap, archive path traversal &mdash; and added standing gates so those classes cannot recur.</p>
+    <p>But I audited my own work, which is worth less than an adversary doing it. <code>docs/security-pentest-checklist.md</code> is a good brief to hand a firm.</p>
+  </div>
+
+  <div class="task task-soon">
+    <h3>Run the endurance check for real <span class="who w-warn">only you</span></h3>
+    <p><code>scripts/endurance_test.py</code> defaults to sixty minutes and its own help says <b>a leak needs hours to be visible</b>. Three attempts were killed by session limits here, so I have no result and am reporting none rather than running eight minutes and calling it verified.</p>
+    <pre>python scripts/endurance_test.py --duration-minutes 240</pre>
+    <p>Run it against a production-like deployment and keep the report. The detector already distinguishes a warm-pool fill from a genuine leak.</p>
+  </div>
+
+  <h2><span class="n">Operational</span>Yours by nature</h2>
+  <p class="lede">These need a decision, a credential, or hardware. They are marked <b>yours</b> in the deployment runbook, each with a stated reason.</p>
+
+  <div class="task task-ops">
+    <h3>Seven runbook items <span class="who w-ops">operator</span></h3>
+    <p><b>TLS termination</b> at your ingress &mdash; a property of your infrastructure, not of Nodyra. <b>SSO</b> needs a real identity provider, and local passwords must be closed afterwards or you have added a door rather than replaced one. <b>Dispatch topology</b> is a judgement about your scale. <b>The rollback plan</b> is a decision to write down before you need it &mdash; migrations are frequently one-way, so if the honest answer is &ldquo;restore from backup&rdquo;, say so now. <b>Alerting</b> on readiness and queue depth needs your stack. <b>A patch route</b> inside a day is a commitment about your process. <b>Runner hardware</b> is machines I do not have.</p>
+  </div>
+
+  <h2><span class="n">The scorecard</span>Where each part actually is</h2>
+  <p class="lede">Rated on what is demonstrated, not on what is written down. The last column is what would move the number &mdash; not vague improvement, the specific missing evidence.</p>
+
+  <div class="scroller">
+  <table>
+    <thead><tr><th>Area</th><th>Score</th><th>What would move it</th></tr></thead>
+    <tbody>
+      <tr><td>Security posture</td><td class="num n-hi">9</td><td class="what">An external pentest. Everything else is done and gated; I audited my own work.</td></tr>
+      <tr><td>Data &amp; migrations</td><td class="num n-hi">9</td><td class="what">Nothing outstanding. 96 migrations, single head, <code>alembic check</code> clean on real PostgreSQL, restore proven by decrypting a credential from the backup.</td></tr>
+      <tr><td>Engine &amp; execution</td><td class="num n-hi">9</td><td class="what">Sustained-load evidence. 10k-node graphs plan in ~10ms against a 2s budget; no soak result yet.</td></tr>
+      <tr><td>Docs &amp; website</td><td class="num n-hi">9</td><td class="what">Public repository, so the links and the fair-code claim stop being false.</td></tr>
+      <tr><td>Billing &amp; licensing</td><td class="num n-hi">8</td><td class="what">One real Stripe transaction, end to end, including a failed card.</td></tr>
+      <tr><td>Operability</td><td class="num n-hi">8</td><td class="what">Alerting wired, and a soak run kept as evidence.</td></tr>
+      <tr><td>Testing &amp; CI</td><td class="num n-mid">7</td><td class="what">A green CI run &mdash; there has not been one in a fortnight. The suite also passed while four production bugs were live, which is the real cap.</td></tr>
+      <tr><td>Packaging &amp; environments</td><td class="num n-mid">6</td><td class="what">Upper bounds on the 72 unbounded dependencies, plus a resolve-fresh check so the next one is caught by CI rather than by a user.</td></tr>
+      <tr><td>Release process</td><td class="num n-lo">5</td><td class="what">A tag that points at working code, and a release job that has completed once.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2><span class="n">For the record</span>What was actually settled</h2>
+
+  <div class="done-list">
+    <h3>Verified against a live stack, not asserted</h3>
+    <ul>
+      <li><b>Backup and restore</b> &mdash; pg_dump, restore into a scratch database, and a credential <b>decrypted from the restore</b>. The same restore with a different master key was refused, so the success was not a no-op. Measured RTO: 2.6s.</li>
+      <li><b>Readiness is not vacuous</b> &mdash; 503 naming both revisions on a rolled-back schema, while <code>/health/live</code> stayed 200.</li>
+      <li><b>The licence path</b> &mdash; a signed Pro key grants exactly observability, git sync and sandbox; a payload edited to say <code>enterprise</code> is refused; an expired key soft-downgrades. The same key is refused against the production public key, proving those were signature checks.</li>
+      <li><b>Go-live signal reached</b> &mdash; <code>/ops/runtime-mode</code> returned <code>"warnings": []</code> after configuring S3 storage and an internal token, rather than by ignoring them.</li>
+      <li><b>The support bundle redacts</b> &mdash; checked directly against six real secrets, including the master key and session token. None appear.</li>
+      <li><b>The launch pages stopped lying</b> &mdash; they were selling Pro customers audit-log export and RBAC that the code grants only to Enterprise, and advertising SCIM, which does not exist. 22 tests now fail the build if any claim drifts from <code>TIER_DEFAULTS</code>.</li>
+    </ul>
+  </div>
+
+  <footer>
+    Twelve commits on <code>fable5-nodyra-full-test-bugfix-production-plan</code>; five not yet pushed.<br>
+    Suite: 9,811 Python + 501 web tests, green on SQLite and on PostgreSQL&nbsp;16.14.<br>
+    Companion document: the deployment runbook, where 22 of 30 gates carry machine-verified evidence.
+  </footer>
+</div>
+
+</body>
+</html>
