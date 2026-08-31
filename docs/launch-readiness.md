@@ -111,30 +111,27 @@ Nodyra; GitHub redirects survive a rename, so the links keep working either way.
 
 ## Before the first paying customer
 
-### Bound the 72 unbounded dependencies — *engineering*
+### ~~Bound the unbounded dependencies~~ — done
 
-This is the highest-leverage engineering work left, and the general form of the
-worst bug found so far.
+`mcp>=1.28.1` with no upper bound broke every freshly built workflow environment
+while every test stayed green: the lockfile pins what dev and CI resolve, but
+environments resolve fresh and got mcp 2.x, which had removed a symbol the code
+imports.
 
-`packages/nodes` declared `mcp>=1.28.1` with no upper bound. The lockfile pins
-1.28.1, so the dev venv and CI never saw anything else — but **a workflow
-environment resolves its dependencies fresh** and got 2.1.1, which had removed a
-symbol the code imports. `import nodyra_nodes` raised, the runtime never emitted
-its ready event, and every environment was broken while every test stayed green.
+**All 89 declarations shaped that way are now bounded.** Each bound is the first
+version that would be a breaking change, computed from what `uv.lock` currently
+resolves — so the constraint describes the future without forbidding the
+present. Relocking changed zero package versions and the node registry still
+loads all 512.
 
-That import is fixed. **There are 71 more declarations shaped exactly the same
-way** — `fastapi>=0.110`, `cryptography>=48.0.1`, `duckdb>=1.0`, `boto3>=1.34`
-and so on. Any of them can break every new environment on the day a maintainer
-cuts a major release.
+`apps/api/tests/test_dependency_bounds.py` keeps it closed, and earned its keep
+immediately: written after the scripted pass, it found ten dependencies that
+pass had missed, and caught a malformed bound that left `pyproject.toml`
+unparseable.
 
-The fix is upper bounds plus a periodic resolve-fresh check in CI, so the next
-one is caught by a build rather than by a user. It needs judgement per package,
-which is why it has not been done wholesale.
-
-```bash
-# see the whole list
-grep -hoE '"[a-zA-Z0-9_.-]+>=[0-9][^"]*"' packages/*/pyproject.toml apps/api/pyproject.toml | grep -v "<" | sort -u
-```
+What remains here is a periodic *fresh-resolve* run — resolving without the
+lockfile, on a schedule, so a newly published major is caught by a build rather
+than by a user. That needs working CI.
 
 ### Put one real charge through Stripe — *only you*
 
@@ -198,7 +195,7 @@ Rated on what is demonstrated, not on what is written down.
 | Billing & licensing | 8 | One real Stripe transaction, including a failed card. |
 | Operability | 8 | Alerting wired, and a soak run kept as evidence. |
 | Testing & CI | 6 | A green CI run, and something that opens the product. The suite passed while *fifteen* bugs were live, six of them making it unusable out of the box. No test in the repository starts the shipped stack or renders a page, which is why none of them saw it. |
-| Packaging & environments | 6 | Upper bounds on the 72 unbounded dependencies, plus a resolve-fresh check in CI. |
+| Packaging & environments | 9 | A periodic fresh-resolve run in CI. The 89 unbounded declarations are bounded and gated; what is left needs CI to be working. |
 | Release process | 5 | A tag that points at working code, and a release job that has completed once. |
 
 **Overall: 8.5.** The first-run path went from broken to working, which is a real gain; the discovery that a full suite could stay green through all of it is a real loss. They roughly cancel, and the number stays where it was until something in CI actually exercises the product.
