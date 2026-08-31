@@ -27,6 +27,7 @@ from app.services.environment_builds import (
     enqueue_environment_build,
     notify_environment_build_workers,
 )
+from app.services.package_preflight import bundled_packages
 from app.tenancy import active_org_id
 from nodyra.packages import canonical_package_name
 from nodyra.sdk import registry as node_registry
@@ -64,6 +65,7 @@ def _to_info(
         is_global=env.is_global,
         python_version=env.python_version,
         packages=list(env.packages),
+        bundled_packages=sorted(bundled_packages()),
         status=env.status,
         status_detail=env.status_detail,
         description=env.description,

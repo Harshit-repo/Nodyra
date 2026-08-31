@@ -547,6 +547,8 @@ export interface Environment {
   is_global: boolean;
   python_version: string;
   packages: string[];
+  /** Distributions the node library brings, importable in every environment. */
+  bundled_packages?: string[];
   status: string;
   status_detail: string;
   description: string;

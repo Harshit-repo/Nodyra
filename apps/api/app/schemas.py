@@ -441,6 +441,11 @@ class EnvironmentInfo(BaseModel):
     is_global: bool
     python_version: str
     packages: list[str]
+    # Distributions present in every environment because the node library
+    # depends on them (duckdb, httpx, ...). Reported separately from
+    # packages so the editor stops telling users a node is unusable when
+    # its requirement is already installed, without implying they declared it.
+    bundled_packages: list[str] = []
     status: str
     status_detail: str
     description: str = ""

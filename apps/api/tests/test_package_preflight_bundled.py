@@ -24,6 +24,7 @@ check immediately starts requiring it in the environment again.
 from __future__ import annotations
 
 import importlib.metadata as metadata
+from datetime import UTC, datetime
 
 import pytest
 
@@ -108,3 +109,48 @@ def test_the_starter_template_runs_on_any_reasonable_environment(env_packages):
     """The specific promise being kept: the credential-free starter must not be
     blocked by whatever the default environment happens to declare."""
     assert find_missing_packages(DATASET_GRAPH, env_packages) == {}
+
+
+def test_the_environment_response_reports_bundled_packages():
+    """The editor needs the same knowledge the pre-flight check has.
+
+    Fixing only the server left the inspector still saying "This node needs
+    duckdb, not installed in Global" with an "Add to Global" button — while the
+    run succeeded. The user was told to modify their environment to fix
+    something that was not broken, on the starter template's own filter node.
+
+    The editor computes missing packages client-side against the environment's
+    package list, so the environment payload has to carry the bundled set too.
+    """
+    from app.schemas import EnvironmentInfo
+
+    assert "bundled_packages" in EnvironmentInfo.model_fields, (
+        "EnvironmentInfo does not expose bundled_packages, so the editor cannot "
+        "tell that a node's requirement is already satisfied"
+    )
+
+    info = EnvironmentInfo(
+        id="e1",
+        name="Global",
+        is_global=True,
+        python_version="3.12",
+        packages=["requests"],
+        bundled_packages=sorted(bundled_packages()),
+        status="ready",
+        status_detail="",
+        created_at=datetime(2026, 8, 31, tzinfo=UTC),
+        updated_at=datetime(2026, 8, 31, tzinfo=UTC),
+    )
+    assert "duckdb" in info.bundled_packages
+
+
+def test_the_client_rule_matches_the_server_rule():
+    """Both sides must agree on what 'installed' means, or the editor and the
+    runtime disagree about whether a workflow can run."""
+    declared = ["requests"]
+    effective = set(declared) | bundled_packages()
+
+    # What the server allows...
+    assert find_missing_packages(DATASET_GRAPH, declared) == {}
+    # ...must be what the client would compute as present.
+    assert "duckdb" in effective
