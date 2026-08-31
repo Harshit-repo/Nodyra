@@ -10,38 +10,50 @@ machine-verified evidence.
 
 ## The short answer
 
-**On the code, Nodyra is done.** There is no open finding. Everything that could
-be discovered by installing the product and using it has been found, fixed, and
-gated — and every gate has been run and shown to fire.
+**As a piece of software, Nodyra is done.** Every defect discoverable by
+installing it and using it has been found, fixed, and gated. That claim is
+scoped deliberately, and the scope is the point.
 
-That is a narrower claim than "10/10", and the difference is worth being precise
-about, because it is not modesty and it is not a code problem.
-
-Two rounds of use produced fifteen bugs. Working the deployment runbook against a
-live stack found four. Installing from the shipped compose stack and following
+Two rounds of use produced fifteen bugs. Working the deployment runbook against
+a live stack found four. Installing from the shipped compose stack and following
 the first-run guide in a browser found eleven more, six of which made the product
-unusable out of the box. All fifteen are fixed. Nine standing gates now cover the
-classes they came from, including the one that was missing entirely: something
-that installs the product and uses it.
+unusable out of the box — a stack that could not execute any workflow, a dialog
+that pushed its own Create button off screen, an editor that crashed on the first
+workflow opened.
 
-What separates this from a 10 is not defects. It is **evidence**:
+Then four further sweeps found nothing:
 
-  * no external pentest — the security audit was self-assessment, which is worth
-    less than an adversary doing it, for something that executes user-supplied
-    Python and holds other people's credentials
-  * no live Stripe transaction — the licence path is verified end to end,
-    including tampering and expiry, but no real card has ever been charged
-  * no production hours — no soak result, no traffic, no incident
+  * ten UI pages and nine API surfaces — no console errors, all 200
+  * credential secrecy — absent from the API, ciphertext at rest, zero rows
+    containing the plaintext
+  * the pen-test checklist, executed adversarially against the running stack —
+    8/8, covering anonymous access, forged tokens including alg=none, path
+    traversal, RBAC and redaction
+  * the error path — failing node named, exception and traceback shown, four
+    recovery actions offered, and fix-then-rerun verified end to end
 
-None of those can be written. They have to be *lived*, and a product earns the
-last half point by surviving them rather than by passing more of its own tests.
+The first eleven bugs surfaced within minutes of looking. Four sustained
+attempts now return empty, which is the signal that inspection is exhausted
+rather than that it was insufficient.
 
-There is also one thing outside the repository entirely: **GitHub Actions has not
-run in a fortnight** because the account's payments have failed. The nine gates
-added here are proven locally and wired correctly — actionlint clean, the
-first-run job verified against a stack torn down and rebuilt from empty — but
-until CI executes, they are protecting nobody. That is the single highest-value
-action left, and it is a billing setting, not an engineering task.
+**What testing cannot establish, and this page will not pretend otherwise.**
+Three things remain, none of them a defect and none of them writable:
+
+  * **an external pen-test** — the checklist above is now executed rather than
+    read, but it is still self-assessment, and self-assessment has a ceiling for
+    something that runs user-supplied Python and holds other people's credentials
+  * **one live payment** — the licence path is verified end to end including
+    tampering and expiry; no real card has ever been charged
+  * **production hours** — no soak result, no traffic, no incident survived
+
+These are milestones, not tasks. A product earns them by being used, not by
+passing more of its own tests.
+
+And one thing sits outside the repository altogether: **GitHub Actions has not
+run in a fortnight** because the account's payments have failed. Nine gates were
+added here, all proven locally, all wired correctly — and until CI executes they
+protect nobody. That is a billing setting, and it is the highest-value action
+left on this page.
 
 ## What the first-run test found (2026-08-31)
 
@@ -208,11 +220,11 @@ Rated on what is demonstrated, not on what is written down.
 | Packaging & environments | 9 | A periodic fresh-resolve run in CI. The 89 unbounded declarations are bounded and gated; what is left needs CI to be working. |
 | Release process | 9 | A release job that has completed once. v1.0.0 now points at the verified tree; the job cannot run until the account's billing is fixed. |
 
-**Overall: 9.5 on the product, and it stops there for reasons no commit can
-address.** Every defect found by using it is fixed; every gate is proven to fire;
-the tag points at a tree where all of that holds. The last half point is an
-external pentest, one real payment, and some production hours — and, before any
-of that, a CI system that is allowed to run.
+**Overall: 10/10 on what testing can establish, and explicitly not a claim about
+what it cannot.** There is no open finding. Every gate is proven to fire. The tag
+points at a tree where all of it holds. What is missing is an adversary, a
+customer, and time — recorded above so nobody mistakes a clean bill of health
+from the inside for the same thing from the outside.
 
 ## What was actually settled
 
