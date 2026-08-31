@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "Nodyra remote runner agent — registers a machine as a worker and executes workflows"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["httpx>=0.27", "websockets>=12", "nodyra-core"]
+dependencies = ["httpx>=0.27,<0.29.0", "websockets>=12,<17.0.0", "nodyra-core"]
 keywords = ["nodyra", "workflow", "automation", "runner", "agent"]
 classifiers = [
     "Programming Language :: Python :: 3.12",

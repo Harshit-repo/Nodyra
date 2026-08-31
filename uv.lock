@@ -1823,21 +1823,21 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "aiosqlite", specifier = ">=0.20" },
-    { name = "asyncpg", specifier = ">=0.29" },
-    { name = "boto3", specifier = ">=1.34" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "openpyxl", specifier = ">=3.1" },
-    { name = "pandas", specifier = ">=2.0" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
-    { name = "pytest-cov", specifier = ">=6.0" },
-    { name = "pytest-httpx", specifier = ">=0.32" },
-    { name = "pytest-rerunfailures", specifier = ">=16.4" },
-    { name = "pytest-timeout", specifier = ">=2.3" },
-    { name = "ruff", specifier = ">=0.6" },
-    { name = "simpleeval", specifier = ">=0.9" },
-    { name = "xmltodict", specifier = ">=0.13" },
+    { name = "aiosqlite", specifier = ">=0.20,<0.23.0" },
+    { name = "asyncpg", specifier = ">=0.29,<0.32.0" },
+    { name = "boto3", specifier = ">=1.34,<2.0.0" },
+    { name = "httpx", specifier = ">=0.27,<0.29.0" },
+    { name = "openpyxl", specifier = ">=3.1,<4.0.0" },
+    { name = "pandas", specifier = ">=2.0,<4.0.0" },
+    { name = "pytest", specifier = ">=8.0,<10.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23,<2.0.0" },
+    { name = "pytest-cov", specifier = ">=6.0,<8.0.0" },
+    { name = "pytest-httpx", specifier = ">=0.32,<0.37.0" },
+    { name = "pytest-rerunfailures", specifier = ">=16.4,<17.0.0" },
+    { name = "pytest-timeout", specifier = ">=2.3,<3.0.0" },
+    { name = "ruff", specifier = ">=0.6,<0.16.0" },
+    { name = "simpleeval", specifier = ">=0.9,<2.0.0" },
+    { name = "xmltodict", specifier = ">=0.13,<2.0.0" },
 ]
 
 [[package]]
@@ -1892,40 +1892,40 @@ kms-gcp = [
 
 [package.metadata]
 requires-dist = [
-    { name = "alembic", specifier = ">=1.13" },
-    { name = "argon2-cffi", specifier = ">=23.1" },
-    { name = "asyncpg", specifier = ">=0.29" },
-    { name = "asyncssh", specifier = ">=2.14" },
-    { name = "authlib", specifier = ">=1.3" },
-    { name = "boto3", specifier = ">=1.34" },
-    { name = "boto3", marker = "extra == 'kms-aws'", specifier = ">=1.34" },
-    { name = "croniter", specifier = ">=2.0" },
-    { name = "cryptography", specifier = ">=48.0.1" },
-    { name = "docker", specifier = ">=7.0" },
-    { name = "fastapi", specifier = ">=0.110" },
-    { name = "google-cloud-kms", marker = "extra == 'kms-gcp'", specifier = ">=2.21" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "jsonschema", specifier = ">=4.21" },
+    { name = "alembic", specifier = ">=1.13,<2.0.0" },
+    { name = "argon2-cffi", specifier = ">=23.1,<26.0.0" },
+    { name = "asyncpg", specifier = ">=0.29,<0.32.0" },
+    { name = "asyncssh", specifier = ">=2.14,<3.0.0" },
+    { name = "authlib", specifier = ">=1.3,<2.0.0" },
+    { name = "boto3", specifier = ">=1.34,<2.0.0" },
+    { name = "boto3", marker = "extra == 'kms-aws'", specifier = ">=1.34,<2.0.0" },
+    { name = "croniter", specifier = ">=2.0,<7.0.0" },
+    { name = "cryptography", specifier = ">=48.0.1,<50.0.0" },
+    { name = "docker", specifier = ">=7.0,<8.0.0" },
+    { name = "fastapi", specifier = ">=0.110,<0.137.0" },
+    { name = "google-cloud-kms", marker = "extra == 'kms-gcp'", specifier = ">=2.21,<4.0.0" },
+    { name = "httpx", specifier = ">=0.27,<0.29.0" },
+    { name = "jsonschema", specifier = ">=4.21,<5.0.0" },
     { name = "nodyra-api", extras = ["kms-aws", "kms-gcp"], marker = "extra == 'kms-all'" },
     { name = "nodyra-core", editable = "packages/core" },
     { name = "nodyra-exporter", editable = "packages/exporter" },
     { name = "nodyra-importer", editable = "packages/importer" },
     { name = "nodyra-nodes", editable = "packages/nodes" },
-    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.30" },
-    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.51b0" },
-    { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.51b0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.30" },
-    { name = "packaging", specifier = ">=24" },
-    { name = "psutil", specifier = ">=5.9" },
-    { name = "pydantic-settings", specifier = ">=2.2" },
-    { name = "python-multipart", specifier = ">=0.0.30" },
-    { name = "python3-saml", specifier = ">=1.16" },
-    { name = "redis", specifier = ">=5.0" },
-    { name = "signxml", specifier = ">=5.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
-    { name = "starlette", specifier = ">=1.3.1" },
-    { name = "tzlocal", specifier = ">=5.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
+    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.30,<2.0.0" },
+    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.51b0,<1.0.0" },
+    { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.51b0,<1.0.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.30,<2.0.0" },
+    { name = "packaging", specifier = ">=24,<27.0.0" },
+    { name = "psutil", specifier = ">=5.9,<8.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.2,<3.0.0" },
+    { name = "python-multipart", specifier = ">=0.0.30,<0.1.0" },
+    { name = "python3-saml", specifier = ">=1.16,<2.0.0" },
+    { name = "redis", specifier = ">=5.0,<7.0.0" },
+    { name = "signxml", specifier = ">=5.0,<6.0.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0,<3.0.0" },
+    { name = "starlette", specifier = ">=1.3.1,<2.0.0" },
+    { name = "tzlocal", specifier = ">=5.0,<6.0.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.29,<0.48.0" },
 ]
 provides-extras = ["kms-aws", "kms-gcp", "kms-all"]
 
@@ -1950,14 +1950,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", specifier = ">=8.1" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25" },
-    { name = "pytest-httpx", marker = "extra == 'dev'", specifier = ">=0.32" },
-    { name = "rich", specifier = ">=13.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9" },
+    { name = "click", specifier = ">=8.1,<9.0.0" },
+    { name = "httpx", specifier = ">=0.28,<0.29.0" },
+    { name = "pydantic", specifier = ">=2.0,<3.0.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<10.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25,<2.0.0" },
+    { name = "pytest-httpx", marker = "extra == 'dev'", specifier = ">=0.32,<0.37.0" },
+    { name = "rich", specifier = ">=13.0,<16.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9,<0.16.0" },
 ]
 provides-extras = ["dev"]
 
@@ -1972,8 +1972,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jsonschema", specifier = ">=4.23" },
-    { name = "pydantic", specifier = ">=2.6" },
+    { name = "jsonschema", specifier = ">=4.23,<5.0.0" },
+    { name = "pydantic", specifier = ">=2.6,<3.0.0" },
 ]
 
 [[package]]
@@ -2076,39 +2076,39 @@ zvec = [
 
 [package.metadata]
 requires-dist = [
-    { name = "audioop-lts", marker = "python_full_version >= '3.13' and extra == 'voice'", specifier = ">=0.2" },
-    { name = "azure-cognitiveservices-speech", marker = "extra == 'azure-speech'", specifier = ">=1.35" },
-    { name = "beautifulsoup4", specifier = ">=4.12" },
-    { name = "boto3", marker = "extra == 'storage'", specifier = ">=1.34" },
-    { name = "cryptography", specifier = ">=48.0.1" },
-    { name = "deepgram-sdk", marker = "extra == 'deepgram'", specifier = ">=3.0" },
-    { name = "defusedxml", specifier = ">=0.7.1" },
-    { name = "duckdb", specifier = ">=1.0" },
-    { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=0.20" },
-    { name = "jinja2", specifier = ">=3.1" },
-    { name = "jmespath", specifier = ">=1.0" },
-    { name = "joblib", marker = "extra == 'ml'", specifier = ">=1.3" },
-    { name = "jsonschema", specifier = ">=4.21" },
-    { name = "markdown", specifier = ">=3.5" },
-    { name = "matplotlib", marker = "extra == 'matplotlib'", specifier = ">=3.8" },
-    { name = "mcp", specifier = ">=1.28.1" },
-    { name = "networkx", marker = "extra == 'networkx'", specifier = ">=3.2" },
+    { name = "audioop-lts", marker = "python_full_version >= '3.13' and extra == 'voice'", specifier = ">=0.2,<0.3.0" },
+    { name = "azure-cognitiveservices-speech", marker = "extra == 'azure-speech'", specifier = ">=1.35,<2.0.0" },
+    { name = "beautifulsoup4", specifier = ">=4.12,<5.0.0" },
+    { name = "boto3", marker = "extra == 'storage'", specifier = ">=1.34,<2.0.0" },
+    { name = "cryptography", specifier = ">=48.0.1,<50.0.0" },
+    { name = "deepgram-sdk", marker = "extra == 'deepgram'", specifier = ">=3.0,<8.0.0" },
+    { name = "defusedxml", specifier = ">=0.7.1,<0.8.0" },
+    { name = "duckdb", specifier = ">=1.0,<2.0.0" },
+    { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=0.20,<2.0.0" },
+    { name = "jinja2", specifier = ">=3.1,<4.0.0" },
+    { name = "jmespath", specifier = ">=1.0,<2.0.0" },
+    { name = "joblib", marker = "extra == 'ml'", specifier = ">=1.3,<2.0.0" },
+    { name = "jsonschema", specifier = ">=4.21,<5.0.0" },
+    { name = "markdown", specifier = ">=3.5,<4.0.0" },
+    { name = "matplotlib", marker = "extra == 'matplotlib'", specifier = ">=3.8,<4.0.0" },
+    { name = "mcp", specifier = ">=1.28.1,<2.0.0" },
+    { name = "networkx", marker = "extra == 'networkx'", specifier = ">=3.2,<4.0.0" },
     { name = "nodyra-core", editable = "packages/core" },
-    { name = "numpy", marker = "extra == 'ml'", specifier = ">=1.26" },
-    { name = "numpy", marker = "extra == 'numpy'", specifier = ">=1.26" },
-    { name = "ollama", marker = "extra == 'ollama'", specifier = ">=0.4" },
-    { name = "opencv-python", marker = "extra == 'opencv'", specifier = ">=4.8" },
-    { name = "pandas", marker = "extra == 'ml'", specifier = ">=2.0" },
-    { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.0" },
-    { name = "pyarrow", specifier = ">=15.0" },
-    { name = "pydantic", marker = "extra == 'pydantic-extra'", specifier = ">=2.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "requests", specifier = ">=2.31" },
-    { name = "scikit-learn", marker = "extra == 'ml'", specifier = ">=1.4" },
-    { name = "scipy", marker = "extra == 'scipy'", specifier = ">=1.12" },
-    { name = "spacy", marker = "extra == 'spacy'", specifier = ">=3.7" },
-    { name = "sympy", marker = "extra == 'sympy'", specifier = ">=1.12" },
-    { name = "zvec", marker = "extra == 'zvec'", specifier = ">=0.4" },
+    { name = "numpy", marker = "extra == 'ml'", specifier = ">=1.26,<3.0.0" },
+    { name = "numpy", marker = "extra == 'numpy'", specifier = ">=1.26,<3.0.0" },
+    { name = "ollama", marker = "extra == 'ollama'", specifier = ">=0.4,<0.7.0" },
+    { name = "opencv-python", marker = "extra == 'opencv'", specifier = ">=4.8,<5.0.0" },
+    { name = "pandas", marker = "extra == 'ml'", specifier = ">=2.0,<4.0.0" },
+    { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.0,<4.0.0" },
+    { name = "pyarrow", specifier = ">=15.0,<25.0.0" },
+    { name = "pydantic", marker = "extra == 'pydantic-extra'", specifier = ">=2.0,<3.0.0" },
+    { name = "pyyaml", specifier = ">=6.0,<7.0.0" },
+    { name = "requests", specifier = ">=2.31,<3.0.0" },
+    { name = "scikit-learn", marker = "extra == 'ml'", specifier = ">=1.4,<2.0.0" },
+    { name = "scipy", marker = "extra == 'scipy'", specifier = ">=1.12,<2.0.0" },
+    { name = "spacy", marker = "extra == 'spacy'", specifier = ">=3.7,<4.0.0" },
+    { name = "sympy", marker = "extra == 'sympy'", specifier = ">=1.12,<2.0.0" },
+    { name = "zvec", marker = "extra == 'zvec'", specifier = ">=0.4,<0.6.0" },
 ]
 provides-extras = ["ml", "storage", "voice", "deepgram", "ollama", "azure-speech", "huggingface", "pandas", "numpy", "matplotlib", "pydantic-extra", "opencv", "scipy", "spacy", "networkx", "sympy", "zvec"]
 
@@ -2124,9 +2124,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx", specifier = ">=0.27" },
+    { name = "httpx", specifier = ">=0.27,<0.29.0" },
     { name = "nodyra-core", editable = "packages/core" },
-    { name = "websockets", specifier = ">=12" },
+    { name = "websockets", specifier = ">=12,<17.0.0" },
 ]
 
 [[package]]
@@ -2141,7 +2141,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx", specifier = ">=0.27" },
+    { name = "httpx", specifier = ">=0.27,<0.29.0" },
     { name = "nodyra-core", editable = "packages/core" },
     { name = "nodyra-nodes", editable = "packages/nodes" },
 ]
