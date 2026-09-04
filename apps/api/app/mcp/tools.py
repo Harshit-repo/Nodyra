@@ -751,6 +751,32 @@ async def _run_outcome(run_id: str, wait_seconds: float) -> dict:
     return result
 
 
+def assert_workflow_runnable_over_mcp(workflow, *, require_opt_in: bool | None = None) -> None:
+    """Refuse to run a workflow the operator has not exposed to MCP.
+
+    run_workflow accepts any workflow id, so without this the operator's
+    opt-in (mcp_enabled, set by enable_mcp_tool) only governed
+    how a workflow was advertised, not whether an agent could invoke it. An
+    agent that knew an id could run anything in the org.
+
+    Off unless MCP_RUN_REQUIRES_OPT_IN is set, so existing integrations keep
+    working across an upgrade.
+    """
+    if require_opt_in is None:
+        from app.config import settings
+
+        require_opt_in = bool(settings.mcp_run_requires_opt_in)
+    if not require_opt_in or getattr(workflow, "mcp_enabled", False):
+        return
+    label = getattr(workflow, "name", None) or getattr(workflow, "id", "?")
+    raise McpToolError(
+        f"This deployment only lets MCP run workflows that have been exposed as "
+        f"tools, and {label!r} has not been. Ask the workspace owner to run "
+        f"enable_mcp_tool for it, or to enable it in the workflow's MCP "
+        f"settings. Retrying will not help."
+    )
+
+
 async def run_workflow_by_id(
     session: AsyncSession,
     workflow_id: str,
@@ -762,6 +788,7 @@ async def run_workflow_by_id(
 ) -> dict:
     """Shared by the static run_workflow tool and dynamic per-workflow tools."""
     workflow = await _load_workflow(session, workflow_id)
+    assert_workflow_runnable_over_mcp(workflow)
     if not workflow.versions:
         raise McpToolError("Workflow has no versions.")
     latest = workflow.versions[-1]
@@ -1713,6 +1740,7 @@ async def _remove_edge(session: AsyncSession, user: User | None, args: dict) -> 
 
 
 async def _toggle_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "toggle_workflow", "change whether a workflow runs live")
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
     active = args.get("active")
     if not isinstance(active, bool):
@@ -2168,6 +2196,7 @@ async def _move_node(session: AsyncSession, user: User | None, args: dict) -> An
 
 
 async def _create_code_node(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "create_code_node", "add a node that runs new code")
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
     _check_expected_graph_revision(workflow, args)
     node_id = str(args.get("node_id") or "").strip()
@@ -2213,6 +2242,7 @@ async def _create_code_node(session: AsyncSession, user: User | None, args: dict
 
 
 async def _update_code(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "update_code", "replace the code a workflow node runs")
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
     _check_expected_graph_revision(workflow, args)
     node_id = str(args.get("node_id") or "").strip()
@@ -2265,6 +2295,14 @@ async def _retry_run(session: AsyncSession, user: User | None, args: dict) -> An
     run_id = str(args.get("run_id") or "").strip()
     if not run_id:
         raise McpToolError("run_id is required.")
+    # Retrying starts an execution, so it needs the same allowlist check as
+    # run_workflow — otherwise any run id is a way around the opt-in.
+    run = await session.scalar(select(Run).where(Run.id == run_id))
+    if run is None:
+        raise McpToolError(f"Run not found: {run_id}")
+    workflow = await session.scalar(select(Workflow).where(Workflow.id == run.workflow_id))
+    if workflow is not None:
+        assert_workflow_runnable_over_mcp(workflow)
     try:
         result = await _retry_route(run_id, session)
     except Exception as exc:
@@ -2905,6 +2943,7 @@ async def _list_run_approvals(
 async def _resolve_run_approval(
     session: AsyncSession, user: User | None, args: dict
 ) -> Any:
+    _require_explicit_mcp_approval(args, "resolve_run_approval", "resolve a pending human approval")
     from app.routers.runs import decide_run_approval
     from app.schemas import RunApprovalDecisionRequest
 

@@ -2,6 +2,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+import pytest
 from httpx import AsyncClient
 
 MANUAL_GRAPH = {
@@ -1057,14 +1058,14 @@ async def test_toggle_workflow(client: AsyncClient) -> None:
     data = _tool_payload(
         await client.post(
             "/mcp",
-            json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": True}}),
+            json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": True, "approved_by_user": True}}),
         )
     )
     assert data["active"] is True
     data2 = _tool_payload(
         await client.post(
             "/mcp",
-            json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": False}}),
+            json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": False, "approved_by_user": True}}),
         )
     )
     assert data2["active"] is False
@@ -1531,6 +1532,7 @@ async def test_create_code_node(client: AsyncClient) -> None:
     wf_id = await make_workflow(client)
     result = await _tool(client, "create_code_node", {
         "workflow_id": wf_id, "node_id": "transform", "code": "output = input * 2", "label": "Double",
+        "approved_by_user": True,
     })
     data = json.loads(result["content"][0]["text"])
     assert data["node_id"] == "transform"
@@ -1543,8 +1545,8 @@ async def test_create_code_node(client: AsyncClient) -> None:
 
 async def test_update_code(client: AsyncClient) -> None:
     wf_id = await make_workflow(client)
-    await _tool(client, "create_code_node", {"workflow_id": wf_id, "node_id": "fn", "code": "output = 1"})
-    result = await _tool(client, "update_code", {"workflow_id": wf_id, "node_id": "fn", "code": "output = 42"})
+    await _tool(client, "create_code_node", {"workflow_id": wf_id, "node_id": "fn", "code": "output = 1", "approved_by_user": True})
+    result = await _tool(client, "update_code", {"workflow_id": wf_id, "node_id": "fn", "code": "output = 42", "approved_by_user": True})
     data = json.loads(result["content"][0]["text"])
     assert data["node_id"] == "fn"
     node = json.loads((await _tool(client, "get_node", {"workflow_id": wf_id, "node_id": "fn"}))["content"][0]["text"])
@@ -1831,3 +1833,38 @@ async def test_workflow_settings_and_version_tools(client: AsyncClient) -> None:
     )
     diff_data = json.loads(diff_result["content"][0]["text"])
     assert diff_data["changed"] is False
+
+
+@pytest.mark.parametrize(
+    "tool,arguments",
+    [
+        ("update_code", {"node_id": "fn", "code": "import os"}),
+        ("create_code_node", {"node_id": "new_fn", "code": "output = 1"}),
+        ("toggle_workflow", {"active": True}),
+    ],
+)
+async def test_consequential_tools_refuse_over_the_wire_without_approval(
+    client: AsyncClient, tool: str, arguments: dict
+) -> None:
+    """The approval gate has to hold at the server, not only in the source.
+
+    test_mcp_approval_consistency.py checks that the gate is *present* on these
+    tools by reading the source. That would still pass if the helper stopped
+    refusing. This drives the real endpoint and asserts a refusal comes back.
+    """
+    wf_id = await make_workflow(client)
+    await _tool(
+        client,
+        "create_code_node",
+        {"workflow_id": wf_id, "node_id": "fn", "code": "output = 1", "approved_by_user": True},
+    )
+
+    result = await _tool(client, tool, {"workflow_id": wf_id, **arguments})
+    assert result["isError"] is True, (
+        f"{tool} ran without approved_by_user, so an agent reaches it without "
+        f"involving the human the gate exists for"
+    )
+    text = result["content"][0]["text"]
+    assert "approved_by_user" in text, (
+        f"{tool} refused but did not say what the caller must do: {text!r}"
+    )

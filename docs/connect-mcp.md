@@ -15,6 +15,109 @@ This guide covers:
 
 ---
 
+## What the agent can do without asking you
+
+Nodyra's MCP tools split into two groups, and the split is worth understanding
+before you point an LLM at a production instance.
+
+**These 20 tools refuse until the caller passes `approved_by_user=true`,**
+so a well-behaved client has to come back to you first:
+
+- `add_environment_package`
+- `apply_workflow_patch`
+- `create_code_node`
+- `create_environment`
+- `create_schedule`
+- `delete_schedule`
+- `delete_workflow`
+- `publish_workflow`
+- `rebuild_environment`
+- `remove_edge`
+- `remove_environment_package`
+- `remove_node`
+- `resolve_run_approval`
+- `rollback_workflow`
+- `set_environment_packages`
+- `set_workflow_graph`
+- `toggle_schedule`
+- `toggle_workflow`
+- `update_code`
+- `update_schedule`
+
+The rule they follow: a tool is gated when it changes *what code will run*,
+*whether it runs*, or *whether a human has signed something off*.
+
+**Everything else runs unattended** — every read, and also `run_workflow`,
+`retry_run` and `cancel_run`. Executing a graph that was already approved is the
+point of the integration; the approval happened when the graph was written.
+
+### The honest limit of this
+
+`approved_by_user` is a convention, not a wall. It is a flag the client sets,
+and a client that wanted to could set it without asking anyone. It exists to
+make the consequential moments visible to you in your agent's transcript, not to
+stop a hostile client — for that, the real boundaries are the bearer token, the
+role attached to it, and the sandbox.
+
+So scope the token you hand an agent the way you would scope a colleague's
+access. An MCP session authenticates as a real user and inherits exactly that
+user's permissions: give an agent an owner token and it can do what an owner can.
+
+`apps/api/tests/test_mcp_approval_consistency.py` keeps this page honest — it
+fails if a gated tool stops being gated, if a consequential tool is added
+without a gate, or if this list drifts from the code.
+
+## Choosing which workflows an agent may run
+
+The section above is about *how* an agent asks. This one is about *what it can
+reach at all*, and it is the stronger of the two controls, because it is enforced
+by the server rather than asserted by the client.
+
+By default `run_workflow` accepts any workflow id in the workspace. That is
+usually what you want on a laptop, where the agent and the workflows are both
+yours. It is not what you want on an instance whose workflows send mail, post to
+Slack, move money, or call a metered API — there, an agent that guesses or reads
+an id can run any of them.
+
+Set `MCP_RUN_REQUIRES_OPT_IN=true` and Nodyra will run only the workflows you
+have explicitly exposed:
+
+```bash
+# docker-compose.yml, or the api service's environment
+MCP_RUN_REQUIRES_OPT_IN=true
+```
+
+You opt a workflow in with `enable_mcp_tool` (or the MCP panel in the workflow's
+settings), and out again with `disable_mcp_tool`. Exposing a workflow already
+publishes it as its own named tool, so the same gesture now does both jobs: it
+decides what the agent can *see* and what it can *run*.
+
+A workflow that has not been exposed is refused with a message that names it and
+says how to allow it, so the agent reports a decision to you rather than
+retrying against what looks like an outage:
+
+```
+This deployment only lets MCP run workflows that have been exposed as tools,
+and 'Payroll' has not been. Ask the workspace owner to run enable_mcp_tool for
+it, or to enable it in the workflow's MCP settings. Retrying will not help.
+```
+
+**It defaults to off, deliberately.** Existing integrations call `run_workflow`
+on workflows that were never exposed, and turning this on by default would break
+them silently on upgrade. For any instance an agent can reach over a network,
+turning it on is the recommended posture.
+
+The restriction covers `retry_run` as well as `run_workflow`. That is worth
+stating because it did not, at first: retrying re-executes by run id and reached
+the execution path directly, so any run id of a revoked workflow was a way
+around the setting. Both entry points are now gated, and
+`apps/api/tests/test_mcp_run_allowlist.py` fails if a new tool that can start an
+execution is added without being checked against the allowlist.
+
+What this does *not* change is authorisation. An MCP session still acts as a
+real user with that user's permissions; the allowlist narrows what that user's
+agent may execute, it does not widen anything. Scope the token too.
+
 ## 1. Endpoint & authentication
 
 | | |
