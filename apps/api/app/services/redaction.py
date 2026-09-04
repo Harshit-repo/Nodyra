@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 import time
 from collections.abc import Iterable
 from typing import Any
@@ -53,24 +54,71 @@ def invalidate_secret_cache(org_id: str | None = None) -> None:
         _secret_cache.pop(org_id, None)
         _secret_cache.pop(_SECRET_CACHE_GLOBAL_KEY, None)
 
-SENSITIVE_KEY_PARTS = (
-    "api_key",
-    "apikey",
-    "authorization",
-    "auth",
-    "bearer",
-    "client_secret",
-    "connection_url",
-    "password",
-    "private_key",
-    "secret",
-    "token",
+# Matched as whole words, not substrings. Substring matching masked every key
+# that merely *contained* one of these - "author" contains "auth", so an
+# ordinary quote-fetching workflow returned {"author": "***REDACTED***"} to the
+# user and to any agent reading the run. Plurals are included so a key holding
+# a list of credentials ("tokens") is still caught; a count like
+# "total_tokens" survives because numbers are never masked (see below).
+SENSITIVE_KEY_WORDS = frozenset(
+    {
+        "auth",
+        "authorization",
+        "bearer",
+        "credential",
+        "credentials",
+        "password",
+        "passwords",
+        "passwd",
+        "secret",
+        "secrets",
+        "token",
+        "tokens",
+        "apikey",
+    }
 )
+
+# Matched as consecutive words, so "api_key", "apiKey" and "x-api-key" all hit.
+SENSITIVE_KEY_PHRASES = (
+    ("api", "key"),
+    ("client", "secret"),
+    ("private", "key"),
+    ("connection", "url"),
+    ("access", "key"),
+)
+
+# Kept for callers that import it. The tuple no longer drives matching.
+SENSITIVE_KEY_PARTS = tuple(sorted(SENSITIVE_KEY_WORDS))
+
+_WORD_SPLIT_RE = re.compile(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _key_words(key: object) -> list[str]:
+    """Split a key into lowercase words on separators and camelCase humps."""
+    return [word for word in _WORD_SPLIT_RE.split(str(key)) if word]
 
 
 def _is_sensitive_key(key: object) -> bool:
-    text = str(key).lower()
-    return any(part in text for part in SENSITIVE_KEY_PARTS)
+    words = [word.lower() for word in _key_words(key)]
+    if any(word in SENSITIVE_KEY_WORDS for word in words):
+        return True
+    return any(
+        words[i : i + len(phrase)] == list(phrase)
+        for phrase in SENSITIVE_KEY_PHRASES
+        for i in range(len(words) - len(phrase) + 1)
+    )
+
+
+def _can_hold_a_secret(value: Any) -> bool:
+    """A number is not a credential.
+
+    Key names are a heuristic and they collide with real field names. Refusing
+    to mask numeric values costs nothing - no API key, password or bearer token
+    is an int - and it keeps LLM usage counts intact, which matters because
+    ``model_serving`` emits ``total_tokens`` and ``model_monitoring`` reads it
+    to compute cost.
+    """
+    return not isinstance(value, bool | int | float)
 
 
 def _usable_secret(value: Any) -> str | None:
@@ -191,7 +239,7 @@ def redact_value(value: Any, secret_values: Iterable[str] = ()) -> Any:
         next_value: dict[str, Any] = {}
         for key, item in value.items():
             out_key = str(key)
-            if _is_sensitive_key(key):
+            if _is_sensitive_key(key) and _can_hold_a_secret(item):
                 next_value[out_key] = REDACTED if item not in (None, "") else item
             else:
                 next_value[out_key] = redact_value(item, secret_values)
