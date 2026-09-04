@@ -388,6 +388,40 @@ def _is_safe_webhook_url(url_str: str) -> tuple[bool, str]:
     return True, ""
 
 
+def matches_display_when(
+    display_when: Any, params: "dict[str, Any]"
+) -> bool:
+    """Is a param visible, given the node's current param values?
+
+    Consolidated integration nodes hold the union of every operation's params
+    and record which (resource, operation) pairs each belongs to in
+    ``display_when``. A param that is not visible for the selected operation is
+    not part of that operation's contract, so it cannot be required by it.
+
+    Must stay in step with ``matchesDisplayWhen`` in
+    ``apps/web/src/editor/node-details/displayRules.ts``: the editor deciding a
+    field is irrelevant while the engine demands it is exactly the failure this
+    exists to prevent.
+    """
+    if not isinstance(display_when, dict) or not display_when:
+        return True
+    any_groups = display_when.get("any")
+    if isinstance(any_groups, list):
+        return any(matches_display_when(group, params) for group in any_groups)
+    conditions = display_when.get("conditions")
+    if isinstance(conditions, list):
+        return all(matches_display_when(cond, params) for cond in conditions)
+    param_name = str(display_when.get("param") or "")
+    if not param_name:
+        return True
+    current = str(params.get(param_name) if params.get(param_name) is not None else "")
+    values = display_when.get("values")
+    if isinstance(values, list):
+        return current in [str(v) for v in values]
+    expected = display_when.get("value")
+    return current == str(expected if expected is not None else "")
+
+
 async def _run_node_hooks(
     hooks: list[dict[str, Any]],
     trigger: str,
@@ -664,7 +698,14 @@ async def _run_one_node(
             continue
         if spec.name in graph_node.params:
             kwargs[spec.name] = graph_node.params[spec.name]
-        elif spec.required:
+        elif spec.required and matches_display_when(
+            getattr(spec, "display_when", None), graph_node.params
+        ):
+            # A param the editor hides for the selected resource/operation is
+            # not part of that operation's contract, so it cannot be required
+            # by it. Without this the engine demanded fields the user was never
+            # shown - "missing required parameters: reaction_name" on a Slack
+            # message send.
             missing.append(spec.name)
 
     if missing:
