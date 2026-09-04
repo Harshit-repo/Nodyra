@@ -369,6 +369,14 @@ class Settings(BaseSettings):
     otel_exporter_protocol: str = "http"
     # MCP server: exposes POST /mcp (workflow run + builder tools) when on.
     mcp_server_enabled: bool = True
+    # Restrict which workflows an MCP agent may execute to those an operator has
+    # explicitly exposed (mcp_enabled, set by enable_mcp_tool).
+    #
+    # Off by default: run_workflow has always accepted any workflow id, and
+    # every existing integration calls it on workflows that were never exposed,
+    # so defaulting this on would break them at upgrade. Recommended posture for
+    # a production instance an agent can reach is on — see docs/connect-mcp.md.
+    mcp_run_requires_opt_in: bool = False
     # Licensing (see app/services/licensing.py). A signed Ed25519 license key
     # set here (env NODYRA_LICENSE_KEY) takes precedence over the DB-stored key.
     # Blank → resolve from system_settings.license_key, else Community edition.
