@@ -534,3 +534,60 @@ def test_register_module_allows_safe_code() -> None:
     registered, skipped = register_module_functions("sec_mod5", source, reg)
     assert "transform" in registered
     assert not skipped
+
+
+MULTILINE_DOCSTRING_SOURCE = (
+    "def documented(x: int) -> int:\n"
+    '    """Do a thing.\n'
+    "\n"
+    "    Requires: something installed\n"
+    "    (a second line).\n"
+    '    """\n'
+    "    return x\n"
+)
+
+
+def test_docstring_indentation_does_not_leak_into_descriptions() -> None:
+    """A node's description is user-facing text, not Python source.
+
+    Docstring continuation lines carry the function's indentation. Four-space
+    indented lines are a code block in Markdown, so a plain sentence like
+    "Requires: playwright install chromium" renders as code wherever the
+    description is shown as Markdown - which is how an MCP client presents it
+    to a model.
+    """
+    reg = NodeRegistry()
+    register_module_functions("docs_mod", MULTILINE_DOCSTRING_SOURCE, reg)
+    manifest = next(m for m in reg.manifests() if m.name == "documented")
+
+    indented = [
+        line
+        for line in manifest.description.split("\n")[1:]
+        if line.startswith("    ") and line.strip()
+    ]
+    assert not indented, (
+        f"description keeps the docstring's own indentation: {indented!r}"
+    )
+
+
+def test_static_and_runtime_extraction_agree() -> None:
+    """The same function must be described identically however it was read.
+
+    ``ast.get_docstring`` dedents (``clean=True`` by default); ``__doc__.strip()``
+    does not. Nodyra reads docstrings both ways - statically when listing what a
+    module offers, at runtime when registering it - so the same function was
+    described two different ways depending on which surface asked.
+    """
+    manifests, _skipped = discover_module_function_manifests(
+        "agree_static", MULTILINE_DOCSTRING_SOURCE, include_undecorated=True
+    )
+    static = manifests[0].description
+
+    reg = NodeRegistry()
+    register_module_functions("agree_runtime", MULTILINE_DOCSTRING_SOURCE, reg)
+    runtime = reg.manifests()[0].description
+
+    assert static == runtime, (
+        f"static extraction gave {static!r} but runtime extraction gave "
+        f"{runtime!r}; the same function is described differently by surface"
+    )
