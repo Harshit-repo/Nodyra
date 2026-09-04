@@ -121,7 +121,13 @@ async def test_runtime_process_missing_heartbeat_is_closed(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_runtime_process_heartbeats_do_not_mask_no_progress(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 0.2)
+    # The point of this test is that a heartbeat arriving *after* the
+    # no-progress deadline does not reset it. Only the ordering of the two
+    # deadlines matters, so give the heartbeat timeout a wide margin: at 0.2s
+    # it sat 140ms from the 0.06s sleep below, and under full-suite load the
+    # sleep overshoots, the heartbeat timeout fires first, and the test fails
+    # claiming "heartbeat lost" instead of "no protocol progress".
+    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 5.0)
     monkeypatch.setattr(settings, "runtime_no_progress_timeout_seconds", 0.05)
     process = _ProtocolProcess()
     runtime = _RuntimeProcess(process, env_id=None)
