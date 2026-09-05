@@ -24,7 +24,29 @@ import pytest
 import nodyra_nodes  # noqa: F401 — importing registers every node
 from nodyra.sdk import NodeDef, registry
 
-ALL_NODES: list[tuple[str, NodeDef]] = sorted(registry._nodes.items())
+
+def _is_shipped(node: NodeDef) -> bool:
+    """Was this node defined by the shipped package, or by a test fixture?
+
+    ``registry`` is global and this module snapshots it at import time, so which
+    nodes are present depends on what pytest imported first. Several tests
+    register fixture nodes into it (e09_key_spy, eng1_slow, stream_body_test),
+    and the full suite therefore saw 515 nodes where running this file alone
+    sees 512 - which made the ratchets below order-dependent. The same tree
+    could pass alone and fail in the suite, reporting a number that described
+    the test run rather than the product.
+
+    Shipped nodes are either defined in ``nodyra_nodes`` or built by the
+    integrations factory, which produces callables carrying no ``__module__``.
+    A fixture defined inside a test module has that module's name.
+    """
+    module = getattr(node.func, "__module__", "") or ""
+    return not module or module.split(".")[0] == "nodyra_nodes"
+
+
+ALL_NODES: list[tuple[str, NodeDef]] = sorted(
+    (node_id, node) for node_id, node in registry._nodes.items() if _is_shipped(node)
+)
 
 # Parameters the engine supplies rather than the user; they are legitimately
 # absent from a manifest's declared params.
