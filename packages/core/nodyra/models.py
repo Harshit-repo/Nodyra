@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class CredentialSpec(BaseModel):
@@ -309,13 +309,29 @@ class GraphNode(BaseModel):
 
 
 class Edge(BaseModel):
-    """Connects a source node's output port to a target node's input port."""
+    """Connects a source node's output port to a target node's input port.
+
+    ``sourceHandle``/``targetHandle`` are accepted as aliases. They are what
+    React Flow calls these fields, so they are what the editor uses internally
+    and what anyone reading the canvas — or driving the API by hand or over
+    MCP — reaches for first. Without the alias an edge naming a branch as
+    ``sourceHandle`` was silently dropped and quietly rewired to "main",
+    which fails much later as a data-shape error in an unrelated node.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     id: str = ""
     source: str
-    source_output: str = "main"
+    source_output: str = Field(
+        default="main",
+        validation_alias=AliasChoices("source_output", "sourceHandle"),
+    )
     target: str
-    target_input: str = "input"
+    target_input: str = Field(
+        default="input",
+        validation_alias=AliasChoices("target_input", "targetHandle"),
+    )
 
 
 class WorkflowGraph(BaseModel):

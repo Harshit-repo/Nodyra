@@ -250,3 +250,41 @@ def test_choices_win_over_the_generic_vocabulary():
 
     spec = ParamSpec(name="provider", choices=["openai", "anthropic"])
     assert spec.description == "One of: openai, anthropic."
+
+
+# ---------------------------------------------------------------------------
+# Edge — React Flow handle aliases
+
+
+def test_edge_accepts_react_flow_handle_names() -> None:
+    """``sourceHandle``/``targetHandle`` must reach the same fields.
+
+    These are React Flow's names, so they are what the editor uses internally
+    and what anyone driving the API by hand or over MCP reaches for first.
+    Ignoring them silently rewired a branch back to "main", and the mistake
+    only surfaced later as a confusing data-shape error in another node.
+    """
+    edge = Edge(source="validate", target="outliers", sourceHandle="valid")
+
+    assert edge.source_output == "valid"
+    assert edge.target_input == "input"
+
+
+def test_edge_still_accepts_its_own_field_names() -> None:
+    edge = Edge(
+        source="validate",
+        target="outliers",
+        source_output="invalid",
+        target_input="right",
+    )
+
+    assert (edge.source_output, edge.target_input) == ("invalid", "right")
+
+
+def test_edge_serializes_under_the_snake_case_names() -> None:
+    """The alias is input-only; stored graphs keep one spelling."""
+    edge = Edge(source="a", target="b", sourceHandle="valid")
+
+    dumped = edge.model_dump()
+    assert dumped["source_output"] == "valid"
+    assert "sourceHandle" not in dumped
