@@ -268,13 +268,17 @@ TEMPLATES: list[dict] = [
                 "code",
                 {
                     "code": (
-                        "rows = (input or {}).get('body') or input or []\n"
+                        "body = input.get('body') if isinstance(input, dict) else input\n"
+                        "rows = body if isinstance(body, list) else []\n"
                         "output = [{'id': r.get('id'), 'name': r.get('name'),\n"
                         "           'email': r.get('email')} for r in rows]"
                     )
                 },
             ),
             ("sort_rows", "sort", {"field": "name", "order": "asc"}),
+            # csv_write consumes a DatasetRef, not records - without this step
+            # the template failed with "expected a DatasetRef" on its last node.
+            ("to_dataset", "records_to_dataset", {}),
             ("export", "csv_write", {"filename": "users.csv", "include_header": True}),
         ),
     },
@@ -526,7 +530,8 @@ TEMPLATES: list[dict] = [
                 "code",
                 {
                     "code": (
-                        "rows = (input or {}).get('body') or input or []\n"
+                        "body = input.get('body') if isinstance(input, dict) else input\n"
+                        "rows = body if isinstance(body, list) else []\n"
                         "output = rows[:50]"
                     )
                 },

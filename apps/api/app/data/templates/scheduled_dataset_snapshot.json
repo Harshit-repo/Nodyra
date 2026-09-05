@@ -51,7 +51,7 @@
         "id": "recent",
         "type": "code",
         "params": {
-          "code": "rows = (input or {}).get('body') or input or []\noutput = rows[:50]"
+          "code": "body = input.get('body') if isinstance(input, dict) else input\nrows = body if isinstance(body, list) else []\noutput = rows[:50]"
         },
         "position": {
           "x": 560,

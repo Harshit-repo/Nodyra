@@ -50,7 +50,7 @@
         "id": "select",
         "type": "code",
         "params": {
-          "code": "rows = (input or {}).get('body') or input or []\noutput = [{'id': r.get('id'), 'name': r.get('name'),\n           'email': r.get('email')} for r in rows]"
+          "code": "body = input.get('body') if isinstance(input, dict) else input\nrows = body if isinstance(body, list) else []\noutput = [{'id': r.get('id'), 'name': r.get('name'),\n           'email': r.get('email')} for r in rows]"
         },
         "position": {
           "x": 560,
@@ -70,6 +70,15 @@
         }
       },
       {
+        "id": "to_dataset",
+        "type": "records_to_dataset",
+        "params": {},
+        "position": {
+          "x": 1120,
+          "y": 40
+        }
+      },
+      {
         "id": "export",
         "type": "csv_write",
         "params": {
@@ -77,7 +86,7 @@
           "include_header": true
         },
         "position": {
-          "x": 1120,
+          "x": 1400,
           "y": 40
         }
       }
@@ -97,6 +106,10 @@
       },
       {
         "source": "sort_rows",
+        "target": "to_dataset"
+      },
+      {
+        "source": "to_dataset",
         "target": "export"
       }
     ]
