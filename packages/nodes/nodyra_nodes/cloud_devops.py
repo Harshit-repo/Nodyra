@@ -381,6 +381,7 @@ def aws_sns_publish(
 @node(
     name="SSH Execute",
     id="ssh_execute",
+    requirements=["paramiko>=3.0"],
     category="System",
     icon="terminal",
     params={

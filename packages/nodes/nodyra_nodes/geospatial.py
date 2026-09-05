@@ -528,7 +528,7 @@ def coordinate_transform(
     id="isochrone_generate",
     category=GEO_CATEGORY,
     icon="route",
-    requirements=["osmnx>=1.9", "geopandas>=0.14"],
+    requirements=["osmnx>=1.9", "geopandas>=0.14", "shapely>=2.0"],
     output_kinds={"main": "dataset"},
     params={
         "lat": {"description": "Origin latitude."},

@@ -992,6 +992,7 @@ _XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetm
 
 @node(
     id="read_excel_file",
+    requirements=["openpyxl>=3.1"],
     name="Read Excel File",
     category="Files",
     description="Read an Excel (.xlsx) file from a server path or browser-uploaded artifact and return it as a dataset.",
@@ -1095,6 +1096,7 @@ def read_excel_file(
 
 @node(
     id="write_excel_file",
+    requirements=["openpyxl>=3.1"],
     name="Write Excel File",
     category="Files",
     description="Write data to an Excel (.xlsx) file. Accepts a list of records or a dataset ref.",

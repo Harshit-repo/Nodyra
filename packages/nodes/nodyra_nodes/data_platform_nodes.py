@@ -13,6 +13,7 @@ from nodyra_nodes._creds import cred_multi
 
 @node(
     id="snowflake_query",
+    requirements=["snowflake-connector-python>=3.0"],
     name="Snowflake Query",
     category="Data Platforms",
     description="Execute a SQL query against Snowflake and return results as a dataset.",
@@ -86,6 +87,7 @@ def snowflake_query(
 
 @node(
     id="bigquery_query",
+    requirements=["google-cloud-bigquery>=3.0", "google-auth>=2.0"],
     name="BigQuery Query",
     category="Data Platforms",
     description="Execute a SQL query against Google BigQuery and return results as a dataset.",
@@ -298,6 +300,7 @@ def dbt_cloud_trigger_job(
 
 @node(
     id="mlflow_log_metric",
+    requirements=["mlflow>=2.0"],
     name="MLflow Log Metric",
     category="Data Platforms",
     description="Log one or more metrics to an MLflow run.",
@@ -370,6 +373,7 @@ def mlflow_log_metric(
 
 @node(
     id="mlflow_log_artifact",
+    requirements=["mlflow>=2.0"],
     name="MLflow Log Artifact",
     category="Data Platforms",
     description="Log a file or dataset as an artifact to an MLflow run.",

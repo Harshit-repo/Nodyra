@@ -62,6 +62,7 @@ def _coerce_json(value: Any, *, default: Any = None) -> Any:
 @node(
     name="MongoDB Query",
     id="mongodb_query",
+    requirements=["pymongo>=4.0"],
     category="Integrations",
     icon="brand:mongodb",
     params={
@@ -164,6 +165,7 @@ def mongodb_query(
 @node(
     name="Redis Command",
     id="redis_command",
+    requirements=["redis>=5.0"],
     category="Integrations",
     icon="brand:redis",
     params={
@@ -320,6 +322,7 @@ def elasticsearch_search(
 @node(
     name="GCS Upload",
     id="gcs_upload",
+    requirements=["google-cloud-storage>=2.0"],
     category="Integrations",
     icon="brand:googlecloud",
     params={
@@ -385,6 +388,7 @@ def gcs_upload(
 @node(
     name="GCS List Objects",
     id="gcs_list_objects",
+    requirements=["google-cloud-storage>=2.0"],
     category="Integrations",
     icon="brand:googlecloud",
     params={
@@ -440,6 +444,7 @@ def gcs_list_objects(
 @node(
     name="Azure Blob Upload",
     id="azure_blob_upload",
+    requirements=["azure-storage-blob>=12.0"],
     category="Integrations",
     icon="brand:microsoftazure",
     params={

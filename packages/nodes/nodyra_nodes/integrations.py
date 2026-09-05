@@ -528,6 +528,7 @@ def github_create_issue(
 @node(
     name="MySQL Query",
     id="mysql_query",
+    requirements=["pymysql>=1.0"],
     param_groups={"Options": ["port", "parameters"]},
     category="Integrations",
     icon="database",
