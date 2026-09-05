@@ -10,9 +10,10 @@
   "version": "1.0.0",
   "creator": "Nodyra maintainers",
   "verified": true,
-  "credential_free": true,
+  "credential_free": false,
   "prerequisites": [
-    "A CSV file readable by the Nodyra process"
+    "A CSV file readable by the Nodyra process",
+    "ydata-profiling installed in the workflow environment"
   ],
   "expected_result": "A profile report plus a separate outliers collection; the run fails when outliers exceed your threshold.",
   "permissions": [

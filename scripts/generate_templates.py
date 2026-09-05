@@ -148,14 +148,14 @@ TEMPLATES: list[dict] = [
         "id": "http_health_check",
         "name": "HTTP health check with alert",
         "description": (
-            "Poll an endpoint on a schedule, and fail the run loudly when it "
-            "stops returning 200 so your alerting sees it."
+            "Poll an endpoint on a schedule and fail the run loudly when it "
+            "stops answering, so your alerting sees it."
         ),
         "tags": ["monitoring", "http", "schedule", "starter"],
         "prerequisites": ["Outbound HTTPS to the endpoint you are checking"],
         "expected_result": (
-            "A green run each time the endpoint is healthy, and a failed run "
-            "carrying the status code when it is not."
+            "A green run each time the endpoint answers healthily, and a "
+            "failed run naming the status code when it does not."
         ),
         "permissions": ["Network: the URL you configure"],
         "credential_free": True,
@@ -165,7 +165,9 @@ TEMPLATES: list[dict] = [
                 "probe",
                 "http_request",
                 {
-                    "url": "https://httpbin.org/status/200",
+                    # An endpoint that returns a body, so the check below has
+                    # something to assert on. /status/200 answers with nothing.
+                    "url": "https://httpbin.org/json",
                     "method": "GET",
                     "timeout_seconds": 10,
                     "max_retries": 1,
@@ -176,10 +178,13 @@ TEMPLATES: list[dict] = [
                 "code",
                 {
                     "code": (
-                        "status = (input or {}).get('status_code', 0)\n"
-                        "if status != 200:\n"
-                        "    raise ValueError(f'health check failed: HTTP {status}')\n"
-                        "output = {'status_code': status, 'healthy': True}"
+                        "# http_request raises on any non-2xx, naming the status, so\n"
+                        "# reaching this node already means the endpoint answered. What\n"
+                        "# it returns is the decoded body - there is no status_code\n"
+                        "# field - so assert on the body instead.\n"
+                        "if input in (None, '', {}, []):\n"
+                        "    raise ValueError('health check failed: empty response body')\n"
+                        "output = {'healthy': True, 'body': input}"
                     )
                 },
             ),
@@ -193,19 +198,37 @@ TEMPLATES: list[dict] = [
             "key column, and write the cleaned file back out."
         ),
         "tags": ["data", "csv", "cleanup", "starter"],
-        "prerequisites": ["A CSV file readable by the Nodyra process"],
+        "prerequisites": [],
         "expected_result": "A cleaned CSV artifact with duplicate rows removed.",
-        "permissions": ["Filesystem: the input path you configure"],
+        "permissions": [],
         "credential_free": True,
         "graph": _chain(
             ("start", "manual_trigger", {"data": {}}),
-            ("read", "read_csv_file", {"path": "data/input.csv", "has_header": True}),
+            # Inline sample rows rather than a file the user does not have, so
+            # the template runs on first click. Deliberately messy: mixed case
+            # and padding for normalise, a repeated address for dedupe.
+            (
+                "sample",
+                "code",
+                {
+                    "code": (
+                        "output = [\n"
+                        "    {'name': 'Ada Lovelace', 'email': '  Ada@Example.COM '},\n"
+                        "    {'name': 'Grace Hopper', 'email': 'grace@example.com'},\n"
+                        "    {'name': 'Ada L.', 'email': 'ada@example.com'},\n"
+                        "    {'name': 'Alan Turing', 'email': ' Alan@Example.com'},\n"
+                        "]"
+                    )
+                },
+            ),
             (
                 "normalise",
                 "string_normalize",
                 {"columns": "email", "case": "lower", "trim": True},
             ),
             ("dedupe", "remove_duplicates", {"field": "email"}),
+            # csv_write consumes a DatasetRef, not records.
+            ("to_dataset", "records_to_dataset", {}),
             ("write", "csv_write", {"filename": "cleaned.csv", "include_header": True}),
         ),
     },
@@ -415,13 +438,18 @@ TEMPLATES: list[dict] = [
             "the run before bad data reaches anything downstream."
         ),
         "tags": ["data-quality", "validation", "etl"],
-        "prerequisites": ["A CSV file readable by the Nodyra process"],
+        "prerequisites": [
+            "A CSV file readable by the Nodyra process",
+            "ydata-profiling installed in the workflow environment",
+        ],
         "expected_result": (
             "A profile report plus a separate outliers collection; the run "
             "fails when outliers exceed your threshold."
         ),
         "permissions": ["Filesystem: the input path you configure"],
-        "credential_free": True,
+        # Not credential-free: needs both a file you supply and a package that
+        # is not bundled, so pre-flight refuses the run until it is installed.
+        "credential_free": False,
         "graph": _chain(
             ("start", "manual_trigger", {"data": {}}),
             ("read", "read_csv_file", {"path": "data/metrics.csv", "has_header": True}),
@@ -487,7 +515,8 @@ TEMPLATES: list[dict] = [
         "prerequisites": ["A PDF readable by the Nodyra process"],
         "expected_result": "One record per page with its text content.",
         "permissions": ["Filesystem: the PDF path you configure"],
-        "credential_free": True,
+        # Not credential-free: needs a PDF you supply.
+        "credential_free": False,
         "graph": _chain(
             ("start", "manual_trigger", {"data": {}}),
             ("extract", "pdf_extract_text_v2", {"path": "data/document.pdf"}),
@@ -514,10 +543,15 @@ TEMPLATES: list[dict] = [
             "rows that changed, and write a dated Excel snapshot."
         ),
         "tags": ["schedule", "snapshot", "excel", "etl"],
-        "prerequisites": ["Outbound HTTPS to the API you are calling"],
+        "prerequisites": [
+            "Outbound HTTPS to the API you are calling",
+            "openpyxl installed in the workflow environment",
+        ],
         "expected_result": "A dated Excel artifact per nightly run.",
         "permissions": ["Network: the API URL you configure"],
-        "credential_free": True,
+        # Not credential-free: write_excel_file needs openpyxl, which is not
+        # bundled, so pre-flight refuses the run until it is installed.
+        "credential_free": False,
         "graph": _chain(
             ("nightly", "schedule_trigger", {"interval": "cron", "cron": "0 2 * * *"}),
             (

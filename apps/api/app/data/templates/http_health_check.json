@@ -1,7 +1,7 @@
 {
   "id": "http_health_check",
   "name": "HTTP health check with alert",
-  "description": "Poll an endpoint on a schedule, and fail the run loudly when it stops returning 200 so your alerting sees it.",
+  "description": "Poll an endpoint on a schedule and fail the run loudly when it stops answering, so your alerting sees it.",
   "tags": [
     "monitoring",
     "http",
@@ -15,7 +15,7 @@
   "prerequisites": [
     "Outbound HTTPS to the endpoint you are checking"
   ],
-  "expected_result": "A green run each time the endpoint is healthy, and a failed run carrying the status code when it is not.",
+  "expected_result": "A green run each time the endpoint answers healthily, and a failed run naming the status code when it does not.",
   "permissions": [
     "Network: the URL you configure"
   ],
@@ -39,7 +39,7 @@
         "id": "probe",
         "type": "http_request",
         "params": {
-          "url": "https://httpbin.org/status/200",
+          "url": "https://httpbin.org/json",
           "method": "GET",
           "timeout_seconds": 10,
           "max_retries": 1
@@ -53,7 +53,7 @@
         "id": "check",
         "type": "code",
         "params": {
-          "code": "status = (input or {}).get('status_code', 0)\nif status != 200:\n    raise ValueError(f'health check failed: HTTP {status}')\noutput = {'status_code': status, 'healthy': True}"
+          "code": "# http_request raises on any non-2xx, naming the status, so\n# reaching this node already means the endpoint answered. What\n# it returns is the decoded body - there is no status_code\n# field - so assert on the body instead.\nif input in (None, '', {}, []):\n    raise ValueError('health check failed: empty response body')\noutput = {'healthy': True, 'body': input}"
         },
         "position": {
           "x": 560,

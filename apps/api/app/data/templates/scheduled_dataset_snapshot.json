@@ -11,9 +11,10 @@
   "version": "1.0.0",
   "creator": "Nodyra maintainers",
   "verified": true,
-  "credential_free": true,
+  "credential_free": false,
   "prerequisites": [
-    "Outbound HTTPS to the API you are calling"
+    "Outbound HTTPS to the API you are calling",
+    "openpyxl installed in the workflow environment"
   ],
   "expected_result": "A dated Excel artifact per nightly run.",
   "permissions": [

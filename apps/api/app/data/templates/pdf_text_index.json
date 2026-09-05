@@ -10,7 +10,7 @@
   "version": "1.0.0",
   "creator": "Nodyra maintainers",
   "verified": true,
-  "credential_free": true,
+  "credential_free": false,
   "prerequisites": [
     "A PDF readable by the Nodyra process"
   ],

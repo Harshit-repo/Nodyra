@@ -12,13 +12,9 @@
   "creator": "Nodyra maintainers",
   "verified": true,
   "credential_free": true,
-  "prerequisites": [
-    "A CSV file readable by the Nodyra process"
-  ],
+  "prerequisites": [],
   "expected_result": "A cleaned CSV artifact with duplicate rows removed.",
-  "permissions": [
-    "Filesystem: the input path you configure"
-  ],
+  "permissions": [],
   "compatibility": ">=1.0.0,<2.0.0",
   "screenshot_url": "/template-previews/csv-clean-dedupe.svg",
   "graph": {
@@ -35,11 +31,10 @@
         }
       },
       {
-        "id": "read",
-        "type": "read_csv_file",
+        "id": "sample",
+        "type": "code",
         "params": {
-          "path": "data/input.csv",
-          "has_header": true
+          "code": "output = [\n    {'name': 'Ada Lovelace', 'email': '  Ada@Example.COM '},\n    {'name': 'Grace Hopper', 'email': 'grace@example.com'},\n    {'name': 'Ada L.', 'email': 'ada@example.com'},\n    {'name': 'Alan Turing', 'email': ' Alan@Example.com'},\n]"
         },
         "position": {
           "x": 280,
@@ -71,6 +66,15 @@
         }
       },
       {
+        "id": "to_dataset",
+        "type": "records_to_dataset",
+        "params": {},
+        "position": {
+          "x": 1120,
+          "y": 40
+        }
+      },
+      {
         "id": "write",
         "type": "csv_write",
         "params": {
@@ -78,7 +82,7 @@
           "include_header": true
         },
         "position": {
-          "x": 1120,
+          "x": 1400,
           "y": 40
         }
       }
@@ -86,10 +90,10 @@
     "edges": [
       {
         "source": "start",
-        "target": "read"
+        "target": "sample"
       },
       {
-        "source": "read",
+        "source": "sample",
         "target": "normalise"
       },
       {
@@ -98,6 +102,10 @@
       },
       {
         "source": "dedupe",
+        "target": "to_dataset"
+      },
+      {
+        "source": "to_dataset",
         "target": "write"
       }
     ]
