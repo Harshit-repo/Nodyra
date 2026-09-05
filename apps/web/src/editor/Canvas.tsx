@@ -3,6 +3,7 @@ import {
   BackgroundVariant,
   MiniMap,
   ReactFlow,
+  useNodesInitialized,
   useReactFlow,
   useStore,
 } from "@xyflow/react";
@@ -45,6 +46,7 @@ import { nodeTypes, edgeTypes } from "./nodeTypes";
 import { PortLegend } from "./PortLegend";
 import { datasetConnectionIssues, validateConnection, type ConnectionCheck } from "./connectionValidation";
 import { OnboardingTour } from "./OnboardingTour";
+import { shouldFitOnLoad, type FitState } from "./fitOnLoad";
 import { pickEditorRunTrigger, useEditor, type NodyraNode } from "./store";
 
 const defaultEdgeOptions = { type: "default" };
@@ -444,6 +446,7 @@ function CanvasControls({
 
 export function Canvas() {
   const nodes = useEditor((s) => s.nodes);
+  const workflowId = useEditor((s) => s.workflowId);
   const edges = useEditor((s) => s.edges);
   const manifests = useEditor((s) => s.manifests);
   const onNodesChange = useEditor((s) => s.onNodesChange);
@@ -467,6 +470,7 @@ export function Canvas() {
   const autoLayout = useEditor((s) => s.autoLayout);
   const autoEnableAgentDependencies = useEditor((s) => s.autoEnableAgentDependencies);
   const { fitView, screenToFlowPosition, getNodes, getIntersectingNodes } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
   const { notify } = useToast();
   const [blockedConnection, setBlockedConnection] = useState<{
     connection: Connection;
@@ -671,6 +675,20 @@ export function Canvas() {
     window.addEventListener("nodyra:fit-view", onFitView);
     return () => window.removeEventListener("nodyra:fit-view", onFitView);
   }, [fitView]);
+
+  // <ReactFlow fitView> fits on the render where it mounts, which is before the
+  // graph has been fetched - so it fits an empty canvas and leaves the viewport
+  // at maxZoom over nothing, with onlyRenderVisibleElements culling the rest.
+  // Fit again the first time this workflow actually has nodes, once only, so it
+  // never yanks the viewport away from someone mid-edit.
+  const fitStateRef = useRef<FitState>({ workflowId: null, fittedFor: null });
+  useEffect(() => {
+    if (!shouldFitOnLoad(fitStateRef.current, workflowId, nodes.length, nodesInitialized)) {
+      return;
+    }
+    fitStateRef.current = { workflowId, fittedFor: workflowId };
+    void fitView({ padding: 0.22, duration: 220 });
+  }, [workflowId, nodes.length, nodesInitialized, fitView]);
 
   useEffect(() => {
     function onOpenEdgeQuickAdd(event: Event): void {
