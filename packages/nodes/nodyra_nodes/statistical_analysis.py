@@ -848,6 +848,33 @@ def dimensionality_reduce(
 # ---------------------------------------------------------------------------
 
 
+def _fundamental_period(
+    candidates: list[dict[str, Any]], *, tolerance: float = 0.05
+) -> dict[str, Any]:
+    """Pick the base period rather than one of its own multiples.
+
+    A weekly series correlates strongly at 7, 14 and 21, and noise routinely
+    lets a multiple edge out the fundamental — real order data here scored
+    21 at 0.5532 against 7 at 0.5454. Reporting "21" sends the reader off to
+    build a three-week baseline for what is plainly a weekly cycle, so when a
+    shorter period that divides the winner scores about as well, prefer it.
+    """
+    best = max(candidates, key=lambda row: float(row["autocorrelation"]))
+    best_score = float(best["autocorrelation"])
+    if best_score <= 0:
+        return best
+    floor = best_score * (1.0 - tolerance)
+    divisors = [
+        row
+        for row in candidates
+        # A period of 1 is not a season, it is just a trend.
+        if int(row["period"]) >= 2
+        and int(best["period"]) % int(row["period"]) == 0
+        and float(row["autocorrelation"]) >= floor
+    ]
+    return min(divisors, key=lambda row: int(row["period"])) if divisors else best
+
+
 @node(
     name="Seasonality Detect",
     id="seasonality_detect",
@@ -910,9 +937,13 @@ def seasonality_detect(
         if not _np.isnan(score):
             candidates.append({"period": period, "autocorrelation": score})
 
-    candidates.sort(key=lambda row: abs(float(row["autocorrelation"])), reverse=True)
+    # Rank by the signed correlation, not its magnitude. A strongly negative
+    # score means the series is in anti-phase at that lag — for a 12-day
+    # cycle, lag 6 scores -1.0 — which is the opposite of repeating, yet
+    # sorting by absolute value ranked it top and reported a period of 6.
+    candidates.sort(key=lambda row: float(row["autocorrelation"]), reverse=True)
     selected = candidates[: max(1, int(top_n or 5))]
-    best = selected[0] if selected else None
+    best = _fundamental_period(candidates) if candidates else None
     return {
         "main": {
             "period": best["period"] if best else None,
