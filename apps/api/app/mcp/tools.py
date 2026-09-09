@@ -798,6 +798,16 @@ async def run_workflow_by_id(
     else:
         graph = latest.graph or EMPTY_GRAPH
         version_id = latest.id
+        # A workflow gets an empty version 1 when it is created, so a draft
+        # that was never published runs that empty graph and fails with
+        # "Workflow needs a trigger to run." — which sends the reader looking
+        # for the trigger node sitting right there in the draft.
+        if not (isinstance(graph, dict) and graph.get("nodes")):
+            raise McpToolError(
+                f"Version {latest.version} of this workflow has no nodes, so there "
+                "is nothing to run. The draft has not been published yet — call "
+                "publish_workflow first, or pass use_draft=true to test the draft."
+            )
     try:
         run_id = await start_run(
             workflow_id,

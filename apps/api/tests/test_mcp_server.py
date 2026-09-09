@@ -1941,3 +1941,55 @@ async def test_unexpected_error_still_hides_behind_a_reference(
     text = result["content"][0]["text"]
     assert "Internal tool error" in text
     assert "password" not in text
+
+
+async def test_running_an_unpublished_workflow_says_so(client: AsyncClient) -> None:
+    """A never-published draft must not report a missing trigger.
+
+    Creating a workflow leaves an empty version 1 behind, so running the
+    published version of a workflow whose draft was never published executed
+    that empty graph and failed with "Workflow needs a trigger to run." — and
+    the trigger node is sitting right there in the draft.
+    """
+    workflow_id = await make_workflow(client, "Never published")
+
+    result = (
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "run_workflow",
+                    "arguments": {"workflow_id": workflow_id, "use_draft": False},
+                },
+            ),
+        )
+    ).json()["result"]
+
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "has no nodes" in text
+    assert "publish_workflow" in text
+    assert "trigger" not in text.lower()
+
+
+async def test_running_the_draft_of_an_unpublished_workflow_works(
+    client: AsyncClient,
+) -> None:
+    """The remedy the message offers has to actually work."""
+    workflow_id = await make_workflow(client, "Draft runnable")
+
+    result = (
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "run_workflow",
+                    "arguments": {"workflow_id": workflow_id, "use_draft": True},
+                },
+            ),
+        )
+    ).json()["result"]
+
+    assert result["isError"] is False, result["content"][0]["text"]
