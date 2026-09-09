@@ -1838,3 +1838,38 @@ async def test_webhook_unsupported_method_returns_ok(
     DELETE/OPTIONS). An OPTIONS request returns 204 without dispatch."""
     resp = await client.options("/webhook/any-path")
     assert resp.status_code == 204
+
+
+def test_dedup_key_without_a_template_is_ignored() -> None:
+    """A constant dedup key would drop every event after the first.
+
+    ``evaluate()`` returns the literal text when the expression has no
+    ``{{ }}``, so a plausible-looking ``body.id`` produces the same key for
+    every delivery. The first event runs, and every one after it is
+    acknowledged as a duplicate — silent event loss behind an HTTP 200.
+    """
+    from app.services.triggers import _webhook_dedup_key
+
+    params = {"dedup": "on", "dedup_key": "body.id"}
+    first = {"body": {"id": "evt_1"}}
+    second = {"body": {"id": "evt_2"}}
+
+    assert _webhook_dedup_key(params, first) is None
+    assert _webhook_dedup_key(params, second) is None
+
+
+def test_dedup_key_with_a_template_distinguishes_deliveries() -> None:
+    from app.services.triggers import _webhook_dedup_key
+
+    params = {"dedup": "on", "dedup_key": "{{ $json.body.id }}"}
+
+    assert _webhook_dedup_key(params, {"body": {"id": "evt_1"}}) == "evt_1"
+    assert _webhook_dedup_key(params, {"body": {"id": "evt_2"}}) == "evt_2"
+
+
+def test_dedup_key_is_none_when_dedup_is_off() -> None:
+    from app.services.triggers import _webhook_dedup_key
+
+    params = {"dedup": "off", "dedup_key": "{{ $json.body.id }}"}
+
+    assert _webhook_dedup_key(params, {"body": {"id": "evt_1"}}) is None

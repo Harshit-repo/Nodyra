@@ -427,6 +427,21 @@ def _webhook_dedup_key(node_params: dict, request_payload: dict) -> str | None:
     expr = node_params.get("dedup_key")
     if not expr:
         return None
+    if "{{" not in str(expr):
+        # Without a template the expression cannot reference the request, so
+        # evaluate() hands back the literal text — the same key for every
+        # delivery. That silently acknowledges every event after the first as
+        # a duplicate: total event loss, and the caller still sees HTTP 200.
+        # Fail open instead; an extra run is recoverable, a dropped event is
+        # not.
+        logger.warning(
+            "webhook dedup_key %r has no {{ }} expression, so it would be the "
+            "same key for every delivery and drop every event after the first. "
+            "Deduplication is disabled for this request — write it as "
+            "'{{ $json.body.id }}'.",
+            expr,
+        )
+        return None
     from nodyra.expr import build_context, evaluate
 
     try:
