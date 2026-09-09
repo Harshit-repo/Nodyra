@@ -1993,3 +1993,34 @@ async def test_running_the_draft_of_an_unpublished_workflow_works(
     ).json()["result"]
 
     assert result["isError"] is False, result["content"][0]["text"]
+
+
+async def test_validating_an_empty_workflow_is_not_valid(client: AsyncClient) -> None:
+    """A brand-new workflow must not validate as ready.
+
+    The trigger check was skipped when a graph had no nodes at all, so
+    validate_workflow_graph answered {"valid": true} for an empty draft — at
+    the one moment the caller most needs to hear that nothing is there yet.
+    """
+    workflow_id = (await client.post("/workflows", json={"name": "Empty"})).json()["id"]
+
+    payload = _tool_payload_allowing_error(
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "validate_workflow_graph",
+                    "arguments": {"workflow_id": workflow_id},
+                },
+            ),
+        )
+    )
+
+    assert payload["valid"] is False
+    assert "no nodes" in payload["error"]
+
+
+def _tool_payload_allowing_error(resp) -> dict:
+    """validate_workflow_graph reports invalidity in its payload, not isError."""
+    return json.loads(resp.json()["result"]["content"][0]["text"])

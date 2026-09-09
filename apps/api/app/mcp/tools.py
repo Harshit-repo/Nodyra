@@ -939,8 +939,17 @@ def _validate_graph_payload(graph: Any, *, require_trigger: bool = True) -> Work
         _validate_connection_kinds(parsed, node_registry)
     except (GraphError, ValueError) as exc:
         raise McpToolError(f"Invalid graph: {exc}") from exc
-    if require_trigger and parsed.nodes and first_trigger_node(parsed.model_dump()) is None:
-        raise McpToolError("Workflow graph has no trigger node.")
+    if require_trigger:
+        if not parsed.nodes:
+            # Skipping the check for an empty graph reported a brand-new
+            # workflow as valid, which is the one moment the caller most needs
+            # to be told there is nothing there yet.
+            raise McpToolError(
+                "Workflow graph has no nodes. Add a trigger and at least one "
+                "step before validating."
+            )
+        if first_trigger_node(parsed.model_dump()) is None:
+            raise McpToolError("Workflow graph has no trigger node.")
     return parsed
 
 
