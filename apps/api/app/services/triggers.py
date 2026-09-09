@@ -89,6 +89,24 @@ def _is_due(params: dict, last: datetime, now: datetime) -> bool:
         last_local = last.astimezone(tz)
         try:
             next_time = croniter(cron, last_local).get_next(datetime)
+            # On a daylight-saving fall-back day the local clock repeats an
+            # hour, so the next matching wall-clock time can be the *same*
+            # nominal slot an hour later: 02:30 AEDT, then 02:30 AEST. Firing
+            # on both runs a nightly job twice — for an invoicing or payout
+            # workflow, that is the money moved twice, once a year.
+            #
+            # Unix cron does not re-run a slot when the clock goes backwards,
+            # and neither do we: skip an occurrence that repeats the wall-clock
+            # time already fired. The loop is bounded because only the one
+            # repeated hour can produce a match.
+            for _ in range(4):
+                if (
+                    next_time.date() != last_local.date()
+                    or next_time.hour != last_local.hour
+                    or next_time.minute != last_local.minute
+                ):
+                    break
+                next_time = croniter(cron, next_time).get_next(datetime)
             return next_time <= now
         except (ValueError, KeyError):
             return False  # malformed cron — never fire rather than crash

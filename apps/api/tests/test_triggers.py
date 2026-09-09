@@ -1873,3 +1873,69 @@ def test_dedup_key_is_none_when_dedup_is_off() -> None:
     params = {"dedup": "off", "dedup_key": "{{ $json.body.id }}"}
 
     assert _webhook_dedup_key(params, {"body": {"id": "evt_1"}}) is None
+
+
+# ---------------------------------------------------------------------------
+# Daylight-saving transitions
+#
+# Australia/Sydney springs forward on the first Sunday of October (02:00 ->
+# 03:00, so 02:30 never happens) and falls back on the first Sunday of April
+# (03:00 -> 02:00, so 02:30 happens twice).
+
+
+def _syd(year, month, day, hour, minute, *, fold=0):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime(
+        year, month, day, hour, minute, tzinfo=ZoneInfo("Australia/Sydney"), fold=fold
+    ).astimezone(ZoneInfo("UTC"))
+
+
+NIGHTLY_0230 = {"cron": "30 2 * * *", "tz": "Australia/Sydney"}
+
+
+def test_nightly_schedule_does_not_fire_twice_on_the_fall_back_day() -> None:
+    """The repeated hour must not run a nightly job a second time.
+
+    On 5 April 2026 the Sydney clock goes 03:00 -> 02:00, so 02:30 occurs
+    twice, an hour apart in real time. croniter's next occurrence after
+    02:30 AEDT is 02:30 AEST — the same nominal slot — so the schedule fired
+    again. For an invoicing or payout workflow that is the money moved twice,
+    once a year.
+    """
+    from app.services.triggers import _is_due
+
+    first_0230 = _syd(2026, 4, 5, 2, 30, fold=0)
+    repeated_0230 = _syd(2026, 4, 5, 2, 30, fold=1)
+
+    assert repeated_0230 > first_0230  # genuinely an hour later
+    assert _is_due(NIGHTLY_0230, first_0230, repeated_0230) is False
+    assert _is_due(NIGHTLY_0230, first_0230, _syd(2026, 4, 5, 9, 0)) is False
+
+
+def test_nightly_schedule_still_fires_the_next_day_after_fall_back() -> None:
+    from app.services.triggers import _is_due
+
+    assert _is_due(NIGHTLY_0230, _syd(2026, 4, 5, 2, 30), _syd(2026, 4, 6, 2, 31)) is True
+
+
+def test_nightly_schedule_is_not_skipped_on_the_spring_forward_day() -> None:
+    """02:30 never happens on 4 October 2026 — the job must still run."""
+    from app.services.triggers import _is_due
+
+    assert _is_due(NIGHTLY_0230, _syd(2026, 10, 3, 2, 30), _syd(2026, 10, 4, 4, 0)) is True
+
+
+def test_ordinary_days_are_unaffected() -> None:
+    from app.services.triggers import _is_due
+
+    assert _is_due(NIGHTLY_0230, _syd(2026, 3, 10, 2, 30), _syd(2026, 3, 11, 2, 31)) is True
+    assert _is_due(NIGHTLY_0230, _syd(2026, 3, 10, 2, 30), _syd(2026, 3, 11, 1, 0)) is False
+
+
+def test_hourly_cron_is_unaffected_by_the_repeat_guard() -> None:
+    from app.services.triggers import _is_due
+
+    hourly = {"cron": "0 * * * *", "tz": "Australia/Sydney"}
+    assert _is_due(hourly, _syd(2026, 3, 10, 2, 0), _syd(2026, 3, 10, 3, 1)) is True
