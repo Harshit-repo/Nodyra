@@ -53,7 +53,8 @@ def _json_loads(value: str, default: Any) -> Any:
     id="data_profile_report",
     category=DATA_QUALITY_CATEGORY,
     icon="file-search",
-    requirements=["pandas>=2.0", "ydata-profiling>=4.0"],
+    # ydata-profiling 4.x still imports pkg_resources, removed in setuptools 82.
+    requirements=["pandas>=2.0", "ydata-profiling>=4.0,<5", "setuptools>=78.1.1,<81"],
     input_kinds={"input": "dataset"},
     params={
         "title": {"description": "Report title."},
@@ -72,7 +73,8 @@ def data_profile_report(
     except ImportError as exc:
         raise RuntimeError(
             "Data Profile Report requires pandas and ydata-profiling. Add "
-            "pandas>=2.0 and ydata-profiling>=4.0 to the workflow environment."
+            "pandas>=2.0, ydata-profiling>=4.0,<5, and setuptools>=78.1.1,<81 "
+            "to the workflow environment and rebuild it."
         ) from exc
 
     rows = _to_records(input)
@@ -102,7 +104,7 @@ def data_profile_report(
     category=DATA_QUALITY_CATEGORY,
     icon="file-json",
     requirements=["jsonschema>=4.21"],
-    outputs=["main", "invalid"],
+    outputs=["main", "valid", "invalid"],
     params={
         "schema_json": {
             "description": "JSON Schema object used to validate each record.",
@@ -163,13 +165,18 @@ def schema_validate(
         "n_invalid": len(invalid_rows),
         "valid_rate": len(valid_rows) / max(len(rows), 1),
     }
+    valid_dataset = (
+        records_to_dataset(valid_rows, name="valid-rows.parquet")
+        if include_valid_rows
+        else None
+    )
     return {
-        "main": {
-            **summary,
-            "valid_rows": records_to_dataset(valid_rows, name="valid-rows.parquet")
-            if include_valid_rows
-            else None,
-        },
+        # "main" stays the summary so existing graphs keep working, but the
+        # rows also get their own output: wiring "valid" into the next data
+        # node is the whole point of a validation gate, and reaching into
+        # main.valid_rows used to need a code node to do it.
+        "main": {**summary, "valid_rows": valid_dataset},
+        "valid": valid_dataset,
         "invalid": records_to_dataset(invalid_rows, name="invalid-rows.parquet")
         if invalid_rows
         else None,
@@ -468,7 +475,7 @@ def data_reconcile(
     id="outlier_detect_statistical",
     category=DATA_QUALITY_CATEGORY,
     icon="scan-search",
-    outputs=["main", "outliers"],
+    outputs=["main", "outliers", "kept"],
     params={
         "column": {"description": "Numeric column to inspect."},
         "method": {"choices": ["zscore", "iqr", "modified_zscore"]},
@@ -488,6 +495,13 @@ def outlier_detect_statistical(
     if not column:
         raise ValueError("column is required.")
 
+    if not any(column in row for row in rows):
+        available = sorted({key for row in rows for key in row})
+        raise ValueError(
+            f"column {column!r} not found. Available columns: "
+            f"{', '.join(available) if available else '(none)'}."
+        )
+
     values: list[tuple[int, float]] = []
     for idx, row in enumerate(rows):
         try:
@@ -495,7 +509,10 @@ def outlier_detect_statistical(
         except (TypeError, ValueError):
             continue
     if len(values) < 3:
-        raise ValueError("At least three numeric values are required.")
+        raise ValueError(
+            f"column {column!r} holds {len(values)} numeric value(s) across "
+            f"{len(rows)} row(s); at least three are required."
+        )
 
     nums = [v for _, v in values]
     outlier_indexes: set[int] = set()
@@ -526,10 +543,15 @@ def outlier_detect_statistical(
         {"_row_index": idx, "_outlier_column": column, **rows[idx]}
         for idx in sorted(outlier_indexes)
     ]
+    # Everything that is not an outlier, so "flag the anomalies, then carry on
+    # with the clean rows" can be wired directly. Without this output the rows
+    # that passed are simply unavailable and have to be rebuilt upstream.
+    kept = [row for idx, row in enumerate(rows) if idx not in outlier_indexes]
     summary = {
         "n_rows": len(rows),
         "n_numeric": len(values),
         "n_outliers": len(outliers),
+        "n_kept": len(kept),
         "method": method,
         "column": column,
     }
@@ -538,6 +560,7 @@ def outlier_detect_statistical(
         "outliers": records_to_dataset(outliers, name="outliers.parquet")
         if outliers
         else None,
+        "kept": records_to_dataset(kept, name="kept.parquet") if kept else None,
     }
 
 
@@ -705,7 +728,7 @@ def currency_normalize(
 
     symbols = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "₹": "INR"}
 
-    def _parse(value: Any) -> tuple[str | None, str]:
+    def _parse(value: Any) -> tuple[float | None, str]:
         text = str(value or "").strip()
         currency = default_currency.upper()
         for symbol, code in symbols.items():
@@ -745,7 +768,12 @@ def currency_normalize(
             amount = Decimal(cleaned)
             if negative:
                 amount = -amount
-            return str(amount), currency
+            # Emit a real number, not text: every downstream consumer of this
+            # column (schema_validate "type": "number", outlier detection,
+            # aggregate, charts) needs it numeric, and a Decimal would survive
+            # Parquet but break JSON previews. The exact original text is still
+            # available in the untouched source column.
+            return float(amount), currency
         except (InvalidOperation, ValueError):
             return None, currency
 
