@@ -12,6 +12,7 @@ import json
 import logging
 from collections import deque
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete, insert, select
@@ -42,9 +43,12 @@ AGENT_EVENT_TYPES: frozenset[str] = frozenset(
         "agent_tool_approval_decided",
     }
 )
-GUARDRAIL_EVENT_TYPES: frozenset[str] = frozenset(
-    {"guardrail_blocked", "guardrail_redacted"}
-)
+GUARDRAIL_EVENT_TYPES: frozenset[str] = frozenset({"guardrail_blocked", "guardrail_redacted"})
+
+# Node lifecycle events worth keeping after the run ends. A retry leaves no
+# other trace: the node run records only the final attempt, so four tries and
+# one slow try are indistinguishable once the live stream is gone.
+LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset({"node_retrying"})
 
 
 def _iteration_key(path: Any) -> str:
@@ -53,9 +57,7 @@ def _iteration_key(path: Any) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-async def _locked_queue_entry(
-    session: AsyncSession, run_id: str
-) -> RunQueueEntry | None:
+async def _locked_queue_entry(session: AsyncSession, run_id: str) -> RunQueueEntry | None:
     stmt = (
         select(RunQueueEntry)
         .where(RunQueueEntry.run_id == run_id)
@@ -112,9 +114,7 @@ async def _upsert_run_approval(
     max_steps_raw = event.get("max_steps")
     max_steps = int(max_steps_raw) if max_steps_raw is not None else None
     reason = (
-        "Auto-approved by AI Agent setting."
-        if event_type == "agent_tool_auto_approved"
-        else ""
+        "Auto-approved by AI Agent setting." if event_type == "agent_tool_auto_approved" else ""
     )
 
     if approval is None:
@@ -170,9 +170,7 @@ async def _upsert_run_approval_in_memory(
     max_steps_raw = event.get("max_steps")
     max_steps = int(max_steps_raw) if max_steps_raw is not None else None
     reason = (
-        "Auto-approved by AI Agent setting."
-        if event_type == "agent_tool_auto_approved"
-        else ""
+        "Auto-approved by AI Agent setting." if event_type == "agent_tool_auto_approved" else ""
     )
 
     if approval is None:
@@ -276,9 +274,7 @@ def _graph_node_types(graph: dict) -> dict[str, str]:
     return out
 
 
-def _extract_webhook_response(
-    graph: dict, node_events: dict[str, dict]
-) -> dict | None:
+def _extract_webhook_response(graph: dict, node_events: dict[str, dict]) -> dict | None:
     """Pull the response a respond_to_webhook node recorded, if any.
 
     Returns the ``{status, headers, body, content_type}`` dict from the first
@@ -339,6 +335,7 @@ async def persist_run_outcome(
     run_events: deque[dict[str, Any]],
     output_cap: int,
     lease_token: str | None = None,
+    artifact_refs: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Write the terminal state of a run: Run row, NodeRun records, RunEvents,
     approval upserts/resume-state, and the durable-queue mirror transition.
@@ -347,6 +344,7 @@ async def persist_run_outcome(
     leaves a run stuck in ``running``.
     """
     queue_fence = {"lease_token": lease_token} if lease_token is not None else {}
+    artifact_cleanup: list[Path] = []
     try:
         async with session_factory() as session:
             if lease_token is not None:
@@ -517,9 +515,7 @@ async def persist_run_outcome(
             if status == "success":
                 await run_queue.complete(session, run_id=run_id, **queue_fence)
             elif status == "waiting":
-                await run_queue.wait_for_approval(
-                    session, run_id=run_id, **queue_fence
-                )
+                await run_queue.wait_for_approval(session, run_id=run_id, **queue_fence)
             elif status == "cancelled":
                 await run_queue.cancel(session, run_id=run_id, **queue_fence)
             else:
@@ -548,13 +544,27 @@ async def persist_run_outcome(
                 from app.services.run_batches import reconcile_batch  # noqa: PLC0415
 
                 await reconcile_batch(session, run.batch_id)
+            if artifact_refs:
+                from app.services.artifacts import persist_artifact_refs
+
+                await persist_artifact_refs(
+                    run_id, artifact_refs, session=session, cleanup_paths=artifact_cleanup
+                )
             await session.commit()
+            for path in artifact_cleanup:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
             return True
 
     except Exception:  # noqa: BLE001
-        logger.exception(
-            "run_id=%s DB persist failed; attempting minimal status update", run_id
-        )
+        logger.exception("run_id=%s DB persist failed; attempting minimal status update", run_id)
+        # A successful computation with missing results is not a successful run.
+        # Keep a durable failure so clients can act on it instead of seeing green
+        # while artifacts or node output are unavailable.
+        if status == "success":
+            status = "error"
         try:
             async with session_factory() as _s:
                 if lease_token is not None:
@@ -575,6 +585,7 @@ async def persist_run_outcome(
                     "waiting",
                 ):
                     _r.status = status
+                    _r.error = "Saving the run result failed. Review worker logs and retry the run."
                     _r.finished_at = datetime.now(UTC)
                     _r.checkpoint = None
                 # Outcome details are best-effort, but a failed bulk event write
@@ -583,9 +594,7 @@ async def persist_run_outcome(
                 if status == "success":
                     await run_queue.complete(_s, run_id=run_id, **queue_fence)
                 elif status == "waiting":
-                    await run_queue.wait_for_approval(
-                        _s, run_id=run_id, **queue_fence
-                    )
+                    await run_queue.wait_for_approval(_s, run_id=run_id, **queue_fence)
                 elif status == "cancelled":
                     await run_queue.cancel(_s, run_id=run_id, **queue_fence)
                 else:

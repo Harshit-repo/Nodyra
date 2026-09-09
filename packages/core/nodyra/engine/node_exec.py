@@ -864,6 +864,24 @@ async def _run_one_node(
                         status="retrying", error=str(caught) if caught else None,
                         attempt=attempt,
                     )
+                # Put the retry on the run's own timeline. Without this the
+                # only trace of four attempts is an unexplained duration —
+                # "did this retry, or was the upstream just slow?" is the
+                # first question asked about a flaky node, and the run record
+                # could not answer it.
+                retry_event: dict[str, Any] = {
+                    "type": "node_retrying",
+                    "node_id": nid,
+                    "attempt": attempt + 1,
+                    "of": attempts,
+                    "error": str(caught) if caught else None,
+                }
+                if iteration_path.get():
+                    retry_event["iteration_path"] = list(iteration_path.get())
+                try:
+                    await emit(retry_event)
+                except Exception:  # noqa: BLE001 - streaming must never break the node
+                    pass
                 # A previous attempt may have streamed ``node_chunk`` deltas to
                 # the client. Tell it to discard them so a retry doesn't render
                 # the failed attempt's partial output concatenated with the new

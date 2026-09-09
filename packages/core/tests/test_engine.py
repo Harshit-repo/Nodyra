@@ -839,3 +839,61 @@ async def test_hooks_never_break_the_node() -> None:
     result = await execute(g, reg)
     assert result.nodes["o"].status == NodeStatus.success
     assert result.nodes["o"].outputs["main"] == 1
+
+
+async def test_retry_emits_an_event_per_attempt() -> None:
+    """A retried node must leave a trace on the run.
+
+    Only the final attempt is recorded as the node run, so without these
+    events four attempts and one slow attempt look identical afterwards —
+    and "did this retry, or was the upstream just slow?" is the first
+    question anyone asks about a flaky node.
+    """
+    reg = NodeRegistry()
+    attempts: list[int] = [0]
+
+    @node(name="Flaky", id="flaky_events", inputs=[], registry=reg)
+    def flaky() -> int:
+        attempts[0] += 1
+        if attempts[0] < 3:
+            raise RuntimeError("upstream 503")
+        return attempts[0]
+
+    seen: list[dict] = []
+
+    async def on_event(event: dict) -> None:
+        seen.append(event)
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="f", type="flaky_events", retry_on_fail=True, retries=3)
+        ],
+    )
+    result = await execute(graph, reg, on_event=on_event)
+
+    assert result.status == RunStatus.success
+    retries = [e for e in seen if e.get("type") == "node_retrying"]
+    assert [e["attempt"] for e in retries] == [2, 3]
+    assert all(e["of"] == 4 for e in retries)
+    assert all(e["node_id"] == "f" for e in retries)
+    assert "upstream 503" in retries[0]["error"]
+
+
+async def test_a_node_that_succeeds_first_time_emits_no_retry_events() -> None:
+    reg = NodeRegistry()
+
+    @node(name="Fine", id="fine_first_time", inputs=[], registry=reg)
+    def fine() -> int:
+        return 1
+
+    seen: list[dict] = []
+
+    async def on_event(event: dict) -> None:
+        seen.append(event)
+
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="f", type="fine_first_time", retry_on_fail=True, retries=3)],
+    )
+    await execute(graph, reg, on_event=on_event)
+
+    assert [e for e in seen if e.get("type") == "node_retrying"] == []

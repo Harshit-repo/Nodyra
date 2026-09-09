@@ -57,7 +57,8 @@ from app.services import (
 from app.services.artifacts import (
     collect_artifact_refs,
     make_artifact_store,
-    persist_artifact_refs,
+    prepare_artifact_inputs,
+    prepare_uploaded_files,
 )
 from app.services.credentials import resolve_credential_refs
 from app.services.events import broker
@@ -169,6 +170,7 @@ def _prune_single_flight_locks() -> None:
 # importers, tests).
 _MAX_RUN_EVENTS = run_persistence._MAX_RUN_EVENTS
 AGENT_EVENT_TYPES = run_persistence.AGENT_EVENT_TYPES
+LIFECYCLE_EVENT_TYPES = run_persistence.LIFECYCLE_EVENT_TYPES
 GUARDRAIL_EVENT_TYPES = run_persistence.GUARDRAIL_EVENT_TYPES
 _approval_key = run_persistence._approval_key
 _upsert_run_approval = run_persistence._upsert_run_approval
@@ -892,14 +894,8 @@ async def cancel_run(run_id: str) -> str | None:
                 .where(RunQueueEntry.run_id == run_id)
                 .execution_options(populate_existing=True, skip_org_filter=True)
             )
-            entry = await session.scalar(
-                _lock_for_update_if_supported(session, entry_stmt)
-            )
-            run_stmt = (
-                select(Run)
-                .where(Run.id == run_id)
-                .execution_options(populate_existing=True)
-            )
+            entry = await session.scalar(_lock_for_update_if_supported(session, entry_stmt))
+            run_stmt = select(Run).where(Run.id == run_id).execution_options(populate_existing=True)
             run = await session.scalar(_lock_for_update_if_supported(session, run_stmt))
             if run is None:
                 return None
@@ -987,15 +983,11 @@ async def _lease_heartbeat_loop(
                 else:
                     await session.rollback()
             if not renewed:
-                logger.error(
-                    "run_id=%s execution lease lost token=%s", run_id, lease_token
-                )
+                logger.error("run_id=%s execution lease lost token=%s", run_id, lease_token)
                 lease_lost.set()
                 owner_task.cancel("execution lease lost")
                 return
-            renewal_deadline = time.monotonic() + max(
-                interval, lease_seconds - interval
-            )
+            renewal_deadline = time.monotonic() + max(interval, lease_seconds - interval)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - tolerate only within the lease window
@@ -1207,6 +1199,8 @@ async def _prepare_run_context(
         graph_dict = await resolve_credential_refs(session, graph_dict, workflow_id=workflow_id)
         if cache is not None:
             cache = await resolve_credential_refs(session, cache, workflow_id=workflow_id)
+        await prepare_uploaded_files(session, graph_dict, run_id=run_id, org_id=run_org_id)
+        await prepare_artifact_inputs(session, [graph_dict, cache], run_id=run_id, org_id=run_org_id)
         await session.commit()
 
         # Code modules: tolerate legacy DB.
@@ -1440,7 +1434,7 @@ async def _execute_run_impl(
             except Exception:  # noqa: BLE001
                 checkpoint_debouncer.has_deferred = True
                 logger.exception("run_id=%s checkpoint save failed", run_id)
-        if clean.get("type") in AGENT_EVENT_TYPES:
+        if clean.get("type") in AGENT_EVENT_TYPES | LIFECYCLE_EVENT_TYPES:
             run_event_sequence += 1
             if len(run_events) < _MAX_RUN_EVENTS:
                 run_events.append(
@@ -1865,14 +1859,6 @@ async def _execute_run_impl(
         except Exception:  # noqa: BLE001
             logger.exception("run_id=%s final checkpoint flush failed", run_id)
 
-    # Publish the terminal event BEFORE the DB session so that a DB failure
-    # (e.g. a connection reset during the persist below) never leaves the
-    # client's WebSocket waiting indefinitely for a run_finished that won't come.
-    if status == "waiting":
-        broker.publish(run_id, {"type": "run_waiting", "run_id": run_id, "status": status})
-    else:
-        broker.publish(run_id, {"type": "run_finished", "run_id": run_id, "status": status})
-
     # SessionLocal / start_run are resolved from this module's globals at call
     # time so the test-suite swaps (conftest, monkeypatch) keep applying.
     persisted = await run_persistence.persist_run_outcome(
@@ -1885,13 +1871,24 @@ async def _execute_run_impl(
         run_events=run_events,
         output_cap=output_cap,
         lease_token=lease_token,
+        artifact_refs=artifact_refs,
     )
 
     if persisted:
-        try:
-            await persist_artifact_refs(run_id, artifact_refs)
-        except Exception:  # noqa: BLE001 - artifact refs are best-effort
-            logger.exception("run_id=%s failed to persist artifact refs", run_id)
+        # Results and artifact metadata are now committed together. Read the
+        # authoritative status: a persistence failure may have saved a minimal
+        # error outcome even when computation itself succeeded.
+        async with SessionLocal() as session:
+            saved_status = await session.scalar(select(Run.status).where(Run.id == run_id))
+        status = saved_status or "error"
+        broker.publish(
+            run_id,
+            {
+                "type": "run_waiting" if status == "waiting" else "run_finished",
+                "run_id": run_id,
+                "status": status,
+            },
+        )
     else:
         logger.warning(
             "run_id=%s stale attempt discarded terminal side effects token=%s",
@@ -1917,9 +1914,7 @@ async def _execute_run_impl(
     return status
 
 
-async def _execute_queued_entry(
-    run_id: str, lease_token: str | None = None
-) -> None:
+async def _execute_queued_entry(run_id: str, lease_token: str | None = None) -> None:
     """Re-attempt dispatch of a queued run after a queue worker leases its entry.
 
     Reloads the run row, recomputes targets from the workflow graph (using
