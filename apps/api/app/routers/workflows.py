@@ -1363,12 +1363,27 @@ async def publish_workflow(
                 continue
             node_params = node.get("params") or {}
             auth_type = str(node_params.get("auth_type") or "none")
-            if auth_type == "none":
-                path = str(node_params.get("path") or node_params.get("base_path") or "").strip("/")
-                _unauthenticated.append(
-                    f"{node_type} '{node.get('name', node.get('id', 'unnamed'))}' "
-                    f"at path '{path or '/'}'"
-                )
+            if auth_type != "none":
+                continue
+            # HMAC signature verification is authentication — it is how Stripe,
+            # GitHub and Shopify sign their webhooks, and it authenticates the
+            # body as well as the caller. The message below already offers it,
+            # so checking auth_type alone rejected the very configuration it
+            # was telling people to use.
+            hmac_on = str(node_params.get("hmac_verification") or "off").lower() == "on"
+            hmac_secret = str(node_params.get("hmac_secret") or "").strip()
+            if hmac_on and hmac_secret:
+                continue
+            path = str(node_params.get("path") or node_params.get("base_path") or "").strip("/")
+            reason = (
+                "hmac_verification is on but no hmac_secret is set"
+                if hmac_on
+                else "no authentication configured"
+            )
+            _unauthenticated.append(
+                f"{node_type} '{node.get('name', node.get('id', 'unnamed'))}' "
+                f"at path '{path or '/'}' ({reason})"
+            )
         if _unauthenticated:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
