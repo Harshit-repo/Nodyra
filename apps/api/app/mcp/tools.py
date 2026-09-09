@@ -1191,15 +1191,22 @@ async def _graph_validation_summary(
                 select(Environment).where(Environment.is_global.is_(True)).limit(1)
             )
         if env is not None:
-            from nodyra.packages import canonical_package_name
+            # Use the same check the runner's pre-flight uses. Re-deriving it
+            # here missed two things it accounts for — packages bundled with
+            # nodyra-nodes (duckdb, jsonschema, matplotlib …) and requirements
+            # whose platform marker does not apply — so validate reported
+            # missing packages that a run would have accepted, and sent
+            # callers off to install things that already ship.
+            from app.services.package_preflight import (
+                find_missing_packages,
+                missing_workflow_requirements,
+            )
 
-            installed = {canonical_package_name(package) for package in env.packages or []}
-            missing_packages = [
-                requirement
-                for requirement in required_packages
-                if canonical_package_name(requirement) not in installed
-            ]
-            from app.services.package_preflight import missing_workflow_requirements
+            missing_packages = list(
+                find_missing_packages(
+                    parsed.model_dump(), list(env.packages or [])
+                )
+            )
 
             workflow_requirements_missing = missing_workflow_requirements(
                 workflow_requirements=list(workflow.requirements or []),
