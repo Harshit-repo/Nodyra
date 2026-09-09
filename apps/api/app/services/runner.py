@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,6 +30,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.exceptions import (
     DedicatedPoolRequired,
+    DuplicateRun,
     PackageNotInstalled,
     QuotaExceeded,
     SandboxRequired,
@@ -725,7 +727,22 @@ async def _start_run_impl(
         if queue_locally:
             run.status = "queued"
         session.add(run)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError:
+            # Concurrent deliveries of the same event both pass the caller's
+            # "have I seen this key?" read before either commits, then both
+            # insert. The unique index on runs.deduplication_key arbitrates —
+            # that is what it is for — but the loser surfaced as a 500, and a
+            # 500 tells a webhook provider to retry, during the exact retry
+            # storm that caused the collision. Report it as the duplicate it
+            # is and let the caller acknowledge it.
+            if deduplication_key is None:
+                raise
+            await session.rollback()
+            raise DuplicateRun(
+                f"A run for deduplication key {deduplication_key!r} already exists."
+            ) from None
         run_id = run.id
         # Durable queue ledger entry; immediate dispatch happens below so this
         # only adds latency cost when capacity is unavailable (failure path
@@ -889,6 +906,11 @@ async def cancel_run(run_id: str) -> str | None:
             # cancellation can otherwise land before _execute_run_impl's
             # CancelledError handler exists and leave the row stuck forever.
             # Lock queue then run, matching outcome persistence's lock order.
+            # SQLite cannot upgrade a stale WAL read snapshot while the run's
+            # cancellation handler commits its outcome. Reserve its write lock
+            # before reading; PostgreSQL uses the row locks below instead.
+            if session.get_bind().dialect.name == "sqlite":
+                await session.execute(text("BEGIN IMMEDIATE"))
             entry_stmt = (
                 select(RunQueueEntry)
                 .where(RunQueueEntry.run_id == run_id)

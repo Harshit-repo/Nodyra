@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal
+from app.exceptions import DuplicateRun
 from app.models import (
     Deployment,
     ProviderTriggerSubscription,
@@ -957,18 +958,26 @@ async def dispatch_webhook(
                 # rejects the run insert; Postgres also benefits from the
                 # shorter transaction boundary.
                 await dispatch_session.commit()
-                run_id = await start_run(
-                    workflow.id,
-                    graph,
-                    version_number,
-                    workflow_version_id=version_id,
-                    mode="test" if prefer_draft else "production",
-                    trigger_type="webhook",
-                    cache={node["id"]: {seed_output: node_payload}},
-                    trigger_node_id=node["id"],
-                    deduplication_key=dedup_key,
-                    run_id=pre_run_id,
-                )
+                try:
+                    run_id = await start_run(
+                        workflow.id,
+                        graph,
+                        version_number,
+                        workflow_version_id=version_id,
+                        mode="test" if prefer_draft else "production",
+                        trigger_type="webhook",
+                        cache={node["id"]: {seed_output: node_payload}},
+                        trigger_node_id=node["id"],
+                        deduplication_key=dedup_key,
+                        run_id=pre_run_id,
+                    )
+                except DuplicateRun:
+                    # Another delivery of this same event won the race between
+                    # the read above and the insert. That is the idempotency
+                    # guarantee holding, so acknowledge it exactly like a
+                    # duplicate caught by the read.
+                    deduped = True
+                    continue
                 run_ids.append(run_id)
                 if raw_ref is not None:
                     # Create the Artifact row (and rehome to the configured backend)

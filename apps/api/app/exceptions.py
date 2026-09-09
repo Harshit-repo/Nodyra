@@ -42,6 +42,16 @@ class SingleFlightConflict(ServiceError):
     http_status = _http_status.HTTP_409_CONFLICT
 
 
+class DuplicateRun(ServiceError):
+    """A run with this deduplication key already exists.
+
+    Raised when concurrent deliveries of the same event race past the
+    "have I seen this key?" read and the unique index arbitrates. Callers
+    treat it as a successful de-duplication, not an error.
+    """
+    http_status = _http_status.HTTP_409_CONFLICT
+
+
 class QuotaExceeded(ServiceError):
     """An org-level quota (executions/day, storage, …) has been reached."""
     http_status = _http_status.HTTP_429_TOO_MANY_REQUESTS
