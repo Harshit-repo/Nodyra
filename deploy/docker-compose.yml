@@ -87,7 +87,7 @@ services:
       - -c
       - >-
         cd apps/api && alembic upgrade head && cd /app
-        && uvicorn app.main:app --host 0.0.0.0 --port 8000
+        && uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-proxy-headers
     environment:
       # Production posture so runtime_warnings() actually surface via
       # /ops/runtime-mode (default SECRET_KEY, local artifacts, etc.).
@@ -103,7 +103,9 @@ services:
       # run no agent/kubernetes pools.
       DISPATCH_ROLE: control
       SCHEDULER_ROLE: leader
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-0}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       ENABLE_INPROCESS_SCHEDULER: "true"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       USE_SUBPROCESS_RUNNER: "true"
@@ -114,6 +116,7 @@ services:
       OTEL_EXPORTER_PROTOCOL: ${OTEL_EXPORTER_PROTOCOL:-http}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
       EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
+      NODYRA_ALLOW_PRIVATE_EGRESS: ${NODYRA_ALLOW_PRIVATE_EGRESS:-0}
       SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
       ENVS_DIR: /app/envs
       ARTIFACTS_DIR: /app/artifacts
@@ -149,8 +152,7 @@ services:
       GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
     ports:
-      # The demo intentionally disables auth, so public ports must stay local.
-      # Production ingress should terminate TLS and proxy to this service.
+      # Keep internal HTTP local; the public ingress terminates TLS.
       - "${NODYRA_BIND_HOST:-127.0.0.1}:${NODYRA_API_PORT:-8000}:8000"
     volumes:
       - envdata:/app/envs
@@ -207,6 +209,7 @@ services:
       # start without it. SANDBOX_RUNTIME=auto picks the strongest available
       # runtime (kata > runsc/gVisor > runc).
       EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
+      NODYRA_ALLOW_PRIVATE_EGRESS: ${NODYRA_ALLOW_PRIVATE_EGRESS:-0}
       SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
     healthcheck:
       test: ["CMD-SHELL", "python -c \"from pathlib import Path; import sys; sys.exit(0 if b'app.worker_main' in Path('/proc/1/cmdline').read_bytes() else 1)\""]
@@ -234,11 +237,13 @@ services:
       context: ../apps/web
       dockerfile: Dockerfile
     environment:
-      VITE_API_PROXY: http://api:8000
+      NODYRA_API_UPSTREAM: api:8000
+      NODYRA_MAX_BODY_SIZE: ${NODYRA_MAX_BODY_SIZE:-52m}
     ports:
       - "${NODYRA_BIND_HOST:-127.0.0.1}:${NODYRA_WEB_PORT:-5173}:5173"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:

@@ -392,6 +392,20 @@ def _webhook_hmac_passes(
     return hmac.compare_digest(provided.strip(), expected)
 
 
+def _proxy_headers_trusted() -> bool:
+    """True when the ASGI server may have rewritten the client address.
+
+    uvicorn's ProxyHeadersMiddleware overwrites ``scope["client"]`` from
+    X-Forwarded-For for any peer in its trusted set — 127.0.0.1 by default —
+    and keeps no copy of the original. Read off the live server config, so
+    this reflects how the process was actually launched rather than what a
+    settings file claims.
+    """
+    from app.state import proxy_headers_enabled
+
+    return proxy_headers_enabled()
+
+
 def _webhook_ip_allowed(node_params: dict, client_ip: str | None, headers: dict) -> bool:
     """Return True if ``client_ip`` is permitted by the node's ip_allowlist.
 
@@ -418,12 +432,34 @@ def _webhook_ip_allowed(node_params: dict, client_ip: str | None, headers: dict)
     if not nets:
         return False  # configured but unparseable → fail closed
 
+    lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    trust_proxy = str(node_params.get("trust_proxy") or "off").lower() == "on"
     candidate = client_ip
-    if str(node_params.get("trust_proxy") or "off").lower() == "on":
-        lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    if trust_proxy:
         xff = lower_headers.get("x-forwarded-for")
         if xff:
             candidate = xff.split(",")[0].strip()
+    elif lower_headers.get("x-forwarded-for") and _proxy_headers_trusted():
+        # trust_proxy is off, so this node's allowlist is meant to be decided
+        # on the socket peer. But uvicorn ships with --proxy-headers on and
+        # trusts X-Forwarded-For from 127.0.0.1, rewriting scope["client"]
+        # before the app ever runs — and it does not keep the original. A
+        # caller on loopback (a sidecar, a co-located proxy, anything sharing
+        # the network namespace) could therefore name any address it liked
+        # and walk through the allowlist.
+        #
+        # The true peer is unrecoverable here, so refuse rather than decide on
+        # an address that may be forged. Deployments pass --no-proxy-headers;
+        # a hand-rolled launch gets a closed door and this message instead of
+        # a silent bypass.
+        logger.error(
+            "webhook ip_allowlist cannot be enforced: the server was started "
+            "with uvicorn's proxy headers enabled, so the client address may "
+            "have come from X-Forwarded-For rather than the socket. Start the "
+            "API with --no-proxy-headers (all shipped deployments do), or set "
+            "the node's trust_proxy=on if a trusted proxy really is in front."
+        )
+        return False
     if not candidate:
         return False
     try:
