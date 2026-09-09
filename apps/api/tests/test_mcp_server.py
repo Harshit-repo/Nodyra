@@ -1868,3 +1868,76 @@ async def test_consequential_tools_refuse_over_the_wire_without_approval(
     assert "approved_by_user" in text, (
         f"{tool} refused but did not say what the caller must do: {text!r}"
     )
+
+
+def _patch_tool_handler(monkeypatch, mcp_router, name: str, handler) -> None:
+    """Swap one tool's handler. McpTool is a frozen dataclass, so replace it."""
+    import dataclasses
+
+    original = mcp_router.get_tool
+    swapped = dataclasses.replace(original(name), handler=handler)
+    monkeypatch.setattr(
+        mcp_router,
+        "get_tool",
+        lambda tool_name: swapped if tool_name == name else original(tool_name),
+    )
+
+
+async def test_service_error_reaches_the_model_instead_of_an_error_id(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """A 4xx service error must arrive as its own message.
+
+    Running a workflow whose environment lacks a package raised
+    PackageNotInstalled, which is neither McpToolError nor HTTPException, so
+    it fell into the blanket handler and the model got
+    "Internal tool error (reference abc123)." The one sentence that says
+    which package and which node was left in the server log.
+    """
+    from app.exceptions import PackageNotInstalled
+    from app.routers import mcp as mcp_router
+
+    message = (
+        "This workflow's environment is missing packages required by its "
+        "nodes: statsmodels>=0.14 (needed by decompose)."
+    )
+
+    async def _boom(session, user, arguments):
+        raise PackageNotInstalled(message)
+
+    _patch_tool_handler(monkeypatch, mcp_router, "list_workflows", _boom)
+
+    result = (
+        await client.post(
+            "/mcp", json=rpc("tools/call", {"name": "list_workflows", "arguments": {}})
+        )
+    ).json()["result"]
+
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "statsmodels>=0.14" in text
+    assert "decompose" in text
+    assert "Internal tool error" not in text
+
+
+async def test_unexpected_error_still_hides_behind_a_reference(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """Genuine bugs stay opaque — only 4xx service errors are passed through."""
+    from app.routers import mcp as mcp_router
+
+    async def _boom(session, user, arguments):
+        raise RuntimeError("psycopg: connection string contains a password")
+
+    _patch_tool_handler(monkeypatch, mcp_router, "list_workflows", _boom)
+
+    result = (
+        await client.post(
+            "/mcp", json=rpc("tools/call", {"name": "list_workflows", "arguments": {}})
+        )
+    ).json()["result"]
+
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "Internal tool error" in text
+    assert "password" not in text

@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
+from app.exceptions import ServiceError
 from app.mcp.prompts import get_prompt, list_prompts
 from app.mcp.protocol import (
     INVALID_PARAMS,
@@ -347,6 +348,20 @@ async def _dispatch_single(
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
             return jsonrpc_result(req_id, tool_result(detail, is_error=True))
+        except ServiceError as exc:
+            # A 4xx service error describes something the caller can act on —
+            # a missing package and which node needs it, no trigger, a quota.
+            # Collapsing it into "Internal tool error (reference …)" throws
+            # away the one message that would let the model recover, and
+            # leaves the reason visible only in the server's own log.
+            if exc.http_status < 500:
+                return jsonrpc_result(req_id, tool_result(str(exc), is_error=True))
+            error_id = uuid.uuid4().hex[:12]
+            logger.exception("mcp tool %s failed (error_id=%s)", name, error_id)
+            return jsonrpc_result(
+                req_id,
+                tool_result(f"Internal tool error (reference {error_id}).", is_error=True),
+            )
         except Exception:  # noqa: BLE001 - tool failures go to the model
             error_id = uuid.uuid4().hex[:12]
             logger.exception("mcp tool %s failed (error_id=%s)", name, error_id)
