@@ -141,7 +141,35 @@ def _import_n8n(source: str, allow_partial: bool) -> MigrationResult:
     if isinstance(connections, dict):
         for source_name, outputs in connections.items():
             source_id = names.get(str(source_name))
-            if not source_id or not isinstance(outputs, dict):
+            if not isinstance(outputs, dict):
+                continue
+            if not source_id:
+                # Same severed-tail problem from the other end: the node that
+                # fed this branch was not mapped, so everything it fed is now
+                # unreachable.
+                downstream = sorted(
+                    {
+                        str(t.get("node"))
+                        for groups in outputs.values()
+                        if isinstance(groups, list)
+                        for group in groups
+                        if isinstance(group, list)
+                        for t in group
+                        if isinstance(t, dict) and t.get("node")
+                    }
+                )
+                if downstream:
+                    findings.append(
+                        MigrationFinding(
+                            str(source_name),
+                            "connection",
+                            "manual",
+                            None,
+                            f"{source_name!r} has no mapping, so nothing now feeds "
+                            f"{', '.join(repr(name) for name in downstream)}. "
+                            "Reconnect after replacing it.",
+                        )
+                    )
                 continue
             for output_groups in outputs.values():
                 if not isinstance(output_groups, list):
@@ -152,8 +180,25 @@ def _import_n8n(source: str, allow_partial: bool) -> MigrationResult:
                     for target in group:
                         if not isinstance(target, dict):
                             continue
-                        target_id = names.get(str(target.get("node") or ""))
+                        target_name = str(target.get("node") or "")
+                        target_id = names.get(target_name)
                         if not target_id:
+                            # The node at the other end had no mapping, so this
+                            # connection goes with it. Say so: dropping a node
+                            # in the middle of a chain silently orphans
+                            # everything downstream of it, and on a large
+                            # import nobody notices the severed tail.
+                            findings.append(
+                                MigrationFinding(
+                                    str(source_name),
+                                    "connection",
+                                    "manual",
+                                    None,
+                                    f"Connection {source_name!r} -> {target_name!r} was "
+                                    f"dropped because {target_name!r} has no mapping. "
+                                    "Reconnect this branch after replacing that node.",
+                                )
+                            )
                             continue
                         edges.append({
                             "id": f"e_{len(edges) + 1}",
