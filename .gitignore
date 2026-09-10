@@ -94,3 +94,8 @@ apps/web/playwright-report/
 # Benchmark and evidence artifacts written by CI scripts into the workspace.
 engine-planning-benchmark.json
 engine-throughput-benchmark.json
+
+# Local API run outputs and extracted acceptance-test bundles.
+/apps/api/artifacts/
+/apps/api/testdata_extract/
+/apps/api/testdata_out.zip
