@@ -2038,6 +2038,14 @@ async def map_items(
         raise RuntimeError("map_items: no host caller is configured for this run")
 
     items: list = input if isinstance(input, list) else ([] if input is None else [input])
+    if isinstance(input, dict) and len(input) == 1:
+        # Trigger payloads commonly wrap the row array under a single
+        # "items"/"rows"/"records" key (the same convention the loop engine
+        # and ai-v2 nodes unwrap). Only a single-key wrapper is unwrapped.
+        only_key = next(iter(input))
+        wrapped = input[only_key]
+        if only_key in ("items", "rows", "records") and isinstance(wrapped, list):
+            items = wrapped
     if len(items) > MAX_MAP_ITEMS:
         raise ValueError(
             f"map_items received {len(items)} items but the hard fan-out cap is {MAX_MAP_ITEMS}."
@@ -2135,6 +2143,11 @@ async def map_group_node(
         raise RuntimeError("map_group: no host caller is configured for this run")
 
     items: list = input if isinstance(input, list) else ([] if input is None else [input])
+    if isinstance(input, dict) and len(input) == 1:
+        only_key = next(iter(input))
+        wrapped = input[only_key]
+        if only_key in ("items", "rows", "records") and isinstance(wrapped, list):
+            items = wrapped
     cap = max(1, int(max_items or 10000))
     if cap > MAX_MAP_ITEMS:
         raise ValueError(f"map_group: max_items must be <= {MAX_MAP_ITEMS}.")

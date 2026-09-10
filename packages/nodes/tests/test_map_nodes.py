@@ -165,6 +165,27 @@ async def test_map_items_artifact_ref_passes_through(store_ctx) -> None:
     assert result["main"][0]["got_pdf"] == artifact_ref
 
 
+async def test_map_items_unwraps_single_key_row_wrapper(store_ctx) -> None:
+    from nodyra_nodes.builtin import map_items
+
+    received: list[dict] = []
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        received.append(payload)
+        return {"value": payload["item"]["id"]}
+
+    token = workflow_caller.set(caller)
+    try:
+        result = await map_items(
+            input={"records": [{"id": "A"}, {"id": "B"}]}, workflow_id="wf-1"
+        )
+    finally:
+        workflow_caller.reset(token)
+
+    assert [item["item"]["id"] for item in received] == ["A", "B"]
+    assert result["main"] == [{"value": "A"}, {"value": "B"}]
+
+
 async def test_map_items_rejects_excessive_item_count(store_ctx) -> None:
     from nodyra_nodes.builtin import MAX_MAP_ITEMS, map_items
 
@@ -223,6 +244,27 @@ async def test_map_group_rejects_excessive_max_items(store_ctx) -> None:
             )
     finally:
         workflow_caller.reset(token)
+
+
+async def test_map_group_unwraps_single_key_row_wrapper(store_ctx) -> None:
+    from nodyra_nodes.builtin import map_group_node
+
+    received: list[dict] = []
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        received.append(payload)
+        return {"value": payload["item"]["id"]}
+
+    token = workflow_caller.set(caller)
+    try:
+        result = await map_group_node(
+            input={"rows": [{"id": "A"}, {"id": "B"}]}, child_workflow_id="wf-child"
+        )
+    finally:
+        workflow_caller.reset(token)
+
+    assert [item["item"]["id"] for item in received] == ["A", "B"]
+    assert result["main"] == [{"value": "A"}, {"value": "B"}]
 
 
 async def test_map_group_rejects_excessive_concurrency(store_ctx) -> None:
