@@ -208,9 +208,7 @@ def _worker_env() -> dict[str, str]:
         _WORKER_ENV_CACHE = dict(env)
         _WORKER_ENV_CACHE_AT = now
     env["NODYRA_CODE_NODE_TIMEOUT_SECONDS"] = str(settings.code_node_timeout_seconds)
-    env["NODYRA_RUNTIME_HEARTBEAT_SECONDS"] = str(
-        settings.runtime_heartbeat_interval_seconds
-    )
+    env["NODYRA_RUNTIME_HEARTBEAT_SECONDS"] = str(settings.runtime_heartbeat_interval_seconds)
     # SEC-3: egress policy for node HTTP/DB. If the operator pinned
     # NODYRA_ALLOW_PRIVATE_EGRESS it was copied through the allowlist above and
     # wins; otherwise the default follows the deployment model — hosted
@@ -304,6 +302,25 @@ async def _python_for_env(env_id: str | None) -> str:
     return sys.executable
 
 
+async def _drain_startup_stderr(
+    process: asyncio.subprocess.Process, *, limit: int = 2000, timeout: float = 2.0
+) -> str:
+    """Return whatever a failed-to-start worker wrote to stderr, for the error.
+
+    Best-effort and time-boxed: a worker that died has already closed the pipe,
+    and one that merely hung must not make the caller wait a second time.
+    Returns "" when there is nothing to add, so callers can append it directly.
+    """
+    if process.stderr is None:
+        return ""
+    try:
+        raw = await asyncio.wait_for(process.stderr.read(limit), timeout=timeout)
+    except Exception:  # noqa: BLE001 - diagnosing a failure must not raise
+        return ""
+    text = raw.decode("utf-8", errors="replace").strip()
+    return f": {text}" if text else ""
+
+
 class _RuntimeProcess:
     def __init__(
         self,
@@ -354,21 +371,28 @@ class _RuntimeProcess:
         try:
             line = await asyncio.wait_for(process.stdout.readline(), timeout=_startup_timeout)
         except TimeoutError:
+            detail = await _drain_startup_stderr(process)
             process.kill()
             await process.wait()
             raise RuntimeError(
                 f"runtime for env {env_id!r} timed out waiting for ready event "
-                f"({_startup_timeout}s)"
+                f"({_startup_timeout}s){detail}"
             ) from None
         if not line:
-            raise RuntimeError(f"runtime for env {env_id!r} did not emit a ready event")
+            # The worker died before saying hello. Its stderr holds the reason —
+            # a SyntaxError in a node module, a missing dependency, an OOM kill —
+            # and nothing else will ever report it: the stderr consumer below
+            # only starts once a worker is ready. Reporting "did not emit a ready
+            # event" on its own sends the reader looking in the wrong place.
+            detail = await _drain_startup_stderr(process)
+            raise RuntimeError(
+                f"runtime for env {env_id!r} exited before it was ready{detail}"
+            )
         ready = json.loads(line)
         if ready.get("type") != "ready":
             raise RuntimeError(f"unexpected first event: {ready}")
         # .get() — old workers without the field must keep working (rolling deploys).
-        logger.info(
-            "runtime worker ready env=%s startup_ms=%s", env_id, ready.get("startup_ms")
-        )
+        logger.info("runtime worker ready env=%s startup_ms=%s", env_id, ready.get("startup_ms"))
         wp = cls(process, env_id)
         wp._start_stderr_consumer()
         return wp
@@ -498,9 +522,7 @@ class _RuntimeProcess:
                     }
                 )
                 while True:
-                    heartbeat_remaining = heartbeat_timeout - (
-                        time.monotonic() - last_liveness_at
-                    )
+                    heartbeat_remaining = heartbeat_timeout - (time.monotonic() - last_liveness_at)
                     if heartbeat_remaining <= 0:
                         await self.close()
                         raise RuntimeError(
@@ -1034,9 +1056,15 @@ class RuntimePool:
                         result = await run
                     proc.run_count += 1
                     return result
-                except TimeoutError as exc:
+                except TimeoutError:
                     await proc.close()
-                    raise RuntimeError(f"workflow run timed out after {timeout}s") from exc
+                    await on_event(
+                        {
+                            "type": "run_error",
+                            "error": f"workflow run timed out after {timeout}s",
+                        }
+                    )
+                    return "timed_out"
                 finally:
                     envpool.release(proc)
 
