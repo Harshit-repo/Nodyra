@@ -185,11 +185,24 @@ async def prepare_artifact_inputs(
                     "Referenced artifact is unavailable in this organization"
                 )
             row = _row_from_ref(ref, run_id, [], org_id=run_org)
-        for name in ("name", "run_id", "storage_key", "size_bytes", "checksum_sha256"):
+        for name in ("name", "run_id", "size_bytes", "checksum_sha256"):
             if ref.get(name) != getattr(row, name):
                 raise ArtifactRefInvalid(
                     "Referenced artifact metadata does not match its stored file"
                 )
+        # storage_key only when the caller actually has one. The API strips it
+        # from every ref it serves ("implementation details that must not leak
+        # through the public API" — NodeRunInfo._redact_storage_internals), so
+        # requiring it made any ref read back from a run unusable as cache or
+        # pinned data: the caller cannot echo a field they were never given.
+        # Nothing reads it from the ref either — input_path derives the path
+        # from artifact_id and name, and staging copies from the row — so this
+        # was friction, not a check. Engine-internal refs (recovered
+        # checkpoints) do carry it, and those are still compared.
+        if ref.get("storage_key") is not None and ref["storage_key"] != row.storage_key:
+            raise ArtifactRefInvalid(
+                "Referenced artifact metadata does not match its stored file"
+            )
         await asyncio.to_thread(_stage_upload, row, store, destination)
 
 

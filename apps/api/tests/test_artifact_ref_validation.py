@@ -154,26 +154,42 @@ async def test_the_endpoint_answers_400_not_500(client: AsyncClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The single-node test enforces an output cap that a full run does not.
+# Test and Run must agree on whether a node works.
 
 
-def test_an_output_cap_failure_says_it_is_a_test_limit() -> None:
-    """Otherwise it reads as a broken node and sends the reader to rewrite it."""
-    from app.routers.workflows import _explain_node_test_error
+def test_an_oversized_port_is_truncated_not_failed() -> None:
+    """A single-node test returns the whole output over HTTP, so it has to be
+    bounded — but bounding it by failing the node made the editor stricter
+    than production, where the run path enforces no such cap."""
+    from app.routers.workflows import _bounded_node_test_output
 
-    explained = _explain_node_test_error(
-        "ValueError: node output of 400000 bytes exceeds limit of 262144 bytes"
+    bounded = _bounded_node_test_output({"main": [{"pad": "x" * 400} for _ in range(50)]}, 1024)
+
+    assert bounded["main"]["_truncated"] is True
+    assert bounded["main"]["size_bytes"] > 1024
+    assert "preview" in bounded["main"]
+
+
+def test_a_small_output_is_returned_whole() -> None:
+    from app.routers.workflows import _bounded_node_test_output
+
+    assert _bounded_node_test_output({"main": {"ok": True}}, 1024) == {"main": {"ok": True}}
+
+
+def test_each_port_is_bounded_independently() -> None:
+    """One fat port must not drop the others."""
+    from app.routers.workflows import _bounded_node_test_output
+
+    bounded = _bounded_node_test_output(
+        {"main": [{"pad": "x" * 400} for _ in range(50)], "summary": {"n": 50}}, 1024
     )
 
-    assert "400000" in explained  # the original message survives
-    assert "single-node test" in explained
-    assert "A full run does not fail here" in explained
-    assert "max_output_bytes" in explained
+    assert bounded["main"]["_truncated"] is True
+    assert bounded["summary"] == {"n": 50}
 
 
-def test_other_errors_are_passed_through_untouched() -> None:
-    from app.routers.workflows import _explain_node_test_error
+def test_no_cap_returns_everything() -> None:
+    from app.routers.workflows import _bounded_node_test_output
 
-    assert _explain_node_test_error("KeyError: 'missing'") == "KeyError: 'missing'"
-    assert _explain_node_test_error(None) is None
-    assert _explain_node_test_error("") == ""
+    payload = {"main": [{"pad": "x" * 400} for _ in range(50)]}
+    assert _bounded_node_test_output(payload, 0) == payload
