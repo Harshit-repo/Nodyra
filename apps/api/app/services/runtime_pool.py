@@ -302,6 +302,21 @@ async def _python_for_env(env_id: str | None) -> str:
     return sys.executable
 
 
+# The worker protocol is one newline-framed JSON message per line, so a whole
+# node result travels as a single line. asyncio's StreamReader defaults to a
+# 64 KiB buffer and raises "Separator is not found, and chunk exceed the limit"
+# past it — killing the run with a message that names nothing. That ceiling was
+# far below what the engine itself permits (max_output_bytes, 256 KiB), so any
+# node materializing a few hundred KB inline failed. Sized off the same setting
+# with room for the JSON envelope and escaping.
+def _stream_limit_bytes() -> int:
+    configured = int(getattr(settings, "max_output_bytes", 0) or 0)
+    return max(8 * 1024 * 1024, configured * 8)
+
+
+_STREAM_LIMIT_BYTES: int = _stream_limit_bytes()
+
+
 async def _drain_startup_stderr(
     process: asyncio.subprocess.Process, *, limit: int = 2000, timeout: float = 2.0
 ) -> str:
@@ -364,6 +379,7 @@ class _RuntimeProcess:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            limit=_STREAM_LIMIT_BYTES,
         )
         if process.stdout is None or process.stdin is None:
             raise RuntimeError("runtime subprocess pipes were not opened")

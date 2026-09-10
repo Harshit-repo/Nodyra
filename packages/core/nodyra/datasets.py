@@ -45,7 +45,18 @@ def is_dataset_ref(value: Any) -> bool:
 def _store():
     store = artifact_store.get()
     if store is None:
-        raise RuntimeError("datasets are not available in this execution context")
+        # Most often a Code node: those run in a separate process, which does
+        # not inherit the artifact store, so no dataset helper works there.
+        # The engine hands Code nodes a DatasetRef unexpanded once a value is
+        # large enough (>1000 rows or >256 KB from another Code node), so this
+        # is reachable simply by growing the data — and the reader needs to
+        # know the way out rather than just that the door is shut.
+        raise RuntimeError(
+            "datasets are not available in this execution context. A Code node "
+            "runs in an isolated process and cannot read a DatasetRef; put a "
+            "Dataset To Records node between the two, or keep the upstream "
+            "value under 1000 rows so it stays inline."
+        )
     return store
 
 

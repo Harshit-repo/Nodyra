@@ -99,3 +99,65 @@ async def test_start_reports_why_the_worker_died(monkeypatch) -> None:
 
 async def _immediate(value):
     return value
+
+
+async def test_the_worker_stream_limit_clears_the_output_cap() -> None:
+    """The protocol must carry what the engine permits.
+
+    Worker messages are newline-framed JSON, one node result per line, and
+    asyncio's StreamReader defaults to a 64 KiB buffer — well under
+    max_output_bytes (256 KiB). Past it readline() raises "Separator is not
+    found, and chunk exceed the limit" and the run dies naming nothing.
+    """
+    from app.config import settings
+    from app.services.runtime_pool import _STREAM_LIMIT_BYTES, _stream_limit_bytes
+
+    assert _STREAM_LIMIT_BYTES > 64 * 1024, "still at asyncio's default"
+    assert _STREAM_LIMIT_BYTES > settings.max_output_bytes, (
+        "a node at the output cap must still fit on one line, with room for "
+        "the JSON envelope and escaping"
+    )
+    assert _stream_limit_bytes() >= 8 * 1024 * 1024
+
+
+async def test_the_stream_limit_follows_a_raised_output_cap(monkeypatch) -> None:
+    from app.config import settings
+    from app.services import runtime_pool
+
+    monkeypatch.setattr(settings, "max_output_bytes", 32 * 1024 * 1024)
+
+    assert runtime_pool._stream_limit_bytes() > 32 * 1024 * 1024
+
+
+async def test_the_worker_is_spawned_with_that_limit(monkeypatch) -> None:
+    """A limit computed but not passed would fix nothing."""
+    import asyncio as _asyncio
+
+    from app.services import runtime_pool
+
+    seen: dict = {}
+    real_exec = _asyncio.create_subprocess_exec
+
+    async def capturing_exec(*args, **kwargs):
+        seen.update(kwargs)
+        return await real_exec(
+            sys.executable,
+            "-c",
+            "pass",
+            stdin=_asyncio.subprocess.PIPE,
+            stdout=_asyncio.subprocess.PIPE,
+            stderr=_asyncio.subprocess.PIPE,
+        )
+
+    monkeypatch.setattr(_asyncio, "create_subprocess_exec", capturing_exec)
+    monkeypatch.setattr(
+        runtime_pool, "_python_for_env", lambda env_id: _immediate(sys.executable)
+    )
+    monkeypatch.setattr(
+        runtime_pool, "_resolve_env_runtime_flags", lambda env_id: _immediate({})
+    )
+
+    with pytest.raises(RuntimeError):
+        await runtime_pool._RuntimeProcess.spawn("env-limit")
+
+    assert seen.get("limit") == runtime_pool._STREAM_LIMIT_BYTES
