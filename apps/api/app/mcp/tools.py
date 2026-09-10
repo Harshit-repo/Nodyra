@@ -3727,6 +3727,7 @@ STATIC_TOOLS: list[McpTool] = [
                 },
                 "schedule_interval": {
                     "type": "string",
+                    "enum": ["minutes", "hours", "days", "weeks"],
                     "description": "minutes / hours / days / weeks.",
                 },
                 "schedule_every": {
@@ -3747,6 +3748,10 @@ STATIC_TOOLS: list[McpTool] = [
                     "description": "Explicitly acknowledge unsafe nodes when policy requires it.",
                 },
             },
+            # Scheduling is production-impacting: silently dropping a mistyped
+            # field (e.g. "interval_seconds") while defaulting to hourly creates
+            # a schedule the caller never intended. Reject unknown fields.
+            "additionalProperties": False,
             "required": ["workflow_id", "name"],
         },
         permission="deployment:write",
@@ -3787,7 +3792,10 @@ STATIC_TOOLS: list[McpTool] = [
                 "schedule_id": {"type": "string"},
                 "name": {"type": "string"},
                 "schedule_cron": {"type": "string"},
-                "schedule_interval": {"type": "string"},
+                "schedule_interval": {
+                    "type": "string",
+                    "enum": ["minutes", "hours", "days", "weeks"],
+                },
                 "schedule_every": {"type": "integer", "minimum": 1},
                 "schedule_tz": {"type": "string"},
                 "default_parameters": {"type": "object"},
@@ -3795,6 +3803,9 @@ STATIC_TOOLS: list[McpTool] = [
                 "workflow_version_id": {"type": "string"},
                 "approve_unsafe_nodes": {"type": "boolean"},
             },
+            # Reject unknown fields instead of silently defaulting timing to
+            # hourly (see create_schedule).
+            "additionalProperties": False,
             "required": ["schedule_id"],
         },
         permission="deployment:write",
