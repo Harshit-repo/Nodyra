@@ -74,7 +74,7 @@ async def dispatch_error_handlers(
             run = await session.get(Run, run_id)
         if (
             run is None
-            or run.status != "error"
+            or run.status not in {"error", "timed_out"}
             or run.triggered_by_error_run_id is not None
         ):
             return
@@ -88,9 +88,7 @@ async def dispatch_error_handlers(
             return
         with run_as_system():
             deployment = (
-                await session.get(Deployment, run.deployment_id)
-                if run.deployment_id
-                else None
+                await session.get(Deployment, run.deployment_id) if run.deployment_id else None
             )
         error_workflow_id = (
             deployment.error_workflow_id if deployment else None
@@ -108,13 +106,11 @@ async def dispatch_error_handlers(
                 "workflow_version": run.workflow_version,
                 "workflow_version_id": run.workflow_version_id,
                 "failed_node_id": failed.get("node_id") if failed else None,
-                "error": failed.get("error") if failed else None,
+                "error": failed.get("error") if failed else run.error,
                 "logs": failed.get("logs") if failed else [],
                 "retry_path": f"/executions?run={run.id}",
                 "started_at": run.started_at.isoformat() if run.started_at else None,
-                "finished_at": (
-                    run.finished_at.isoformat() if run.finished_at else None
-                ),
+                "finished_at": (run.finished_at.isoformat() if run.finished_at else None),
             },
             secret_values,
         )

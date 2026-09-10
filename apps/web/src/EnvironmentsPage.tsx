@@ -23,10 +23,10 @@ import { useModalA11y } from "./useModalA11y";
 import type { Environment, RunnerPoolInfo } from "./types";
 
 const BACKEND_BADGE: Record<string, { label: string; color: string }> = {
-  venv:   { label: "venv",   color: "#22c55e" },
-  conda:  { label: "conda",  color: "#3b82f6" },
-  pixi:   { label: "pixi",   color: "#14b8a6" },
-  docker: { label: "docker", color: "#a855f7" },
+  venv:   { label: "venv",   color: "#166534" },
+  conda:  { label: "conda",  color: "#1d4ed8" },
+  pixi:   { label: "pixi",   color: "#0f766e" },
+  docker: { label: "docker", color: "#7e22ce" },
 };
 
 type BackendTab = "venv" | "conda" | "pixi";
@@ -846,7 +846,7 @@ function EnvCard({
         <span title="Where runs of this environment execute">
           {env.runner_pool_id
             ? `→ ${env.runner_pool_name ?? "runner pool"}`
-            : "→ local (in-process)"}
+            : "→ instance worker"}
         </span>
       </div>
       <div className="env-health-grid">
@@ -1059,7 +1059,7 @@ export function EnvironmentsPage() {
 
         {error && <p className="error-text">{error}</p>}
         {!environments && !error && (
-          <div aria-label="Loading environments">
+          <div role="status" aria-label="Loading environments">
             <SkeletonCardGrid count={3} />
           </div>
         )}

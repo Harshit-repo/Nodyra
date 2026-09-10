@@ -134,19 +134,26 @@ export default function App() {
   const [apiReachable, setApiReachable] = useState(true);
   const retryRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
+  // Ignore identity requests started before a login/logout transition. Focus
+  // refreshes must never resurrect a session the user has just signed out of.
+  const authRevisionRef = useRef(0);
+  const signedOutRef = useRef(false);
 
   // Bootstrap auth with capped exponential backoff. Only a genuine legacy 404
   // may fall back to no-auth; every other failure stays fail-closed and keeps
   // probing at most once per minute so recovery needs no page reload.
   const loadAuth = useCallback(() => {
+    const revision = authRevisionRef.current;
     api
       .authRequired()
       .then((state) => {
+        if (revision !== authRevisionRef.current || signedOutRef.current) return;
         retryCountRef.current = 0;
         setAuth(state);
         setApiReachable(true);
       })
       .catch((err: unknown) => {
+        if (revision !== authRevisionRef.current || signedOutRef.current) return;
         if (shouldRetryAuthError(err)) {
           setApiReachable(false);
           setAuth(null);
@@ -167,18 +174,23 @@ export default function App() {
   useEffect(() => {
     loadAuth();
     onUnauthorized(() => {
+      authRevisionRef.current += 1;
       clearClientSession();
       setAuth((current) =>
         current ? { ...current, signed_in: false, user: null } : current,
       );
     });
     return () => {
+      authRevisionRef.current += 1;
       onUnauthorized(null);
       if (retryRef.current) window.clearTimeout(retryRef.current);
     };
   }, [loadAuth]);
 
   function onSignedIn(user: UserInfo): void {
+    authRevisionRef.current += 1;
+    signedOutRef.current = false;
+    if (retryRef.current) window.clearTimeout(retryRef.current);
     clearClientDataScope();
     setAuth((current) => ({
       ...current,
@@ -191,23 +203,27 @@ export default function App() {
   }
 
   const signOut = useCallback((): void => {
-    // Fire-and-forget: clears server httpOnly cookie; local state cleared
-    // synchronously below so the UI transitions immediately.
-    void apiLogout();
+    signedOutRef.current = true;
+    const revision = ++authRevisionRef.current;
+    if (retryRef.current) window.clearTimeout(retryRef.current);
+    // Capture the current credentials before clearing the client, and finish
+    // revoking the cookie before asking the server for the new auth state.
+    const logout = apiLogout();
     clearClientSession();
     setAuth((current) =>
       current ? { ...current, signed_in: false, user: null } : current,
     );
-    api
-      .authRequired()
-      .then(setAuth)
+    void logout
+      .then(() => api.authRequired())
+      .then((state) => {
+        if (revision !== authRevisionRef.current) return;
+        setAuth({ ...state, signed_in: false, user: null });
+      })
       .catch(() => {
-        setAuth(null);
-        setApiReachable(false);
-        retryCountRef.current = 0;
-        loadAuth();
+        // Keep the sign-in screen during an outage. Retrying identity here
+        // could restore a cookie that the unreachable server has not revoked.
       });
-  }, [loadAuth]);
+  }, []);
 
   useEffect(() => {
     if (!auth?.user) return;
@@ -218,7 +234,11 @@ export default function App() {
 
   useEffect(() => {
     function refreshIdentity(): void {
-      void api.authRequired().then(setAuth).catch(() => undefined);
+      if (signedOutRef.current) return;
+      const revision = authRevisionRef.current;
+      void api.authRequired().then((state) => {
+        if (revision === authRevisionRef.current && !signedOutRef.current) setAuth(state);
+      }).catch(() => undefined);
     }
     window.addEventListener("focus", refreshIdentity);
     return () => window.removeEventListener("focus", refreshIdentity);

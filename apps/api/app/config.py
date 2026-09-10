@@ -179,7 +179,7 @@ class Settings(BaseSettings):
     # Durable run-queue tuning. These were hard-coded in
     # ``app.services.queue`` and are surfaced as config so operators can tune
     # backpressure without code changes (see "Production-readiness gaps" in
-    # docs/architecture-improvement-plan.md, item 4).
+    # the durable queue contract).
     queue_lease_seconds: int = 30
     queue_retry_backoff_base_seconds: int = 5
     queue_retry_backoff_max_seconds: int = 300

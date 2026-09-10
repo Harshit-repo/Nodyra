@@ -23,6 +23,7 @@ regresses.
 from __future__ import annotations
 
 import json
+import runpy
 from pathlib import Path
 
 import pytest
@@ -85,7 +86,33 @@ def test_the_generator_and_the_shipped_json_agree() -> None:
     generator = Path(__file__).resolve().parents[3] / "scripts" / "generate_templates.py"
     if not generator.exists():
         pytest.skip("generator not present in this checkout")
-    source = generator.read_text(encoding="utf-8")
-    assert "(input or {}).get('body')" not in source, (
-        "the generator still emits the pattern that raises on a list input"
+    specs = runpy.run_path(str(generator))["TEMPLATES"]
+    for spec in specs:
+        shipped = json.loads((TEMPLATE_DIR / f"{spec['id']}.json").read_text(encoding="utf-8"))
+        for key, value in spec.items():
+            assert shipped[key] == value, f"{spec['id']}.{key} differs from the generator"
+
+
+def test_health_monitor_reads_the_requested_response_metadata() -> None:
+    result = _run(
+        _code_for("http_health_check", "check"),
+        {"status_code": 200, "headers": {}, "body": {"status": "ok"}},
     )
+    assert result == {"healthy": True, "status_code": 200, "body": {"status": "ok"}}
+
+
+@pytest.mark.parametrize("body", [None, "", {}, []])
+def test_health_monitor_does_not_treat_an_empty_body_envelope_as_healthy(body) -> None:
+    with pytest.raises(ValueError, match="empty response body"):
+        _run(
+            _code_for("http_health_check", "check"),
+            {"status_code": 200, "headers": {}, "body": body},
+        )
+
+
+def test_health_monitor_rejects_an_unhealthy_status() -> None:
+    with pytest.raises(ValueError, match="HTTP 503"):
+        _run(
+            _code_for("http_health_check", "check"),
+            {"status_code": 503, "headers": {}, "body": "unavailable"},
+        )

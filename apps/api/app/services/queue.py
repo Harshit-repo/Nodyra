@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 # Defaults; the *active* values are read from ``settings.queue_*`` at call
 # time (see "Production-readiness gaps" in
-# docs/architecture-improvement-plan.md, item 4). Kept as module constants
+# the durable queue contract). Kept as module constants
 # for back-compat with tests that import them directly.
 DEFAULT_LEASE_SECONDS = 30
 RETRY_BACKOFF_BASE_SECONDS = 5

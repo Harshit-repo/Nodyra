@@ -1,8 +1,0 @@
-<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Orbit Wrap logo">
-  <rect x="29" y="29" width="42" height="42" rx="12" fill="#142033" stroke="#35D4D0" stroke-width="3"/>
-  <rect x="43" y="43" width="14" height="14" rx="4" fill="#4C9EFF"/>
-  <path d="M8 50C8 22 92 22 92 50" stroke="#4C9EFF" stroke-width="7" stroke-linecap="round"/>
-  <path d="M92 50C92 78 8 78 8 50" stroke="#FFD34E" stroke-width="7" stroke-linecap="round"/>
-  <circle cx="8" cy="50" r="6" fill="#35D4D0"/><rect x="86" y="44" width="12" height="12" rx="3" fill="#FFD34E"/>
-  <text x="120" y="65" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text><text x="225" y="65" fill="#4C9EFF" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text><text x="247" y="65" fill="#35D4D0" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
-</svg>

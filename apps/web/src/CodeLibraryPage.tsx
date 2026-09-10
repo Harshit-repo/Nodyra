@@ -199,7 +199,7 @@ export function CodeLibraryPage() {
 
         {error && <p className="error-text">{error}</p>}
         {!modules && !error && (
-          <div className="codelib-list" aria-label="Loading files">
+          <div role="status" className="codelib-list" aria-label="Loading files">
             {Array.from({ length: 5 }).map((_, index) => (
               <div className="codelib-row skeleton-row" key={index}>
                 <div className="codelib-main">

@@ -433,9 +433,21 @@ class FakeResponse:
         self.reason = "OK" if status_code < 400 else "Not Found"
         self.text = json.dumps(payload)
         self.content = self.text.encode("utf-8")
+        self.headers = {"Content-Type": "application/json"}
 
     def json(self) -> object:
         return self._payload
+
+
+def test_http_request_response_metadata_is_opt_in(monkeypatch) -> None:
+    monkeypatch.setattr(requests, "request", lambda *a, **kw: FakeResponse([{"id": 1}], 201))
+    request = registry.get("http_request").func
+    assert request(url="https://api.example.test") == [{"id": 1}]
+    assert request(url="https://api.example.test", include_response_metadata=True) == {
+        "status_code": 201,
+        "headers": {"Content-Type": "application/json"},
+        "body": [{"id": 1}],
+    }
 
 
 def test_http_request_raises_on_error_status(monkeypatch) -> None:

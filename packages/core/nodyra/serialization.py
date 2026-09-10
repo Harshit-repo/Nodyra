@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import math
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
@@ -20,6 +21,27 @@ from pydantic import BaseModel
 TYPED_MARKER = "__nodyra_typed__"
 TYPED_VERSION = 1
 DEFAULT_DATAFRAME_ROWS = 100
+
+
+def sanitize_nonfinite(value: Any) -> Any:
+    """Recursively replace NaN/±Inf floats with None.
+
+    JSON cannot represent non-finite floats; a NaN anywhere in a run output
+    makes ``json.dumps`` raise ``ValueError: Out of range float values are not
+    JSON compliant`` and turns every API/MCP read of that output into a 500.
+    This walks plain containers (and typed envelopes) so any persisted or
+    served value is JSON-safe. Only float *values* are rewritten — keys are
+    left untouched.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, list):
+        return [sanitize_nonfinite(item) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_nonfinite(item) for item in value]
+    if isinstance(value, dict):
+        return {key: sanitize_nonfinite(item) for key, item in value.items()}
+    return value
 
 
 def is_typed_envelope(value: Any) -> bool:
@@ -53,7 +75,7 @@ def _safe_repr(value: Any, limit: int = 500) -> str:
         text = repr(value)
     except Exception:  # noqa: BLE001 - serialization must never fail a run
         text = f"<{type(value).__name__}>"
-    return text if len(text) <= limit else f"{text[:limit - 1]}..."
+    return text if len(text) <= limit else f"{text[: limit - 1]}..."
 
 
 def _object_preview(value: Any, *, reason: str | None = None) -> dict[str, Any]:
@@ -70,10 +92,7 @@ def _object_preview(value: Any, *, reason: str | None = None) -> dict[str, Any]:
 def _is_dataframe(value: Any) -> bool:
     if type(value).__name__ != "DataFrame":
         return False
-    return all(
-        hasattr(value, attr)
-        for attr in ("columns", "dtypes", "head", "shape", "to_dict")
-    )
+    return all(hasattr(value, attr) for attr in ("columns", "dtypes", "head", "shape", "to_dict"))
 
 
 def _serialize_dataframe(
@@ -159,8 +178,13 @@ def serialize_value(
     _seen: set[int] | None = None,
 ) -> Any:
     """Return a JSON-compatible value with safe type envelopes where useful."""
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, int, bool)):
         return value
+    if isinstance(value, float):
+        # NaN/±Inf are not JSON-compatible; persist them as null so downstream
+        # consumers (DB rows, SSE events, MCP tool results) never crash on
+        # json.dumps(..., allow_nan=False).
+        return value if math.isfinite(value) else None
     if is_typed_envelope(value):
         return value
     # Dataset / artifact refs are already JSON-compatible by construction —
@@ -301,9 +325,7 @@ def _deserialize_envelope(envelope: dict[str, Any]) -> Any:
             return set(deserialize_value(items if isinstance(items, list) else []))
         if kind == "frozenset" and isinstance(value, dict):
             items = value.get("items", [])
-            return frozenset(
-                deserialize_value(items if isinstance(items, list) else [])
-            )
+            return frozenset(deserialize_value(items if isinstance(items, list) else []))
         if kind in {"bytes", "bytearray"} and isinstance(value, dict):
             encoded = value.get("base64")
             if not isinstance(encoded, str):

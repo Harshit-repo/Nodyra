@@ -1,4 +1,5 @@
 """Model monitoring, observability, and lifecycle management nodes for Nodyra."""
+
 from __future__ import annotations
 
 import json
@@ -41,6 +42,7 @@ def _is_registry_ref(val: Any) -> bool:
 def _require_numpy():
     try:
         import numpy as np
+
         return np
     except ImportError as exc:
         raise RuntimeError(
@@ -71,6 +73,7 @@ def _pct(values: list[float], p: float) -> float:
 # cost_budget_gate
 # ============================================================
 
+
 @node(
     name="Cost Budget Gate",
     id="cost_budget_gate",
@@ -96,8 +99,7 @@ def _pct(values: list[float], p: float) -> float:
         },
         "price_per_1k_tokens": {
             "description": (
-                "Auto-compute cost from total_tokens at this price per 1K "
-                "tokens (0 = disabled)."
+                "Auto-compute cost from total_tokens at this price per 1K tokens (0 = disabled)."
             ),
         },
     },
@@ -111,9 +113,7 @@ def cost_budget_gate(
 ) -> dict[str, Any]:
     """Branch based on whether cost is within budget."""
     if not isinstance(input, dict):
-        raise ValueError(
-            f"Expected a dict input with cost fields, got {type(input).__name__}."
-        )
+        raise ValueError(f"Expected a dict input with cost fields, got {type(input).__name__}.")
 
     cost = input.get(metric_field)
 
@@ -130,8 +130,11 @@ def cost_budget_gate(
     cost = float(cost)
     threshold = float(budget_usd)
     ops = {
-        "<=": cost <= threshold, "<": cost < threshold,
-        ">=": cost >= threshold, ">": cost > threshold, "==": cost == threshold,
+        "<=": cost <= threshold,
+        "<": cost < threshold,
+        ">=": cost >= threshold,
+        ">": cost > threshold,
+        "==": cost == threshold,
     }
     passed = ops.get(operator, cost <= threshold)
 
@@ -149,6 +152,7 @@ def cost_budget_gate(
 # ============================================================
 # latency_slo_gate
 # ============================================================
+
 
 @node(
     name="Latency SLO Gate",
@@ -188,9 +192,7 @@ def latency_slo_gate(
 ) -> dict[str, Any]:
     """Branch based on whether latency metrics are within an SLO threshold."""
     if not isinstance(input, dict):
-        raise ValueError(
-            f"Expected a dict input with latency fields, got {type(input).__name__}."
-        )
+        raise ValueError(f"Expected a dict input with latency fields, got {type(input).__name__}.")
 
     if metric_field:
         field = metric_field
@@ -209,8 +211,7 @@ def latency_slo_gate(
     latency = input.get(field)
     if latency is None:
         numeric_fields = [
-            k for k, v in input.items()
-            if isinstance(v, (int, float)) and "latency" in k.lower()
+            k for k, v in input.items() if isinstance(v, (int, float)) and "latency" in k.lower()
         ]
         if numeric_fields:
             field = numeric_fields[0]
@@ -239,6 +240,7 @@ def latency_slo_gate(
 # ============================================================
 # response_quality_monitor
 # ============================================================
+
 
 @node(
     name="Response Quality Monitor",
@@ -323,13 +325,13 @@ def response_quality_monitor(
 ) -> dict[str, Any]:
     """Sample and score production model responses for quality issues."""
     import math
+
     rows = _to_records(input)
     if not rows:
         raise ValueError("Input must be a non-empty DatasetRef or list of records.")
     if response_column not in rows[0]:
         raise ValueError(
-            f"response_column '{response_column}' not found. "
-            f"Available: {list(rows[0].keys())}"
+            f"response_column '{response_column}' not found. Available: {list(rows[0].keys())}"
         )
 
     n_sample = max(1, math.ceil(len(rows) * min(1.0, max(0.0, float(sample_rate)))))
@@ -359,12 +361,14 @@ def response_quality_monitor(
                     json.loads(resp)
                 except json.JSONDecodeError:
                     issues.append("invalid_json")
-            result_rows.append({
-                **row,
-                "_quality_pass": len(issues) == 0,
-                "_quality_issues": "; ".join(issues) if issues else "",
-                "_quality_mode": "rule_check",
-            })
+            result_rows.append(
+                {
+                    **row,
+                    "_quality_pass": len(issues) == 0,
+                    "_quality_issues": "; ".join(issues) if issues else "",
+                    "_quality_mode": "rule_check",
+                }
+            )
 
     elif mode == "llm_judge":
         if len(sample) > MAX_LLM_MONITOR_SAMPLES:
@@ -373,6 +377,7 @@ def response_quality_monitor(
                 f"{len(sample)} exceeds cap {MAX_LLM_MONITOR_SAMPLES}"
             )
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
         client = _openai_client(openai_api_key)
 
         def _judge_one(row: dict) -> dict:
@@ -386,8 +391,10 @@ def response_quality_monitor(
             try:
                 r = client.chat.completions.create(
                     model=judge_model,
-                    messages=[{"role": "system", "content": system},
-                               {"role": "user", "content": user_msg}],
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_msg},
+                    ],
                     max_tokens=100,
                     temperature=0,
                 )
@@ -436,6 +443,7 @@ def response_quality_monitor(
 # prompt_drift_monitor
 # ============================================================
 
+
 @node(
     name="Prompt Drift Monitor",
     id="prompt_drift_monitor",
@@ -480,8 +488,7 @@ def prompt_drift_monitor(
         raise ValueError("input must be a non-empty DatasetRef or list of records.")
     if text_column not in current_rows[0]:
         raise ValueError(
-            f"text_column '{text_column}' not found. "
-            f"Available: {list(current_rows[0].keys())}"
+            f"text_column '{text_column}' not found. Available: {list(current_rows[0].keys())}"
         )
 
     current_texts = [str(r.get(text_column, "")) for r in current_rows]
@@ -505,7 +512,7 @@ def prompt_drift_monitor(
         bigrams: dict[str, int] = {}
         for t in texts:
             for i in range(len(t) - 1):
-                bg = t[i:i+2].lower()
+                bg = t[i : i + 2].lower()
                 bigrams[bg] = bigrams.get(bg, 0) + 1
         top_bigrams = dict(sorted(bigrams.items(), key=lambda x: -x[1])[:50])
         return {
@@ -529,9 +536,9 @@ def prompt_drift_monitor(
     if has_baseline:
         baseline_stats = _text_stats(baseline_texts)
 
-        length_drift = abs(
-            current_stats["mean_length"] - baseline_stats["mean_length"]
-        ) / max(baseline_stats["mean_length"], 1.0)
+        length_drift = abs(current_stats["mean_length"] - baseline_stats["mean_length"]) / max(
+            baseline_stats["mean_length"], 1.0
+        )
 
         curr_vocab = current_stats["vocab"]
         base_vocab = baseline_stats["vocab"]
@@ -540,9 +547,7 @@ def prompt_drift_monitor(
         vocab_jaccard = intersection / max(union, 1)
         vocab_drift = 1.0 - vocab_jaccard
 
-        all_bigrams = set(
-            list(current_stats["bigram_dist"]) + list(baseline_stats["bigram_dist"])
-        )
+        all_bigrams = set(list(current_stats["bigram_dist"]) + list(baseline_stats["bigram_dist"]))
         curr_vec = np.array(
             [current_stats["bigram_dist"].get(b, 0) for b in all_bigrams],
             dtype=float,
@@ -608,6 +613,7 @@ def prompt_drift_monitor(
 # model_registry_query
 # ============================================================
 
+
 @node(
     name="Model Registry Query",
     id="model_registry_query",
@@ -649,8 +655,11 @@ def model_registry_query(
 ) -> dict[str, Any]:
     """Query and filter model registry entries."""
     records = _to_records(input)
-    if not records:
-        raise ValueError("input must be a non-empty DatasetRef or list of registry entries.")
+    if not records or not any(records):
+        raise ValueError(
+            "input must be a non-empty DatasetRef or list of registry entries — "
+            "each row needs at least one column (got an empty object)."
+        )
 
     results = list(records)
 
@@ -660,13 +669,11 @@ def model_registry_query(
         results = [r for r in results if filter_provider.lower() in r.get("provider", "").lower()]
     if filter_base_model:
         results = [
-            r
-            for r in results
-            if filter_base_model.lower() in r.get("base_model", "").lower()
+            r for r in results if filter_base_model.lower() in r.get("base_model", "").lower()
         ]
 
     results = sorted(results, key=lambda r: str(r.get(sort_by, "")))
-    results = results[:int(limit)]
+    results = results[: int(limit)]
 
     status_counts: dict[str, int] = {}
     for r in records:
@@ -690,6 +697,7 @@ def model_registry_query(
 # ============================================================
 # model_promote
 # ============================================================
+
 
 @node(
     name="Promote Model",
@@ -736,15 +744,10 @@ def model_promote(
 
     resolved_id = (model_id or "").strip() or entry.get("model_id", "")
     if not resolved_id:
-        raise ValueError(
-            "model_id is required. Set it in params or pass a dict with model_id."
-        )
+        raise ValueError("model_id is required. Set it in params or pass a dict with model_id.")
 
     if require_eval_result:
-        has_eval = (
-            entry.get("__nodyra_eval_result__") is True
-            or bool(entry.get("metrics"))
-        )
+        has_eval = entry.get("__nodyra_eval_result__") is True or bool(entry.get("metrics"))
         if not has_eval:
             raise ValueError(
                 "require_eval_result=True but no EvalResultRef or metrics found in input. "
@@ -778,6 +781,7 @@ def model_promote(
 # ============================================================
 # model_rollback
 # ============================================================
+
 
 @node(
     name="Rollback Model",
@@ -831,7 +835,8 @@ def model_rollback(
         try:
             history = _to_records(version_history)
             candidates = [
-                r for r in history
+                r
+                for r in history
                 if r.get("model_id") == resolved_id and r.get("status") != "production"
             ]
             if candidates:

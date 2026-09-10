@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api, type RunApprovalDecision, type RunApprovalInfo } from "./api";
+import "./execution-panels.css";
 
 /**
  * Tool-approval list for a run: shows pending/decided agent-tool approvals and,

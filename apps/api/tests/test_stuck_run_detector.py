@@ -11,7 +11,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.dml import Update
 
 from app import models
 from app.services import stuck_run_detector
@@ -89,7 +91,9 @@ async def test_a_finished_run_is_not_touched(client: AsyncClient, short_grace) -
     assert run.error is None
 
 
-async def test_runs_on_a_remote_pool_are_left_to_lease_expiry(client: AsyncClient, short_grace) -> None:
+async def test_runs_on_a_remote_pool_are_left_to_lease_expiry(
+    client: AsyncClient, short_grace
+) -> None:
     """Remote-pool runs are managed by their lease, not by this detector."""
     async with stuck_run_detector.SessionLocal() as session:
         workflow = models.Workflow(name="Remote probe")
@@ -112,3 +116,28 @@ async def test_runs_on_a_remote_pool_are_left_to_lease_expiry(client: AsyncClien
     await detect_stuck_runs()
 
     assert (await _load(run_id)).status == "running"
+
+
+async def test_concurrent_completion_does_not_publish_a_false_failure(
+    client: AsyncClient, short_grace, monkeypatch
+) -> None:
+    run_id = await _make_run(started_minutes_ago=10)
+    original_execute = AsyncSession.execute
+    raced = False
+
+    async def finish_before_detector_update(session, statement, *args, **kwargs):
+        nonlocal raced
+        if isinstance(statement, Update) and statement.table.name == "runs" and not raced:
+            raced = True
+            await original_execute(
+                session, update(models.Run).where(models.Run.id == run_id).values(status="success")
+            )
+        return await original_execute(session, statement, *args, **kwargs)
+
+    events = []
+    monkeypatch.setattr(AsyncSession, "execute", finish_before_detector_update)
+    monkeypatch.setattr(stuck_run_detector.broker, "publish", lambda *args: events.append(args))
+    assert await detect_stuck_runs() == 0
+    assert raced
+    assert (await _load(run_id)).status == "success"
+    assert not events

@@ -154,3 +154,41 @@ def test_the_client_rule_matches_the_server_rule():
     assert find_missing_packages(DATASET_GRAPH, declared) == {}
     # ...must be what the client would compute as present.
     assert "duckdb" in effective
+
+def test_optional_extras_are_not_bundled():
+    """Pandas/scipy/matplotlib are optional extras of nodyra-nodes, not core
+    dependencies. Treating them as bundled let pre-flight wave through nodes
+    whose imports crashed at runtime ("Data transform requires pandas").
+
+    This test guards the fixed behaviour: extras must be declared on the
+    environment like any other requirement.
+    """
+    bundled = bundled_packages()
+    for extra_only in ("pandas", "scipy", "matplotlib", "scikit-learn"):
+        assert extra_only not in bundled, (
+            f"{extra_only} is an optional extra of nodyra-nodes; pre-flight "
+            "must not assume every environment has it"
+        )
+    # The genuinely universal dependencies must still be bundled.
+    for core in ("duckdb", "jmespath", "pyarrow"):
+        assert core in bundled
+
+
+def test_extra_only_requirement_is_reported_missing():
+    """A node requiring pandas on an env that only declares requests must be
+    blocked up front — not crashed deep in execution."""
+    graph = {"nodes": [{"id": "n1", "type": "__preflight_probe__"}]}
+
+    class _Manifest:
+        id = "__preflight_probe__"
+        requirements = ["pandas>=2.0"]
+
+    real = package_preflight.node_registry.manifests
+    package_preflight.node_registry.manifests = lambda: [_Manifest()]
+    try:
+        missing = find_missing_packages(graph, ["requests"])
+    finally:
+        package_preflight.node_registry.manifests = real
+
+    assert "pandas>=2.0" in missing
+    assert missing["pandas>=2.0"] == ["n1"]

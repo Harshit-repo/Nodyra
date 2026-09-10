@@ -30,9 +30,7 @@ explains what you can and cannot do. It is a summary for convenience — the
 The default Community product posture includes up to five seats, ten active
 deployments, unlimited local workflow drafts, three environments, one
 sandboxed runner, and basic health/metrics visibility. Limits reject new
-activity without deleting existing workflows, runs, or artifacts. Current
-limits are part of an adoption experiment; see
-[the measurement contract](adoption-metrics.md).
+activity without deleting existing workflows, runs, or artifacts.
 
 ## What you CANNOT do without a commercial agreement
 
@@ -52,14 +50,13 @@ and OEM licenses are available.
 
 **Is Nodyra open source?**
 Not by the OSI definition — the Sustainable Use License restricts commercial
-redistribution and hosting. It is *fair-code*, the same model n8n uses: source
-available, free to self-host, commercially protected.
+redistribution and hosting. It is *fair-code*: source available, free to
+self-host for permitted uses, and commercially protected.
 
 **Why not MIT or Apache?**
 A permissive license would let anyone — including large cloud vendors — resell
 Nodyra without contributing back. The fair-code model keeps self-hosting free
-while funding continued development. Our full reasoning is documented in the
-[licensing & monetization report](licensing-and-monetization-report.md).
+while funding continued development.
 
 **I'm an agency. Can I build Nodyra workflows for clients and charge for it?**
 Yes. Your time and expertise are yours to sell. The client should run its own
@@ -69,7 +66,7 @@ do is run one central Nodyra you charge many clients to access.
 **Do Enterprise features stop working when a license expires?**
 Licensing is designed to soft-fail: expiry downgrades limits to Community and
 disables gated features for *new* activity, but never deletes data or stops
-existing workflows destructively. See the licensing plan for mechanics.
+existing workflows destructively.
 
 **Can I evaluate the Enterprise code?**
 You may read the Enterprise source for evaluation, audit, and security review.

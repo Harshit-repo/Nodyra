@@ -1,3 +1,5 @@
+clusterDomain: cluster.local
+
 image:
   repository: nodyra
   tag: "1.0.0"
@@ -51,6 +53,8 @@ runtime:
 web:
   replicas: 1
   port: 5173
+  # API artifact limit (50 MiB by default) plus multipart framing.
+  maxBodySize: "52m"
   # uid/gid of the nginx worker user in the nginx:alpine base image.
   runAsUser: 101
   # Blank repository defaults to "<image.repository>-web".
@@ -71,9 +75,21 @@ securityContext:
   runAsUser: 10001
   runAsGroup: 10001
   fsGroup: 10001
-  # /app/envs, /app/artifacts and /tmp are mounted as emptyDir so the rest of
-  # the filesystem can be immutable. Set false only to debug a write failure.
+  # Runtime data is mounted separately so the image filesystem stays immutable.
   readOnlyRootFilesystem: true
+
+# API and workers require shared ReadWriteMany storage. Choose an RWX-capable
+# StorageClass (for example NFS/EFS/Azure Files) or provide existing RWX claims.
+# Claims are retained on uninstall. Disable only for disposable evaluations.
+persistence:
+  enabled: true
+  storageClass: ""
+  envs:
+    existingClaim: ""
+    size: 10Gi
+  artifacts:
+    existingClaim: ""
+    size: 20Gi
 
 serviceAccount:
   # A dedicated ServiceAccount with no API token mounted. Nodyra never calls
@@ -155,6 +171,10 @@ secret:
 ingress:
   enabled: false
   className: ""
+  # Match web.maxBodySize in your ingress controller too. For ingress-nginx:
+  # annotations:
+  #   nginx.ingress.kubernetes.io/proxy-body-size: "52m"
+  annotations: {}
   host: nodyra.example.com
   # TLS should be enabled for any production deployment.  Session cookies
   # have Secure: true so cookie-based auth silently breaks on plain HTTP.

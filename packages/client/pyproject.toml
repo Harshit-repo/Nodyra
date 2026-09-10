@@ -45,6 +45,6 @@ packages = ["nodyra_client"]
 include = ["nodyra_client", "README.md", "LICENSE", "tests"]
 
 [project.urls]
-Homepage = "https://github.com/Harshit-repo/nodyra"
-Documentation = "https://github.com/Harshit-repo/nodyra/blob/main/packages/client/README.md"
-Changelog = "https://github.com/Harshit-repo/nodyra/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Harshit-repo/Nodyra"
+Documentation = "https://github.com/Harshit-repo/Nodyra/blob/main/packages/client/README.md"
+Changelog = "https://github.com/Harshit-repo/Nodyra/blob/main/CHANGELOG.md"

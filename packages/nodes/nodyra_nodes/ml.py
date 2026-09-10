@@ -111,10 +111,16 @@ def is_model_ref(value: Any) -> bool:
     )
 
 
-def _make_model_ref(pipeline, *, task: str, algorithm: str,
-                    features: list[str], target: str,
-                    classes: list[Any] | None = None,
-                    name: str = "model.joblib") -> dict[str, Any]:
+def _make_model_ref(
+    pipeline,
+    *,
+    task: str,
+    algorithm: str,
+    features: list[str],
+    target: str,
+    classes: list[Any] | None = None,
+    name: str = "model.joblib",
+) -> dict[str, Any]:
     import joblib  # type: ignore[import-not-found]
 
     buf = io.BytesIO()
@@ -245,8 +251,7 @@ def _feature_importances(pipeline, features: list[str]) -> list[dict[str, Any]] 
         arr = np.asarray(coef)
         importances = np.abs(arr).mean(axis=0) if arr.ndim > 1 else np.abs(arr)
     pairs = [
-        {"feature": f, "importance": _num(v)}
-        for f, v in zip(features, importances, strict=False)
+        {"feature": f, "importance": _num(v)} for f, v in zip(features, importances, strict=False)
     ]
     pairs.sort(key=lambda p: p["importance"], reverse=True)
     return pairs
@@ -295,8 +300,7 @@ _REGRESSOR_ALGOS = [
         "algorithm": {"choices": _CLASSIFIER_ALGOS},
         "test_size": {
             "group": "Options",
-            "description": "Fraction of rows held out to score the model "
-            "(0.0–0.9).",
+            "description": "Fraction of rows held out to score the model (0.0–0.9).",
         },
         "scale": {"group": "Options", "description": "Standardize features before training."},
         "random_state": {"group": "Options", "description": "Seed for a reproducible split."},
@@ -352,9 +356,7 @@ def train_classifier(
     else:
         x_train, x_test, y_train, y_test = x, x, y, y
 
-    pipeline = _build_pipeline(
-        _classifier(algorithm, random_state, max_iter), scale=scale
-    )
+    pipeline = _build_pipeline(_classifier(algorithm, random_state, max_iter), scale=scale)
     pipeline.fit(x_train, y_train)
     preds = pipeline.predict(x_test)
 
@@ -363,12 +365,8 @@ def train_classifier(
         "task": "classification",
         "algorithm": algorithm,
         "accuracy": _num(accuracy_score(y_test, preds)),
-        "precision": _num(
-            precision_score(y_test, preds, average="weighted", zero_division=0)
-        ),
-        "recall": _num(
-            recall_score(y_test, preds, average="weighted", zero_division=0)
-        ),
+        "precision": _num(precision_score(y_test, preds, average="weighted", zero_division=0)),
+        "recall": _num(recall_score(y_test, preds, average="weighted", zero_division=0)),
         "f1": _num(f1_score(y_test, preds, average="weighted", zero_division=0)),
         "classes": _num(classes),
         "confusion_matrix": _num(confusion_matrix(y_test, preds, labels=classes)),
@@ -393,7 +391,7 @@ def train_classifier(
 
 @node(
     name="Train Regressor",
-    requirements=["scikit-learn", "joblib", "pandas"],
+    requirements=["scikit-learn", "joblib", "pandas", "numpy>=1.24"],
     id="train_regressor",
     category="Machine Learning",
     icon="cpu",
@@ -410,8 +408,7 @@ def train_classifier(
         "algorithm": {"choices": _REGRESSOR_ALGOS},
         "test_size": {
             "group": "Options",
-            "description": "Fraction of rows held out to score the model "
-            "(0.0–0.9).",
+            "description": "Fraction of rows held out to score the model (0.0–0.9).",
         },
         "scale": {"group": "Options", "description": "Standardize features before training."},
         "random_state": {"group": "Options", "description": "Seed for a reproducible split."},
@@ -505,7 +502,7 @@ def train_regressor(
 
 @node(
     name="Predict",
-    requirements=["scikit-learn", "joblib", "pandas"],
+    requirements=["scikit-learn", "joblib", "pandas", "numpy>=1.24"],
     id="ml_predict",
     category="Machine Learning",
     icon="sparkles",
@@ -517,8 +514,7 @@ def train_regressor(
             "description": "Name of the column to write predictions into.",
         },
         "include_proba": {
-            "description": "For classifiers, append per-class probability "
-            "columns (proba_<class>).",
+            "description": "For classifiers, append per-class probability columns (proba_<class>).",
         },
     },
 )
@@ -558,7 +554,7 @@ def ml_predict(
 
 @node(
     name="Evaluate Model",
-    requirements=["scikit-learn", "joblib", "pandas"],
+    requirements=["scikit-learn", "joblib", "pandas", "numpy>=1.24"],
     id="evaluate_model",
     category="Machine Learning",
     icon="gauge",
@@ -632,9 +628,7 @@ def evaluate_model(
     return {
         "task": "classification",
         "accuracy": _num(accuracy_score(y, preds)),
-        "precision": _num(
-            precision_score(y, preds, average="weighted", zero_division=0)
-        ),
+        "precision": _num(precision_score(y, preds, average="weighted", zero_division=0)),
         "recall": _num(recall_score(y, preds, average="weighted", zero_division=0)),
         "f1": _num(f1_score(y, preds, average="weighted", zero_division=0)),
         "classes": _num(classes),
@@ -645,7 +639,7 @@ def evaluate_model(
 
 @node(
     name="Select Features",
-    requirements=["scikit-learn", "joblib", "pandas"],
+    requirements=["scikit-learn", "joblib", "pandas", "numpy>=1.24"],
     id="select_features",
     category="Machine Learning",
     icon="filter",
@@ -707,8 +701,7 @@ def select_features(
     selector = SelectKBest(score_func=score_func, k=keep)
     selector.fit(x, y)
     scores = [
-        {"feature": f, "score": _num(s)}
-        for f, s in zip(numeric, selector.scores_, strict=False)
+        {"feature": f, "score": _num(s)} for f, s in zip(numeric, selector.scores_, strict=False)
     ]
     scores.sort(key=lambda p: (p["score"] is None, -(p["score"] or 0.0)))
     chosen = [s["feature"] for s in scores[:keep]]
@@ -741,9 +734,7 @@ def save_model(model: Any = None, name: str = "model.joblib") -> dict[str, Any]:
     through unchanged so downstream Predict/Evaluate nodes still work.
     """
     if not is_model_ref(model):
-        raise ValueError(
-            "Save Model expects a trained model on its 'model' input."
-        )
+        raise ValueError("Save Model expects a trained model on its 'model' input.")
     filename = (name or "model.joblib").strip() or "model.joblib"
     if not filename.lower().endswith((".joblib", ".pkl")):
         filename = f"{filename}.joblib"
@@ -788,9 +779,7 @@ def _registry_root():
 
     store = artifact_store.get()
     if store is None:
-        raise RuntimeError(
-            "model registry is unavailable in this execution context."
-        )
+        raise RuntimeError("model registry is unavailable in this execution context.")
     storage_key = f"{getattr(store, 'key_prefix', '')}model-registry"
     if hasattr(store, "_path_for_key"):
         root = store._path_for_key(storage_key)
@@ -842,9 +831,7 @@ def register_model(model: Any = None, name: str = "") -> dict[str, Any]:
     from datetime import UTC, datetime
 
     if not is_model_ref(model):
-        raise ValueError(
-            "Register Model expects a trained model on its 'model' input."
-        )
+        raise ValueError("Register Model expects a trained model on its 'model' input.")
     if not name or not name.strip():
         raise ValueError("a model name is required to register.")
 

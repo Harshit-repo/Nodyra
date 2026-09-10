@@ -24,6 +24,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
   value: {{ .Values.redis.url | quote }}
 - name: QUEUE_BACKEND
   value: "redis"
+- name: ENVS_DIR
+  value: "/app/envs"
+- name: ARTIFACTS_DIR
+  value: "/app/artifacts"
 - name: RUNTIME_MODE
   value: "production"
 - name: API_REPLICA_COUNT
@@ -117,16 +121,24 @@ capabilities:
 {{- end -}}
 
 {{/*
-Writable scratch for a read-only root filesystem. These paths are ephemeral
-either way — before this chart set readOnlyRootFilesystem they lived on the
-container's writable layer, which is discarded on restart just the same — so
-mounting them as emptyDir changes durability not at all.
+API and workers must see the same environments and local artifacts. Only
+temporary files belong on emptyDir in a persistent deployment.
 */}}
 {{- define "nodyra.scratchVolumes" -}}
 - name: envs
+  {{- if .Values.persistence.enabled }}
+  persistentVolumeClaim:
+    claimName: {{ .Values.persistence.envs.existingClaim | default (printf "%s-envs" .Release.Name) }}
+  {{- else }}
   emptyDir: {}
+  {{- end }}
 - name: artifacts
+  {{- if .Values.persistence.enabled }}
+  persistentVolumeClaim:
+    claimName: {{ .Values.persistence.artifacts.existingClaim | default (printf "%s-artifacts" .Release.Name) }}
+  {{- else }}
   emptyDir: {}
+  {{- end }}
 - name: tmp
   emptyDir: {}
 {{- end -}}

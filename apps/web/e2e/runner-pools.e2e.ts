@@ -12,6 +12,15 @@ test("creates an agent runner pool and mints a machine install token", async ({
   const poolName = uniqueName("E2E Agent Pool");
   const machineName = uniqueName("e2e-worker");
   await page.goto("/runner-pools");
+  await expect(page.getByRole("heading", { name: /^Runner Pools/ })).toBeVisible();
+  // The default production install is Community; the development E2E
+  // server supplies a throwaway Enterprise key. Verify both real outcomes.
+  const licenseSettings = page.getByRole("link", { name: "View license settings" });
+  if (await licenseSettings.isVisible()) {
+    await expect(page.getByRole("button", { name: /New pool|Create runner pool/ })).toHaveCount(0);
+    await expect(page.getByText(/Enterprise adds dedicated runner pools/)).toBeVisible();
+    return;
+  }
   await page.getByRole("button", { name: /New pool|Create runner pool/ }).first().click();
 
   const poolDialog = page.getByRole("dialog", { name: "New runner pool" });
@@ -25,7 +34,8 @@ test("creates an agent runner pool and mints a machine install token", async ({
       new URL(response.url()).pathname === "/api/runner-pools",
   );
   await poolDialog.getByRole("button", { name: "Create pool" }).click();
-  expect((await created).ok()).toBe(true);
+  const createdResponse = await created;
+  expect(createdResponse.ok(), await createdResponse.text()).toBe(true);
   await expect(poolDialog).toBeHidden();
 
   const poolCard = page.locator(".pool-card", { hasText: poolName });

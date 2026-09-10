@@ -46,6 +46,7 @@ predate this field simply omit it, so hosts must read it with ``.get()``.
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import sys
 import time
@@ -172,6 +173,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
     request_id = request.get("request_id", "")
     run_id = str(request.get("run_id") or request_id)
     _active_request_id = request_id
+    sent_artifacts: set[str] = set()
 
     async def emit_heartbeats() -> None:
         while True:
@@ -186,6 +188,20 @@ async def _handle_run(request: dict[str, Any]) -> None:
             )
 
     async def on_event(event: dict) -> None:
+        if request.get("artifacts_upload_url"):
+            from nodyra_runtime.artifact_outputs import _refs
+
+            remote_store = artifact_store.get()
+            if remote_store is not None:
+                for ref in _refs(event):
+                    await asyncio.to_thread(remote_store.ensure_uploaded, ref)
+        if request.get("stream_artifacts"):
+            from nodyra_runtime.artifact_outputs import output_messages
+
+            store = artifact_store.get()
+            if store is not None:
+                for message in output_messages(event, store, sent_artifacts):
+                    _emit({"request_id": request_id, **message})
         _emit({"request_id": request_id, **event})
 
     # Register any per-run user code modules into the local registry. The
@@ -219,9 +235,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
 
     # Per-org amplification caps (multi-tenancy C5); empty = uncapped.
     raw_limits = request.get("org_limits")
-    limits_token = org_run_limits.set(
-        raw_limits if isinstance(raw_limits, dict) else {}
-    )
+    limits_token = org_run_limits.set(raw_limits if isinstance(raw_limits, dict) else {})
     artifact_token = None
     artifacts_upload_url = request.get("artifacts_upload_url")
     artifacts_dir = request.get("artifacts_dir")
@@ -253,14 +267,16 @@ async def _handle_run(request: dict[str, Any]) -> None:
     try:
         graph = WorkflowGraph.model_validate(request["graph"])
         raw_agent_resume = request.get("agent_action_resume") or {}
-        agent_action_resume = {
-            str(node_id): AgentActionRequest.model_validate(action_request)
-            for node_id, action_request in raw_agent_resume.items()
-            if isinstance(action_request, dict)
-        } if isinstance(raw_agent_resume, dict) else {}
-        sub_meta = SubworkflowMeta.from_payload(
-            request.get("subworkflow_meta") or {}
+        agent_action_resume = (
+            {
+                str(node_id): AgentActionRequest.model_validate(action_request)
+                for node_id, action_request in raw_agent_resume.items()
+                if isinstance(action_request, dict)
+            }
+            if isinstance(raw_agent_resume, dict)
+            else {}
         )
+        sub_meta = SubworkflowMeta.from_payload(request.get("subworkflow_meta") or {})
         result = await execute(
             graph,
             registry,
@@ -294,6 +310,13 @@ async def _handle_run(request: dict[str, Any]) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
         if artifact_token is not None:
+            if artifacts_upload_url:
+                try:
+                    await asyncio.to_thread(artifact_store.get().cleanup)
+                except OSError:
+                    logging.getLogger(__name__).warning(
+                        "Could not clean completed remote-run scratch files", exc_info=True
+                    )
             artifact_store.reset(artifact_token)
         org_run_limits.reset(limits_token)
         for module_id in loaded_module_ids:
@@ -310,9 +333,7 @@ def _resolve_callback(message: dict[str, Any]) -> bool:
     if future is None or future.done():
         return True
     if message.get("type") == "call_workflow_error":
-        future.set_exception(
-            RuntimeError(message.get("error", "remote call_workflow error"))
-        )
+        future.set_exception(RuntimeError(message.get("error", "remote call_workflow error")))
     elif "inline_graph" in message:
         # Inline directive — the ENGINE adapter executes it with correct
         # depth/chain meta (nodyra.engine.subworkflows.make_workflow_caller).
@@ -332,12 +353,14 @@ def _resolve_callback(message: dict[str, Any]) -> bool:
 # Node types that call ``workflow_caller`` and therefore need the host-side
 # stdin reader loop to stay alive so ``call_workflow_response`` messages can
 # be dispatched. If a new node type uses ``workflow_caller``, add it here.
-_HOST_CALLBACK_NODE_TYPES: frozenset[str] = frozenset({
-    "execute_workflow",
-    "map_items",
-    "map_group",
-    "map_dataset",
-})
+_HOST_CALLBACK_NODE_TYPES: frozenset[str] = frozenset(
+    {
+        "execute_workflow",
+        "map_items",
+        "map_group",
+        "map_dataset",
+    }
+)
 
 
 def _needs_host_callbacks(message: dict[str, Any]) -> bool:
@@ -346,8 +369,7 @@ def _needs_host_callbacks(message: dict[str, Any]) -> bool:
     if not isinstance(nodes, list):
         return False
     return any(
-        isinstance(node, dict) and node.get("type") in _HOST_CALLBACK_NODE_TYPES
-        for node in nodes
+        isinstance(node, dict) and node.get("type") in _HOST_CALLBACK_NODE_TYPES for node in nodes
     )
 
 
@@ -367,6 +389,15 @@ async def run_forever() -> None:
             continue
 
         if _resolve_callback(message):
+            continue
+
+        if message.get("type") == "artifact_input":
+            from nodyra_runtime.artifact_inputs import receive_upload
+
+            try:
+                receive_upload(message)
+            except (ValueError, KeyError, OSError) as exc:
+                _emit({"type": "error", "error": f"Upload transfer failed: {exc}"})
             continue
 
         if message.get("type") != "run":

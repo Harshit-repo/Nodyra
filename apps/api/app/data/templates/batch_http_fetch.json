@@ -54,7 +54,7 @@
         "id": "each",
         "type": "loop_start",
         "params": {
-          "mode": "items",
+          "mode": "each",
           "concurrency": 4,
           "on_error": "continue"
         },
@@ -81,7 +81,7 @@
         "type": "loop_end",
         "params": {
           "loop_start_id": "each",
-          "output_mode": "collect"
+          "output_mode": "records"
         },
         "position": {
           "x": 1120,

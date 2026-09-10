@@ -1,3 +1,6 @@
+from unittest.mock import AsyncMock
+
+import pytest
 from httpx import AsyncClient
 
 
@@ -27,6 +30,61 @@ def _trigger_to_code(code: str) -> dict:
             }
         ],
     }
+
+
+@pytest.mark.parametrize("same_environment", [False, True])
+async def test_sandbox_child_never_falls_back_to_host_subprocess(
+    client, monkeypatch, same_environment
+):
+    from app.config import settings
+    from app.services import runtime_pool, sandbox_pool
+    from app.services.subworkflows import resolve_subworkflow
+    from nodyra.engine.subworkflows import InlineSubworkflow, SubworkflowCall
+
+    workflow = (await client.post("/workflows", json={"name": "Sandbox child"})).json()
+    await client.put(
+        f"/workflows/{workflow['id']}", json={"graph": _trigger_to_code("output = input")}
+    )
+    monkeypatch.setattr(settings, "use_subprocess_runner", True)
+    host_dispatch = AsyncMock(side_effect=AssertionError("Sandbox child escaped to host execution"))
+    sandbox_dispatch = AsyncMock(return_value="success")
+    monkeypatch.setattr(runtime_pool.pool, "dispatch_subworkflow", host_dispatch)
+    monkeypatch.setattr(sandbox_pool.pool, "dispatch", sandbox_dispatch)
+    result = await resolve_subworkflow(
+        SubworkflowCall(
+            workflow_id=workflow["id"],
+            parameters=7,
+            use_published=False,
+            parent_run_id=None,
+            depth=1,
+            org_id="default",
+        ),
+        parent_env_id=None if same_environment else "parent-env",
+        parent_sandboxed=True,
+    )
+    host_dispatch.assert_not_awaited()
+    if same_environment:
+        assert isinstance(result, InlineSubworkflow)
+        sandbox_dispatch.assert_not_awaited()
+    else:
+        sandbox_dispatch.assert_awaited_once()
+        assert sandbox_dispatch.await_args.kwargs["org_id"] == "default"
+
+
+async def test_failed_subworkflow_marks_parent_failed(client):
+    child = (await client.post("/workflows", json={"name": "Failing child"})).json()
+    await client.put(
+        f"/workflows/{child['id']}",
+        json={"graph": _trigger_to_code("raise ValueError('invoice rejected')")},
+    )
+    parent = (await client.post("/workflows", json={"name": "Parent failure propagation"})).json()
+    graph = _trigger_to_code("output = input")
+    graph["nodes"][1].update(type="execute_workflow", params={"workflow_id": child["id"]})
+    await client.put(f"/workflows/{parent['id']}", json={"graph": graph})
+    run_id = (await client.post(f"/workflows/{parent['id']}/run", json={})).json()["run_id"]
+    run = (await client.get(f"/runs/{run_id}")).json()
+    assert run["status"] == "error", run
+    assert any("invoice rejected" in (node.get("error") or "") for node in run["node_runs"])
 
 
 async def test_execute_workflow_runs_sub_workflow(client: AsyncClient) -> None:
@@ -66,9 +124,7 @@ async def test_execute_workflow_runs_sub_workflow(client: AsyncClient) -> None:
     }
     await client.put(f"/workflows/{parent['id']}", json={"graph": parent_graph})
 
-    run_id = (
-        await client.post(f"/workflows/{parent['id']}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{parent['id']}/run", json={})).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
     results = {n["node_id"]: n for n in run["node_runs"]}
     assert run["status"] == "success"
@@ -104,9 +160,7 @@ async def test_execute_workflow_self_call_is_a_cycle(client: AsyncClient) -> Non
     }
     await client.put(f"/workflows/{workflow['id']}", json={"graph": graph})
 
-    run_id = (
-        await client.post(f"/workflows/{workflow['id']}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow['id']}/run", json={})).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
     results = {n["node_id"]: n for n in run["node_runs"]}
     assert run["status"] == "error"
@@ -207,9 +261,7 @@ async def test_execute_workflow_requires_workflow_id(client: AsyncClient) -> Non
     }
     await client.put(f"/workflows/{workflow['id']}", json={"graph": graph})
 
-    run_id = (
-        await client.post(f"/workflows/{workflow['id']}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow['id']}/run", json={})).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
     results = {n["node_id"]: n for n in run["node_runs"]}
     assert results["sub"]["status"] == "error"

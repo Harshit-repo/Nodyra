@@ -9,6 +9,19 @@ node_modules
 **/dist
 # Secrets — never bake into images
 .env
+**/.env
+**/.env.*
+**/*.db
+**/*.db-*
+**/*.log
+.secrets/
+.tmp/
+.venv-*/
+.agents/
+.codebase-memory/
+apps/api/artifacts/
+apps/api/data/
+packages/graphify-out/
 .env.local
 .env.*.local
 deploy/.env
@@ -16,7 +29,6 @@ deploy/.env
 apps/api/tests/
 packages/*/tests/
 docs/
-design/
 brand/
 # CI config
 .github/

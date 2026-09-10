@@ -16,7 +16,8 @@
 <rect x="300" y="40" width="4" height="40" rx="2" fill="#2E4A7D"/>
 <text x="338" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">sort</text>
 <line x1="376" y1="60" x2="398" y2="60" stroke="#C3C9D4" stroke-width="1.5"/>
-<rect x="398" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#1F6B48" stroke-width="1.5"/>
-<rect x="398" y="40" width="4" height="40" rx="2" fill="#1F6B48"/>
-<text x="436" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">csv write</text>
+<rect x="398" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#2E4A7D" stroke-width="1.5"/>
+<rect x="398" y="40" width="4" height="40" rx="2" fill="#2E4A7D"/>
+<text x="436" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">records to </text>
+<text x="468" y="110" text-anchor="end" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="9" fill="#6B7484">+1 more</text>
 </svg>

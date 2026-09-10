@@ -67,18 +67,14 @@ async def _run_git_command(
     )
     timeout = max(1, int(timeout_seconds or 300))
     try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError as exc:
         proc.kill()
         stdout_bytes, stderr_bytes = await proc.communicate()
         stderr = stderr_bytes.decode("utf-8", "replace")
         if stderr:
             stderr = f": {stderr[:500]}"
-        raise RuntimeError(
-            f"{operation}: timed out after {timeout}s{stderr}"
-        ) from exc
+        raise RuntimeError(f"{operation}: timed out after {timeout}s{stderr}") from exc
 
     duration_ms = int((time.monotonic() - started) * 1000)
     returncode = proc.returncode or 0
@@ -100,6 +96,7 @@ async def _run_git_command(
 
 @node(
     name="AWS Lambda Invoke",
+    requirements=["boto3>=1.34"],
     id="aws_lambda_invoke",
     category="Integrations",
     icon="brand:awslambda",
@@ -114,8 +111,7 @@ async def _run_git_command(
         },
         "payload_json": {
             "description": (
-                "Invocation payload as JSON. Falls back to the wired input "
-                "(serialised to JSON)."
+                "Invocation payload as JSON. Falls back to the wired input (serialised to JSON)."
             ),
             "multiline": True,
         },
@@ -175,6 +171,7 @@ def aws_lambda_invoke(
 
 @node(
     name="AWS SQS Send Message",
+    requirements=["boto3>=1.34"],
     id="aws_sqs_send",
     category="Integrations",
     icon="brand:amazonsqs",
@@ -189,8 +186,7 @@ def aws_lambda_invoke(
         },
         "body": {
             "description": (
-                "Message body. Falls back to the wired input (dicts/lists "
-                "are JSON-serialised)."
+                "Message body. Falls back to the wired input (dicts/lists are JSON-serialised)."
             ),
             "multiline": True,
         },
@@ -240,6 +236,7 @@ def aws_sqs_send(
 
 @node(
     name="AWS SQS Receive Messages",
+    requirements=["boto3>=1.34"],
     id="aws_sqs_receive",
     category="Integrations",
     icon="brand:amazonsqs",
@@ -294,9 +291,7 @@ def aws_sqs_receive(
     messages = response.get("Messages", [])
     if delete_after_receive and messages:
         for msg in messages:
-            client.delete_message(
-                QueueUrl=queue_url, ReceiptHandle=msg["ReceiptHandle"]
-            )
+            client.delete_message(QueueUrl=queue_url, ReceiptHandle=msg["ReceiptHandle"])
     return [
         {
             "message_id": msg.get("MessageId"),
@@ -314,6 +309,7 @@ def aws_sqs_receive(
 
 @node(
     name="AWS SNS Publish",
+    requirements=["boto3>=1.34"],
     id="aws_sns_publish",
     category="Integrations",
     icon="brand:amazonsns",
@@ -332,8 +328,7 @@ def aws_sqs_receive(
         },
         "message": {
             "description": (
-                "Message body. Falls back to the wired input (dicts/lists "
-                "are JSON-serialised)."
+                "Message body. Falls back to the wired input (dicts/lists are JSON-serialised)."
             ),
             "multiline": True,
         },
@@ -428,13 +423,9 @@ def ssh_execute(
     private_key = str(creds.get("private_key") or "")
     host_key = str(creds.get("host_key") or "").strip()
     if not host or not username or not command:
-        raise ValueError(
-            "ssh_execute: host, command, and credentials (username) are required"
-        )
+        raise ValueError("ssh_execute: host, command, and credentials (username) are required")
     if not password and not private_key:
-        raise ValueError(
-            "ssh_execute: credentials must include password or private_key"
-        )
+        raise ValueError("ssh_execute: credentials must include password or private_key")
     try:
         import io as io_mod
 
@@ -455,9 +446,7 @@ def ssh_execute(
                 base64.b64decode(encoded_key, validate=True),
             )
         except (ValueError, TypeError, binascii.Error) as exc:
-            raise ValueError(
-                "ssh_execute: host_key must be an OpenSSH public key"
-            ) from exc
+            raise ValueError("ssh_execute: host_key must be an OpenSSH public key") from exc
         lookup_host = host if int(port or 22) == 22 else f"[{host}]:{int(port)}"
         client.get_host_keys().add(lookup_host, pinned_key.get_name(), pinned_key)
     client.set_missing_host_key_policy(paramiko.RejectPolicy())
@@ -542,18 +531,14 @@ async def git_clone(
     if not url or not directory:
         raise ValueError("git_clone: url and directory are required")
     if shutil.which("git") is None:
-        raise RuntimeError(
-            "git_clone: 'git' binary not found on PATH; install git in this env"
-        )
+        raise RuntimeError("git_clone: 'git' binary not found on PATH; install git in this env")
     argv = ["git", "clone"]
     if branch:
         argv.extend(["--branch", branch])
     if depth and depth > 0:
         argv.extend(["--depth", str(int(depth))])
     argv.extend([url, directory])
-    result = await _run_git_command(
-        argv, operation="git_clone", timeout_seconds=timeout_seconds
-    )
+    result = await _run_git_command(argv, operation="git_clone", timeout_seconds=timeout_seconds)
     return {
         "directory": directory,
         **result,
@@ -597,14 +582,10 @@ async def git_pull(
     if not directory:
         raise ValueError("git_pull: directory is required")
     if shutil.which("git") is None:
-        raise RuntimeError(
-            "git_pull: 'git' binary not found on PATH; install git in this env"
-        )
+        raise RuntimeError("git_pull: 'git' binary not found on PATH; install git in this env")
     argv = ["git", "-C", directory, "pull"]
     if remote:
         argv.append(remote)
     if branch:
         argv.append(branch)
-    return await _run_git_command(
-        argv, operation="git_pull", timeout_seconds=timeout_seconds
-    )
+    return await _run_git_command(argv, operation="git_pull", timeout_seconds=timeout_seconds)

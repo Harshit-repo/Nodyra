@@ -412,7 +412,7 @@ COLOR_SCHEMES = ["default", "viridis", "plasma", "dark", "pastel"]
     category=CHARTS_CATEGORY,
     role="executable",
     icon="bar-chart-2",
-    requirements=["matplotlib>=3.8"],
+    requirements=["matplotlib>=3.8", "numpy>=1.24"],
     inputs=["main"],
     outputs=["main"],
     param_groups={
@@ -809,7 +809,7 @@ OPENCV_OPS = [
     category=IMAGE_CATEGORY,
     role="executable",
     icon="aperture",
-    requirements=["opencv-python>=4.8"],
+    requirements=["opencv-python>=4.8", "numpy>=1.24"],
     inputs=["main"],
     outputs=["main"],
     param_groups={"Options": ["threshold_value", "blur_kernel", "cascade_file", "output_format"]},

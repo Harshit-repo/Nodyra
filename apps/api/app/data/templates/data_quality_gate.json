@@ -13,7 +13,7 @@
   "credential_free": false,
   "prerequisites": [
     "A CSV file readable by the Nodyra process",
-    "ydata-profiling installed in the workflow environment"
+    "pandas>=2.0, ydata-profiling>=4.0,<5, and setuptools>=78.1.1,<81 installed in the workflow environment"
   ],
   "expected_result": "A profile report plus a separate outliers collection; the run fails when outliers exceed your threshold.",
   "permissions": [
@@ -67,7 +67,18 @@
         },
         "position": {
           "x": 840,
-          "y": 40
+          "y": -100
+        }
+      },
+      {
+        "id": "gate",
+        "type": "code",
+        "params": {
+          "code": "summary = input or {}\nif summary.get('n_numeric', 0) != summary.get('n_rows', 0):\n    raise ValueError('quality gate failed: non-numeric or missing values')\nif summary.get('n_outliers', 0) > 0:\n    raise ValueError(f\"quality gate failed: {summary['n_outliers']} outliers\")\noutput = {**summary, 'quality_passed': True}"
+        },
+        "position": {
+          "x": 840,
+          "y": 160
         }
       }
     ],
@@ -81,8 +92,12 @@
         "target": "outliers"
       },
       {
-        "source": "outliers",
+        "source": "read",
         "target": "profile"
+      },
+      {
+        "source": "outliers",
+        "target": "gate"
       }
     ]
   }

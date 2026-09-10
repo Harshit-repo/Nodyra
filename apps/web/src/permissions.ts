@@ -24,6 +24,7 @@ export type Permission =
   | "code_module:write"
   | "pinned:write"
   | "artifact:delete"
+  | "artifact:write"
   | "credential:read"
   | "credential:test"
   | "credential:write"
@@ -40,6 +41,7 @@ const PERMISSION_MIN_ROLE: Record<Permission, Role> = {
   "code_module:write": "editor",
   "pinned:write": "editor",
   "artifact:delete": "editor",
+  "artifact:write": "editor",
   "credential:read": "editor",
   "credential:test": "editor",
   "credential:write": "admin",

@@ -158,7 +158,7 @@ def test_run_timeout_marks_dead(monkeypatch):
         async def on_event(e):
             pass
 
-        with pytest.raises(RuntimeError, match="exceeded overall timeout"):
+        with pytest.raises(TimeoutError, match="exceeded overall timeout"):
             await worker.run(
                 "run1", graph={}, cache=None, targets=None, workflow_modules=[], on_event=on_event
             )
@@ -272,7 +272,7 @@ def test_run_heartbeats_do_not_mask_overall_timeout(monkeypatch):
 
         producer = asyncio.create_task(emit_heartbeats())
         try:
-            with pytest.raises(RuntimeError, match="exceeded overall timeout"):
+            with pytest.raises(TimeoutError, match="exceeded overall timeout"):
                 await worker.run(
                     "run1",
                     graph={},
@@ -327,7 +327,7 @@ def test_call_workflow_bridged_to_resolver():
         sock = client.containers_made[0].sock._sock
         resolved = asyncio.Event()
 
-        async def resolver(call, parent_env_id=None):
+        async def resolver(call, parent_env_id=None, parent_sandboxed=False):
             assert parent_env_id == "env1"
             assert call.workflow_id == "wf2"
             resolved.set()
@@ -383,7 +383,7 @@ def test_call_workflow_resolver_error_replied():
         worker = await _spawned_worker(client)
         sock = client.containers_made[0].sock._sock
 
-        async def resolver(call, parent_env_id=None):
+        async def resolver(call, parent_env_id=None, parent_sandboxed=False):
             raise ValueError("no such workflow")
 
         async def on_event(e):

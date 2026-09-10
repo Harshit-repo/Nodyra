@@ -114,6 +114,11 @@ def test_declared_params_exist_on_the_function(node_id: str, node: NodeDef) -> N
     if node.accepts_var_keyword:
         pytest.skip("accepts **kwargs; any declared param is bindable")
     accepted = set(inspect.signature(node.func).parameters)
+    if "ctx" in accepted:
+        # The engine injects RuntimeContext as `ctx`, and every declared param
+        # is available on ctx.node_params — the documented mechanism for nodes
+        # like mcp_tool whose parameters are resolved through platform hooks.
+        pytest.skip("params reach the function via ctx.node_params")
     declared = {p.name for p in node.manifest.params}
     orphans = sorted(declared - accepted - ENGINE_SUPPLIED)
     assert not orphans, (

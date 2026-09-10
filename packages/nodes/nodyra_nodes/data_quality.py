@@ -166,9 +166,7 @@ def schema_validate(
         "valid_rate": len(valid_rows) / max(len(rows), 1),
     }
     valid_dataset = (
-        records_to_dataset(valid_rows, name="valid-rows.parquet")
-        if include_valid_rows
-        else None
+        records_to_dataset(valid_rows, name="valid-rows.parquet") if include_valid_rows else None
     )
     return {
         # "main" stays the summary so existing graphs keep working, but the
@@ -224,6 +222,11 @@ def expectation_suite_run(
         if not isinstance(exp, dict):
             continue
         exp_type = str(exp.get("type") or "").strip()
+        if not exp_type:
+            raise ValueError(
+                f"Expectation {exp_idx} is missing 'type'; supported types: "
+                "not_null, unique, in_set, min, max, regex."
+            )
         column = str(exp.get("column") or "").strip()
         if not column:
             raise ValueError(f"Expectation {exp_idx} is missing column.")
@@ -234,14 +237,10 @@ def expectation_suite_run(
             failed_indexes = [i for i, value in enumerate(values) if value in (None, "")]
         elif exp_type == "unique":
             counts = Counter(str(value) for value in values)
-            failed_indexes = [
-                i for i, value in enumerate(values) if counts[str(value)] > 1
-            ]
+            failed_indexes = [i for i, value in enumerate(values) if counts[str(value)] > 1]
         elif exp_type == "in_set":
             allowed = set(str(v) for v in exp.get("values", []))
-            failed_indexes = [
-                i for i, value in enumerate(values) if str(value) not in allowed
-            ]
+            failed_indexes = [i for i, value in enumerate(values) if str(value) not in allowed]
         elif exp_type == "min":
             minimum = float(exp.get("value"))
             failed_indexes = [
@@ -258,7 +257,10 @@ def expectation_suite_run(
                 i for i, value in enumerate(values) if not pattern.search(str(value or ""))
             ]
         else:
-            raise ValueError(f"Unknown expectation type: {exp_type}")
+            raise ValueError(
+                f"Expectation {exp_idx} has unsupported type {exp_type!r}; "
+                "supported types: not_null, unique, in_set, min, max, regex."
+            )
 
         passed = not failed_indexes
         result = {
@@ -378,9 +380,7 @@ def record_linkage(
             "matches": len(matches),
             "threshold": float(threshold),
         },
-        "matches": records_to_dataset(matches, name="record-linkage.parquet")
-        if matches
-        else None,
+        "matches": records_to_dataset(matches, name="record-linkage.parquet") if matches else None,
     }
 
 
@@ -426,12 +426,7 @@ def data_reconcile(
     compare = [col.strip() for col in compare_columns.split(",") if col.strip()]
     if not compare:
         compare = sorted(
-            {
-                key
-                for row in [*left_rows, *right_rows]
-                for key in row
-                if key not in keys
-            }
+            {key for row in [*left_rows, *right_rows] for key in row if key not in keys}
         )
 
     left_only = [row for key, row in left_by_key.items() if key not in right_by_key]
@@ -458,15 +453,11 @@ def data_reconcile(
     }
     return {
         "main": summary,
-        "left_only": records_to_dataset(left_only, name="left-only.parquet")
-        if left_only
-        else None,
+        "left_only": records_to_dataset(left_only, name="left-only.parquet") if left_only else None,
         "right_only": records_to_dataset(right_only, name="right-only.parquet")
         if right_only
         else None,
-        "changed": records_to_dataset(changed, name="changed.parquet")
-        if changed
-        else None,
+        "changed": records_to_dataset(changed, name="changed.parquet") if changed else None,
     }
 
 
@@ -557,9 +548,7 @@ def outlier_detect_statistical(
     }
     return {
         "main": summary,
-        "outliers": records_to_dataset(outliers, name="outliers.parquet")
-        if outliers
-        else None,
+        "outliers": records_to_dataset(outliers, name="outliers.parquet") if outliers else None,
         "kept": records_to_dataset(kept, name="kept.parquet") if kept else None,
     }
 
@@ -600,9 +589,7 @@ def string_normalize(
             text = text.strip()
         if strip_accents:
             text = "".join(
-                ch
-                for ch in unicodedata.normalize("NFKD", text)
-                if not unicodedata.combining(ch)
+                ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
             )
         if collapse_whitespace:
             text = re.sub(r"\s+", " ", text)

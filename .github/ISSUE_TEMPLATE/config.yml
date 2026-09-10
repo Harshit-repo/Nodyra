@@ -1,8 +1,7 @@
 blank_issues_enabled: false
 contact_links:
-  # TODO: replace REPLACE-ORG/REPLACE-REPO with the final GitHub location.
   - name: Security vulnerability
-    url: https://github.com/REPLACE-ORG/REPLACE-REPO/security/policy
+    url: https://github.com/Harshit-repo/Nodyra/security/policy
     about: Please report vulnerabilities privately per SECURITY.md — never in a public issue.
   - name: Commercial licensing & Enterprise
     url: mailto:sharma.har97@gmail.com

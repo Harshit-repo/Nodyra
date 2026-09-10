@@ -26,10 +26,10 @@ import app.services.queue as queue_module
 import app.services.redaction as redaction_module
 import app.services.remote_dispatch as remote_dispatch_module
 import app.services.retention as retention_module
-import app.services.stuck_run_detector as stuck_run_detector_module
 import app.services.run_checkpoints as run_checkpoints_module
 import app.services.runner as runner_module
 import app.services.runtime_pool as runtime_pool_module
+import app.services.stuck_run_detector as stuck_run_detector_module
 import app.services.subworkflows as subworkflows_module
 import app.services.triggers as triggers_module
 from app import models  # noqa: F401 - registers ORM models on Base.metadata

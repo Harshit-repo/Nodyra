@@ -12,18 +12,16 @@ available. A first local build can take longer depending on network and CPU.
 
 ## 2. Start Nodyra with Docker Compose
 
-Copy the example environment file and fill in the three required secrets:
+Copy the example environment file:
 
 ```bash
 cp deploy/.env.example deploy/.env
 ```
 
-```bash
-# in deploy/.env — all three are required; compose refuses to start without them
-INTERNAL_API_TOKEN=$(openssl rand -hex 32)
-NODYRA_SECRET_KEY=$(openssl rand -hex 32)
-MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)   # at least 8 characters
-```
+Open `deploy/.env` and replace all three `CHANGE-ME` values. Run
+`openssl rand -hex 32` three times and paste one generated value into each
+setting. Shell expressions such as `$(openssl ...)` are not expanded inside an
+environment file.
 
 Do not hand-write `deploy/.env` from scratch: `docker compose` hard-requires
 `MINIO_ROOT_PASSWORD` as well, and fails before starting anything if it is
@@ -168,8 +166,8 @@ testable, and deployable. Full guide: [MCP quickstart](mcp-quickstart.md).
   reports and copy-paste starting points.
 - [Working with datasets](datasetref.md) — DataFrame-scale data via
   artifact-backed DatasetRef handles and DuckDB SQL.
-- [CLI & Python SDK](../packages/client/README.md) — `pip install
-  nodyra-client`, run workflows from CI.
+- [CLI & Python SDK](../packages/client/README.md) — install the current client
+  from a source checkout and run workflows from CI.
 - [GitOps](gitops.md) — two-way GitHub sync for workflow definitions.
 - [Licensing guide](licensing.md) — what's free, what's paid, in plain
   English.

@@ -591,3 +591,55 @@ def test_static_and_runtime_extraction_agree() -> None:
         f"static extraction gave {static!r} but runtime extraction gave "
         f"{runtime!r}; the same function is described differently by surface"
     )
+
+def test_manifest_hides_engine_reserved_ctx() -> None:
+    """``ctx`` is the engine-injected RuntimeContext, never a config param.
+
+    Rendering it in the manifest forced authors to supply a meaningless value
+    (``mcp_tool`` validated only after users set the hidden param) and hid the
+    node's real parameters.
+    """
+    reg = NodeRegistry()
+
+    @node(
+        name="MCP-ish",
+        category="MCP",
+        registry=reg,
+        params={
+            "connection_id": {"required": True},
+            "tool_name": {"required": True},
+            "arguments": {},
+        },
+    )
+    async def mcpish(input=None, *, ctx=None):  # noqa: ANN001
+        return {"ok": True}
+
+    manifest = reg.get("mcpish").manifest
+    assert [p.name for p in manifest.params] == ["connection_id", "tool_name", "arguments"]
+    assert manifest.params[0].required is True
+    assert manifest.params[2].required is False
+
+
+def test_decorator_only_params_appear_in_manifest() -> None:
+    """Params declared in the decorator but absent from the signature must
+    still reach the inspector (mcp_tool reads them from ctx.node_params)."""
+    reg = NodeRegistry()
+
+    @node(
+        name="Inspector",
+        category="Demo",
+        registry=reg,
+        params={
+            "api_key": {"type": "string", "required": True, "description": "Key."},
+            "verbose": {"default": False},
+        },
+    )
+    async def inspector(input=None, *, ctx=None):  # noqa: ANN001
+        return {"ok": True}
+
+    manifest = reg.get("inspector").manifest
+    specs = {p.name: p for p in manifest.params}
+    assert set(specs) == {"api_key", "verbose"}
+    assert specs["api_key"].required is True
+    assert specs["api_key"].description == "Key."
+    assert specs["verbose"].default is False

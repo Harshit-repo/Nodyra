@@ -48,9 +48,9 @@ spec:
           livenessProbe:
             exec:
               command:
-                - pgrep
-                - -f
-                - app.worker_main
+                - python
+                - -c
+                - "from pathlib import Path; import sys; sys.exit(0 if b'app.worker_main' in Path('/proc/1/cmdline').read_bytes() else 1)"
             initialDelaySeconds: 30
             periodSeconds: 20
             failureThreshold: 3

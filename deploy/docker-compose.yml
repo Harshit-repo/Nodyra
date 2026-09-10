@@ -2,7 +2,9 @@ name: nodyra
 
 services:
   postgres:
-    image: postgres:16.14-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
     environment:
       POSTGRES_USER: nodyra
       # Override in deploy/.env for any host that is not a private dev box.
@@ -79,6 +81,8 @@ services:
       - minio
 
   api:
+    security_opt:
+      - no-new-privileges:true
     build:
       context: ..
       dockerfile: deploy/Dockerfile.python
@@ -169,6 +173,8 @@ services:
         condition: service_completed_successfully
 
   worker:
+    security_opt:
+      - no-new-privileges:true
     build:
       context: ..
       dockerfile: deploy/Dockerfile.python
@@ -233,6 +239,8 @@ services:
         condition: service_completed_successfully
 
   web:
+    security_opt:
+      - no-new-privileges:true
     build:
       context: ../apps/web
       dockerfile: Dockerfile

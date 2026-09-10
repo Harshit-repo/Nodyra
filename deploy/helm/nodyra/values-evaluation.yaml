@@ -26,6 +26,13 @@ worker:
 web:
   replicas: 1
 
+# Shared storage is still needed between API and worker; stay within quota.
+persistence:
+  envs:
+    size: 2Gi
+  artifacts:
+    size: 2Gi
+
 evaluation:
   enabled: true
   # Required RFC 3339 timestamp, set by the provisioning service.

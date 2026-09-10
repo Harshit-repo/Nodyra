@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv-*/
 venv/
 .pytest_cache/
 .ruff_cache/
@@ -77,6 +78,13 @@ apps/web/playwright-report/
 
 # Playwright MCP session artifacts
 .playwright-mcp/
+
+# Local coding-agent and review artifacts
+.codex-remote-attachments/
+.hermes/
+/audit/
+/docs/audits/
+/docs/superpowers/
 
 # Session artifacts — screenshots and scratch dirs dropped at repo root
 /*.png

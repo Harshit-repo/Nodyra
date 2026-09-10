@@ -266,7 +266,11 @@ jobs:
       # dependency must be addressed (upgrade or explicit ignore with justification).
       # --skip-editable excludes local workspace packages that have no PyPI record.
       - name: pip-audit — dependency CVEs (blocking)
-        run: uvx pip-audit --skip-editable
+        # uvx runs in its own isolated environment. Audit the application
+        # environment explicitly, rather than pip-audit's helper dependencies.
+        run: >-
+          uvx pip-audit --skip-editable
+          --path "$(uv run python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
       - name: bandit — security-critical modules (blocking)
         run: >-
           uvx bandit -ll

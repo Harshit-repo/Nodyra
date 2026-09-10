@@ -288,8 +288,7 @@ def reverse_geocode(
     params={
         "path": {
             "description": (
-                "Local path to a shapefile/GeoJSON/GeoPackage. "
-                "Used when no artifact is wired."
+                "Local path to a shapefile/GeoJSON/GeoPackage. Used when no artifact is wired."
             ),
         },
         "max_features": {"description": "Maximum features to return (0 = all)."},
@@ -528,7 +527,7 @@ def coordinate_transform(
     id="isochrone_generate",
     category=GEO_CATEGORY,
     icon="route",
-    requirements=["osmnx>=1.9", "geopandas>=0.14", "shapely>=2.0"],
+    requirements=["osmnx>=1.9", "geopandas>=0.14", "shapely>=2.0", "networkx>=3.0"],
     output_kinds={"main": "dataset"},
     params={
         "lat": {"description": "Origin latitude."},

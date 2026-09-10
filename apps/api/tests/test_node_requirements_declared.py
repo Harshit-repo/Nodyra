@@ -62,6 +62,9 @@ DEGRADES_GRACEFULLY = {
     "date_parse_normalize",  # falls back to built-in date parsing
     "record_linkage",        # falls back to difflib.SequenceMatcher
     "system_info",           # returns a message instead of raising
+    # spaCy is only used by the optional "spacy" backend (default "llm" works
+    # without it) and raises an ImportError with install instructions.
+    "ai_named_entity_recognition",
 }
 
 FIRST_PARTY = {"nodyra", "nodyra_nodes", "app"}

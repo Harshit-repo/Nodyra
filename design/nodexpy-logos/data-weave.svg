@@ -1,7 +1,0 @@
-<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Data Weave logo">
-  <path d="M10 26H32C52 26 45 74 68 74H91" stroke="#35D4D0" stroke-width="7" stroke-linecap="round"/>
-  <path d="M10 50H31C52 50 47 50 68 50H91" stroke="#FFD34E" stroke-width="7" stroke-linecap="round"/>
-  <path d="M10 74H32C52 74 45 26 68 26H91" stroke="#FF7A59" stroke-width="7" stroke-linecap="round"/>
-  <rect x="5" y="21" width="10" height="10" rx="3" fill="#35D4D0"/><rect x="5" y="45" width="10" height="10" rx="3" fill="#FFD34E"/><rect x="5" y="69" width="10" height="10" rx="3" fill="#FF7A59"/>
-  <text x="119" y="65" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="720" letter-spacing="-2">nodexpy</text>
-</svg>

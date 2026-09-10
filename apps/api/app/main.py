@@ -70,6 +70,7 @@ from app.services.environment_builds import run_environment_build_dispatch_loop
 from app.services.events import broker_reaper_loop
 from app.services.ghost_cleanup import ghost_cleanup_loop
 from app.services.github_sync_jobs import github_sync_dispatch_loop
+from app.services.json_responses import NodyraJSONResponse
 from app.services.license_refresh import license_refresh_loop, refresh_enabled
 from app.services.queue import run_queue_dispatch_loop
 from app.services.remote_dispatch import (
@@ -503,6 +504,10 @@ app = FastAPI(
     version=NODYRA_VERSION,
     lifespan=lifespan,
     dependencies=[Depends(resolve_org)],
+    # Non-finite floats (NaN/Inf) are not valid JSON; sanitize every REST
+    # response so legacy run outputs containing them degrade to null instead
+    # of crashing json.dumps and returning a bare 500.
+    default_response_class=NodyraJSONResponse,
 )
 
 # A5: tracing is initialised at import so FastAPI/SQLAlchemy instrumentation

@@ -116,6 +116,8 @@
 
   --shadow: 0 18px 44px -26px rgba(28, 41, 62, 0.32);
   --color-error: #b42335;
+  --color-success: #256c38;
+  --color-warning: #825600;
 }
 
 * {
@@ -799,17 +801,17 @@ textarea:focus-visible,
 }
 
 .artifact-browser-row {
-  min-width: 1040px;
+  min-width: 980px;
   display: grid;
   grid-template-columns:
-    minmax(220px, 1.35fr)
-    104px
-    minmax(220px, 1fr)
+    minmax(160px, 1.35fr)
     88px
-    122px
-    160px
+    minmax(160px, 1fr)
+    60px
+    85px
+    120px
     118px;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
   padding: 11px 14px;
   border-top: 1px solid var(--line-2);
@@ -818,6 +820,34 @@ textarea:focus-visible,
 
 .artifact-browser-row:first-child {
   border-top: 0;
+}
+
+.artifact-browser-row > [role="cell"] {
+  min-width: 0;
+}
+
+@media (max-width: 700px) {
+  .artifact-browser-row {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "name actions" "kind size" "preview preview" "run created";
+    gap: 12px;
+  }
+  .artifact-browser-row > [role="cell"]:nth-child(1) { grid-area: name; }
+  .artifact-browser-row > [role="cell"]:nth-child(2) { grid-area: kind; }
+  .artifact-browser-row > [role="cell"]:nth-child(3) { grid-area: preview; }
+  .artifact-browser-row > [role="cell"]:nth-child(4) { grid-area: size; text-align: right; }
+  .artifact-browser-row > [role="cell"]:nth-child(5) { grid-area: run; }
+  .artifact-browser-row > [role="cell"]:nth-child(6) { grid-area: created; text-align: right; }
+  .artifact-browser-row > [role="cell"]:nth-child(7) { grid-area: actions; }
+  .artifact-browser-row-head {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
 }
 
 .artifact-browser-row-head {
@@ -1496,8 +1526,8 @@ textarea:focus-visible,
   background: rgba(87, 201, 138, 0.12);
 }
 .wf-status.run-error {
-  color: #f0747a;
-  background: rgba(240, 116, 122, 0.12);
+  color: var(--color-error);
+  background: var(--color-error-bg);
 }
 .wf-trigger-status {
   border: 0;
@@ -1553,6 +1583,7 @@ textarea:focus-visible,
   color: var(--ink-3);
 }
 .wf-run-meta {
+  color: var(--ink-2);
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--line-2);
@@ -1777,8 +1808,11 @@ textarea:focus-visible,
 
 .wf-pagination-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .wf-pagination-ellipsis {
@@ -4374,8 +4408,8 @@ kbd {
   white-space: nowrap;
 }
 .status-ready {
-  color: #6cd08a;
-  background: rgba(108, 208, 138, 0.13);
+  color: var(--color-success);
+  background: var(--color-success-bg);
 }
 .status-building {
   color: var(--accent);
@@ -6063,16 +6097,16 @@ kbd {
   text-align: center;
 }
 .action-create {
-  color: #6cd08a;
-  background: rgba(108, 208, 138, 0.13);
+  color: var(--color-success);
+  background: var(--color-success-bg);
 }
 .action-update {
   color: var(--accent);
   background: var(--accent-glow);
 }
 .action-delete {
-  color: #f0747a;
-  background: rgba(240, 116, 122, 0.13);
+  color: var(--color-error);
+  background: var(--color-error-bg);
 }
 .activity-target {
   font-family: var(--font-mono);
@@ -6091,6 +6125,36 @@ kbd {
   color: var(--ink-3);
 }
 
+/* Keep these after the base rules so the desktop grid cannot override them. */
+@media (max-width: 900px) {
+  .activity-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .activity-filters > :first-child {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 640px) {
+  .activity-filters > * {
+    min-width: 0;
+    width: 100%;
+  }
+  .activity-row {
+    grid-template-columns: 84px minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+  .activity-detail {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .activity-time {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
 /* ---- run pill primitives (also defined in editor.css for the canvas) ---- */
 .run-pill {
   font-family: var(--font-mono);
@@ -6102,7 +6166,7 @@ kbd {
   display: inline-block;
 }
 .status-run-running {
-  background: var(--accent, #66b2ff);
+  background: #79b6ff;
   color: #06101e;
 }
 .status-run-success {
@@ -6505,6 +6569,8 @@ kbd {
 }
 .deploy-meta a {
   color: var(--ink-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .deploy-meta a:hover {
   color: var(--accent);

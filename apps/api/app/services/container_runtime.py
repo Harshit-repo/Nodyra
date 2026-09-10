@@ -8,13 +8,16 @@ ever spawns. No DB access; safe to import from worker_main.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
+import os
 import re
 import shlex
 import tarfile
 import threading
 import weakref
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -26,9 +29,7 @@ logger = logging.getLogger(__name__)
 # sandbox starts for the same environment can reach it from separate executor
 # threads, so the cache probe must be serialized per tag. Weak values keep the
 # lock registry bounded as old environment/image tags disappear from use.
-_IMAGE_BUILD_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = (
-    weakref.WeakValueDictionary()
-)
+_IMAGE_BUILD_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = weakref.WeakValueDictionary()
 _IMAGE_BUILD_LOCKS_GUARD = threading.Lock()
 
 
@@ -40,10 +41,11 @@ def _image_build_lock(tag: str) -> threading.Lock:
             _IMAGE_BUILD_LOCKS[tag] = lock
         return lock
 
+
 # Bump whenever the generated Dockerfile changes shape — stale images built
 # from the old recipe (e.g. root-running v1 images, PyPI-installing v2 images)
 # must never be reused.
-IMAGE_SCHEMA_VERSION = "v3"
+IMAGE_SCHEMA_VERSION = "v4"
 
 # RD-2: ``ensure_docker_image`` interpolates the env's package list and Python
 # version into a shell ``RUN uv pip install`` / ``FROM python:`` line in the
@@ -135,10 +137,10 @@ def hardening_kwargs(
 ) -> dict[str, Any]:
     environment: dict[str, str] = {
         "HOME": "/tmp",
+        "NODYRA_ALLOW_PRIVATE_EGRESS": os.environ.get("NODYRA_ALLOW_PRIVATE_EGRESS", "0"),
+        "NODYRA_MAX_INPUT_BYTES": str(settings.max_artifact_bytes),
         "NODYRA_CODE_NODE_TIMEOUT_SECONDS": str(settings.code_node_timeout_seconds),
-        "NODYRA_RUNTIME_HEARTBEAT_SECONDS": str(
-            settings.runtime_heartbeat_interval_seconds
-        ),
+        "NODYRA_RUNTIME_HEARTBEAT_SECONDS": str(settings.runtime_heartbeat_interval_seconds),
     }
     # PYTHON_JIT / PYTHON_LAZY_IMPORTS: the same two spawn-time env vars the
     # subprocess pool injects (runtime_pool._resolve_env_runtime_flags).
@@ -231,9 +233,7 @@ def ensure_sandbox_network(client: Any, name: str | None = None) -> str:
             client.networks.get(name)
             return name
         except Exception:  # noqa: BLE001
-            raise RuntimeError(
-                f"could not create sandbox network {name!r}: {exc}"
-            ) from exc
+            raise RuntimeError(f"could not create sandbox network {name!r}: {exc}") from exc
 
 
 class DockerStreamDemuxer:
@@ -255,8 +255,8 @@ class DockerStreamDemuxer:
             size = int.from_bytes(self._buf[4:8], "big")
             if len(self._buf) < 8 + size:
                 break
-            out += self._buf[8:8 + size]
-            self._buf = self._buf[8 + size:]
+            out += self._buf[8 : 8 + size]
+            self._buf = self._buf[8 + size :]
         return out
 
 
@@ -274,7 +274,7 @@ def image_tag_for(env_payload: dict) -> str:
     return (
         f"nodyra-env:{env_payload.get('id', 'default')}"
         f"-{env_payload.get('packages_hash', 'latest')}"
-        f"-{IMAGE_SCHEMA_VERSION}"
+        f"-{runtime_source_digest()}-{IMAGE_SCHEMA_VERSION}"
     )
 
 
@@ -316,7 +316,25 @@ _TAR_EXCLUDE = ("__pycache__", ".pytest_cache", ".venv", ".git", "node_modules")
 
 
 def base_image_tag(python_version: str) -> str:
-    return f"nodyra-runtime-base:{python_version}-{IMAGE_SCHEMA_VERSION}"
+    return f"nodyra-runtime-base:{python_version}-{runtime_source_digest()}-{IMAGE_SCHEMA_VERSION}"
+
+
+@lru_cache(maxsize=1)
+def runtime_source_digest() -> str:
+    """Invalidate cached runtime images when the shipped application changes."""
+    root = _workspace_root()
+    digest = hashlib.sha256()
+    for package in _BASE_PACKAGES:
+        for path in sorted((root / "packages" / package).rglob("*")):
+            relative = path.relative_to(root)
+            if not path.is_file() or any(p in (*_TAR_EXCLUDE, "tests") for p in relative.parts):
+                continue
+            if path.suffix == ".pyc":
+                continue
+            digest.update(relative.as_posix().encode())
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:16]
 
 
 def _workspace_root() -> Path:
@@ -350,8 +368,7 @@ def _base_build_context(dockerfile: str, root: Path) -> io.BytesIO:
         df_info.size = len(data)
         tar.addfile(df_info, io.BytesIO(data))
         for pkg in _BASE_PACKAGES:
-            tar.add(root / "packages" / pkg, arcname=f"packages/{pkg}",
-                    filter=_tar_filter)
+            tar.add(root / "packages" / pkg, arcname=f"packages/{pkg}", filter=_tar_filter)
     buf.seek(0)
     return buf
 
@@ -374,10 +391,13 @@ def ensure_base_image(client: Any, python_version: str) -> str:
         src = "/opt/nodyra-src/packages"
         dockerfile = (
             f"FROM python:{python_version}-slim\n"
-            "RUN pip install uv --quiet\n"
+            "RUN apt-get update && apt-get upgrade -y "
+            "&& rm -rf /var/lib/apt/lists/*\n"
+            "RUN pip install --no-cache-dir uv==0.12.11 --quiet\n"
             f"COPY packages {src}\n"
             f"RUN uv pip install --system "
-            + " ".join(f"{src}/{pkg}" for pkg in _BASE_PACKAGES) + "\n"
+            + " ".join(f"{src}/{pkg}" for pkg in _BASE_PACKAGES)
+            + "\n"
             "RUN useradd --uid 65532 --create-home --shell /usr/sbin/nologin nodyra\n"
             "USER nodyra\n"
             'ENTRYPOINT ["python", "-u", "-m", "nodyra_runtime"]\n'
@@ -397,21 +417,13 @@ def ensure_docker_image(client: Any, image_tag: str, env_payload: dict) -> None:
         except Exception:  # noqa: BLE001 — NotFound; build below
             pass
 
-        python_version = _validate_python_version(
-            env_payload.get("python_version", "3.12")
-        )
+        python_version = _validate_python_version(env_payload.get("python_version", "3.12"))
         packages = _validate_packages(env_payload.get("packages") or [])
         base = ensure_base_image(client, python_version)
 
         dockerfile = f"FROM {base}\n"
         if packages:
-            dockerfile += (
-                "USER root\n"
-                f"{_install_command(packages)}\n"
-                "USER nodyra\n"
-            )
+            dockerfile += f"USER root\n{_install_command(packages)}\nUSER nodyra\n"
 
-        client.images.build(
-            fileobj=io.BytesIO(dockerfile.encode()), tag=image_tag, rm=True
-        )
+        client.images.build(fileobj=io.BytesIO(dockerfile.encode()), tag=image_tag, rm=True)
         logger.info("built docker image %s", image_tag)

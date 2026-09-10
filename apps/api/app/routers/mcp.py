@@ -62,6 +62,7 @@ from app.security import (
     current_user,
     role_allows,
 )
+from app.services.json_responses import NodyraJSONResponse
 from app.services.rate_limit import allow as _rate_allow
 from app.tenancy import current_org_id
 
@@ -476,4 +477,7 @@ async def mcp_post(
         return JSONResponse(notification_result, status_code=400)
 
     result = await _dispatch_single(body, session, user, request)
-    return JSONResponse(result)
+    # Tool results embed run outputs, which may contain NaN/Inf floats (legacy
+    # rows predating serialization-side sanitization). NodyraJSONResponse
+    # degrades them to null instead of raising a 500 mid-encode.
+    return NodyraJSONResponse(result)

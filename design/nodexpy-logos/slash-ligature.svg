@@ -1,7 +1,0 @@
-<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Slash Ligature logo">
-  <path d="M13 79L38 21H53L28 79H13ZM46 79L71 21H86L61 79H46Z" fill="#FF4D1C"/>
-  <circle cx="20" cy="77" r="6" fill="#F4F2EC"/><rect x="78" y="17" width="12" height="12" rx="3" fill="#F4F2EC"/>
-  <text x="112" y="65" fill="#F4F2EC" font-family="Arial, sans-serif" font-size="45" font-weight="900" letter-spacing="-2.5">NODE</text>
-  <text x="238" y="65" fill="#FF4D1C" font-family="Arial, sans-serif" font-size="45" font-weight="900" letter-spacing="-2.5">/X/</text>
-  <text x="306" y="65" fill="#F4F2EC" font-family="Arial, sans-serif" font-size="45" font-weight="900" letter-spacing="-2.5">PY</text>
-</svg>

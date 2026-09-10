@@ -253,7 +253,7 @@ export function DeploymentsPage() {
 
         {error && <p className="error-text">{error}</p>}
         {!deployments && !error && (
-          <div className="deploy-list" aria-label="Loading deployments">
+          <div role="status" className="deploy-list" aria-label="Loading deployments">
             {Array.from({ length: 4 }).map((_, index) => (
               <div className="deploy-row skeleton-row" key={index}>
                 <div className="deploy-main">
@@ -322,6 +322,7 @@ export function DeploymentsPage() {
                     >
                       <input
                         type="checkbox"
+                        aria-label={`Enable ${d.name}`}
                         checked={d.active}
                         disabled={busyIds.has(d.id) || (!d.active && atActiveCap)}
                         onChange={(e) => void toggleActive(d, e.target.checked)}

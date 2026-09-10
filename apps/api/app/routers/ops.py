@@ -399,8 +399,7 @@ async def set_drain(
     """Toggle drain mode. While true the dispatch loop stops leasing new
     queue entries; leased/running entries continue to completion. Used by
     deploy scripts to drain a replica before sending SIGTERM, avoiding
-    avoidable ``cancelled`` runs (see "Production-readiness gaps" #2 in
-    docs/architecture-improvement-plan.md).
+    avoidable ``cancelled`` runs.
     """
     await audit(
         "drain" if payload.draining else "undrain",

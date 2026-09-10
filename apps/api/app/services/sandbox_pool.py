@@ -30,6 +30,8 @@ from app.services.container_runtime import (
     hardening_kwargs,
     image_tag_for,
 )
+from app.services.sandbox_artifacts import CONTAINER_ARTIFACTS_DIR, SandboxArtifacts
+from app.tenancy import DEFAULT_ORG_ID
 from nodyra.serialization import deserialize_value, serialize_value
 
 logger = logging.getLogger(__name__)
@@ -238,6 +240,13 @@ class SandboxWorker:
         overall_deadline = started_at + overall_timeout
         last_liveness_at = started_at
         last_progress_at = started_at
+        artifacts = SandboxArtifacts(self.container, run_id, self.key[0] or DEFAULT_ORG_ID)
+        try:
+            for message in artifacts.upload_messages():
+                await self._send(message, loop)
+        except BaseException:
+            self.dead = True
+            raise
         await self._send(
             {
                 "type": "run",
@@ -249,6 +258,11 @@ class SandboxWorker:
                 "pause_on_approval": pause_on_approval,
                 "agent_action_resume": agent_action_resume or {},
                 "subworkflow_meta": subworkflow_meta or {},
+                "artifacts_dir": CONTAINER_ARTIFACTS_DIR,
+                "stream_artifacts": True,
+                "artifact_key_prefix": artifacts.store.key_prefix,
+                "max_artifact_bytes": artifacts.store.max_bytes,
+                "max_artifacts_per_run": artifacts.store.max_count,
             },
             loop,
         )
@@ -261,9 +275,8 @@ class SandboxWorker:
                 now = time.monotonic()
                 if now >= overall_deadline:
                     self.dead = True
-                    raise RuntimeError(
-                        f"sandbox run {run_id!r} exceeded overall timeout of "
-                        f"{overall_timeout:g}s"
+                    raise TimeoutError(
+                        f"sandbox run {run_id!r} exceeded overall timeout of {overall_timeout:g}s"
                     )
                 heartbeat_deadline = last_liveness_at + heartbeat_timeout
                 read_deadline = min(overall_deadline, heartbeat_deadline)
@@ -274,7 +287,7 @@ class SandboxWorker:
                 except RuntimeError as exc:
                     self.dead = True
                     if time.monotonic() >= overall_deadline:
-                        raise RuntimeError(
+                        raise TimeoutError(
                             f"sandbox run {run_id!r} exceeded overall timeout of "
                             f"{overall_timeout:g}s"
                         ) from exc
@@ -286,9 +299,7 @@ class SandboxWorker:
                 last_liveness_at = now
                 etype = event.get("type")
                 if etype == "heartbeat":
-                    if no_progress_timeout > 0 and (
-                        now - last_progress_at >= no_progress_timeout
-                    ):
+                    if no_progress_timeout > 0 and (now - last_progress_at >= no_progress_timeout):
                         self.dead = True
                         raise RuntimeError(
                             f"sandbox run {run_id!r} made no protocol progress for "
@@ -297,12 +308,16 @@ class SandboxWorker:
                 elif etype == "call_workflow":
                     last_progress_at = now
                     task = asyncio.create_task(
-                        self._handle_call_workflow(event, subworkflow_resolver, loop)
+                        self._handle_call_workflow(event, subworkflow_resolver, loop, artifacts)
                     )
                     callbacks.add(task)
                     task.add_done_callback(callbacks.discard)
+                elif etype == "artifact_output":
+                    last_progress_at = now
+                    await asyncio.to_thread(artifacts.receive_chunk, event)
                 elif etype in _FORWARDED_EVENTS:
                     last_progress_at = now
+                    await asyncio.to_thread(artifacts.receive, event)
                     await on_event(event)
                 elif etype == "result":
                     last_progress_at = now
@@ -321,7 +336,10 @@ class SandboxWorker:
                 # unknown event types are ignored (forward-compat)
         finally:
             self.runs_completed += 1
-            if not clean:
+            await asyncio.to_thread(artifacts.cleanup)
+            if not clean or artifacts.transferred:
+                # File-bearing runs are recycled so their tmpfs inputs and
+                # outputs cannot accumulate in a warm container.
                 self.dead = True
             pending = [task for task in callbacks if not task.done()]
             for task in pending:
@@ -331,7 +349,11 @@ class SandboxWorker:
         return status
 
     async def _handle_call_workflow(
-        self, event: dict, subworkflow_resolver, loop: asyncio.AbstractEventLoop
+        self,
+        event: dict,
+        subworkflow_resolver,
+        loop: asyncio.AbstractEventLoop,
+        artifacts: SandboxArtifacts | None = None,
     ) -> None:
         """Mirror of runtime_pool._handle_call_workflow over the attach socket."""
         from nodyra.engine.subworkflows import (  # noqa: PLC0415
@@ -346,7 +368,22 @@ class SandboxWorker:
             call = SubworkflowCall.from_payload(
                 {**event, "input": deserialize_value(event.get("input"))}
             )
-            outcome = await subworkflow_resolver(call, parent_env_id=self.key[1])
+            outcome = await subworkflow_resolver(
+                call, parent_env_id=self.key[1], parent_sandboxed=True
+            )
+            if artifacts is not None:
+                from app.services import artifacts as artifact_service
+
+                if not isinstance(outcome, InlineSubworkflow):
+                    async with artifact_service.SessionLocal() as session:
+                        await artifact_service.prepare_artifact_inputs(
+                            session,
+                            outcome,
+                            run_id=artifacts.store.run_id,
+                            org_id=artifacts.store.key_prefix.strip("/"),
+                        )
+                for message in artifacts.upload_messages():
+                    await self._send(message, loop)
             if isinstance(outcome, InlineSubworkflow):
                 await self._send(
                     {
@@ -404,9 +441,7 @@ class SandboxPool:
         self._lock = asyncio.Lock()
         self._reaper: asyncio.Task | None = None
 
-    def configure(
-        self, client: Any, *, runtime: str, network: str, owner_id: str = ""
-    ) -> None:
+    def configure(self, client: Any, *, runtime: str, network: str, owner_id: str = "") -> None:
         self._client = client
         self._runtime = runtime
         self._network = network
@@ -474,6 +509,10 @@ class SandboxPool:
         except asyncio.CancelledError:
             await worker.close()  # cancelled task ⇒ hard-kill the container
             raise
+        except TimeoutError as exc:
+            await worker.close()
+            await on_event({"type": "run_error", "error": str(exc)})
+            status = "timed_out"
         except Exception as exc:  # noqa: BLE001 — transport/spawn failure
             logger.exception("sandbox run failed run_id=%s: %s", run_id, exc)
             await on_event({"type": "run_error", "error": str(exc)})

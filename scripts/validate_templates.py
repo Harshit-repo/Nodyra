@@ -63,6 +63,16 @@ def validate_catalog() -> list[str]:
         try:
             graph = WorkflowGraph.model_validate(template["graph"])
             _validate_graph(graph, registry)
+            for node in graph.nodes:
+                specs = {param.name: param for param in registry.get(node.type).manifest.params}
+                for key, value in node.params.items():
+                    spec = specs.get(key)
+                    if spec is None:
+                        errors.append(f"{path.name}: {node.id} has unknown parameter {key!r}")
+                    elif spec.choices and "{{" not in str(value) and value not in spec.choices:
+                        errors.append(
+                            f"{path.name}: {node.id}.{key}={value!r} is not one of {spec.choices}"
+                        )
         except Exception as exc:
             errors.append(f"{path.name}: invalid graph: {exc}")
     if not seen:

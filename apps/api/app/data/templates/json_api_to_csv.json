@@ -62,7 +62,7 @@
         "type": "sort",
         "params": {
           "field": "name",
-          "order": "asc"
+          "order": "ascending"
         },
         "position": {
           "x": 840,

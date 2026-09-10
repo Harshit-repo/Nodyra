@@ -1,7 +1,7 @@
 {
   "id": "csv_clean_dedupe",
   "name": "Clean and de-duplicate a CSV",
-  "description": "Read a CSV, normalise its text columns, drop duplicate rows by a key column, and write the cleaned file back out.",
+  "description": "Normalise sample customer records, remove duplicate email addresses, and export a cleaned CSV. Replace the sample node with your own records to use real data.",
   "tags": [
     "data",
     "csv",
@@ -55,13 +55,25 @@
         }
       },
       {
+        "id": "to_records",
+        "type": "dataset_to_records",
+        "params": {
+          "max_rows": 10000,
+          "allow_truncate": false
+        },
+        "position": {
+          "x": 840,
+          "y": 40
+        }
+      },
+      {
         "id": "dedupe",
         "type": "remove_duplicates",
         "params": {
           "field": "email"
         },
         "position": {
-          "x": 840,
+          "x": 1120,
           "y": 40
         }
       },
@@ -70,7 +82,7 @@
         "type": "records_to_dataset",
         "params": {},
         "position": {
-          "x": 1120,
+          "x": 1400,
           "y": 40
         }
       },
@@ -82,7 +94,7 @@
           "include_header": true
         },
         "position": {
-          "x": 1400,
+          "x": 1680,
           "y": 40
         }
       }
@@ -98,6 +110,10 @@
       },
       {
         "source": "normalise",
+        "target": "to_records"
+      },
+      {
+        "source": "to_records",
         "target": "dedupe"
       },
       {

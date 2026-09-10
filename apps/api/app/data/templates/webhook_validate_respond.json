@@ -12,7 +12,8 @@
   "verified": true,
   "credential_free": true,
   "prerequisites": [
-    "An inbound webhook URL reachable by the caller"
+    "An inbound webhook URL reachable by the caller",
+    "Configure webhook authentication before publishing; the production default requires it"
   ],
   "expected_result": "Valid payloads return 200; invalid ones return the validation errors rather than failing silently.",
   "permissions": [
@@ -27,7 +28,8 @@
         "type": "webhook_trigger",
         "params": {
           "path": "validated-intake",
-          "response_mode": "Last Node"
+          "http_method": "POST",
+          "response_mode": "Respond Node"
         },
         "position": {
           "x": 0,
@@ -35,11 +37,10 @@
         }
       },
       {
-        "id": "validate",
-        "type": "schema_validate",
+        "id": "body",
+        "type": "code",
         "params": {
-          "schema_json": "{\"type\": \"object\", \"required\": [\"email\", \"amount\"], \"properties\": {\"email\": {\"type\": \"string\"}, \"amount\": {\"type\": \"number\"}}}",
-          "on_error": "split"
+          "code": "output = (input or {}).get('body')"
         },
         "position": {
           "x": 280,
@@ -47,40 +48,73 @@
         }
       },
       {
-        "id": "accepted",
-        "type": "no_op",
-        "params": {},
+        "id": "validate",
+        "type": "json_schema_validate",
+        "params": {
+          "schema": "{\"type\": \"object\", \"required\": [\"email\", \"amount\"], \"properties\": {\"email\": {\"type\": \"string\"}, \"amount\": {\"type\": \"number\"}}}"
+        },
         "position": {
           "x": 560,
+          "y": 40
+        }
+      },
+      {
+        "id": "valid",
+        "type": "if",
+        "params": {
+          "field": "valid",
+          "operator": "is true"
+        },
+        "position": {
+          "x": 840,
+          "y": 40
+        }
+      },
+      {
+        "id": "accepted",
+        "type": "respond_to_webhook",
+        "params": {
+          "status_code": 200
+        },
+        "position": {
+          "x": 1120,
           "y": -40
         }
       },
       {
         "id": "rejected",
-        "type": "code",
+        "type": "respond_to_webhook",
         "params": {
-          "code": "output = {'accepted': False,\n          'errors': input if input is not None else []}"
+          "status_code": 422
         },
         "position": {
-          "x": 560,
-          "y": 120
+          "x": 1120,
+          "y": 160
         }
       }
     ],
     "edges": [
       {
         "source": "hook",
+        "target": "body"
+      },
+      {
+        "source": "body",
         "target": "validate"
       },
       {
         "source": "validate",
-        "target": "accepted",
-        "source_output": "main"
+        "target": "valid"
       },
       {
-        "source": "validate",
+        "source": "valid",
+        "target": "accepted",
+        "source_output": "true"
+      },
+      {
+        "source": "valid",
         "target": "rejected",
-        "source_output": "invalid"
+        "source_output": "false"
       }
     ]
   }

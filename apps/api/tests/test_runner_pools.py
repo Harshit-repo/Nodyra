@@ -13,14 +13,22 @@ from app.services.ssh_onboard import _install_script
 def _graph_with_trigger() -> dict:
     return {
         "nodes": [
-            {"id": "trig", "type": "manual_trigger", "params": {},
-             "position": {"x": 0, "y": 0}},
-            {"id": "echo", "type": "code", "params": {"code": "output = input"},
-             "position": {"x": 250, "y": 0}},
+            {"id": "trig", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "echo",
+                "type": "code",
+                "params": {"code": "output = input"},
+                "position": {"x": 250, "y": 0},
+            },
         ],
         "edges": [
-            {"id": "e1", "source": "trig", "source_output": "main",
-             "target": "echo", "target_input": "input"}
+            {
+                "id": "e1",
+                "source": "trig",
+                "source_output": "main",
+                "target": "echo",
+                "target_input": "input",
+            }
         ],
     }
 
@@ -55,9 +63,7 @@ async def test_runner_pool_crud(client: AsyncClient) -> None:
     got = (await client.get(f"/runner-pools/{pool_id}")).json()
     assert got["max_concurrent_runs"] == 8
 
-    patched = await client.patch(
-        f"/runner-pools/{pool_id}", json={"max_concurrent_runs": 16}
-    )
+    patched = await client.patch(f"/runner-pools/{pool_id}", json={"max_concurrent_runs": 16})
     assert patched.json()["max_concurrent_runs"] == 16
 
     deleted = await client.delete(f"/runner-pools/{pool_id}")
@@ -106,9 +112,7 @@ def test_payload_token_roundtrip_and_expiry() -> None:
     assert decode_payload_token(expired) is None
 
 
-async def test_fleet_health_flags_pool_without_dispatcher(
-    client: AsyncClient, monkeypatch
-) -> None:
+async def test_fleet_health_flags_pool_without_dispatcher(client: AsyncClient, monkeypatch) -> None:
     """A6: an agent pool with a queued run but no live dispatcher heartbeat is
     reported unreachable + stuck — the signal behind the 'no dispatcher' banner.
     A pool whose provider has a heartbeat is reachable."""
@@ -121,9 +125,7 @@ async def test_fleet_health_flags_pool_without_dispatcher(
         await client.post("/runner-pools", json={"name": "agents", "provider": "agent"})
     ).json()["id"]
     docker_pool = (
-        await client.post(
-            "/runner-pools", json={"name": "dock", "provider": "docker"}
-        )
+        await client.post("/runner-pools", json={"name": "dock", "provider": "docker"})
     ).json()["id"]
 
     # A queued run on each pool.
@@ -157,10 +159,12 @@ async def test_fleet_health_flags_pool_without_dispatcher(
         await session.flush()
         session.add_all(
             [
-                RunQueueEntry(run_id="q-agent", workflow_id="wf",
-                              runner_pool_id=agent_pool, status="queued"),
-                RunQueueEntry(run_id="q-docker", workflow_id="wf",
-                              runner_pool_id=docker_pool, status="queued"),
+                RunQueueEntry(
+                    run_id="q-agent", workflow_id="wf", runner_pool_id=agent_pool, status="queued"
+                ),
+                RunQueueEntry(
+                    run_id="q-docker", workflow_id="wf", runner_pool_id=docker_pool, status="queued"
+                ),
             ]
         )
         await session.commit()
@@ -180,9 +184,7 @@ async def test_fleet_health_flags_pool_without_dispatcher(
     assert "docker" not in health["fleet"]["providers_stuck"]
 
 
-async def test_wheel_index_serves_built_wheels(
-    client: AsyncClient, monkeypatch, tmp_path
-) -> None:
+async def test_wheel_index_serves_built_wheels(client: AsyncClient, monkeypatch, tmp_path) -> None:
     """A2: the wheel index page lists the nodyra-* wheels and each is
     downloadable, with a path-traversal guard. The actual ``uv build`` is
     stubbed — that round-trip is covered by the live clean-machine test."""
@@ -241,9 +243,7 @@ async def test_implicit_global_workflow_honours_env_pool_binding(
     from app.models import Environment
     from app.services.runner import SessionLocal
 
-    pool_id = (
-        await client.post("/runner-pools", json={"name": "global-bound"})
-    ).json()["id"]
+    pool_id = (await client.post("/runner-pools", json={"name": "global-bound"})).json()["id"]
     workflow_id = await _create_published_workflow(client)
 
     # Bind the pool to the GLOBAL env; leave the workflow's environment_id unset.
@@ -252,9 +252,7 @@ async def test_implicit_global_workflow_honours_env_pool_binding(
             _select(Environment).where(Environment.is_global.is_(True))
         )
         if global_env is None:
-            global_env = Environment(
-                name="Global", is_global=True, status="ready"
-            )
+            global_env = Environment(name="Global", is_global=True, status="ready")
             session.add(global_env)
         global_env.runner_pool_id = pool_id
         wf = await session.get(Workflow, workflow_id)
@@ -334,11 +332,7 @@ async def test_batch_runs_dispatch_one_run_per_parameter(client: AsyncClient) ->
     from app.services.runner import SessionLocal  # patched in conftest
 
     async with SessionLocal() as session:
-        runs = (
-            await session.scalars(
-                select(Run).where(Run.batch_id == body["batch_id"])
-            )
-        ).all()
+        runs = (await session.scalars(select(Run).where(Run.batch_id == body["batch_id"]))).all()
         assert len(runs) == 3
         assert {run.runner_pool_id for run in runs} == {pool_id}
         batch_row = await session.get(RunBatch, body["batch_id"])
@@ -350,10 +344,19 @@ async def test_batch_run_requires_trigger(client: AsyncClient) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "NoTrig"})).json()["id"]
     await client.put(
         f"/workflows/{workflow_id}",
-        json={"graph": {"nodes": [
-            {"id": "n", "type": "code", "params": {"code": "output = 1"},
-             "position": {"x": 0, "y": 0}}
-        ], "edges": []}},
+        json={
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "n",
+                        "type": "code",
+                        "params": {"code": "output = 1"},
+                        "position": {"x": 0, "y": 0},
+                    }
+                ],
+                "edges": [],
+            }
+        },
     )
     await client.post(f"/workflows/{workflow_id}/publish", json={})
     resp = await client.post(
@@ -372,8 +375,11 @@ async def test_artifact_upload_rejects_missing_token(client: AsyncClient) -> Non
     resp = await client.post(
         "/runner-pools/artifact-upload",
         params={
-            "run_id": "r", "node_id": "n", "artifact_id": "a",
-            "name": "f.txt", "storage_key": "runs/r/n/a-f.txt",
+            "run_id": "r",
+            "node_id": "n",
+            "artifact_id": "a",
+            "name": "f.txt",
+            "storage_key": "runs/r/n/a-f.txt",
         },
         files={"data": ("f.txt", b"hello", "text/plain")},
     )
@@ -382,9 +388,7 @@ async def test_artifact_upload_rejects_missing_token(client: AsyncClient) -> Non
 
 async def test_artifact_upload_writes_bytes_and_row(client: AsyncClient) -> None:
     pool_id = (await client.post("/runner-pools", json={"name": "p"})).json()["id"]
-    token_resp = (
-        await client.post(f"/runner-pools/{pool_id}/registration-tokens")
-    ).json()
+    token_resp = (await client.post(f"/runner-pools/{pool_id}/registration-tokens")).json()
 
     # A run row must exist for the FK / list endpoint.
     workflow_id = await _create_published_workflow(client)
@@ -392,8 +396,11 @@ async def test_artifact_upload_writes_bytes_and_row(client: AsyncClient) -> None
 
     async with SessionLocal() as session:
         run = Run(
-            workflow_id=workflow_id, workflow_version=1, mode="manual",
-            trigger_type="manual", status="success",
+            workflow_id=workflow_id,
+            workflow_version=1,
+            mode="manual",
+            trigger_type="manual",
+            status="success",
             runner_id=token_resp["runner_id"],
         )
         session.add(run)
@@ -404,9 +411,14 @@ async def test_artifact_upload_writes_bytes_and_row(client: AsyncClient) -> None
     resp = await client.post(
         "/runner-pools/artifact-upload",
         params={
-            "run_id": run_id, "node_id": "node1", "artifact_id": "abc123",
-            "name": "report.txt", "storage_key": storage_key,
-            "content_type": "text/plain", "kind": "text", "size_bytes": 5,
+            "run_id": run_id,
+            "node_id": "node1",
+            "artifact_id": "abc123",
+            "name": "report.txt",
+            "storage_key": storage_key,
+            "content_type": "text/plain",
+            "kind": "text",
+            "size_bytes": 5,
         },
         files={"data": ("report.txt", b"hello", "text/plain")},
         headers={"Authorization": f"Bearer {token_resp['token']}"},
@@ -422,16 +434,74 @@ async def test_artifact_upload_writes_bytes_and_row(client: AsyncClient) -> None
     assert download.content == b"hello"
 
 
+async def test_assigned_runner_can_download_only_its_staged_inputs(client: AsyncClient):
+    from app.services.artifacts import make_artifact_store
+    from app.services.runner import SessionLocal
+
+    pool_id = (await client.post("/runner-pools", json={"name": "inputs"})).json()["id"]
+    token = (await client.post(f"/runner-pools/{pool_id}/registration-tokens")).json()
+    other = (await client.post(f"/runner-pools/{pool_id}/registration-tokens")).json()
+    workflow_id = await _create_published_workflow(client)
+    async with SessionLocal() as session:
+        run = Run(
+            workflow_id=workflow_id,
+            workflow_version=1,
+            mode="manual",
+            trigger_type="manual",
+            status="running",
+            runner_id=token["runner_id"],
+        )
+        session.add(run)
+        await session.commit()
+        run_id = run.id
+    uploaded_id = "a" * 32
+    path = make_artifact_store(run_id, org_id="default").upload_path(uploaded_id) / "customers.csv"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"name\nAda")
+    params = {"run_id": run_id, "artifact_id": uploaded_id}
+    response = await client.get(
+        "/runner-pools/artifacts/input",
+        params=params,
+        headers={"Authorization": f"Bearer {token['token']}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.content == b"name\nAda"
+    assert response.headers["X-Nodyra-Artifact-Name"] == "customers.csv"
+    denied = await client.get(
+        "/runner-pools/artifacts/input",
+        params=params,
+        headers={"Authorization": f"Bearer {other['token']}"},
+    )
+    assert denied.status_code == 403
+    missing = await client.get(
+        "/runner-pools/artifacts/input",
+        params={**params, "artifact_id": "b" * 32},
+        headers={"Authorization": f"Bearer {token['token']}"},
+    )
+    assert missing.status_code == 404
+    async with SessionLocal() as session:
+        row = await session.get(Runner, token["runner_id"])
+        await session.delete(row)
+        await session.commit()
+    revoked = await client.get(
+        "/runner-pools/artifacts/input",
+        params=params,
+        headers={"Authorization": f"Bearer {token['token']}"},
+    )
+    assert revoked.status_code == 401
+
+
 async def test_artifact_upload_rejects_path_escape(client: AsyncClient) -> None:
     pool_id = (await client.post("/runner-pools", json={"name": "p"})).json()["id"]
-    token = (
-        await client.post(f"/runner-pools/{pool_id}/registration-tokens")
-    ).json()["token"]
+    token = (await client.post(f"/runner-pools/{pool_id}/registration-tokens")).json()["token"]
     resp = await client.post(
         "/runner-pools/artifact-upload",
         params={
-            "run_id": "r", "node_id": "n", "artifact_id": "a",
-            "name": "f.txt", "storage_key": "../../etc/passwd",
+            "run_id": "r",
+            "node_id": "n",
+            "artifact_id": "a",
+            "name": "f.txt",
+            "storage_key": "../../etc/passwd",
         },
         files={"data": ("f.txt", b"x", "text/plain")},
         headers={"Authorization": f"Bearer {token}"},
@@ -456,8 +526,10 @@ async def test_ssh_onboard_creates_and_stores_encrypted(client, monkeypatch) -> 
     resp = await client.post(
         f"/runner-pools/{pool_id}/ssh-onboard",
         json={
-            "host": "10.0.0.5", "username": "ubuntu",
-            "auth_method": "password", "password": "hunter2",
+            "host": "10.0.0.5",
+            "username": "ubuntu",
+            "auth_method": "password",
+            "password": "hunter2",
             "api_url": "http://nodyra.example:8000",
         },
     )
@@ -487,8 +559,11 @@ async def test_ssh_onboard_failure_cleans_up_runner(client, monkeypatch) -> None
     resp = await client.post(
         f"/runner-pools/{pool_id}/ssh-onboard",
         json={
-            "host": "h", "username": "u", "auth_method": "password",
-            "password": "p", "api_url": "http://x",
+            "host": "h",
+            "username": "u",
+            "auth_method": "password",
+            "password": "p",
+            "api_url": "http://x",
         },
     )
     assert resp.status_code == 400
@@ -499,13 +574,18 @@ async def test_ssh_onboard_failure_cleans_up_runner(client, monkeypatch) -> None
 
 
 async def test_ssh_onboard_rejects_non_agent_pool(client) -> None:
-    pool_id = (
-        await client.post("/runner-pools", json={"name": "d", "provider": "docker"})
-    ).json()["id"]
+    pool_id = (await client.post("/runner-pools", json={"name": "d", "provider": "docker"})).json()[
+        "id"
+    ]
     resp = await client.post(
         f"/runner-pools/{pool_id}/ssh-onboard",
-        json={"host": "h", "username": "u", "auth_method": "password",
-              "password": "p", "api_url": "http://x"},
+        json={
+            "host": "h",
+            "username": "u",
+            "auth_method": "password",
+            "password": "p",
+            "api_url": "http://x",
+        },
     )
     assert resp.status_code == 400
 
@@ -525,7 +605,10 @@ async def test_ssh_onboard_requires_api_url(client, monkeypatch) -> None:
 
 def test_install_script_quotes_injection() -> None:
     req = SSHOnboardRequest(
-        host="h", username="ubuntu", auth_method="password", password="p",
+        host="h",
+        username="ubuntu",
+        auth_method="password",
+        password="p",
         use_systemd=False,
     )
     script = _install_script(req, "http://api", "tok", "evil; rm -rf /")
@@ -547,13 +630,16 @@ async def test_mark_stale_runners_offline_marks_and_requeues(client: AsyncClient
     """A runner that hasn't sent a pong in N seconds is marked offline and
     its in-flight Run + RunQueueEntry are returned to ``queued``."""
     from app.db import get_session as _get_session
+
     override = client._transport.app.dependency_overrides[_get_session]
 
     # Create pool + an online runner that hasn't been seen in 5 minutes.
-    pool_id = (await client.post(
-        "/runner-pools",
-        json={"name": "p1", "provider": "agent", "provider_config": {}},
-    )).json()["id"]
+    pool_id = (
+        await client.post(
+            "/runner-pools",
+            json={"name": "p1", "provider": "agent", "provider_config": {}},
+        )
+    ).json()["id"]
 
     workflow_id = (await client.post("/workflows", json={"name": "WF"})).json()["id"]
 
@@ -605,9 +691,7 @@ async def test_mark_stale_runners_offline_marks_and_requeues(client: AsyncClient
         run = await session.get(Run, run_id)
         assert run.status == "pending"
         assert run.runner_id is None
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         assert entry.status == "queued"
         assert entry.leased_by is None
         assert entry.lease_expires_at is None
@@ -618,12 +702,15 @@ async def test_mark_stale_runners_offline_marks_and_requeues(client: AsyncClient
 
 async def test_mark_stale_runners_offline_leaves_healthy_alone(client: AsyncClient) -> None:
     from app.db import get_session as _get_session
+
     override = client._transport.app.dependency_overrides[_get_session]
 
-    pool_id = (await client.post(
-        "/runner-pools",
-        json={"name": "p2", "provider": "agent", "provider_config": {}},
-    )).json()["id"]
+    pool_id = (
+        await client.post(
+            "/runner-pools",
+            json={"name": "p2", "provider": "agent", "provider_config": {}},
+        )
+    ).json()["id"]
 
     runner_id: str | None = None
     async for session in override():
@@ -653,12 +740,15 @@ async def test_mark_stale_runners_offline_leaves_healthy_alone(client: AsyncClie
 async def test_mark_stale_runners_handles_never_seen_runner(client: AsyncClient) -> None:
     """``last_seen_at`` is NULL for an online runner — treat it as offline."""
     from app.db import get_session as _get_session
+
     override = client._transport.app.dependency_overrides[_get_session]
 
-    pool_id = (await client.post(
-        "/runner-pools",
-        json={"name": "p3", "provider": "agent", "provider_config": {}},
-    )).json()["id"]
+    pool_id = (
+        await client.post(
+            "/runner-pools",
+            json={"name": "p3", "provider": "agent", "provider_config": {}},
+        )
+    ).json()["id"]
 
     runner_id: str | None = None
     async for session in override():
@@ -690,6 +780,7 @@ async def test_ping_connected_agents_sends_to_each_connection() -> None:
 
         async def send_text(self, text: str) -> None:
             import json
+
             self.sent.append(json.loads(text))
 
     ws1 = _FakeWS()
@@ -716,20 +807,28 @@ async def test_pick_agent_prefers_least_loaded(client: AsyncClient) -> None:
     from app.services.remote_dispatch import _AgentConnection
 
     override = client._transport.app.dependency_overrides[_get_session]
-    pool_id = (await client.post(
-        "/runner-pools",
-        json={"name": "spread", "provider": "agent", "max_concurrent_runs": 10},
-    )).json()["id"]
+    pool_id = (
+        await client.post(
+            "/runner-pools",
+            json={"name": "spread", "provider": "agent", "max_concurrent_runs": 10},
+        )
+    ).json()["id"]
 
     busy_id = loaded_id = ""
     async for session in override():
         busy = Runner(
-            pool_id=pool_id, name="busy", status="online",
-            current_runs=2, max_concurrent_runs=3,
+            pool_id=pool_id,
+            name="busy",
+            status="online",
+            current_runs=2,
+            max_concurrent_runs=3,
         )
         free = Runner(
-            pool_id=pool_id, name="free", status="online",
-            current_runs=0, max_concurrent_runs=3,
+            pool_id=pool_id,
+            name="free",
+            status="online",
+            current_runs=0,
+            max_concurrent_runs=3,
         )
         session.add_all([busy, free])
         await session.flush()
@@ -757,16 +856,21 @@ async def test_pick_agent_honours_pool_ceiling(client: AsyncClient) -> None:
     from app.services.remote_dispatch import _AgentConnection
 
     override = client._transport.app.dependency_overrides[_get_session]
-    pool_id = (await client.post(
-        "/runner-pools",
-        json={"name": "capped", "provider": "agent", "max_concurrent_runs": 2},
-    )).json()["id"]
+    pool_id = (
+        await client.post(
+            "/runner-pools",
+            json={"name": "capped", "provider": "agent", "max_concurrent_runs": 2},
+        )
+    ).json()["id"]
 
     runner_id = ""
     async for session in override():
         runner = Runner(
-            pool_id=pool_id, name="r", status="online",
-            current_runs=2, max_concurrent_runs=5,
+            pool_id=pool_id,
+            name="r",
+            status="online",
+            current_runs=2,
+            max_concurrent_runs=5,
         )
         session.add(runner)
         await session.flush()
@@ -791,72 +895,72 @@ async def test_pick_agent_honours_pool_ceiling(client: AsyncClient) -> None:
 
 
 async def test_registration_token_accepts_machine_details(client: AsyncClient) -> None:
-    pool_id = (await client.post('/runner-pools', json={'name': 'p'})).json()['id']
+    pool_id = (await client.post("/runner-pools", json={"name": "p"})).json()["id"]
     resp = await client.post(
-        f'/runner-pools/{pool_id}/registration-tokens',
+        f"/runner-pools/{pool_id}/registration-tokens",
         json={
-            'name': 'ci-worker-3',
-            'max_concurrent_runs': 8,
-            'capabilities': {'region': 'eu', 'gpu': 'a100'},
+            "name": "ci-worker-3",
+            "max_concurrent_runs": 8,
+            "capabilities": {"region": "eu", "gpu": "a100"},
         },
     )
     assert resp.status_code == 200
-    runners = (await client.get(f'/runner-pools/{pool_id}/runners')).json()
+    runners = (await client.get(f"/runner-pools/{pool_id}/runners")).json()
     assert len(runners) == 1
-    assert runners[0]['name'] == 'ci-worker-3'
-    assert runners[0]['max_concurrent_runs'] == 8
-    assert runners[0]['capabilities'] == {'region': 'eu', 'gpu': 'a100'}
+    assert runners[0]["name"] == "ci-worker-3"
+    assert runners[0]["max_concurrent_runs"] == 8
+    assert runners[0]["capabilities"] == {"region": "eu", "gpu": "a100"}
 
 
 async def test_registration_token_without_body_still_uses_defaults(client: AsyncClient) -> None:
-    pool_id = (await client.post('/runner-pools', json={'name': 'p'})).json()['id']
-    resp = await client.post(f'/runner-pools/{pool_id}/registration-tokens')
+    pool_id = (await client.post("/runner-pools", json={"name": "p"})).json()["id"]
+    resp = await client.post(f"/runner-pools/{pool_id}/registration-tokens")
     assert resp.status_code == 200
-    runners = (await client.get(f'/runner-pools/{pool_id}/runners')).json()
-    assert runners[0]['max_concurrent_runs'] == 1
-    assert runners[0]['capabilities'] == {}
+    runners = (await client.get(f"/runner-pools/{pool_id}/runners")).json()
+    assert runners[0]["max_concurrent_runs"] == 1
+    assert runners[0]["capabilities"] == {}
 
 
 async def test_patch_runner_updates_editable_fields(client: AsyncClient) -> None:
-    pool_id = (await client.post('/runner-pools', json={'name': 'p'})).json()['id']
-    runner_id = (
-        await client.post(f'/runner-pools/{pool_id}/registration-tokens')
-    ).json()['runner_id']
+    pool_id = (await client.post("/runner-pools", json={"name": "p"})).json()["id"]
+    runner_id = (await client.post(f"/runner-pools/{pool_id}/registration-tokens")).json()[
+        "runner_id"
+    ]
 
     resp = await client.patch(
-        f'/runner-pools/{pool_id}/runners/{runner_id}',
+        f"/runner-pools/{pool_id}/runners/{runner_id}",
         json={
-            'name': 'renamed',
-            'max_concurrent_runs': 4,
-            'capabilities': {'env': 'prod'},
+            "name": "renamed",
+            "max_concurrent_runs": 4,
+            "capabilities": {"env": "prod"},
         },
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body['name'] == 'renamed'
-    assert body['max_concurrent_runs'] == 4
-    assert body['capabilities'] == {'env': 'prod'}
+    assert body["name"] == "renamed"
+    assert body["max_concurrent_runs"] == 4
+    assert body["capabilities"] == {"env": "prod"}
 
 
 async def test_patch_runner_404_for_unknown_runner(client: AsyncClient) -> None:
-    pool_id = (await client.post('/runner-pools', json={'name': 'p'})).json()['id']
+    pool_id = (await client.post("/runner-pools", json={"name": "p"})).json()["id"]
     resp = await client.patch(
-        f'/runner-pools/{pool_id}/runners/no-such',
-        json={'name': 'x'},
+        f"/runner-pools/{pool_id}/runners/no-such",
+        json={"name": "x"},
     )
     assert resp.status_code == 404
 
 
 async def test_patch_runner_404_when_runner_belongs_to_other_pool(client: AsyncClient) -> None:
-    pool_a = (await client.post('/runner-pools', json={'name': 'a'})).json()['id']
-    pool_b = (await client.post('/runner-pools', json={'name': 'b'})).json()['id']
-    runner_id = (
-        await client.post(f'/runner-pools/{pool_a}/registration-tokens')
-    ).json()['runner_id']
+    pool_a = (await client.post("/runner-pools", json={"name": "a"})).json()["id"]
+    pool_b = (await client.post("/runner-pools", json={"name": "b"})).json()["id"]
+    runner_id = (await client.post(f"/runner-pools/{pool_a}/registration-tokens")).json()[
+        "runner_id"
+    ]
 
     # Path uses pool_b but runner lives in pool_a -> 404.
     resp = await client.patch(
-        f'/runner-pools/{pool_b}/runners/{runner_id}',
-        json={'name': 'x'},
+        f"/runner-pools/{pool_b}/runners/{runner_id}",
+        json={"name": "x"},
     )
     assert resp.status_code == 404

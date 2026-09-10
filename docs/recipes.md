@@ -37,10 +37,14 @@ ratio rather than a single retry.
 ## Invoke from CI
 
 ```bash
-pip install nodyra-client
-nodyra login --url "$NODYRA_URL" --token "$NODYRA_TOKEN"
-nodyra workflows run "$WORKFLOW_ID" --input-json build-payload.json --watch
+python -m pip install ./packages/client
+printf '%s\n' "$NODYRA_TOKEN" | \
+  nodyra login --base-url "$NODYRA_URL" --token-stdin
+nodyra run start "$WORKFLOW_ID" --data "$(cat build-payload.json)" --watch
 ```
+
+The client is installed from a Nodyra source checkout until its first PyPI
+release.
 
 The command exits non-zero for failed or cancelled runs, making the workflow a
 normal CI gate. Pin a published workflow version through a deployment for

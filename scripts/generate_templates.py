@@ -82,9 +82,7 @@ def _chain(*specs) -> dict:
         _node(node_id, node_type, params, x=index * 280)
         for index, (node_id, node_type, params) in enumerate(specs)
     ]
-    edges = [
-        {"source": specs[i][0], "target": specs[i + 1][0]} for i in range(len(specs) - 1)
-    ]
+    edges = [{"source": specs[i][0], "target": specs[i + 1][0]} for i in range(len(specs) - 1)]
     return {"nodes": nodes, "edges": edges}
 
 
@@ -147,90 +145,131 @@ TEMPLATES: list[dict] = [
     {
         "id": "http_health_check",
         "name": "HTTP health check with alert",
-        "description": (
-            "Poll an endpoint on a schedule and fail the run loudly when it "
-            "stops answering, so your alerting sees it."
-        ),
+        "description": "Poll an endpoint on a schedule and fail the run loudly when it stops answering, "
+        "so your alerting sees it.",
         "tags": ["monitoring", "http", "schedule", "starter"],
-        "prerequisites": ["Outbound HTTPS to the endpoint you are checking"],
-        "expected_result": (
-            "A green run each time the endpoint answers healthily, and a "
-            "failed run naming the status code when it does not."
-        ),
-        "permissions": ["Network: the URL you configure"],
         "credential_free": True,
-        "graph": _chain(
-            ("every_5_min", "schedule_trigger", {"interval": "minutes", "every": 5}),
-            (
-                "probe",
-                "http_request",
+        "prerequisites": ["Outbound HTTPS to the endpoint you are checking"],
+        "expected_result": "A green run each time the endpoint answers healthily, and a failed run naming "
+        "the status code when it does not.",
+        "permissions": ["Network: the URL you configure"],
+        "graph": {
+            "nodes": [
                 {
-                    # An endpoint that returns a body, so the check below has
-                    # something to assert on. /status/200 answers with nothing.
-                    "url": "https://httpbin.org/json",
-                    "method": "GET",
-                    "timeout_seconds": 10,
-                    "max_retries": 1,
+                    "id": "every_5_min",
+                    "type": "schedule_trigger",
+                    "params": {"interval": "minutes", "every": 5},
+                    "position": {"x": 0, "y": 40},
                 },
-            ),
-            (
-                "check",
-                "code",
                 {
-                    "code": (
-                        "# http_request raises on any non-2xx, naming the status, so\n"
-                        "# reaching this node already means the endpoint answered. What\n"
-                        "# it returns is the decoded body - there is no status_code\n"
-                        "# field - so assert on the body instead.\n"
-                        "if input in (None, '', {}, []):\n"
-                        "    raise ValueError('health check failed: empty response body')\n"
-                        "output = {'healthy': True, 'body': input}"
-                    )
+                    "id": "probe",
+                    "type": "http_request",
+                    "params": {
+                        "url": "https://httpbin.org/json",
+                        "method": "GET",
+                        "timeout_seconds": 10,
+                        "max_retries": 1,
+                        "include_response_metadata": True,
+                    },
+                    "position": {"x": 280, "y": 40},
                 },
-            ),
-        ),
+                {
+                    "id": "check",
+                    "type": "code",
+                    "params": {
+                        "code": "# The probe requests status, headers and body metadata.\n"
+                        "status = input['status_code']\n"
+                        "if not 200 <= status < 300:\n"
+                        "    raise ValueError(f'health check failed: HTTP {status}')\n"
+                        "body = input.get('body')\n"
+                        "if body in (None, '', {}, []):\n"
+                        "    raise ValueError('health check failed: empty "
+                        "response body')\n"
+                        "output = {'healthy': True, 'status_code': status, 'body': body}"
+                    },
+                    "position": {"x": 560, "y": 40},
+                },
+            ],
+            "edges": [
+                {"source": "every_5_min", "target": "probe"},
+                {"source": "probe", "target": "check"},
+            ],
+        },
     },
     {
         "id": "csv_clean_dedupe",
         "name": "Clean and de-duplicate a CSV",
-        "description": (
-            "Read a CSV, normalise its text columns, drop duplicate rows by a "
-            "key column, and write the cleaned file back out."
-        ),
+        "description": "Normalise sample customer records, remove duplicate email addresses, and export a "
+        "cleaned CSV. Replace the sample node with your own records to use real data.",
         "tags": ["data", "csv", "cleanup", "starter"],
+        "credential_free": True,
         "prerequisites": [],
         "expected_result": "A cleaned CSV artifact with duplicate rows removed.",
         "permissions": [],
-        "credential_free": True,
-        "graph": _chain(
-            ("start", "manual_trigger", {"data": {}}),
-            # Inline sample rows rather than a file the user does not have, so
-            # the template runs on first click. Deliberately messy: mixed case
-            # and padding for normalise, a repeated address for dedupe.
-            (
-                "sample",
-                "code",
+        "graph": {
+            "nodes": [
                 {
-                    "code": (
-                        "output = [\n"
-                        "    {'name': 'Ada Lovelace', 'email': '  Ada@Example.COM '},\n"
-                        "    {'name': 'Grace Hopper', 'email': 'grace@example.com'},\n"
-                        "    {'name': 'Ada L.', 'email': 'ada@example.com'},\n"
-                        "    {'name': 'Alan Turing', 'email': ' Alan@Example.com'},\n"
-                        "]"
-                    )
+                    "id": "start",
+                    "type": "manual_trigger",
+                    "params": {"data": {}},
+                    "position": {"x": 0, "y": 40},
                 },
-            ),
-            (
-                "normalise",
-                "string_normalize",
-                {"columns": "email", "case": "lower", "trim": True},
-            ),
-            ("dedupe", "remove_duplicates", {"field": "email"}),
-            # csv_write consumes a DatasetRef, not records.
-            ("to_dataset", "records_to_dataset", {}),
-            ("write", "csv_write", {"filename": "cleaned.csv", "include_header": True}),
-        ),
+                {
+                    "id": "sample",
+                    "type": "code",
+                    "params": {
+                        "code": "output = [\n"
+                        "    {'name': 'Ada Lovelace', 'email': '  Ada@Example.COM "
+                        "'},\n"
+                        "    {'name': 'Grace Hopper', 'email': "
+                        "'grace@example.com'},\n"
+                        "    {'name': 'Ada L.', 'email': 'ada@example.com'},\n"
+                        "    {'name': 'Alan Turing', 'email': ' "
+                        "Alan@Example.com'},\n"
+                        "]"
+                    },
+                    "position": {"x": 280, "y": 40},
+                },
+                {
+                    "id": "normalise",
+                    "type": "string_normalize",
+                    "params": {"columns": "email", "case": "lower", "trim": True},
+                    "position": {"x": 560, "y": 40},
+                },
+                {
+                    "id": "to_records",
+                    "type": "dataset_to_records",
+                    "params": {"max_rows": 10000, "allow_truncate": False},
+                    "position": {"x": 840, "y": 40},
+                },
+                {
+                    "id": "dedupe",
+                    "type": "remove_duplicates",
+                    "params": {"field": "email"},
+                    "position": {"x": 1120, "y": 40},
+                },
+                {
+                    "id": "to_dataset",
+                    "type": "records_to_dataset",
+                    "params": {},
+                    "position": {"x": 1400, "y": 40},
+                },
+                {
+                    "id": "write",
+                    "type": "csv_write",
+                    "params": {"filename": "cleaned.csv", "include_header": True},
+                    "position": {"x": 1680, "y": 40},
+                },
+            ],
+            "edges": [
+                {"source": "start", "target": "sample"},
+                {"source": "sample", "target": "normalise"},
+                {"source": "normalise", "target": "to_records"},
+                {"source": "to_records", "target": "dedupe"},
+                {"source": "dedupe", "target": "to_dataset"},
+                {"source": "to_dataset", "target": "write"},
+            ],
+        },
     },
     {
         "id": "rss_digest",
@@ -270,157 +309,186 @@ TEMPLATES: list[dict] = [
     {
         "id": "json_api_to_csv",
         "name": "JSON API to CSV export",
-        "description": (
-            "Fetch a JSON list from an API, pick the fields you care about, "
-            "sort it, and export a CSV artifact."
-        ),
+        "description": "Fetch a JSON list from an API, pick the fields you care about, sort it, and "
+        "export a CSV artifact.",
         "tags": ["api", "csv", "export", "etl"],
+        "credential_free": True,
         "prerequisites": ["Outbound HTTPS to the API you are calling"],
         "expected_result": "A CSV artifact containing the selected fields, sorted.",
         "permissions": ["Network: the API URL you configure"],
-        "credential_free": True,
-        "graph": _chain(
-            ("start", "manual_trigger", {"data": {}}),
-            (
-                "fetch",
-                "http_request",
-                {"url": "https://jsonplaceholder.typicode.com/users", "method": "GET"},
-            ),
-            (
-                "select",
-                "code",
+        "graph": {
+            "nodes": [
                 {
-                    "code": (
-                        "body = input.get('body') if isinstance(input, dict) else input\n"
+                    "id": "start",
+                    "type": "manual_trigger",
+                    "params": {"data": {}},
+                    "position": {"x": 0, "y": 40},
+                },
+                {
+                    "id": "fetch",
+                    "type": "http_request",
+                    "params": {
+                        "url": "https://jsonplaceholder.typicode.com/users",
+                        "method": "GET",
+                    },
+                    "position": {"x": 280, "y": 40},
+                },
+                {
+                    "id": "select",
+                    "type": "code",
+                    "params": {
+                        "code": "body = input.get('body') if isinstance(input, dict) else "
+                        "input\n"
                         "rows = body if isinstance(body, list) else []\n"
                         "output = [{'id': r.get('id'), 'name': r.get('name'),\n"
                         "           'email': r.get('email')} for r in rows]"
-                    )
+                    },
+                    "position": {"x": 560, "y": 40},
                 },
-            ),
-            ("sort_rows", "sort", {"field": "name", "order": "asc"}),
-            # csv_write consumes a DatasetRef, not records - without this step
-            # the template failed with "expected a DatasetRef" on its last node.
-            ("to_dataset", "records_to_dataset", {}),
-            ("export", "csv_write", {"filename": "users.csv", "include_header": True}),
-        ),
+                {
+                    "id": "sort_rows",
+                    "type": "sort",
+                    "params": {"field": "name", "order": "ascending"},
+                    "position": {"x": 840, "y": 40},
+                },
+                {
+                    "id": "to_dataset",
+                    "type": "records_to_dataset",
+                    "params": {},
+                    "position": {"x": 1120, "y": 40},
+                },
+                {
+                    "id": "export",
+                    "type": "csv_write",
+                    "params": {"filename": "users.csv", "include_header": True},
+                    "position": {"x": 1400, "y": 40},
+                },
+            ],
+            "edges": [
+                {"source": "start", "target": "fetch"},
+                {"source": "fetch", "target": "select"},
+                {"source": "select", "target": "sort_rows"},
+                {"source": "sort_rows", "target": "to_dataset"},
+                {"source": "to_dataset", "target": "export"},
+            ],
+        },
     },
     {
         "id": "webhook_validate_respond",
         "name": "Validate a webhook payload and reply",
-        "description": (
-            "Accept an inbound webhook, validate it against a JSON schema, and "
-            "answer 200 or 422 so the caller learns immediately what was wrong."
-        ),
+        "description": "Accept an inbound webhook, validate it against a JSON schema, and answer 200 or "
+        "422 so the caller learns immediately what was wrong.",
         "tags": ["webhook", "validation", "api"],
-        "prerequisites": ["An inbound webhook URL reachable by the caller"],
-        "expected_result": (
-            "Valid payloads return 200; invalid ones return the validation "
-            "errors rather than failing silently."
-        ),
-        "permissions": ["Inbound: webhook"],
         "credential_free": True,
+        "prerequisites": [
+            "An inbound webhook URL reachable by the caller",
+            "Configure webhook authentication before publishing; the production default "
+            "requires it",
+        ],
+        "expected_result": "Valid payloads return 200; invalid ones return the validation errors rather "
+        "than failing silently.",
+        "permissions": ["Inbound: webhook"],
         "graph": {
             "nodes": [
-                _node(
-                    "hook",
-                    "webhook_trigger",
-                    {"path": "validated-intake", "response_mode": "Last Node"},
-                    0,
-                ),
-                _node(
-                    "validate",
-                    "schema_validate",
-                    {
-                        "schema_json": json.dumps(
-                            {
-                                "type": "object",
-                                "required": ["email", "amount"],
-                                "properties": {
-                                    "email": {"type": "string"},
-                                    "amount": {"type": "number"},
-                                },
-                            }
-                        ),
-                        "on_error": "split",
+                {
+                    "id": "hook",
+                    "type": "webhook_trigger",
+                    "params": {
+                        "path": "validated-intake",
+                        "http_method": "POST",
+                        "response_mode": "Respond Node",
                     },
-                    280,
-                ),
-                _node("accepted", "no_op", {}, 560, -40),
-                _node(
-                    "rejected",
-                    "code",
-                    {
-                        "code": (
-                            "output = {'accepted': False,\n"
-                            "          'errors': input if input is not None else []}"
-                        )
+                    "position": {"x": 0, "y": 40},
+                },
+                {
+                    "id": "body",
+                    "type": "code",
+                    "params": {"code": "output = (input or {}).get('body')"},
+                    "position": {"x": 280, "y": 40},
+                },
+                {
+                    "id": "validate",
+                    "type": "json_schema_validate",
+                    "params": {
+                        "schema": '{"type": "object", "required": ["email", "amount"], '
+                        '"properties": {"email": {"type": "string"}, "amount": '
+                        '{"type": "number"}}}'
                     },
-                    560,
-                    120,
-                ),
+                    "position": {"x": 560, "y": 40},
+                },
+                {
+                    "id": "valid",
+                    "type": "if",
+                    "params": {"field": "valid", "operator": "is true"},
+                    "position": {"x": 840, "y": 40},
+                },
+                {
+                    "id": "accepted",
+                    "type": "respond_to_webhook",
+                    "params": {"status_code": 200},
+                    "position": {"x": 1120, "y": -40},
+                },
+                {
+                    "id": "rejected",
+                    "type": "respond_to_webhook",
+                    "params": {"status_code": 422},
+                    "position": {"x": 1120, "y": 160},
+                },
             ],
             "edges": [
-                {"source": "hook", "target": "validate"},
-                {"source": "validate", "target": "accepted", "source_output": "main"},
-                {"source": "validate", "target": "rejected", "source_output": "invalid"},
+                {"source": "hook", "target": "body"},
+                {"source": "body", "target": "validate"},
+                {"source": "validate", "target": "valid"},
+                {"source": "valid", "target": "accepted", "source_output": "true"},
+                {"source": "valid", "target": "rejected", "source_output": "false"},
             ],
         },
     },
     {
         "id": "batch_http_fetch",
         "name": "Fetch many URLs in parallel",
-        "description": (
-            "Loop over a list of URLs, fetch each one concurrently, and collect "
-            "the successes and failures separately."
-        ),
+        "description": "Loop over a list of URLs, fetch each one concurrently, and collect the successes "
+        "and failures separately.",
         "tags": ["http", "loop", "batch", "concurrency"],
-        "prerequisites": ["Outbound HTTPS to the URLs you supply"],
-        "expected_result": (
-            "One results collection with every successful response, and a "
-            "separate errors collection for the ones that failed."
-        ),
-        "permissions": ["Network: the URLs you supply at run time"],
         "credential_free": True,
+        "prerequisites": ["Outbound HTTPS to the URLs you supply"],
+        "expected_result": "One results collection with every successful response, and a separate errors "
+        "collection for the ones that failed.",
+        "permissions": ["Network: the URLs you supply at run time"],
         "graph": {
             "nodes": [
-                _node(
-                    "start",
-                    "manual_trigger",
-                    {
-                        "data": {
-                            "urls": [
-                                "https://httpbin.org/json",
-                                "https://httpbin.org/uuid",
-                            ]
-                        }
+                {
+                    "id": "start",
+                    "type": "manual_trigger",
+                    "params": {
+                        "data": {"urls": ["https://httpbin.org/json", "https://httpbin.org/uuid"]}
                     },
-                    0,
-                ),
-                _node(
-                    "expand",
-                    "code",
-                    {"code": "output = (input or {}).get('urls', [])"},
-                    280,
-                ),
-                _node(
-                    "each",
-                    "loop_start",
-                    {"mode": "items", "concurrency": 4, "on_error": "continue"},
-                    560,
-                ),
-                _node(
-                    "fetch",
-                    "http_request",
-                    {"url": "{{ $json }}", "method": "GET", "timeout_seconds": 10},
-                    840,
-                ),
-                _node(
-                    "collect",
-                    "loop_end",
-                    {"loop_start_id": "each", "output_mode": "collect"},
-                    1120,
-                ),
+                    "position": {"x": 0, "y": 40},
+                },
+                {
+                    "id": "expand",
+                    "type": "code",
+                    "params": {"code": "output = (input or {}).get('urls', [])"},
+                    "position": {"x": 280, "y": 40},
+                },
+                {
+                    "id": "each",
+                    "type": "loop_start",
+                    "params": {"mode": "each", "concurrency": 4, "on_error": "continue"},
+                    "position": {"x": 560, "y": 40},
+                },
+                {
+                    "id": "fetch",
+                    "type": "http_request",
+                    "params": {"url": "{{ $json }}", "method": "GET", "timeout_seconds": 10},
+                    "position": {"x": 840, "y": 40},
+                },
+                {
+                    "id": "collect",
+                    "type": "loop_end",
+                    "params": {"loop_start_id": "each", "output_mode": "records"},
+                    "position": {"x": 1120, "y": 40},
+                },
             ],
             "edges": [
                 {"source": "start", "target": "expand"},
@@ -433,33 +501,67 @@ TEMPLATES: list[dict] = [
     {
         "id": "data_quality_gate",
         "name": "Data quality gate",
-        "description": (
-            "Profile an incoming dataset, flag statistical outliers, and stop "
-            "the run before bad data reaches anything downstream."
-        ),
+        "description": "Profile an incoming dataset, flag statistical outliers, and stop the run before "
+        "bad data reaches anything downstream.",
         "tags": ["data-quality", "validation", "etl"],
+        "credential_free": False,
         "prerequisites": [
             "A CSV file readable by the Nodyra process",
-            "ydata-profiling installed in the workflow environment",
+            "pandas>=2.0, ydata-profiling>=4.0,<5, and setuptools>=78.1.1,<81 installed in the workflow environment",
         ],
-        "expected_result": (
-            "A profile report plus a separate outliers collection; the run "
-            "fails when outliers exceed your threshold."
-        ),
+        "expected_result": "A profile report plus a separate outliers collection; the run fails when "
+        "outliers exceed your threshold.",
         "permissions": ["Filesystem: the input path you configure"],
-        # Not credential-free: needs both a file you supply and a package that
-        # is not bundled, so pre-flight refuses the run until it is installed.
-        "credential_free": False,
-        "graph": _chain(
-            ("start", "manual_trigger", {"data": {}}),
-            ("read", "read_csv_file", {"path": "data/metrics.csv", "has_header": True}),
-            (
-                "outliers",
-                "outlier_detect_statistical",
-                {"column": "value", "method": "zscore", "threshold": 3.0},
-            ),
-            ("profile", "data_profile_report", {"title": "Incoming metrics"}),
-        ),
+        "graph": {
+            "nodes": [
+                {
+                    "id": "start",
+                    "type": "manual_trigger",
+                    "params": {"data": {}},
+                    "position": {"x": 0, "y": 40},
+                },
+                {
+                    "id": "read",
+                    "type": "read_csv_file",
+                    "params": {"path": "data/metrics.csv", "has_header": True},
+                    "position": {"x": 280, "y": 40},
+                },
+                {
+                    "id": "outliers",
+                    "type": "outlier_detect_statistical",
+                    "params": {"column": "value", "method": "zscore", "threshold": 3.0},
+                    "position": {"x": 560, "y": 40},
+                },
+                {
+                    "id": "profile",
+                    "type": "data_profile_report",
+                    "params": {"title": "Incoming metrics"},
+                    "position": {"x": 840, "y": -100},
+                },
+                {
+                    "id": "gate",
+                    "type": "code",
+                    "params": {
+                        "code": "summary = input or {}\n"
+                        "if summary.get('n_numeric', 0) != summary.get('n_rows', "
+                        "0):\n"
+                        "    raise ValueError('quality gate failed: non-numeric "
+                        "or missing values')\n"
+                        "if summary.get('n_outliers', 0) > 0:\n"
+                        '    raise ValueError(f"quality gate failed: '
+                        "{summary['n_outliers']} outliers\")\n"
+                        "output = {**summary, 'quality_passed': True}"
+                    },
+                    "position": {"x": 840, "y": 160},
+                },
+            ],
+            "edges": [
+                {"source": "start", "target": "read"},
+                {"source": "read", "target": "outliers"},
+                {"source": "read", "target": "profile"},
+                {"source": "outliers", "target": "gate"},
+            ],
+        },
     },
     {
         "id": "text_extract_regex",
@@ -477,11 +579,7 @@ TEMPLATES: list[dict] = [
             (
                 "start",
                 "manual_trigger",
-                {
-                    "data": {
-                        "text": "order=A-1001 total=42.50\norder=A-1002 total=17.00"
-                    }
-                },
+                {"data": {"text": "order=A-1001 total=42.50\norder=A-1002 total=17.00"}},
             ),
             (
                 "extract",
@@ -492,14 +590,14 @@ TEMPLATES: list[dict] = [
                 "shape",
                 "code",
                 {
-                        # regex_extract is re.findall, so a two-group pattern yields tuples,
-                        # not dicts — named groups included. The original code called .get()
-                        # on a tuple, so every run of this template died with AttributeError.
-                        "code": (
-                            "matches = input if isinstance(input, list) else [input]\n"
-                            "output = [{\'order\': m[0], \'total\': float(m[1] or 0)}\n"
-                            "          for m in matches if m]"
-                        )
+                    # regex_extract is re.findall, so a two-group pattern yields tuples,
+                    # not dicts — named groups included. The original code called .get()
+                    # on a tuple, so every run of this template died with AttributeError.
+                    "code": (
+                        "matches = input if isinstance(input, list) else [input]\n"
+                        "output = [{'order': m[0], 'total': float(m[1] or 0)}\n"
+                        "          for m in matches if m]"
+                    )
                 },
             ),
         ),
@@ -538,40 +636,62 @@ TEMPLATES: list[dict] = [
     {
         "id": "scheduled_dataset_snapshot",
         "name": "Nightly dataset snapshot",
-        "description": (
-            "On a nightly schedule, pull a dataset from an API, keep only the "
-            "rows that changed, and write a dated Excel snapshot."
-        ),
+        "description": "On a nightly schedule, fetch the current API dataset and export a dated Excel "
+        "snapshot with the UTC snapshot date recorded on every row.",
         "tags": ["schedule", "snapshot", "excel", "etl"],
+        "credential_free": False,
         "prerequisites": [
             "Outbound HTTPS to the API you are calling",
             "openpyxl installed in the workflow environment",
         ],
         "expected_result": "A dated Excel artifact per nightly run.",
         "permissions": ["Network: the API URL you configure"],
-        # Not credential-free: write_excel_file needs openpyxl, which is not
-        # bundled, so pre-flight refuses the run until it is installed.
-        "credential_free": False,
-        "graph": _chain(
-            ("nightly", "schedule_trigger", {"interval": "cron", "cron": "0 2 * * *"}),
-            (
-                "fetch",
-                "http_request",
-                {"url": "https://jsonplaceholder.typicode.com/posts", "method": "GET"},
-            ),
-            (
-                "recent",
-                "code",
+        "graph": {
+            "nodes": [
                 {
-                    "code": (
-                        "body = input.get('body') if isinstance(input, dict) else input\n"
-                        "rows = body if isinstance(body, list) else []\n"
-                        "output = rows[:50]"
-                    )
+                    "id": "nightly",
+                    "type": "schedule_trigger",
+                    "params": {"interval": "days", "cron": "0 2 * * *", "tz": "UTC"},
+                    "position": {"x": 0, "y": 40},
                 },
-            ),
-            ("snapshot", "write_excel_file", {"sheet_name": "snapshot"}),
-        ),
+                {
+                    "id": "fetch",
+                    "type": "http_request",
+                    "params": {
+                        "url": "https://jsonplaceholder.typicode.com/posts",
+                        "method": "GET",
+                    },
+                    "position": {"x": 280, "y": 40},
+                },
+                {
+                    "id": "recent",
+                    "type": "code",
+                    "params": {
+                        "code": "from datetime import datetime, timezone\n"
+                        "rows = input.get('body', []) if isinstance(input, dict) "
+                        "else (input or [])\n"
+                        "stamp = datetime.now(timezone.utc).strftime('%Y-%m-%d')\n"
+                        "output = [{**row, 'snapshot_date': stamp} for row in "
+                        "rows]"
+                    },
+                    "position": {"x": 560, "y": 40},
+                },
+                {
+                    "id": "snapshot",
+                    "type": "write_excel_file",
+                    "params": {
+                        "sheet_name": "snapshot",
+                        "filename": "snapshot-{{ $json[0].snapshot_date }}.xlsx",
+                    },
+                    "position": {"x": 840, "y": 40},
+                },
+            ],
+            "edges": [
+                {"source": "nightly", "target": "fetch"},
+                {"source": "fetch", "target": "recent"},
+                {"source": "recent", "target": "snapshot"},
+            ],
+        },
     },
     {
         "id": "conditional_routing",
@@ -624,34 +744,39 @@ TEMPLATES: list[dict] = [
     {
         "id": "error_handler_workflow",
         "name": "Catch failures from other workflows",
-        "description": (
-            "A dedicated error workflow: attach it to any workflow and it "
-            "receives the failure details so you can route them one place."
-        ),
+        "description": "A dedicated error workflow: attach it to any workflow and it receives the failure "
+        "details so you can route them one place.",
         "tags": ["errors", "operations", "reliability"],
+        "credential_free": True,
         "prerequisites": ["Set this workflow as another workflow's error handler"],
         "expected_result": "One structured failure record per upstream failure.",
         "permissions": [],
-        "credential_free": True,
-        "graph": _chain(
-            ("failure", "error_trigger", {}),
-            (
-                "summarise",
-                "code",
+        "graph": {
+            "nodes": [
                 {
-                    "code": (
-                        "detail = input or {}\n"
+                    "id": "failure",
+                    "type": "error_trigger",
+                    "params": {},
+                    "position": {"x": 0, "y": 40},
+                },
+                {
+                    "id": "summarise",
+                    "type": "code",
+                    "params": {
+                        "code": "detail = input or {}\n"
                         "output = {\n"
-                        "    'workflow': detail.get('workflow_name') "
-                        "or detail.get('workflow_id'),\n"
+                        "    'workflow': detail.get('workflow_name') or "
+                        "detail.get('workflow_id'),\n"
                         "    'run_id': detail.get('run_id'),\n"
-                        "    'node': detail.get('node_id'),\n"
+                        "    'node': detail.get('failed_node_id'),\n"
                         "    'error': str(detail.get('error', ''))[:500],\n"
                         "}"
-                    )
+                    },
+                    "position": {"x": 280, "y": 40},
                 },
-            ),
-        ),
+            ],
+            "edges": [{"source": "failure", "target": "summarise"}],
+        },
     },
 ]
 

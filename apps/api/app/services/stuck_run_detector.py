@@ -58,7 +58,7 @@ async def detect_stuck_runs() -> int:
         for run_id in rows:
             latest_node = await session.scalar(
                 select(NodeRun.finished_at)
-                .where(NodeRun.run_id == run_id)
+                .where(NodeRun.run_id == run_id, NodeRun.finished_at.is_not(None))
                 .order_by(NodeRun.finished_at.desc())
                 .limit(1)
             )
@@ -78,12 +78,10 @@ async def detect_stuck_runs() -> int:
             return 0
 
         now = datetime.now(UTC)
-        reason = (
-            "Run was stuck: no node completed in the last "
-            f"{int(grace // 60)} minutes"
-        )
+        reason = f"Run was stuck: no node completed in the last {int(grace // 60)} minutes"
+        marked_ids: list[str] = []
         for run_id in stuck_ids:
-            await session.execute(
+            result = await session.execute(
                 update(Run)
                 .where(Run.id == run_id, Run.status == "running")
                 # ADR-0003: a terminal failure no node owns belongs on
@@ -93,10 +91,12 @@ async def detect_stuck_runs() -> int:
                 # no node error to fall back on, so there was nothing at all.
                 .values(status="error", finished_at=now, error=reason)
             )
+            if result.rowcount:
+                marked_ids.append(run_id)
 
         await session.commit()
 
-        for run_id in stuck_ids:
+        for run_id in marked_ids:
             broker.publish(
                 run_id,
                 {"type": "run_error", "error": reason},
@@ -107,10 +107,11 @@ async def detect_stuck_runs() -> int:
             )
             logger.warning(
                 "stuck_run_detector: run_id=%s marked error (no progress for %.0fs)",
-                run_id, grace,
+                run_id,
+                grace,
             )
 
-    return len(stuck_ids)
+    return len(marked_ids)
 
 
 async def stuck_run_detector_loop() -> None:
@@ -120,9 +121,7 @@ async def stuck_run_detector_loop() -> None:
         try:
             stuck = await detect_stuck_runs()
             if stuck:
-                logger.info(
-                    "stuck_run_detector: marked %d run(s) as error", stuck
-                )
+                logger.info("stuck_run_detector: marked %d run(s) as error", stuck)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — never kill the loop

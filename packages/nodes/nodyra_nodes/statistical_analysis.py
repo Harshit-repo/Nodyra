@@ -22,13 +22,22 @@ MAX_BOOTSTRAP_RESAMPLES = 100_000
 def _rows_from_input(value: Any) -> list[dict[str, Any]]:
     if is_dataset_ref(value):
         return materialize_dataset(value)
+    if value is None:
+        return []
     if isinstance(value, list):
         return [row for row in value if isinstance(row, dict)]
     if isinstance(value, dict):
-        if isinstance(value.get("records"), list):
-            return [row for row in value["records"] if isinstance(row, dict)]
+        # Trigger payloads and pinned data commonly wrap records under
+        # "rows"/"records"; treat the dict itself as a single record otherwise.
+        for key in ("records", "rows"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return [row for row in nested if isinstance(row, dict)]
         return [value]
-    return []
+    raise ValueError(
+        "input must be a DatasetRef, a list of records, or an object with a "
+        "'rows'/'records' array — add a Records To Dataset node upstream."
+    )
 
 
 def _bounded_positive_int(name: str, value: Any, max_value: int) -> int:
@@ -76,9 +85,15 @@ def statistical_test(
             "scipy is required. Add scipy to the workflow environment and rebuild it."
         ) from exc
 
-    rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
+    rows = _rows_from_input(input)
     col_values = [float(r[column]) for r in rows if column in r and r[column] is not None]
     n = len(col_values)
+    if n == 0:
+        raise ValueError(
+            f"column {column!r} has no numeric values in the input rows — "
+            "check the column name and that upstream data is a DatasetRef "
+            "or list of records."
+        )
 
     warnings_list: list[str] = []
     if n < 30:
@@ -177,11 +192,22 @@ def statistical_test(
         )
         raise ValueError(f"Unknown test: {test!r}. Valid: {valid}")
 
+    # scipy can return NaN/Inf when a sample is degenerate (e.g. all values
+    # identical, so variance collapses). Surface it as a descriptive error
+    # instead of emitting a non-finite float that poisons every JSON consumer
+    # of the run output.
+    if stat is None or pval is None or not math.isfinite(stat) or not math.isfinite(pval):
+        raise ValueError(
+            f"statistical test {test!r} produced a non-finite result — check that "
+            "the sample column(s) contain numeric data with enough variance "
+            "(all-identical values have no measurable effect)."
+        )
+
     reject = pval < alpha
     interp = (
         f"Reject the null hypothesis (p={pval:.4f} < α={alpha}). Statistically significant."
-        if reject else
-        "Fail to reject the null hypothesis "
+        if reject
+        else "Fail to reject the null hypothesis "
         f"(p={pval:.4f} ≥ α={alpha}). Not statistically significant."
     )
 
@@ -216,7 +242,7 @@ def statistical_test(
     name="Distribution Fit",
     id="distribution_fit",
     category="Statistical Analysis",
-    requirements=["scipy>=1.10"],
+    requirements=["scipy>=1.10", "numpy>=1.24"],
 )
 def distribution_fit(
     input=None,
@@ -237,8 +263,10 @@ def distribution_fit(
             "scipy is required. Add scipy to the workflow environment and rebuild it."
         ) from exc
 
-    rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
+    rows = _rows_from_input(input)
     data = [float(r[column]) for r in rows if column in r and r[column] is not None]
+    if not data:
+        raise ValueError(f"column {column!r} has no numeric values in the input rows.")
     arr = _np.array(data, dtype=float)
 
     dist_names = [d.strip() for d in distributions.split(",") if d.strip()]
@@ -256,15 +284,17 @@ def distribution_fit(
             n = len(data)
             aic = 2.0 * k - 2.0 * ll
             bic = k * math.log(n) - 2.0 * ll
-            fitted.append({
-                "distribution": name,
-                "params": str(params),
-                "ks_statistic": float(ks_stat),
-                "ks_pvalue": float(ks_p),
-                "log_likelihood": ll,
-                "aic": aic,
-                "bic": bic,
-            })
+            fitted.append(
+                {
+                    "distribution": name,
+                    "params": str(params),
+                    "ks_statistic": float(ks_stat),
+                    "ks_pvalue": float(ks_p),
+                    "log_likelihood": ll,
+                    "aic": aic,
+                    "bic": bic,
+                }
+            )
         except Exception:
             continue
 
@@ -297,7 +327,12 @@ def correlation_analysis(
     if input is None:
         raise ValueError("input is required")
 
-    rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
+    rows = _rows_from_input(input)
+
+    if not rows:
+        raise ValueError(
+            "input must contain at least one record — add a Records To Dataset node upstream."
+        )
 
     if columns:
         col_names = [c.strip() for c in columns.split(",") if c.strip()]
@@ -330,17 +365,19 @@ def correlation_analysis(
 
     pairs: list[dict] = []
     for i, c1 in enumerate(col_names):
-        for c2 in col_names[i + 1:]:
+        for c2 in col_names[i + 1 :]:
             v1, v2 = vecs[c1], vecs[c2]
             n2 = min(len(v1), len(v2))
             r_val, p_val = corr_fn(v1[:n2], v2[:n2])
-            pairs.append({
-                "col1": c1,
-                "col2": c2,
-                "correlation": float(r_val),
-                "p_value": float(p_val),
-                "n": n2,
-            })
+            pairs.append(
+                {
+                    "col1": c1,
+                    "col2": c2,
+                    "correlation": float(r_val),
+                    "p_value": float(p_val),
+                    "n": n2,
+                }
+            )
 
     return {
         "dataset": records_to_dataset(pairs),
@@ -359,7 +396,7 @@ def correlation_analysis(
     name="Regression Analysis",
     id="regression_analysis",
     category="Statistical Analysis",
-    requirements=["statsmodels>=0.14"],
+    requirements=["statsmodels>=0.14", "numpy>=1.24"],
 )
 def regression_analysis(
     input=None,
@@ -385,10 +422,15 @@ def regression_analysis(
             "statsmodels is required. Add statsmodels to the workflow environment and rebuild it."
         ) from exc
 
-    rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
+    rows = _rows_from_input(input)
+    if not rows:
+        raise ValueError(
+            "input must contain at least one record — add a Records To Dataset node upstream."
+        )
     feats = [c.strip() for c in feature_columns.split(",") if c.strip()]
 
     import numpy as _np
+
     y = _np.array([float(r[target_column]) for r in rows], dtype=float)
     X_raw = _np.array([[float(r[f]) for f in feats] for r in rows], dtype=float)
     X = _sm.add_constant(X_raw)
@@ -404,15 +446,17 @@ def regression_analysis(
     ci = model.conf_int()
     coef_rows = []
     for i, name in enumerate(feat_names):
-        coef_rows.append({
-            "feature": name,
-            "coef": float(model.params[i]),
-            "std_err": float(model.bse[i]),
-            "t_stat": float(model.tvalues[i]),
-            "p_value": float(model.pvalues[i]),
-            "ci_lower": float(ci[i][0]),
-            "ci_upper": float(ci[i][1]),
-        })
+        coef_rows.append(
+            {
+                "feature": name,
+                "coef": float(model.params[i]),
+                "std_err": float(model.bse[i]),
+                "t_stat": float(model.tvalues[i]),
+                "p_value": float(model.pvalues[i]),
+                "ci_lower": float(ci[i][0]),
+                "ci_upper": float(ci[i][1]),
+            }
+        )
 
     summary: dict = {"n_obs": int(model.nobs), "model_type": model_type}
     if model_type == "ols":
@@ -448,9 +492,7 @@ def monte_carlo_simulate(
         raise ValueError("variables_json is required")
     if not expression:
         raise ValueError("expression is required")
-    n_iterations = _bounded_positive_int(
-        "n_iterations", n_iterations, MAX_MONTE_CARLO_ITERATIONS
-    )
+    n_iterations = _bounded_positive_int("n_iterations", n_iterations, MAX_MONTE_CARLO_ITERATIONS)
 
     try:
         import numpy as _np
@@ -480,9 +522,7 @@ def monte_carlo_simulate(
         name = vd.get("name", "")
         dist = vd.get("distribution", "normal")
         if dist not in _DISTRIBUTIONS:
-            raise ValueError(
-                f"Unknown distribution {dist!r}. Valid: {sorted(_DISTRIBUTIONS)}"
-            )
+            raise ValueError(f"Unknown distribution {dist!r}. Valid: {sorted(_DISTRIBUTIONS)}")
         samples[name] = _DISTRIBUTIONS[dist](vd, n_iterations)
 
     # SECURITY (SA-1): eval with empty __builtins__ does NOT sandbox — the
@@ -501,19 +541,19 @@ def monte_carlo_simulate(
         _ExprValidator().visit(tree)
         code_obj = compile(tree, "<monte_carlo>", "eval")
     except (SyntaxError, ValueError) as exc:
-        raise ValueError(
-            f"Invalid expression {expression!r}: {exc}"
-        ) from exc
+        raise ValueError(f"Invalid expression {expression!r}: {exc}") from exc
     safe_globals: dict = {"__builtins__": _SAFE_BUILTINS}
     try:
-        result_arr = _np.array([
-            eval(  # noqa: S307 - AST-validated above, restricted builtins
-                code_obj,
-                safe_globals,
-                {k: float(v[i]) for k, v in samples.items()},  # type: ignore[index]
-            )
-            for i in range(n_iterations)
-        ])
+        result_arr = _np.array(
+            [
+                eval(  # noqa: S307 - AST-validated above, restricted builtins
+                    code_obj,
+                    safe_globals,
+                    {k: float(v[i]) for k, v in samples.items()},  # type: ignore[index]
+                )
+                for i in range(n_iterations)
+            ]
+        )
     except Exception as exc:
         raise ValueError(f"Failed to evaluate expression {expression!r}: {exc}") from exc
 
@@ -542,7 +582,7 @@ def monte_carlo_simulate(
     name="Bootstrap Confidence Interval",
     id="bootstrap_ci",
     category="Statistical Analysis",
-    requirements=["scipy>=1.10"],
+    requirements=["scipy>=1.10", "numpy>=1.24"],
 )
 def bootstrap_ci(
     input=None,
@@ -556,9 +596,7 @@ def bootstrap_ci(
         raise ValueError("input is required")
     if not column:
         raise ValueError("column is required")
-    n_resamples = _bounded_positive_int(
-        "n_resamples", n_resamples, MAX_BOOTSTRAP_RESAMPLES
-    )
+    n_resamples = _bounded_positive_int("n_resamples", n_resamples, MAX_BOOTSTRAP_RESAMPLES)
     try:
         confidence_level = float(confidence_level)
     except (TypeError, ValueError) as exc:
@@ -574,7 +612,7 @@ def bootstrap_ci(
             "scipy is required. Add scipy to the workflow environment and rebuild it."
         ) from exc
 
-    rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
+    rows = _rows_from_input(input)
     data = [float(r[column]) for r in rows if column in r and r[column] is not None]
 
     _STAT_FNS = {
@@ -586,6 +624,9 @@ def bootstrap_ci(
     }
     if statistic not in _STAT_FNS:
         raise ValueError(f"statistic must be one of {sorted(_STAT_FNS)}")
+
+    if len(data) < 2:
+        raise ValueError(f"column {column!r} needs at least 2 numeric values for bootstrapping.")
 
     stat_fn = _STAT_FNS[statistic]
     arr = _np.array(data, dtype=float)
@@ -661,14 +702,10 @@ def optimization_solve(
             cat=cat,
         )
 
-    prob += _pulp.lpSum(
-        coef * lp_vars[var] for var, coef in obj_def["coefficients"].items()
-    )
+    prob += _pulp.lpSum(coef * lp_vars[var] for var, coef in obj_def["coefficients"].items())
 
     for cd in constraint_defs:
-        expr = _pulp.lpSum(
-            coef * lp_vars[var] for var, coef in cd["coefficients"].items()
-        )
+        expr = _pulp.lpSum(coef * lp_vars[var] for var, coef in cd["coefficients"].items())
         s, rhs = cd["sense"], cd["rhs"]
         if s == "<=":
             prob += expr <= rhs
@@ -707,7 +744,7 @@ def optimization_solve(
     name="Time Series Decompose",
     id="time_series_decompose",
     category="Statistical Analysis",
-    requirements=["statsmodels>=0.14"],
+    requirements=["statsmodels>=0.14", "numpy>=1.24"],
 )
 def time_series_decompose(
     input=None,
@@ -727,11 +764,9 @@ def time_series_decompose(
             "statsmodels is required. Add statsmodels to the workflow environment and rebuild it."
         ) from exc
 
-    rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
+    rows = _rows_from_input(input)
     values = [
-        float(r[value_column])
-        for r in rows
-        if value_column in r and r[value_column] is not None
+        float(r[value_column]) for r in rows if value_column in r and r[value_column] is not None
     ]
 
     if len(values) < 2 * period:
@@ -741,6 +776,7 @@ def time_series_decompose(
         )
 
     import numpy as _np
+
     arr = _np.array(values, dtype=float)
     decomp = _decompose(arr, model=model, period=period, extrapolate_trend="freq")
 
@@ -748,13 +784,15 @@ def time_series_decompose(
     for i, obs in enumerate(decomp.observed):
         tr = decomp.trend[i]
         re = decomp.resid[i]
-        out_rows.append({
-            "index": i,
-            "observed": float(obs),
-            "trend": float(tr) if not _np.isnan(tr) else None,
-            "seasonal": float(decomp.seasonal[i]),
-            "residual": float(re) if not _np.isnan(re) else None,
-        })
+        out_rows.append(
+            {
+                "index": i,
+                "observed": float(obs),
+                "trend": float(tr) if not _np.isnan(tr) else None,
+                "seasonal": float(decomp.seasonal[i]),
+                "residual": float(re) if not _np.isnan(re) else None,
+            }
+        )
 
     return {
         "dataset": records_to_dataset(out_rows),
@@ -773,7 +811,7 @@ def time_series_decompose(
     name="Dimensionality Reduce",
     id="dimensionality_reduce",
     category="Statistical Analysis",
-    requirements=["scikit-learn>=1.3"],
+    requirements=["scikit-learn>=1.3", "numpy>=1.24"],
 )
 def dimensionality_reduce(
     input=None,
@@ -795,7 +833,11 @@ def dimensionality_reduce(
             "scikit-learn is required. Add scikit-learn to the workflow environment and rebuild it."
         ) from exc
 
-    rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
+    rows = _rows_from_input(input)
+    if not rows:
+        raise ValueError(
+            "input must contain at least one record — add a Records To Dataset node upstream."
+        )
 
     if feature_columns:
         feats = [c.strip() for c in feature_columns.split(",") if c.strip()]
@@ -804,6 +846,7 @@ def dimensionality_reduce(
         feats = [k for k, v in sample.items() if isinstance(v, (int, float))]
 
     import numpy as _np
+
     X = _np.array([[float(r.get(f, 0.0)) for f in feats] for r in rows], dtype=float)
     X_scaled = _Scaler().fit_transform(X)
 

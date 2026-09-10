@@ -11,8 +11,6 @@ import subprocess
 import sys
 
 EXEMPT_PREFIXES = (
-    "docs/audits/",
-    "docs/superpowers/",
     "scripts/check_rename.py",
     "scripts/rename_to_nodyra.py",
     "CHANGELOG.md",
@@ -23,7 +21,7 @@ EXEMPT_FILES = {
 PATTERN = re.compile(r"noodle", re.IGNORECASE)
 EXEMPT_LINES = {
     # Former-name SEO/support note intentionally retained after the rename.
-    ("README.md", "previously developed under the working name"),
+    ("README.md", "previously developed under the name"),
 }
 EXEMPT_LINE_PATTERNS = (
     re.compile(r"NOODLE_[A-Z0-9_]+"),

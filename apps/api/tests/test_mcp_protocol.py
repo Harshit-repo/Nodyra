@@ -40,3 +40,11 @@ def test_tool_result_error_is_plain_text() -> None:
     out = tool_result("boom", is_error=True)
     assert out["isError"] is True
     assert "structuredContent" not in out
+
+def test_tool_result_sanitizes_non_finite_floats() -> None:
+    """A run output containing NaN must reach the caller as JSON-safe nulls in
+    both the text and the structured content — not a literal ``NaN`` token."""
+    out = tool_result({"rows": [{"statistic": float("nan")}, {"ok": 1.0}]})
+    assert out["isError"] is False
+    assert out["structuredContent"]["rows"][0]["statistic"] is None
+    assert "NaN" not in out["content"][0]["text"]

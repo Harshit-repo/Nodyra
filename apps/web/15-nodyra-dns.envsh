@@ -1,0 +1,11 @@
+#!/bin/sh
+# Sourced by the nginx entrypoint before template substitution. Works with
+# Docker's embedded DNS and Kubernetes' configured cluster nameserver.
+if [ -z "${NODYRA_DNS_RESOLVER:-}" ]; then
+    NODYRA_DNS_RESOLVER=$(awk '$1 == "nameserver" { print $2; exit }' /etc/resolv.conf)
+    case "$NODYRA_DNS_RESOLVER" in
+        *:*) NODYRA_DNS_RESOLVER="[$NODYRA_DNS_RESOLVER]" ;;
+    esac
+fi
+: "${NODYRA_DNS_RESOLVER:?No DNS resolver configured}"
+export NODYRA_DNS_RESOLVER

@@ -1499,13 +1499,17 @@ def _http_backoff_seconds(attempt: int) -> float:
             "group": "Options",
             "description": "Per-request timeout in seconds.",
         },
-        "max_retries": {
+          "max_retries": {
             "group": "Options",
             "description": (
                 "Retries on a transient failure (429/5xx or a connection/timeout "
                 "error) with exponential backoff. 0 = a single attempt."
-            ),
-        },
+              ),
+          },
+          "include_response_metadata": {
+              "group": "Options",
+              "description": "Return status_code, headers and body instead of only the response body.",
+          },
     },
 )
 def http_request(
@@ -1517,11 +1521,13 @@ def http_request(
     body: dict | None = None,
     timeout_seconds: float = 30,
     max_retries: int = 0,
+    include_response_metadata: bool = False,
 ) -> Any:
     """Call an HTTP API and return the JSON body (or text on non-JSON).
 
     Optionally retries transient failures (429/5xx, connection/timeout errors)
     with exponential backoff; ``max_retries=0`` (default) makes a single attempt.
+    Enable ``include_response_metadata`` to return status_code, headers and body.
     """
     import time
 
@@ -1567,6 +1573,12 @@ def http_request(
         if reason:
             label = f"{label} {reason}"
         raise RuntimeError(f"{label} from {url}: {detail}")
+    if include_response_metadata:
+        return {
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+            "body": payload,
+        }
     return payload
 
 

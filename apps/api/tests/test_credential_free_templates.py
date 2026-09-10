@@ -85,9 +85,8 @@ def test_credential_free_templates_read_no_files(template):
     ids=lambda t: t.get("id", "?"),
 )
 def test_credential_free_templates_need_no_extra_packages(template):
-    from nodyra.sdk import registry
-
     from app.services.package_preflight import bundled_packages
+    from nodyra.sdk import registry
 
     bundled = {b.lower().replace("-", "_") for b in bundled_packages()}
     by_id = {m.id: m for m in registry.manifests()}

@@ -750,7 +750,7 @@ export function CredentialsPage() {
 
         {error && <p className="error-text">{error}</p>}
         {!credentials && !error && (
-          <div className="env-grid" aria-label="Loading credentials">
+          <div role="status" className="env-grid" aria-label="Loading credentials">
             {Array.from({ length: 6 }).map((_, index) => (
               <article className="env-card skeleton-card" key={index}>
                 <span className="skeleton-line short" />

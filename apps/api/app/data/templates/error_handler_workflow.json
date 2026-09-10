@@ -33,7 +33,7 @@
         "id": "summarise",
         "type": "code",
         "params": {
-          "code": "detail = input or {}\noutput = {\n    'workflow': detail.get('workflow_name') or detail.get('workflow_id'),\n    'run_id': detail.get('run_id'),\n    'node': detail.get('node_id'),\n    'error': str(detail.get('error', ''))[:500],\n}"
+          "code": "detail = input or {}\noutput = {\n    'workflow': detail.get('workflow_name') or detail.get('workflow_id'),\n    'run_id': detail.get('run_id'),\n    'node': detail.get('failed_node_id'),\n    'error': str(detail.get('error', ''))[:500],\n}"
         },
         "position": {
           "x": 280,

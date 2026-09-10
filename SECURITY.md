@@ -47,7 +47,7 @@ regression.
 ## Reporting a vulnerability
 
 Please report security issues privately rather than opening a public issue.
-Email the maintainers at **security@<your-domain>** (replace before release) with
+Email the maintainers at **sharma.har97@gmail.com** with
 a description, reproduction steps, and impact. We aim to acknowledge within a few
 business days and will coordinate a fix and disclosure timeline with you.
 

@@ -9,8 +9,6 @@ import subprocess
 from pathlib import Path
 
 EXEMPT_PREFIXES = (
-    "docs/audits/",
-    "docs/superpowers/",
     "scripts/check_rename.py",
     "scripts/rename_to_nodyra.py",
     "CHANGELOG.md",

@@ -2,14 +2,17 @@
 
 ## What to back up
 
-Back up the Postgres `pgdata` volume, the `artifactdata` and `envdata` volumes,
-and your `.env` file. **If you lose `SECRET_KEY`, every stored credential is
-permanently undecryptable.**
+Back up PostgreSQL with a consistent database dump, the configured artifact
+backend, environment definitions, and the deployment secrets. Include the
+organization encryption keys stored in PostgreSQL and any external KMS keys.
+**Losing the application secret or required encryption keys can make stored
+credentials permanently undecryptable.** Do not copy a live `pgdata` directory
+as a substitute for a database-aware backup.
 
 ## Backup
 
 ```bash
-docker compose -f deploy/docker-compose.yml exec postgres \
+docker compose -f deploy/docker-compose.yml exec -T postgres \
   pg_dump -U nodyra -Fc nodyra > nodyra-$(date +%F).dump
 docker run --rm -v nodyra_artifactdata:/data -v "$PWD:/backup" \
   alpine tar czf /backup/artifacts-$(date +%F).tgz -C /data .
@@ -18,6 +21,13 @@ docker run --rm -v nodyra_envdata:/data -v "$PWD:/backup" \
 ```
 
 Store `.env` with the dumps in your secret backup system.
+
+The commands above are Bash examples. Use the actual Compose project volume
+names from `docker volume ls`; they may differ from `nodyra_*`. The artifact
+archive covers the local backend only. With the default MinIO/S3 backend,
+back up the object bucket separately as described below. Drain workflow
+execution while capturing a coordinated database and object-storage recovery
+point, and store the resulting backups outside the application host.
 
 ### Automated restore verification
 
@@ -81,6 +91,10 @@ production data.
 
 ## S3 artifact backends
 
-When artifacts live in S3 or a compatible object store, enable bucket
-versioning and lifecycle retention instead of tarring the `artifactdata`
-volume. Continue backing up Postgres, `envdata`, and `.env`.
+When artifacts live in S3 or a compatible object store, back up the bucket
+objects and use versioning and lifecycle retention. Tarring `artifactdata`
+does not capture S3/MinIO objects. Keep an encrypted off-host copy or replication
+target under a separate access policy; versioning on the same machine alone
+does not protect against losing that machine. Restore the bucket alongside
+PostgreSQL, the organization keys, environment definitions, and `.env`, then
+run the recovery verification before restoring user traffic.

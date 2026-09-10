@@ -217,7 +217,7 @@ export function SSOSettingsPage() {
   if (loading) {
     return (
       <div className="screen-center">
-        <div className="nodyra-settings-skeleton" aria-label="Loading SSO settings">
+        <div role="status" className="nodyra-settings-skeleton" aria-label="Loading SSO settings">
           <span />
           <span />
           <span />

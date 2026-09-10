@@ -44,6 +44,14 @@ def bundled_packages() -> frozenset[str]:
     without this the pre-flight check demanded they also appear in the
     environment's package list, refusing runs that would have succeeded.
 
+    Only the *core* dependencies count. ``metadata.requires()`` also returns
+    the optional-extras requirements (pandas, scipy, matplotlib, opencv, ...)
+    marked ``extra == '<name>'``; those are only installed when an environment
+    build selects them, so treating them as bundled waved pre-flight through
+    nodes whose imports crashed at runtime ("Data transform requires pandas").
+    Markers that mention ``extra`` are therefore dropped, and packages from
+    extras must be declared on the environment like any other requirement.
+
     Read from installed metadata rather than hard-coded, so removing a
     dependency from nodyra-nodes makes the check start requiring it again
     without anyone remembering to edit this file.
@@ -55,7 +63,17 @@ def bundled_packages() -> frozenset[str]:
     names: set[str] = set()
     for raw in requires:
         try:
-            names.add(canonicalize_name(Requirement(raw).name))
+            req = Requirement(raw)
+        except InvalidRequirement:
+            continue
+        if req.marker is not None:
+            try:
+                if not req.marker.evaluate():
+                    continue  # optional extra (or platform mismatch)
+            except Exception:  # noqa: BLE001 - unknown marker env must not crash pre-flight
+                continue
+        try:
+            names.add(canonicalize_name(req.name))
         except InvalidRequirement:
             continue
     return frozenset(names)
@@ -67,9 +85,7 @@ def find_missing_packages(graph: dict, env_packages: list[str]) -> dict[str, lis
     Requirements whose PEP 508 sys_platform marker does not match the current
     server platform are skipped — they are not needed here.
     """
-    reqs_by_type = {
-        m.id: m.requirements for m in node_registry.manifests() if m.requirements
-    }
+    reqs_by_type = {m.id: m.requirements for m in node_registry.manifests() if m.requirements}
     # Declared in the environment, plus whatever ships with the node library.
     have = {canonical_package_name(p) for p in env_packages if p.strip()}
     have |= bundled_packages()

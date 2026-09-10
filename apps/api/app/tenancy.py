@@ -1,6 +1,6 @@
 """Request-scoped tenant context + the ORM enforcement layer (Layer 2).
 
-Two enforcement layers keep tenants apart (see docs/multi-tenancy-plan.md A3):
+Two enforcement layers keep tenants apart:
 
 * **Layer 2 (this module, all backends):** a ``do_orm_execute`` hook appends
   ``org_id = :current_org`` to every ORM SELECT against any model that has an

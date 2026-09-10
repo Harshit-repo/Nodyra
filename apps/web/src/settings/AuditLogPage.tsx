@@ -230,7 +230,7 @@ export function AuditLogPage() {
         {error && <p className="error-text">{error}</p>}
 
         {loading && (
-          <div className="audit-log-skeleton" aria-label="Loading audit logs">
+          <div role="status" className="audit-log-skeleton" aria-label="Loading audit logs">
             {Array.from({ length: 5 }).map((_, index) => (
               <div key={index} className="skeleton-line" />
             ))}

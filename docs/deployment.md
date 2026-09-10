@@ -17,7 +17,7 @@ uv sync --all-packages
 
 # api
 DATABASE_URL=sqlite+aiosqlite:///./dev.db \
-  uv run alembic upgrade head --config apps/api/alembic.ini
+  uv run alembic -c apps/api/alembic.ini upgrade head
 DATABASE_URL=sqlite+aiosqlite:///./dev.db \
   uv run uvicorn app.main:app --app-dir apps/api --reload --port 8000
 
@@ -34,8 +34,20 @@ compose Postgres URL.
 `deploy/docker-compose.yml` brings up the full stack — Postgres, Redis, the
 API as a control plane (running migrations on startup, `DISPATCH_ROLE=control`,
 leader-elected scheduler), a dispatch worker (`DISPATCH_ROLE=worker`, executes
-runs), and the web dev server. Open <http://localhost:5173> after the API is
+runs), and the production web build served by nginx. Open <http://localhost:5173> after the API is
 healthy.
+
+This default stack includes MinIO for disposable local development and
+acceptance. The bundled MinIO community image is not qualified for production.
+For a public deployment, use the sandbox and external-S3 overlays together,
+with an independently provisioned private bucket, HTTPS ingress, and off-host
+recovery. The [launch hosting runbook](deployment/launch-hosting.md) contains
+the exact Compose command, required settings, and remaining host checks.
+
+The web image refreshes upstream DNS after API replacement. It reads the
+container's configured nameserver at startup; `NODYRA_DNS_RESOLVER` can override
+that resolver when necessary. Helm uses a fully qualified API service name;
+set `clusterDomain` if the cluster domain differs from `cluster.local`.
 
 ### Execution topology (`DISPATCH_ROLE`)
 
@@ -76,14 +88,42 @@ helm install nodyra deploy/helm/nodyra \
   --set redis.url=redis://redis:6379/0 \
   --set secret.key=$(openssl rand -hex 32) \
   --set secret.internalApiToken=$(openssl rand -hex 32) \
+  --set persistence.storageClass=your-rwx-storage-class \
   --set api.corsOrigins=https://nodyra.example.com
 ```
 
 The chart deploys the API (control plane), web, and the dispatch worker.
 Postgres and Redis are expected to be installed separately. Enable the bundled Ingress
-with `--set ingress.enabled=true` — it routes `/api`, `/ws`, `/mcp`, and the
-MCP protected-resource metadata path to the API, and everything else to the
-web app.
+with `--set ingress.enabled=true`. The web proxy handles `/api` and strips that
+prefix before forwarding to the API. `/ws`, `/mcp`, and the MCP
+protected-resource metadata path route directly to the API.
+
+### Persistent storage and web proxy
+
+The API and workers share two retained `ReadWriteMany` PVCs: environments
+(`persistence.envs`, 10 GiB by default) and local artifact staging
+(`persistence.artifacts`, 20 GiB). Set `persistence.storageClass` to a class
+that supports concurrent mounts across nodes, or supply pre-created claims
+with `persistence.envs.existingClaim` and `persistence.artifacts.existingClaim`.
+An ordinary single-node `ReadWriteOnce` volume is insufficient for replicas
+scheduled on different nodes. S3 stores durable artifact objects; shared
+staging still lets the API persist bytes produced by workers.
+
+Claims are retained on Helm uninstall. Back up the database, object bucket,
+deployment encryption secret, and environment storage before an upgrade.
+When upgrading an older installation with ephemeral volumes, migrate those
+files into the shared claims before replacing its pods. Set
+`persistence.enabled=false` only for disposable development instances.
+
+The web image configures nginx at startup with `NODYRA_API_UPSTREAM`,
+`NODYRA_WEB_PORT`, and `NODYRA_MAX_BODY_SIZE`. Compose and Helm set the upstream
+automatically. Helm also supplies writable configuration storage for a
+non-root web process with a read-only root filesystem. The default request
+limit is 52 MiB to accommodate a 50 MiB artifact plus multipart overhead.
+Match `web.maxBodySize` at the external ingress; for ingress-nginx, add the
+annotation `nginx.ingress.kubernetes.io/proxy-body-size: "52m"` under
+`ingress.annotations` in the values file. In Compose, use `NODYRA_MAX_BODY_SIZE` and set
+`CORS_ORIGINS` to the browser origin when changing the web port or domain.
 
 ## Configuration flags
 
@@ -221,9 +261,17 @@ HTTPS before activating those workflows.
 
 Always run `alembic upgrade head` to completion **before** starting any
 process that opens a write connection (API, worker, Beat). The Helm chart
-runs an init container for this and the `docker-compose` API entrypoint
+runs a pre-install/pre-upgrade Job for this and the `docker-compose` API entrypoint
 gates on it. Out-of-order startup is the most common cause of "column does
 not exist" errors after a deploy.
+
+Data migrations must receive the same `NODYRA_SECRET_KEY` (or `SECRET_KEY`)
+as the API and workers because some migrations rewrap encrypted credentials.
+Helm references `secret.existingSecret` when supplied; otherwise a separate
+pre-install hook Secret makes the configured key available before the Job.
+That hook Secret (`<release>-migration-key`) remains available for failed-job
+diagnostics and is replaced on upgrade. Helm does not remove hook resources
+on uninstall; remove that Secret explicitly when decommissioning an instance.
 
 Migration policy:
 

@@ -16,7 +16,7 @@ from nodyra.models import (
     WorkflowGraph,
 )
 from nodyra.sdk import NodeDef, NodeRegistry, node, registry
-from nodyra.serialization import deserialize_value, serialize_value
+from nodyra.serialization import deserialize_value, sanitize_nonfinite, serialize_value
 
 __version__ = "1.0.0"
 
@@ -43,4 +43,5 @@ __all__ = [
     "run",
     "deserialize_value",
     "serialize_value",
+    "sanitize_nonfinite",
 ]

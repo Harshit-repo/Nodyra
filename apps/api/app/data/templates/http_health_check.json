@@ -42,7 +42,8 @@
           "url": "https://httpbin.org/json",
           "method": "GET",
           "timeout_seconds": 10,
-          "max_retries": 1
+          "max_retries": 1,
+          "include_response_metadata": true
         },
         "position": {
           "x": 280,
@@ -53,7 +54,7 @@
         "id": "check",
         "type": "code",
         "params": {
-          "code": "# http_request raises on any non-2xx, naming the status, so\n# reaching this node already means the endpoint answered. What\n# it returns is the decoded body - there is no status_code\n# field - so assert on the body instead.\nif input in (None, '', {}, []):\n    raise ValueError('health check failed: empty response body')\noutput = {'healthy': True, 'body': input}"
+          "code": "# The probe requests status, headers and body metadata.\nstatus = input['status_code']\nif not 200 <= status < 300:\n    raise ValueError(f'health check failed: HTTP {status}')\nbody = input.get('body')\nif body in (None, '', {}, []):\n    raise ValueError('health check failed: empty response body')\noutput = {'healthy': True, 'status_code': status, 'body': body}"
         },
         "position": {
           "x": 560,

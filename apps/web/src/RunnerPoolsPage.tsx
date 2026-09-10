@@ -1,5 +1,7 @@
 ﻿import { useRef, useState } from "react";
 
+import { Link } from "react-router-dom";
+
 import { useConfirm } from "./ConfirmProvider";
 import { useEntitlements } from "./entitlements";
 import { useCan } from "./permissions";
@@ -1696,6 +1698,7 @@ export function RunnerPoolsPage() {
   const [creating, setCreating] = useState(false);
   const canWrite = useCan("runner_pool:write");
   const ent = useEntitlements();
+  const canManagePools = canWrite && ent.has("dedicated_pools");
   const poolsQuery = useRunnerPools({ refetchInterval: 5000 });
   const healthQuery = useRunnerFleetHealth({ refetchInterval: 5000 });
   const environmentsQuery = useEnvironments();
@@ -1736,7 +1739,7 @@ export function RunnerPoolsPage() {
             Runner Pools
             {pools && <span className="home-count">{pools.length}</span>}
           </h1>
-          {canWrite && (
+          {canManagePools && (
             <button
               type="button"
               className="btn"
@@ -1753,11 +1756,19 @@ export function RunnerPoolsPage() {
           )}
         </div>
 
+        {!ent.has("dedicated_pools") && (
+          <p className="muted">
+            The instance worker runs your workflows. Enterprise adds dedicated
+            runner pools for remote machines, Docker, and Kubernetes.{" "}
+            <Link to="/settings">View license settings</Link>
+          </p>
+        )}
+
         {health && pools && pools.length > 0 && <FleetBar health={health} />}
 
         {error && <p className="error-text">{error}</p>}
         {!pools && !error && (
-          <div className="pool-list" aria-label="Loading runner pools">
+          <div role="status" className="pool-list" aria-label="Loading runner pools">
             {Array.from({ length: 3 }).map((_, index) => (
               <div className="pool-card skeleton-card" key={index}>
                 <div className="pool-head">
@@ -1775,11 +1786,11 @@ export function RunnerPoolsPage() {
           <div className="empty-state">
             <h2>No runner pools yet</h2>
             <p className="muted">
-              {canWrite
+              {canManagePools
                 ? "Create one to dispatch workflows to remote machines, Docker, or Kubernetes."
-                : "Ask an admin to create one."}
+                : ent.has("dedicated_pools") ? "Ask an admin to create one." : "Workflows use the instance worker until you configure a dedicated pool."}
             </p>
-            {canWrite && (
+            {canManagePools && (
               <button
                 type="button"
                 className="btn btn-primary"
@@ -1798,7 +1809,7 @@ export function RunnerPoolsPage() {
                 key={pool.id}
                 pool={pool}
                 health={healthByPool[pool.id]}
-                canWrite={canWrite}
+                canWrite={canManagePools}
                 onChanged={refreshPools}
                 boundEnvs={envsByPool[pool.id] ?? []}
               />

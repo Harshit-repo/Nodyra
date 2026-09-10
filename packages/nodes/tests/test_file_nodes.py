@@ -58,6 +58,27 @@ def test_read_text_file_no_source() -> None:
         read_text_file(input=None, path="", file="")
 
 
+def test_read_upload_is_bound_to_run_and_organization(tmp_path):
+    upload_id = "a" * 32
+    owner = LocalArtifactStore(tmp_path, "run-a", key_prefix="org-a")
+    path = owner.upload_path(upload_id) / "hello.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text("hello", encoding="utf-8")
+    assert owner.read_upload(upload_id) == (b"hello", "hello.txt")
+    for other in [
+        LocalArtifactStore(tmp_path, "run-b", key_prefix="org-a"),
+        LocalArtifactStore(tmp_path, "run-a", key_prefix="org-b"),
+    ]:
+        with pytest.raises(FileNotFoundError):
+            other.read_upload(upload_id)
+
+
+@pytest.mark.parametrize("upload_id", ["../secret", "/etc/passwd", "", "a/../b", "x" * 32])
+def test_read_upload_rejects_invalid_ids(store_ctx, upload_id):
+    with pytest.raises(ValueError, match="artifact id"):
+        store_ctx.read_upload(upload_id)
+
+
 def test_read_text_file_from_upload() -> None:
     with patch(
         "nodyra_nodes.file_nodes._read_upload_bytes",
@@ -591,13 +612,13 @@ def test_stream_large_file_csv_returns_dataset_ref(store_ctx) -> None:
     """stream_large_file on a CSV upload always returns a DatasetRef."""
     from nodyra_nodes.file_nodes import stream_large_file
 
-    upload_dir = store_ctx.base_dir / "uploads" / "upload-001"
+    upload_dir = store_ctx.upload_path("00000000000000000000000000000001")
     upload_dir.mkdir(parents=True)
     (upload_dir / "big.csv").write_bytes(_make_csv_bytes(100))
 
     chunks: list[str] = []
     with patch("nodyra.context.emit_chunk", side_effect=lambda msg: chunks.append(msg)):
-        result = stream_large_file(input=None, file="upload-001", format="csv")
+        result = stream_large_file(input=None, file="00000000000000000000000000000001", format="csv")
 
     assert result.get("__nodyra_dataset__") is True
     assert any("big.csv" in c for c in chunks)
@@ -607,11 +628,11 @@ def test_stream_large_file_csv_returns_dataset_ref(store_ctx) -> None:
 def test_stream_large_file_json_returns_dataset_ref(store_ctx) -> None:
     from nodyra_nodes.file_nodes import stream_large_file
 
-    upload_dir = store_ctx.base_dir / "uploads" / "upload-002"
+    upload_dir = store_ctx.upload_path("00000000000000000000000000000002")
     upload_dir.mkdir(parents=True)
     (upload_dir / "records.jsonl").write_bytes(_make_ndjson_bytes(50))
 
-    result = stream_large_file(input=None, file="upload-002", format="json")
+    result = stream_large_file(input=None, file="00000000000000000000000000000002", format="json")
     assert result.get("__nodyra_dataset__") is True
 
 
@@ -628,13 +649,13 @@ def test_stream_large_file_server_path_csv(store_ctx, tmp_path) -> None:
 def test_stream_large_file_emits_three_chunks(store_ctx) -> None:
     from nodyra_nodes.file_nodes import stream_large_file
 
-    upload_dir = store_ctx.base_dir / "uploads" / "upload-003"
+    upload_dir = store_ctx.upload_path("00000000000000000000000000000003")
     upload_dir.mkdir(parents=True)
     (upload_dir / "sample.csv").write_bytes(_make_csv_bytes(10))
 
     chunks: list[str] = []
     with patch("nodyra.context.emit_chunk", side_effect=lambda msg: chunks.append(msg)):
-        stream_large_file(input=None, file="upload-003", format="csv")
+        stream_large_file(input=None, file="00000000000000000000000000000003", format="csv")
 
     assert len(chunks) == 3, f"Expected 3 emit_chunk calls, got {len(chunks)}: {chunks}"
 
@@ -649,22 +670,22 @@ def test_stream_large_file_missing_source_raises() -> None:
 def test_stream_large_file_auto_format_csv_extension(store_ctx) -> None:
     from nodyra_nodes.file_nodes import stream_large_file
 
-    upload_dir = store_ctx.base_dir / "uploads" / "upload-004"
+    upload_dir = store_ctx.upload_path("00000000000000000000000000000004")
     upload_dir.mkdir(parents=True)
     (upload_dir / "sales.csv").write_bytes(_make_csv_bytes(5))
 
-    result = stream_large_file(input=None, file="upload-004", format="auto")
+    result = stream_large_file(input=None, file="00000000000000000000000000000004", format="auto")
     assert result.get("__nodyra_dataset__") is True
 
 
 def test_stream_large_file_auto_format_json_extension(store_ctx) -> None:
     from nodyra_nodes.file_nodes import stream_large_file
 
-    upload_dir = store_ctx.base_dir / "uploads" / "upload-005"
+    upload_dir = store_ctx.upload_path("00000000000000000000000000000005")
     upload_dir.mkdir(parents=True)
     (upload_dir / "events.jsonl").write_bytes(_make_ndjson_bytes(5))
 
-    result = stream_large_file(input=None, file="upload-005", format="auto")
+    result = stream_large_file(input=None, file="00000000000000000000000000000005", format="auto")
     assert result.get("__nodyra_dataset__") is True
 
 
@@ -808,13 +829,24 @@ def test_write_excel_from_dataset_ref(tmp_path: Path, store_ctx) -> None:
     _write_test_excel(p)
     ref = read_excel_file(input=None, path=str(p))
     result = write_excel_file(input=ref)
-    assert result.get("content_type") == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert (
+        result.get("content_type")
+        == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 
 def test_write_excel_from_list(store_ctx) -> None:
     data = [{"x": 1, "y": "a"}, {"x": 2, "y": "b"}]
     result = write_excel_file(input=data)
-    assert result.get("content_type") == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert (
+        result.get("content_type")
+        == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+def test_write_excel_preserves_dated_filename(store_ctx) -> None:
+    result = write_excel_file(input=[{"id": 1}], filename="snapshot-2026-09-07.xlsx")
+    assert result["name"] == "snapshot-2026-09-07.xlsx"
 
 
 def test_write_excel_rejects_none_input(store_ctx) -> None:

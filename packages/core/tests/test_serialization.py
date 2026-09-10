@@ -209,3 +209,42 @@ def test_dataset_ref_truncation_preserves_ref_identity() -> None:
     assert capped["row_count"] == 10_000
     assert capped["preview_truncated"] is True
     assert capped.get("_truncated") is not True
+
+def test_serialize_value_normalizes_non_finite_floats() -> None:
+    value = {
+        "nan": float("nan"),
+        "pos_inf": float("inf"),
+        "neg_inf": float("-inf"),
+        "finite": 1.5,
+        "nested": [float("nan"), {"deep": float("inf")}],
+    }
+
+    serialized = serialize_value(value)
+
+    assert serialized["nan"] is None
+    assert serialized["pos_inf"] is None
+    assert serialized["neg_inf"] is None
+    assert serialized["finite"] == 1.5
+    assert serialized["nested"] == [None, {"deep": None}]
+
+
+def test_sanitize_nonfinite_walks_containers_and_leaves_other_values() -> None:
+    from nodyra.serialization import sanitize_nonfinite
+
+    value = {
+        "rows": [{"v": float("nan")}, {"v": float("inf")}, {"v": 3.0}],
+        "tuple": (1.0, float("-inf")),
+        "text": "nan is a string",
+        "none": None,
+        "int": 7,
+    }
+
+    cleaned = sanitize_nonfinite(value)
+
+    assert cleaned == {
+        "rows": [{"v": None}, {"v": None}, {"v": 3.0}],
+        "tuple": [1.0, None],
+        "text": "nan is a string",
+        "none": None,
+        "int": 7,
+    }

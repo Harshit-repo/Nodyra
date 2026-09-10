@@ -5,7 +5,6 @@
 * :func:`docker_bundle` emits the files needed to ship the workflow as an image.
 """
 
-import json
 import pprint
 import re
 

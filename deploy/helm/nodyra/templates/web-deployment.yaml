@@ -33,6 +33,8 @@ spec:
           emptyDir: {}
         - name: nginx-run
           emptyDir: {}
+        - name: nginx-config
+          emptyDir: {}
         - name: tmp
           emptyDir: {}
       containers:
@@ -40,8 +42,12 @@ spec:
           image: {{ include "nodyra.webImage" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: VITE_API_PROXY
-              value: "http://{{ .Release.Name }}-api:{{ .Values.api.port }}"
+            - name: NODYRA_API_UPSTREAM
+              value: "{{ .Release.Name }}-api.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain | default "cluster.local" }}:{{ .Values.api.port }}"
+            - name: NODYRA_WEB_PORT
+              value: {{ .Values.web.port | quote }}
+            - name: NODYRA_MAX_BODY_SIZE
+              value: {{ .Values.web.maxBodySize | default "52m" | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.web.port }}
@@ -52,6 +58,8 @@ spec:
               mountPath: /var/cache/nginx
             - name: nginx-run
               mountPath: /var/run
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
             - name: tmp
               mountPath: /tmp
           {{- if .Values.startupProbe.enabled }}

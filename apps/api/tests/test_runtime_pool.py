@@ -26,12 +26,40 @@ class _FakeProcess:
     closed: bool = False
 
     # The pool checks ``proc.process.returncode``; expose a tiny proxy.
-    process: object = field(
-        default_factory=lambda: type("P", (), {"returncode": None})()
-    )
+    process: object = field(default_factory=lambda: type("P", (), {"returncode": None})())
 
     async def close(self) -> None:
         self.closed = True
+
+
+async def test_dispatch_deadline_returns_timed_out_and_releases_process(client, monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from app.services import runtime_pool
+
+    async def slow_run(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    proc = _FakeProcess()
+    proc.run = slow_run
+    env = Mock(rss_estimate=0)
+    env.acquire = AsyncMock(return_value=proc)
+    pool = RuntimePool()
+    monkeypatch.setattr(pool, "_env_pool", AsyncMock(return_value=env))
+    monkeypatch.setattr(runtime_pool, "_rss_soft_budget_bytes", AsyncMock(return_value=0))
+    monkeypatch.setattr(runtime_pool, "_resolve_run_org", AsyncMock(return_value="default"))
+    monkeypatch.setattr(runtime_pool, "_org_run_limits_for", AsyncMock(return_value={}))
+    events = []
+
+    async def on_event(event):
+        events.append(event)
+
+    status = await pool.dispatch("timeout-run", None, {}, None, None, on_event, run_timeout=0.01)
+    assert status == "timed_out"
+    assert proc.closed
+    env.release.assert_called_once_with(proc)
+    assert events[0]["type"] == "run_error"
+    assert "timed out" in events[0]["error"]
 
 
 class _ProtocolStdin:
@@ -91,14 +119,10 @@ async def test_runtime_process_consumes_heartbeat_without_forwarding(monkeypatch
     runtime = _RuntimeProcess(process, env_id=None)
     events: list[dict] = []
 
-    task = asyncio.create_task(
-        runtime.run("run-1", {}, None, None, events.append)
-    )
+    task = asyncio.create_task(runtime.run("run-1", {}, None, None, events.append))
     request_id = await _protocol_request_id(process)
     process.stdout.feed({"type": "heartbeat", "request_id": request_id})
-    process.stdout.feed(
-        {"type": "result", "request_id": request_id, "status": "success"}
-    )
+    process.stdout.feed({"type": "result", "request_id": request_id, "status": "success"})
 
     assert await task == "success"
     assert events == []
@@ -132,9 +156,7 @@ async def test_runtime_process_heartbeats_do_not_mask_no_progress(monkeypatch) -
     process = _ProtocolProcess()
     runtime = _RuntimeProcess(process, env_id=None)
 
-    task = asyncio.create_task(
-        runtime.run("run-1", {}, None, None, lambda _event: None)
-    )
+    task = asyncio.create_task(runtime.run("run-1", {}, None, None, lambda _event: None))
     request_id = await _protocol_request_id(process)
     await asyncio.sleep(0.06)
     process.stdout.feed({"type": "heartbeat", "request_id": request_id})

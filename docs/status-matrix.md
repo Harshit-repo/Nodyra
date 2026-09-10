@@ -1,8 +1,11 @@
 # Nodyra architecture status matrix
 
-Live status of the components called out in
-[architecture-improvement-plan.md](architecture-improvement-plan.md). Updated as
-tasks land.
+Live status of Nodyra's major architecture components, updated as tasks land.
+
+Deployment, migration, licensing, and supply-chain entries were checked again
+on 2026-09-05. See the [launch verification report](launch-readiness-2026-09-05.md)
+for current test evidence; older feature classifications below are not a
+claim that every external integration was exercised with live credentials.
 
 > Reconciled against the code on 2026-06-05. Most of Phases 2–6 had shipped well
 > ahead of this doc (durable-queue dispatch, dead-letter, leader election, runner
@@ -95,11 +98,11 @@ outside the 20 tasks above.
 | --- | --- |
 | CI against Postgres + real subprocess run | Shipped (`.github/workflows/ci.yml` `postgres` job runs the SKIP-LOCKED queue path + a real `nodyra_runtime` subprocess against `postgres:16`; `conftest` honours `NODYRA_TEST_DATABASE_URL`) |
 | Graceful drain on SIGTERM | Shipped (`queue_drain` flag stops new leases; lifespan drains in-flight runs within `queue_dispatch_shutdown_timeout_seconds`, then cancels) |
-| Migrate-then-start ordering documented + enforced | Partial (compose/Helm run `alembic upgrade` before the API starts; not yet documented as a hard contract) |
+| Migrate-then-start ordering documented + enforced | Shipped (Compose gates API/worker startup; Helm runs a pre-install/pre-upgrade migration Job with the deployment encryption key; see `deployment.md`) |
 | Queue/lease config surface (lease seconds, backoff, max attempts) | Shipped (`queue_lease_seconds`, `queue_retry_backoff_*`, `queue_default_max_attempts`, etc. in `config.py`) |
 | Backpressure latency measurement in `RUNTIME_MODE=local` | Planned |
 | Secret-handling boundary preserved through Task 5b | Shipped (queue rows store ids/status only; credentials are decrypted at dispatch in `runner._execute_run`, never persisted on `RunQueueEntry`) |
-| License + supply-chain audit | Planned (no `LICENSE` yet; AGPL vs BSL undecided) |
+| License + supply-chain audit | Shipped release files (`LICENSE`, `LICENSE.enterprise`); CI scans installed dependencies and container images. Current scan evidence is in the launch verification report. |
 
 ## Chat / conversational triggers
 
@@ -145,4 +148,4 @@ outside the 20 tasks above.
 | `CONTRIBUTING.md` — contribution intake process | Shipped |
 | `CONTRIBUTOR_LICENSE_AGREEMENT.md` (v0.1) | Shipped |
 | `.github/PULL_REQUEST_TEMPLATE.md` | Shipped |
-| `LICENSE` file | Planned (blocked on AGPL vs BSL decision and name/trademark resolution) |
+| `LICENSE` file | Shipped (Nodyra Sustainable Use License; designated Enterprise code is covered by `LICENSE.enterprise`) |

@@ -294,7 +294,7 @@ function ConnectionCallHistory({ connectionId }: { connectionId: string }) {
   }
   if (calls === null) {
     return (
-      <div className="mcp-call-history" aria-label="Loading MCP call history">
+      <div role="status" className="mcp-call-history" aria-label="Loading MCP call history">
         <span className="skeleton-line short" />
         <span className="skeleton-line" />
       </div>
@@ -533,7 +533,7 @@ export function McpConnectionsPage() {
         {error && <p className="error-text">{error}</p>}
 
         {loading && (
-          <div className="env-grid" aria-label="Loading MCP connections">
+          <div role="status" className="env-grid" aria-label="Loading MCP connections">
             {Array.from({ length: 3 }).map((_, index) => (
               <article className="env-card skeleton-card" key={index}>
                 <span className="skeleton-line short" />

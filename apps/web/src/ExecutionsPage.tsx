@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ReactFlowProvider } from "@xyflow/react";
 import { MagnifyingGlass } from "@phosphor-icons/react";
 
 import { SkeletonRows } from "./Skeleton";
+import "./execution-panels.css";
 
 import {
   api,
@@ -209,14 +210,13 @@ function OpsDashboard() {
           </div>
           <div className="ops-card-sub">
             {oldestWarn ? (
-              <span
+              <Link
+                to="/settings"
                 className="backpressure-link"
                 title="This run waited in the queue because the concurrency limit was reached. Check Settings to adjust max_concurrent_runs."
-                style={{ cursor: "pointer", textDecoration: "underline dotted" }}
-                onClick={() => window.location.assign("/settings")}
               >
                 ⚠ backpressure
-              </span>
+              </Link>
             ) : (
               "fresh"
             )}

@@ -1,0 +1,35 @@
+# Production storage overlay (Compose >= 2.24.4). Apply after the sandbox
+# overlay. The bundled, unsupported MinIO images are excluded from this stack.
+# Provision a private bucket separately and retain credentials in deploy/.env.
+services:
+  minio:
+    profiles: [local-artifacts]
+  minio-init:
+    profiles: [local-artifacts]
+  api:
+    environment: &external-s3
+      ARTIFACT_STORAGE_BACKEND: s3
+      ARTIFACT_S3_BUCKET: ${ARTIFACT_S3_BUCKET:?Set the external private bucket name}
+      ARTIFACT_S3_REGION: ${ARTIFACT_S3_REGION:?Set the external bucket region}
+      ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:?Set the external HTTPS S3 endpoint}
+      ARTIFACT_S3_PUBLIC_ENDPOINT: ${ARTIFACT_S3_PUBLIC_ENDPOINT:?Set the browser-reachable HTTPS S3 endpoint}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Set the scoped external S3 access key}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Set the scoped external S3 secret}
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      docker-socket-proxy:
+        condition: service_healthy
+  worker:
+    environment: *external-s3
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      docker-socket-proxy:
+        condition: service_healthy

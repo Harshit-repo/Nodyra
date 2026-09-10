@@ -1,6 +1,12 @@
 Nodyra has been deployed successfully.
 
-API:    http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+{{- if .Values.ingress.enabled }}
+Web:    http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+API:    http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}/api
+{{- else }}
+Preview: kubectl port-forward service/{{ .Release.Name }}-web 5173:{{ .Values.web.port }}
+         Then open http://localhost:5173
+{{- end }}
 Status: kubectl get pods -l app={{ .Release.Name }}-api
 
 {{- if and .Values.ingress.enabled (not .Values.ingress.tls) }}
@@ -25,9 +31,8 @@ EVALUATION ENVIRONMENT
 
 {{- end }}
 
-{{- if eq .Values.secret.key "" }}
-
-WARNING: secret.key is empty — using an empty string for NODYRA_SECRET_KEY.
-  Generate a secure key with:  openssl rand -hex 32
-
+{{- if .Values.persistence.enabled }}
+Storage: kubectl get pvc
+  Environment and artifact claims require ReadWriteMany storage and are retained
+  on uninstall. See docs/deployment.md for backup and decommissioning guidance.
 {{- end }}
