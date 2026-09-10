@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +33,8 @@ from app.services.package_preflight import bundled_packages
 from app.tenancy import active_org_id
 from nodyra.packages import canonical_package_name
 from nodyra.sdk import registry as node_registry
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/environments", tags=["environments"])
 
@@ -127,9 +131,7 @@ async def list_environments(
     session: AsyncSession = Depends(get_session),
     _user: User | None = Depends(optional_current_user),
 ):
-    total = await session.scalar(
-        select(func.count()).select_from(Environment)
-    )
+    total = await session.scalar(select(func.count()).select_from(Environment))
     result = await session.scalars(
         select(Environment)
         .order_by(Environment.is_global.desc(), Environment.name)
@@ -140,9 +142,7 @@ async def list_environments(
     pool_ids = {e.runner_pool_id for e in envs if e.runner_pool_id}
     names: dict[str, str] = {}
     if pool_ids:
-        pools = await session.scalars(
-            select(RunnerPool).where(RunnerPool.id.in_(pool_ids))
-        )
+        pools = await session.scalars(select(RunnerPool).where(RunnerPool.id.in_(pool_ids)))
         names = {p.id: p.name for p in pools.all()}
     items = [_to_info(env, names.get(env.runner_pool_id or "")) for env in envs]
     return PageResponse(items=items, total=total or 0, limit=limit, offset=offset)
@@ -171,6 +171,7 @@ async def create_environment(
     await validate_pool_assignment(session, active_org_id(), body.runner_pool_id)
 
     from app.services.licensing import enforce_resource_cap
+
     await enforce_resource_cap(session, "environments")
 
     env = Environment(
@@ -188,9 +189,14 @@ async def create_environment(
         status="pending",
     )
     session.add(env)
-    await log_audit(session, "create", "environment", detail=body.name,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "create",
+        "environment",
+        detail=body.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.flush()
     build_job = await enqueue_environment_build(
         session,
@@ -253,9 +259,15 @@ async def update_environment(
         # Spawn-time only: no rebuild needed, flags take effect for the next
         # worker the pool spawns for this environment.
         env.runtime_flags = dict(body.runtime_flags)
-    await log_audit(session, "update", "environment", env.id, env.name,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "update",
+        "environment",
+        env.id,
+        env.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     build_job: EnvironmentBuildJob | None = None
     if needs_rebuild:
         build_job = await enqueue_environment_build(
@@ -299,9 +311,11 @@ async def list_backends(
 
     uv_path = shutil.which("uv")
     micromamba_version = _tool_version("micromamba") or (
-        "mamba (system)" if shutil.which("mamba") else
-        "conda (system)" if shutil.which("conda") else
-        None
+        "mamba (system)"
+        if shutil.which("mamba")
+        else "conda (system)"
+        if shutil.which("conda")
+        else None
     )
     pixi_version = _tool_version("pixi")
     docker_available = shutil.which("docker") is not None
@@ -397,9 +411,7 @@ async def package_usage(
 
     stmt = select(Workflow).options(selectinload(Workflow.versions))
     if env.is_global:
-        stmt = stmt.where(
-            (Workflow.environment_id == env_id) | (Workflow.environment_id.is_(None))
-        )
+        stmt = stmt.where((Workflow.environment_id == env_id) | (Workflow.environment_id.is_(None)))
     else:
         stmt = stmt.where(Workflow.environment_id == env_id)
     workflows = (await session.scalars(stmt)).all()
@@ -428,9 +440,7 @@ async def package_usage(
                     )
                 )
     return PackageUsageInfo(
-        packages=[
-            PackageUsagePackage(package=k, used_by=v) for k, v in sorted(usage.items())
-        ]
+        packages=[PackageUsagePackage(package=k, used_by=v) for k, v in sorted(usage.items())]
     )
 
 
@@ -588,13 +598,22 @@ async def get_environment_build_job(
     dependencies=[Depends(require_permission("environment:write"))],
 )
 async def delete_environment(
-    env_id: str, session: AsyncSession = Depends(get_session), audit: AuditRecorder = Depends(audit_recorder)
+    env_id: str,
+    session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ):
     env = await _load(session, env_id)
     if env.is_global:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "The global environment cannot be deleted"
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The global environment cannot be deleted")
     await audit("delete", "environment", env.id, f"name={env.name}")
+    # Warm runtime workers hold the env's code (and on Windows its .pyd
+    # files); drain them so the directory can be removed and no worker ever
+    # serves a deleted environment again.
+    try:
+        from app.services.runtime_pool import pool as _runtime_pool
+
+        await _runtime_pool.drain_env(env.id)
+    except Exception:  # noqa: BLE001 - deletion must proceed regardless
+        logger.exception("delete_environment: could not drain runtime workers")
     await session.delete(env)
     await session.commit()

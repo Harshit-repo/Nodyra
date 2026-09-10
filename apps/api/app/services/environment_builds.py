@@ -41,7 +41,9 @@ async def notify_environment_build_workers() -> None:
 
         await redis_client.publish(_NOTIFY_CHANNEL, "1")
     except Exception:
-        logger.debug("environment build notify: Redis publish failed; polling fallback remains active")
+        logger.debug(
+            "environment build notify: Redis publish failed; polling fallback remains active"
+        )
 
 
 async def _redis_subscriber() -> None:
@@ -57,7 +59,9 @@ async def _redis_subscriber() -> None:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.debug("environment build Redis subscriber exited; polling fallback remains active")
+            logger.debug(
+                "environment build Redis subscriber exited; polling fallback remains active"
+            )
         finally:
             with contextlib.suppress(Exception):
                 await pubsub.unsubscribe(_NOTIFY_CHANNEL)
@@ -400,12 +404,22 @@ async def process_environment_build_job(job_id: str) -> None:
         await session.commit()
 
     stop = asyncio.Event()
-    heartbeat = asyncio.create_task(
-        _heartbeat_until_stopped(job_id, stop, worker_id=worker)
-    )
+    heartbeat = asyncio.create_task(_heartbeat_until_stopped(job_id, stop, worker_id=worker))
     retryable_failure = False
     try:
         from app.services.backends import build_environment
+
+        # Warm runtime workers hold the previous environment's code in memory
+        # and, on Windows, their loaded .pyd files lock the environment
+        # directory — a rebuild cannot overwrite them (PermissionError:
+        # Access is denied). Drain the env's idle workers first; any in-flight
+        # run finishes and its worker closes on release.
+        try:
+            from app.services.runtime_pool import pool as _runtime_pool
+
+            await _runtime_pool.drain_env(job.environment_id)
+        except Exception:  # noqa: BLE001 - draining must never block a build
+            logger.exception("environment build: could not drain runtime workers")
 
         await build_environment(job.environment_id)
         async with SessionLocal() as session:

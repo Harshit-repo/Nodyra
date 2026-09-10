@@ -563,3 +563,71 @@ async def test_spawn_does_not_leak_host_python_jit_when_flag_absent(monkeypatch)
     await rp_module._RuntimeProcess.spawn("some-env")
 
     assert "PYTHON_JIT" not in captured
+
+
+@pytest.mark.asyncio
+async def test_env_pool_drain_closes_idle_workers_and_invalidates_inflight() -> None:
+    """Rebuilding an environment must not be blocked by warm workers — and
+    workers released after the drain must not serve the new environment."""
+    from app.services.runtime_pool import _EnvPool
+
+    pool = _EnvPool(env_id="e1", min_size=1, max_size=2, rss_estimate=0)
+
+    idle = _FakeProcess()
+    idle.idle_since = time.time() - 30
+    idle.generation = 0
+    inflight = _FakeProcess()
+    inflight.generation = 0
+
+    pool._all.add(idle)
+    pool._all.add(inflight)
+    pool._idle.append(idle)
+
+    await pool.drain()
+
+    assert idle.closed is True
+    assert inflight.closed is False  # in-flight runs are never killed
+    assert pool._idle == []
+    assert inflight in pool._all
+
+    # The in-flight worker finishing after the drain must be closed, not warmed.
+    pool.release(inflight)
+    assert inflight not in pool._all
+    assert inflight not in pool._idle
+    # release() fires close as a background task; give it a tick.
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_env_pool_release_keeps_current_generation_worker_warm() -> None:
+    from app.services.runtime_pool import _EnvPool
+
+    pool = _EnvPool(env_id="e1", min_size=1, max_size=2, rss_estimate=0)
+    proc = _FakeProcess()
+    proc.generation = 0
+    pool._all.add(proc)
+    pool.release(proc)
+    assert pool._idle == [proc]
+    assert proc.closed is False
+
+
+@pytest.mark.asyncio
+async def test_runtime_pool_drain_env_targets_only_that_env() -> None:
+    pool = RuntimePool()
+    env_a = _EnvPool(env_id="env-a", min_size=1, max_size=2, rss_estimate=0)
+    env_b = _EnvPool(env_id="env-b", min_size=1, max_size=2, rss_estimate=0)
+    worker_a = _FakeProcess()
+    worker_a.generation = 0
+    worker_b = _FakeProcess()
+    worker_b.generation = 0
+    env_a._idle.append(worker_a)
+    env_a._all.add(worker_a)
+    env_b._idle.append(worker_b)
+    env_b._all.add(worker_b)
+    pool._envs["env-a"] = env_a
+    pool._envs["env-b"] = env_b
+
+    await pool.drain_env("env-a")
+
+    assert worker_a.closed is True
+    assert worker_b.closed is False

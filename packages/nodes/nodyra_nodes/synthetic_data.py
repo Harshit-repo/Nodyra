@@ -24,8 +24,7 @@ _OPENAI_ERROR = (
     "and rebuild, then run again."
 )
 _TIKTOKEN_ERROR = (
-    "tiktoken>=0.7 is required for token profiling. Add it to the workflow "
-    "environment and rebuild."
+    "tiktoken>=0.7 is required for token profiling. Add it to the workflow environment and rebuild."
 )
 MAX_SYNTHETIC_EXAMPLES = 1_000
 MAX_LLM_ROWS = 1_000
@@ -71,10 +70,18 @@ def _ts() -> str:
 
 def _to_records(input_value: Any) -> list[dict[str, Any]]:
     from nodyra.datasets import is_dataset_ref
+
     if is_dataset_ref(input_value):
         return materialize_dataset(input_value, cap=50_000, allow_truncate=True)
     if isinstance(input_value, list):
         return [r for r in input_value if isinstance(r, dict)]
+    if isinstance(input_value, dict):
+        # Trigger payloads and pinned data commonly wrap records under
+        # "rows"/"records"; accept those so a manual_trigger can seed the node.
+        for key in ("records", "rows"):
+            nested = input_value.get(key)
+            if isinstance(nested, list):
+                return [r for r in nested if isinstance(r, dict)]
     return []
 
 
@@ -108,6 +115,7 @@ def _limit_llm_rows(
 # Node: Synthetic Examples Generate
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="Synthetic Examples Generate",
     id="synthetic_examples_generate",
@@ -139,7 +147,7 @@ def _limit_llm_rows(
         "output_schema": {
             "description": (
                 "JSON object describing the output fields and types. "
-                "E.g. {\"user\": \"string\", \"assistant\": \"string\"}. "
+                'E.g. {"user": "string", "assistant": "string"}. '
                 "Leave blank to let the model choose a schema."
             ),
             "multiline": True,
@@ -226,8 +234,7 @@ def synthetic_examples_generate(
     n = max(1, int(n_examples or 20))
     if n > MAX_SYNTHETIC_EXAMPLES:
         raise ValueError(
-            "synthetic_examples_generate: n_examples exceeds cap "
-            f"{MAX_SYNTHETIC_EXAMPLES}"
+            f"synthetic_examples_generate: n_examples exceeds cap {MAX_SYNTHETIC_EXAMPLES}"
         )
     bs = max(1, min(20, int(batch_size or 5)))
 
@@ -248,10 +255,8 @@ def synthetic_examples_generate(
         if seed_rows:
             parts.append("\nHere are example records for style/structure reference:")
             for i, r in enumerate(seed_rows[:5]):
-                parts.append(f"Example {i+1}: {json.dumps(r, ensure_ascii=False)}")
-        parts.append(
-            "\nRespond with ONLY the JSON array, no markdown, no explanation."
-        )
+                parts.append(f"Example {i + 1}: {json.dumps(r, ensure_ascii=False)}")
+        parts.append("\nRespond with ONLY the JSON array, no markdown, no explanation.")
         return "\n".join(parts)
 
     sys_msg = (system_prompt or "").strip() or (
@@ -279,9 +284,7 @@ def synthetic_examples_generate(
             ],
             temperature=float(temperature or 0.9),
             max_tokens=4096,
-            response_format={"type": "json_object"}
-            if schema_dict
-            else None,  # type: ignore[arg-type]
+            response_format={"type": "json_object"} if schema_dict else None,  # type: ignore[arg-type]
         )
         raw = str(resp.choices[0].message.content or "[]").strip()
         # Extract JSON array from response
@@ -326,8 +329,7 @@ def synthetic_examples_generate(
 
     if not all_results:
         raise ValueError(
-            f"No examples were generated. Errors: {errors[:3]}. "
-            "Check your instruction and API key."
+            f"No examples were generated. Errors: {errors[:3]}. Check your instruction and API key."
         )
 
     dataset_ref = records_to_dataset(all_results, name="synthetic_examples.parquet")
@@ -346,6 +348,7 @@ def synthetic_examples_generate(
 # ---------------------------------------------------------------------------
 # Node: Preference Pair Generate
 # ---------------------------------------------------------------------------
+
 
 @node(
     name="Preference Pair Generate",
@@ -432,9 +435,7 @@ def preference_pair_generate(
     p_col = (prompt_column or "prompt").strip()
     if rows and p_col not in rows[0]:
         available = list(rows[0].keys())
-        raise ValueError(
-            f"prompt_column {p_col!r} not found. Available: {available}"
-        )
+        raise ValueError(f"prompt_column {p_col!r} not found. Available: {available}")
 
     rows = _limit_llm_rows(rows, max_rows=int(max_rows or 0), label="preference_pair_generate")
 
@@ -496,9 +497,7 @@ def preference_pair_generate(
     result_rows = [indexed[i] for i in sorted(indexed) if indexed[i] is not None]
 
     if not result_rows:
-        raise ValueError(
-            f"No preference pairs were generated. Errors: {errors[:3]}."
-        )
+        raise ValueError(f"No preference pairs were generated. Errors: {errors[:3]}.")
 
     dataset_ref = records_to_dataset(result_rows, name="preference_pairs.parquet")
 
@@ -522,6 +521,7 @@ _WEAK_LABEL_MODES = [
     "rule_regex",
     "rule_keyword_vote",
 ]
+
 
 @node(
     name="Weak Label",
@@ -579,7 +579,7 @@ _WEAK_LABEL_MODES = [
             "group": "Rules",
             "description": (
                 "JSON object mapping labels to patterns. "
-                "E.g. {\"billing\": [\"invoice\", \"payment\"], \"tech\": [\"bug\", \"error\"]}. "
+                'E.g. {"billing": ["invoice", "payment"], "tech": ["bug", "error"]}. '
                 "Used by rule_exact, rule_contains, and rule_regex modes."
             ),
             "multiline": True,
@@ -774,6 +774,7 @@ def weak_label(
 # Node: Token Profile
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="Token Profile",
     id="token_profile",
@@ -797,8 +798,7 @@ def weak_label(
         },
         "model": {
             "description": (
-                "If set, auto-select encoding from model name "
-                "(overrides encoding param)."
+                "If set, auto-select encoding from model name (overrides encoding param)."
             ),
             "placeholder": "gpt-4o",
         },

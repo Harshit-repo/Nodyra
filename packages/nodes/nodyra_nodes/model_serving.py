@@ -1,4 +1,5 @@
 """Model serving, deployment, and endpoint testing nodes for Nodyra."""
+
 from __future__ import annotations
 
 import json
@@ -21,6 +22,7 @@ MAX_SHADOW_PROMPTS = 1_000
 def _require_requests():
     try:
         import requests
+
         return requests
     except ImportError as exc:
         raise RuntimeError(
@@ -34,6 +36,12 @@ def _to_records(val: Any) -> list[dict]:
     if isinstance(val, list):
         return [r for r in val if isinstance(r, dict)]
     if isinstance(val, dict):
+        # Trigger payloads and pinned data commonly wrap records under
+        # "rows"/"records"; accept those so a manual_trigger can seed the node.
+        for key in ("records", "rows"):
+            nested = val.get(key)
+            if isinstance(nested, list):
+                return [r for r in nested if isinstance(r, dict)]
         return [val]
     return []
 
@@ -81,8 +89,13 @@ def _check_models_list(req, base_url: str, api_key: str, timeout: float) -> dict
 
 
 def _send_completion(
-    req, base_url: str, api_key: str, model: str,
-    prompt: str, max_tokens: int, timeout: float,
+    req,
+    base_url: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    max_tokens: int,
+    timeout: float,
 ) -> dict:
     url = base_url.rstrip("/") + "/v1/chat/completions"
     payload = {
@@ -133,6 +146,7 @@ def _pct(values: list[float], p: float) -> float:
 # ============================================================
 # model_deployment_spec
 # ============================================================
+
 
 @node(
     name="Generate Model Deployment Spec",
@@ -205,14 +219,18 @@ def model_deployment_spec(
         if format == "docker-compose":
             env_lines = "\n".join(f"      - {k}={v}" for k, v in env_vars.items())
             gpu_block = (
-                "\n    deploy:\n      resources:\n        reservations:\n"
-                "          devices:\n            - driver: nvidia\n"
-                "              count: 1\n              capabilities: [gpu]"
-            ) if gpu else ""
+                (
+                    "\n    deploy:\n      resources:\n        reservations:\n"
+                    "          devices:\n            - driver: nvidia\n"
+                    "              count: 1\n              capabilities: [gpu]"
+                )
+                if gpu
+                else ""
+            )
             spec = (
                 f'version: "3.9"\nservices:\n  ollama:\n'
                 f"    image: ollama/ollama:latest\n"
-                f"    ports:\n      - \"{port}:11434\"\n"
+                f'    ports:\n      - "{port}:11434"\n'
                 f"    volumes:\n      - ollama_data:/root/.ollama\n"
                 f"    environment:\n{env_lines}{gpu_block}\n\n"
                 f"volumes:\n  ollama_data:\n"
@@ -223,7 +241,7 @@ def model_deployment_spec(
             )
         elif format == "kubernetes":
             env_lines = "\n".join(
-                f"        - name: {k}\n          value: \"{v}\"" for k, v in env_vars.items()
+                f'        - name: {k}\n          value: "{v}"' for k, v in env_vars.items()
             )
             spec = (
                 f"apiVersion: apps/v1\nkind: Deployment\nmetadata:\n"
@@ -255,17 +273,21 @@ def model_deployment_spec(
         if format == "docker-compose":
             env_lines = "\n".join(f"      - {k}={v}" for k, v in env_vars.items())
             gpu_block = (
-                "\n    deploy:\n      resources:\n        reservations:\n"
-                "          devices:\n            - driver: nvidia\n"
-                "              count: 1\n              capabilities: [gpu]"
-            ) if gpu else ""
+                (
+                    "\n    deploy:\n      resources:\n        reservations:\n"
+                    "          devices:\n            - driver: nvidia\n"
+                    "              count: 1\n              capabilities: [gpu]"
+                )
+                if gpu
+                else ""
+            )
             spec = (
                 f'version: "3.9"\nservices:\n  vllm:\n'
                 f"    image: vllm/vllm-openai:latest\n"
-                f"    ports:\n      - \"{port}:8000\"\n"
+                f'    ports:\n      - "{port}:8000"\n'
                 f"    environment:\n{env_lines}\n"
-                f"    command: [\"--model\", \"{model}\", \"--host\", \"0.0.0.0\", "
-                f"\"--port\", \"8000\", \"--max-model-len\", \"{context_length}\"]\n"
+                f'    command: ["--model", "{model}", "--host", "0.0.0.0", '
+                f'"--port", "8000", "--max-model-len", "{context_length}"]\n'
                 f"{gpu_block}\n"
             )
             commands = f"docker-compose up -d\n# Endpoint: http://localhost:{port}/v1"
@@ -301,6 +323,7 @@ def model_deployment_spec(
 # ============================================================
 # model_endpoint_probe
 # ============================================================
+
 
 @node(
     name="Probe Model Endpoint",
@@ -374,8 +397,13 @@ def model_endpoint_probe(
     completion_result: dict = {}
     if check_completion and active_model:
         completion_result = _send_completion(
-            req, base_url, api_key, active_model,
-            test_prompt, int(max_tokens), float(timeout_seconds),
+            req,
+            base_url,
+            api_key,
+            active_model,
+            test_prompt,
+            int(max_tokens),
+            float(timeout_seconds),
         )
         checks.append({"check": "completion", **completion_result})
         if not completion_result.get("success"):
@@ -401,6 +429,7 @@ def model_endpoint_probe(
 # ============================================================
 # model_endpoint_benchmark
 # ============================================================
+
 
 @node(
     name="Benchmark Model Endpoint",
@@ -449,8 +478,7 @@ def model_endpoint_benchmark(
     model: str = "llama3.2",
     api_key: str = "",
     prompts: str = (
-        '["Summarize AI in one sentence.", "What is machine learning?", '
-        '"Explain transformers."]'
+        '["Summarize AI in one sentence.", "What is machine learning?", "Explain transformers."]'
     ),
     n_requests: int = 10,
     concurrency: int = 2,
@@ -461,9 +489,7 @@ def model_endpoint_benchmark(
     prompt_list = _parse_json(prompts, ["Hello"])
     if not prompt_list:
         prompt_list = ["Hello"]
-    request_count = _bounded_int(
-        "n_requests", n_requests, 10, MAX_ENDPOINT_REQUESTS
-    )
+    request_count = _bounded_int("n_requests", n_requests, 10, MAX_ENDPOINT_REQUESTS)
     worker_count = min(
         _bounded_int("concurrency", concurrency, 2, MAX_ENDPOINT_CONCURRENCY),
         request_count,
@@ -475,8 +501,13 @@ def model_endpoint_benchmark(
 
     def _run(idx: int, prompt: str) -> dict:
         result = _send_completion(
-            req, base_url, api_key, model,
-            prompt, int(max_tokens), float(timeout_seconds),
+            req,
+            base_url,
+            api_key,
+            model,
+            prompt,
+            int(max_tokens),
+            float(timeout_seconds),
         )
         return {"request_idx": idx, "prompt": prompt[:120], **result}
 
@@ -517,6 +548,7 @@ def model_endpoint_benchmark(
 # ============================================================
 # shadow_compare_endpoint
 # ============================================================
+
 
 @node(
     name="Shadow Compare Endpoints",
@@ -609,13 +641,28 @@ def shadow_compare_endpoint(
     comparison_rows: list[dict] = []
 
     def _compare_one(idx: int, prompt: str) -> dict:
-        p = _send_completion(req, primary_url, primary_api_key, primary_model,
-                              prompt, int(max_tokens), float(timeout_seconds))
-        s = _send_completion(req, shadow_url, shadow_api_key, shadow_model,
-                              prompt, int(max_tokens), float(timeout_seconds))
+        p = _send_completion(
+            req,
+            primary_url,
+            primary_api_key,
+            primary_model,
+            prompt,
+            int(max_tokens),
+            float(timeout_seconds),
+        )
+        s = _send_completion(
+            req,
+            shadow_url,
+            shadow_api_key,
+            shadow_model,
+            prompt,
+            int(max_tokens),
+            float(timeout_seconds),
+        )
         latency_diff = (
             ((s.get("latency_ms") or 0) - (p.get("latency_ms") or 0))
-            if p.get("latency_ms") and s.get("latency_ms") else None
+            if p.get("latency_ms") and s.get("latency_ms")
+            else None
         )
         return {
             "idx": idx,
@@ -645,15 +692,13 @@ def shadow_compare_endpoint(
     summary = {
         "n_prompts": len(comparison_rows),
         "primary_model": primary_model,
-        "primary_success_rate": sum(
-            1 for r in comparison_rows if r["primary_success"]
-        ) / max(len(comparison_rows), 1),
+        "primary_success_rate": sum(1 for r in comparison_rows if r["primary_success"])
+        / max(len(comparison_rows), 1),
         "primary_p50_ms": _pct(p_lat, 50) if p_lat else None,
         "primary_p95_ms": _pct(p_lat, 95) if p_lat else None,
         "shadow_model": shadow_model,
-        "shadow_success_rate": sum(
-            1 for r in comparison_rows if r["shadow_success"]
-        ) / max(len(comparison_rows), 1),
+        "shadow_success_rate": sum(1 for r in comparison_rows if r["shadow_success"])
+        / max(len(comparison_rows), 1),
         "shadow_p50_ms": _pct(s_lat, 50) if s_lat else None,
         "shadow_p95_ms": _pct(s_lat, 95) if s_lat else None,
         "mean_latency_diff_ms": statistics.mean(diffs) if diffs else None,

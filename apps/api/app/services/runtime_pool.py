@@ -334,6 +334,10 @@ class _RuntimeProcess:
         self.process = process
         self.env_id = env_id
         self.dead = False
+        # Set by _EnvPool.acquire when the worker is admitted; workers with a
+        # generation older than the pool's are closed on release (see
+        # _EnvPool.drain).
+        self.generation = 0
         self.idle_since = time.time()
         # Number of runs this process has serviced.  Used by the pool's
         # ``max_runs_per_subprocess`` cap to recycle processes before
@@ -390,9 +394,7 @@ class _RuntimeProcess:
             # only starts once a worker is ready. Reporting "did not emit a ready
             # event" on its own sends the reader looking in the wrong place.
             detail = await _drain_startup_stderr(process)
-            raise RuntimeError(
-                f"runtime for env {env_id!r} exited before it was ready{detail}"
-            )
+            raise RuntimeError(f"runtime for env {env_id!r} exited before it was ready{detail}")
         ready = json.loads(line)
         if ready.get("type") != "ready":
             raise RuntimeError(f"unexpected first event: {ready}")
@@ -685,6 +687,12 @@ class _EnvPool:
         self._idle: list[_RuntimeProcess] = []
         self._all: set[_RuntimeProcess] = set()
         self._lock = asyncio.Lock()
+        # Bumped whenever the environment is rebuilt/replaced. Workers stamped
+        # with an older generation are closed on release instead of returning
+        # to the idle list — a warm worker running the previous environment's
+        # code must never serve runs after a rebuild, and on Windows a live
+        # worker's loaded DLLs would otherwise block the rebuild itself.
+        self._generation = 0
 
     @staticmethod
     def _alive(proc: _RuntimeProcess) -> bool:
@@ -715,6 +723,7 @@ class _EnvPool:
             self._sem.release()
             raise
         async with self._lock:
+            proc.generation = self._generation
             self._all.add(proc)
         return proc
 
@@ -727,12 +736,34 @@ class _EnvPool:
             asyncio.create_task(proc.close())
             self._sem.release()
             return
-        if self._alive(proc):
+        if self._alive(proc) and proc.generation == self._generation:
             proc.idle_since = time.time()
             self._idle.append(proc)
         else:
+            # Worker died, or its environment has since been drained/rebuilt —
+            # never keep a stale worker warm.
             self._all.discard(proc)
+            asyncio.create_task(proc.close())
         self._sem.release()
+
+    async def drain(self) -> None:
+        """Close every idle worker and invalidate in-flight workers.
+
+        Called before an environment rebuild (and on delete): a warm worker
+        holds the previous environment's code in memory, and on Windows its
+        loaded ``.pyd`` files lock the environment directory, so a rebuild
+        cannot overwrite them until the workers are gone. In-flight runs are
+        left untouched — they close themselves on release thanks to the
+        generation bump.
+        """
+        async with self._lock:
+            self._generation += 1
+            to_close = list(self._idle)
+            self._idle.clear()
+            for proc in to_close:
+                self._all.discard(proc)
+        for proc in to_close:
+            await proc.close()
 
     async def reap_idle(self, threshold_seconds: float) -> int:
         """Close warm processes idle past the threshold, respecting ``min_size``.
@@ -1008,6 +1039,20 @@ class RuntimePool:
                 )
                 self._envs[key] = envpool
             return envpool
+
+    async def drain_env(self, env_id: str | None) -> None:
+        """Close warm workers for one environment before a rebuild/delete.
+
+        A warm worker keeps the previous environment's code in memory, and on
+        Windows its loaded ``.pyd`` files lock the environment directory so the
+        rebuild cannot replace them (PermissionError). In-flight runs are left
+        running; their workers close on release thanks to the generation bump.
+        """
+        key = env_id or "_default"
+        async with self._lock:
+            envpool = self._envs.get(key)
+        if envpool is not None:
+            await envpool.drain()
 
     async def dispatch(
         self,

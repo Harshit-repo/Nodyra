@@ -160,6 +160,21 @@ def _as_loop_rows(value: Any, *, max_rows: int) -> list[Any]:
                 f"loop received {len(value)} rows but max_rows is {total_cap}"
             )
         return value
+    if isinstance(value, dict):
+        # Trigger payloads and pinned data commonly wrap a row array under a
+        # single "items"/"rows"/"records" key (the same convention the stripe
+        # and ai-v2 nodes unwrap). Only a *single-key* wrapper is unwrapped —
+        # a real record that happens to contain a list field iterates as one
+        # row, unchanged.
+        keys = list(value)
+        if len(keys) == 1:
+            only = value[keys[0]]
+            if keys[0] in ("items", "rows", "records") and isinstance(only, list):
+                if len(only) > total_cap:
+                    raise ValueError(
+                        f"loop received {len(only)} rows but max_rows is {total_cap}"
+                    )
+                return only
     return [value]
 
 

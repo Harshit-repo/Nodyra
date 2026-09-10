@@ -23,6 +23,7 @@ from nodyra.sdk import node
 # html_extract
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="HTML Extract Records",
     id="html_extract_records",
@@ -33,8 +34,7 @@ from nodyra.sdk import node
         "container_selector": {
             "placeholder": "li.product  (blank = whole page, one record)",
             "description": (
-                "CSS selector for the repeating parent element. Each match "
-                "becomes one record."
+                "CSS selector for the repeating parent element. Each match becomes one record."
             ),
         },
         "selectors_json": {
@@ -91,18 +91,17 @@ def html_extract_records(
         containers = soup.select(container_selector)
         for container in containers:
             record = {
-                field: _text(container.select_one(sel))
-                for field, sel in field_selectors.items()
+                field: _text(container.select_one(sel)) for field, sel in field_selectors.items()
             }
             records.append(record)
     else:
-        record = {
-            field: _text(soup.select_one(sel))
-            for field, sel in field_selectors.items()
-        }
+        record = {field: _text(soup.select_one(sel)) for field, sel in field_selectors.items()}
         records.append(record)
 
-    dataset = records_to_dataset(records) if records else None
+    # records_to_dataset on columnless rows (no selectors configured, or a
+    # selector that matched nothing) raises a raw duckdb exception. Only build
+    # the dataset when there is something tabular to hold.
+    dataset = records_to_dataset(records) if records and any(records) else None
     return {
         "records": records,
         "records_found": len(records),
@@ -113,6 +112,7 @@ def html_extract_records(
 # ---------------------------------------------------------------------------
 # sitemap_crawl
 # ---------------------------------------------------------------------------
+
 
 @node(
     name="Sitemap Crawl",
@@ -156,7 +156,9 @@ def sitemap_crawl(
             # SEC-2: candidate is a user-supplied URL — route through the SSRF
             # guard so a sitemap fetch cannot reach internal/metadata endpoints.
             resp = safe_request(
-                "GET", candidate, timeout=float(timeout_seconds or 15),
+                "GET",
+                candidate,
+                timeout=float(timeout_seconds or 15),
                 context="sitemap_crawl",
             )
             resp.raise_for_status()
@@ -243,6 +245,7 @@ def sitemap_crawl(
 # web_feed_parse
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="RSS / Atom Feed Parse",
     id="web_feed_parse",
@@ -281,14 +284,16 @@ def web_feed_parse(input=None, max_items: int = 50) -> dict:
     limit = len(raw_entries) if max_items == 0 else min(max_items, len(raw_entries))
     entries = []
     for e in raw_entries[:limit]:
-        entries.append({
-            "title": e.get("title", ""),
-            "link": e.get("link", ""),
-            "summary": e.get("summary", ""),
-            "published": e.get("published", ""),
-            "author": e.get("author", ""),
-            "id": e.get("id", ""),
-        })
+        entries.append(
+            {
+                "title": e.get("title", ""),
+                "link": e.get("link", ""),
+                "summary": e.get("summary", ""),
+                "published": e.get("published", ""),
+                "author": e.get("author", ""),
+                "id": e.get("id", ""),
+            }
+        )
 
     feed_meta = parsed.get("feed", {})
     dataset = records_to_dataset(entries) if entries else None
@@ -302,10 +307,10 @@ def web_feed_parse(input=None, max_items: int = 50) -> dict:
     }
 
 
-
 # ---------------------------------------------------------------------------
 # browser_screenshot  ★
 # ---------------------------------------------------------------------------
+
 
 @node(
     name="Browser Screenshot",
@@ -324,17 +329,14 @@ def web_feed_parse(input=None, max_items: int = 50) -> dict:
             ),
         },
         "full_page": {
-            "description": (
-                "Capture the full scrollable page (ignored when selector is set)"
-            )
+            "description": ("Capture the full scrollable page (ignored when selector is set)")
         },
         "viewport_width": {"description": "Browser viewport width in pixels (default 1280)"},
         "viewport_height": {"description": "Browser viewport height in pixels (default 800)"},
         "wait_for": {
             "choices": ["networkidle", "load", "domcontentloaded"],
             "description": (
-                "Wait condition before capturing. networkidle waits for no "
-                "network activity."
+                "Wait condition before capturing. networkidle waits for no network activity."
             ),
         },
         "page_timeout_ms": {"description": "Maximum page load wait in ms (default 30000)"},
@@ -359,9 +361,7 @@ def browser_screenshot(
     """
     target_url = url or (str(input) if input is not None else "")
     if not target_url:
-        raise ValueError(
-            "url is required — set a URL in the node config or wire one as input."
-        )
+        raise ValueError("url is required — set a URL in the node config or wire one as input.")
 
     try:
         from playwright.sync_api import TimeoutError as PWTimeout  # type: ignore[import-not-found]
@@ -375,9 +375,7 @@ def browser_screenshot(
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            page = browser.new_page(
-                viewport={"width": viewport_width, "height": viewport_height}
-            )
+            page = browser.new_page(viewport={"width": viewport_width, "height": viewport_height})
             try:
                 page.goto(target_url, wait_until=wait_for, timeout=page_timeout_ms)
             except (PWTimeout, TimeoutError) as exc:
@@ -389,9 +387,7 @@ def browser_screenshot(
             if selector.strip():
                 element = page.query_selector(selector)
                 if element is None:
-                    raise ValueError(
-                        f"Selector '{selector}' matched no elements on {target_url}."
-                    )
+                    raise ValueError(f"Selector '{selector}' matched no elements on {target_url}.")
                 img_bytes: bytes = element.screenshot()
             else:
                 img_bytes = page.screenshot(full_page=full_page)
@@ -411,6 +407,7 @@ def browser_screenshot(
 # browser_scrape  ★
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="Browser Scrape",
     id="browser_scrape",
@@ -423,16 +420,14 @@ def browser_screenshot(
         "container_selector": {
             "placeholder": "li.product-card",
             "description": (
-                "CSS selector for the repeating element. Each match becomes "
-                "one record."
+                "CSS selector for the repeating element. Each match becomes one record."
             ),
         },
         "selectors_json": {
             "multiline": True,
             "placeholder": '{"title": "h2.name", "price": ".price", "link": "a[href]"}',
             "description": (
-                "JSON mapping of field name → CSS selector (relative to each "
-                "container)."
+                "JSON mapping of field name → CSS selector (relative to each container)."
             ),
         },
         "wait_for": {
@@ -442,8 +437,7 @@ def browser_screenshot(
         "pagination_next_selector": {
             "placeholder": "a.next-page",
             "description": (
-                "CSS selector for the 'next page' link. Leave blank to disable "
-                "pagination."
+                "CSS selector for the 'next page' link. Leave blank to disable pagination."
             ),
         },
         "max_pages": {"description": "Maximum pages to paginate through (default 1)"},
@@ -467,9 +461,7 @@ def browser_scrape(
     """
     target_url = url or (str(input) if input is not None else "")
     if not target_url:
-        raise ValueError(
-            "url is required — set a URL in the node config or wire one as input."
-        )
+        raise ValueError("url is required — set a URL in the node config or wire one as input.")
     if not selectors_json.strip():
         raise ValueError(
             "selectors_json is required — provide a JSON mapping of field name → CSS selector."
@@ -551,6 +543,7 @@ def browser_scrape(
 # browser_click_fill
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="Browser Click & Fill",
     id="browser_click_fill",
@@ -562,16 +555,19 @@ def browser_scrape(
         "url": {"placeholder": "https://example.com/login"},
         "actions_json": {
             "multiline": True,
-            "placeholder": json.dumps([
-                {"action": "fill", "selector": "#username", "value": "user@example.com"},
-                {"action": "fill", "selector": "#password", "value": "secret"},
-                {"action": "click", "selector": "button[type=submit]"},
-                {
-                    "action": "wait_for_selector",
-                    "selector": ".dashboard",
-                    "timeout_ms": 5000,
-                },
-            ], indent=2),
+            "placeholder": json.dumps(
+                [
+                    {"action": "fill", "selector": "#username", "value": "user@example.com"},
+                    {"action": "fill", "selector": "#password", "value": "secret"},
+                    {"action": "click", "selector": "button[type=submit]"},
+                    {
+                        "action": "wait_for_selector",
+                        "selector": ".dashboard",
+                        "timeout_ms": 5000,
+                    },
+                ],
+                indent=2,
+            ),
             "description": (
                 "JSON list of browser actions. "
                 "Each: {action: click|fill|select|wait_for_selector|wait, "
@@ -580,9 +576,7 @@ def browser_scrape(
         },
         "screenshot_after": {"description": "Capture a screenshot of the final page state"},
         "page_timeout_ms": {
-            "description": (
-                "Maximum page load wait per navigation in ms (default 30000)"
-            )
+            "description": ("Maximum page load wait per navigation in ms (default 30000)")
         },
         "viewport_width": {"description": "Browser viewport width in pixels (default 1280)"},
         "viewport_height": {"description": "Browser viewport height in pixels (default 800)"},
@@ -612,13 +606,11 @@ def browser_click_fill(
     target_url = url or (str(input) if input is not None else "")
     if not target_url:
         raise ValueError(
-            "url is required — set a starting URL in the node config or wire "
-            "one as input."
+            "url is required — set a starting URL in the node config or wire one as input."
         )
     if not actions_json.strip():
         raise ValueError(
-            "actions_json is required — provide a JSON list of browser actions "
-            "in the node config."
+            "actions_json is required — provide a JSON list of browser actions in the node config."
         )
 
     try:
@@ -638,9 +630,7 @@ def browser_click_fill(
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            page = browser.new_page(
-                viewport={"width": viewport_width, "height": viewport_height}
-            )
+            page = browser.new_page(viewport={"width": viewport_width, "height": viewport_height})
             try:
                 page.goto(target_url, wait_until="networkidle", timeout=page_timeout_ms)
             except (PWTimeout, TimeoutError) as exc:
@@ -664,6 +654,7 @@ def browser_click_fill(
                     page.wait_for_selector(sel, timeout=timeout)
                 elif act == "wait":
                     import time
+
                     time.sleep(int(action.get("ms", 1000)) / 1000)
                 else:
                     raise ValueError(
@@ -695,6 +686,7 @@ def browser_click_fill(
 # ---------------------------------------------------------------------------
 # browser_pdf_from_url
 # ---------------------------------------------------------------------------
+
 
 @node(
     name="Browser PDF from URL",
@@ -734,9 +726,7 @@ def browser_pdf_from_url(
     """
     target_url = url or (str(input) if input is not None else "")
     if not target_url:
-        raise ValueError(
-            "url is required — set a URL in the node config or wire one as input."
-        )
+        raise ValueError("url is required — set a URL in the node config or wire one as input.")
 
     try:
         from playwright.sync_api import TimeoutError as PWTimeout  # type: ignore[import-not-found]

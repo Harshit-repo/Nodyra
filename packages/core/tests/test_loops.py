@@ -777,3 +777,18 @@ def test_bounded_conditional_iterations_zero_returns_default_e13():
     from nodyra.engine.loops import _bounded_conditional_iterations
     assert _bounded_conditional_iterations(0) == 1000
     assert _bounded_conditional_iterations(None) == 1000
+
+def test_loop_items_unwraps_single_key_items_wrapper():
+    """Trigger payloads commonly wrap rows under "items" (the same convention
+    the stripe and ai-v2 nodes unwrap). A single-key wrapper iterates its
+    array; a real record with multiple keys still iterates once."""
+    assert _loop_items({"items": [1, 2, 3]}, mode="each", max_rows=100) == [1, 2, 3]
+    assert _loop_items({"rows": [{"a": 1}, {"a": 2}]}, mode="each", max_rows=100) == [
+        {"a": 1},
+        {"a": 2},
+    ]
+    # multi-key records are single rows, not wrappers
+    record = {"name": "x", "items": [1, 2]}
+    assert _loop_items(record, mode="each", max_rows=100) == [record]
+    # non-list single-key values stay single rows
+    assert _loop_items({"items": 5}, mode="each", max_rows=100) == [{"items": 5}]

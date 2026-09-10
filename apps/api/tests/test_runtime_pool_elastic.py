@@ -24,9 +24,8 @@ class _FakeProcess:
     dead: bool = False
     idle_since: float = 0.0
     closed: bool = False
-    process: object = field(
-        default_factory=lambda: type("P", (), {"returncode": None})()
-    )
+    generation: int = 0
+    process: object = field(default_factory=lambda: type("P", (), {"returncode": None})())
 
     async def close(self) -> None:
         self.closed = True

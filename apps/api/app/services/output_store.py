@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -19,6 +20,7 @@ from typing import Any
 
 from app.config import settings
 from app.services.metrics import output_store_events_total
+from nodyra.serialization import sanitize_nonfinite
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +87,9 @@ def maybe_offload_output(
     if outputs is None:
         return None
     try:
-        raw = json.dumps(outputs, default=str)
+        # NaN/Inf are not valid JSON; degrade to null so the offloaded copy
+        # stays readable by every consumer.
+        raw = json.dumps(sanitize_nonfinite(outputs), default=str)
     except (TypeError, ValueError):
         return outputs  # unserializable — keep inline, it'll fail later anyway
 
@@ -131,7 +135,9 @@ def maybe_load_output(outputs: dict[str, Any] | None) -> dict[str, Any] | None:
 
     try:
         raw = _read_output(key)
-        return json.loads(raw)
+        # Legacy offloaded copies may predate non-finite sanitization; degrade
+        # NaN/Inf to null so downstream JSON consumers never see them.
+        return sanitize_nonfinite(json.loads(raw))
     except Exception:  # noqa: BLE001
         # The caller receives the raw marker back — degraded, but visible
         # (better than raising and failing the read entirely).
@@ -173,7 +179,11 @@ def _write_output(key: str, raw: str) -> None:
         raise ValueError(f"output_store: invalid key {key!r}")
     path = _output_root() / f"{key}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(raw, encoding="utf-8")
+    # Atomic write: a crash mid-write must never leave a truncated file that
+    # later reads surface as corrupt data.
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(raw, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _read_output(key: str) -> str:

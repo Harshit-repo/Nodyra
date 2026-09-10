@@ -226,3 +226,84 @@ def test_mcp_tool_manifest_keeps_input_port() -> None:
     manifest = registry.get("mcp_tool").manifest
     assert [p.name for p in manifest.inputs] == ["input"]
     assert [p.name for p in manifest.outputs] == ["main"]
+
+
+# ---------------------------------------------------------------------------
+# html_extract_records: columnless records must not crash the dataset builder
+# ---------------------------------------------------------------------------
+
+
+def test_html_extract_records_no_selectors_does_not_crash() -> None:
+    """With no selectors configured the node produced one empty record and fed
+    it to records_to_dataset, which raised a raw duckdb InvalidInputException."""
+    pytest.importorskip("bs4")
+    from nodyra_nodes.browser_automation import html_extract_records
+
+    result = html_extract_records(input="<html><body>hi</body></html>")
+    assert result["records_found"] == 1
+    assert result["dataset"] is None
+
+
+def test_html_extract_records_extracts_with_selectors(store_ctx) -> None:
+    pytest.importorskip("bs4")
+    from nodyra_nodes.browser_automation import html_extract_records
+
+    result = html_extract_records(
+        input='<div class="r"><span>1</span></div><div class="r"><span>2</span></div>',
+        container_selector="div.r",
+        selectors_json='{"value": "span"}',
+    )
+    assert result["records_found"] == 2
+    assert result["records"][0]["value"] == "1"
+    assert result["dataset"] is not None
+
+
+# ---------------------------------------------------------------------------
+# rows-wrapped trigger payloads on ML/LLM record inputs
+# ---------------------------------------------------------------------------
+
+
+def test_weak_label_accepts_rows_wrapped_dict(store_ctx) -> None:
+    from nodyra_nodes.synthetic_data import weak_label
+
+    result = weak_label(
+        input={"rows": [{"text": "buy now"}, {"text": "hello"}]},
+        mode="rules",
+        text_column="text",
+        labels="spam,ham",
+        output_column="label",
+        rule_patterns='{"spam": "buy"}',
+    )
+    assert result is not None
+
+
+def test_llm_fine_tune_dataset_accepts_rows_wrapped_dict(store_ctx) -> None:
+    from nodyra_nodes.llm_training import llm_fine_tune_dataset
+
+    result = llm_fine_tune_dataset(
+        input={"rows": [{"p": "q1", "c": "a1"}, {"p": "q2", "c": "a2"}]},
+        format="openai_chat",
+        prompt_column="p",
+        completion_column="c",
+        min_examples=2,
+    )
+    assert result is not None
+
+
+def test_model_registry_query_accepts_rows_wrapped_dict(store_ctx) -> None:
+    from nodyra_nodes.model_monitoring import model_registry_query
+
+    result = model_registry_query(
+        input={
+            "rows": [
+                {
+                    "model_id": "m1",
+                    "status": "production",
+                    "provider": "openai",
+                    "base_model": "gpt-4",
+                },
+            ]
+        }
+    )
+    assert result["main"]["total_registered"] == 1
+    assert result["main"]["total_matched"] == 1

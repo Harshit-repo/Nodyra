@@ -22,6 +22,12 @@ def _to_records(val: Any) -> list[dict]:
     if isinstance(val, list):
         return [r for r in val if isinstance(r, dict)]
     if isinstance(val, dict):
+        # Trigger payloads and pinned data commonly wrap records under
+        # "rows"/"records"; accept those so a manual_trigger can seed the node.
+        for key in ("records", "rows"):
+            nested = val.get(key)
+            if isinstance(nested, list):
+                return [r for r in nested if isinstance(r, dict)]
         return [val]
     return []
 

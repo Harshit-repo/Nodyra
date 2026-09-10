@@ -98,3 +98,29 @@ async def test_get_version_graph_404_unknown_version(client: AsyncClient):
     wf_id = await make_workflow(client)
     resp = await client.get(f"/workflows/{wf_id}/versions/nonexistent/graph")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_publish_rejects_structurally_broken_graph(client: AsyncClient):
+    """Publishing takes a workflow live; an empty or self-looped graph can
+    never run and must be rejected with a clear message instead of silently
+    creating a dead published version."""
+    resp = await client.post("/workflows", json={"name": "broken"})
+    wf_id = resp.json()["id"]
+
+    publish = await client.post(f"/workflows/{wf_id}/publish", json={"notes": "nope"})
+    assert publish.status_code == 422
+    assert "invalid workflow graph" in publish.json()["detail"].lower()
+
+    self_loop = {
+        "nodes": [
+            {"id": "n1", "type": "user:test:fn", "params": {}, "position": {"x": 0, "y": 0}},
+        ],
+        "edges": [
+            {"source": "n1", "source_output": "main", "target": "n1", "target_input": "input"}
+        ],
+    }
+    await client.put(f"/workflows/{wf_id}", json={"graph": self_loop})
+    publish = await client.post(f"/workflows/{wf_id}/publish", json={"notes": "nope"})
+    assert publish.status_code == 422
+    assert "self-loop" in publish.json()["detail"].lower()
