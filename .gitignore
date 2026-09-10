@@ -99,3 +99,4 @@ engine-throughput-benchmark.json
 /apps/api/artifacts/
 /apps/api/testdata_extract/
 /apps/api/testdata_out.zip
+/.impeccable/

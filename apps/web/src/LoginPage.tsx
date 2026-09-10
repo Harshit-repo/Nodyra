@@ -94,63 +94,20 @@ export function LoginPage({
           <Logo size={30} />
           <span>Nodyra</span>
         </div>
-        <div className="login-nav-meta" aria-label="Workspace security summary">
-          <span>Self-hosted</span>
-          <span>Python-native</span>
-          <span>RBAC</span>
-        </div>
+        <span className="login-nav-note">Self-hosted workspace</span>
       </header>
 
-      <main className="login-hero">
-        <section className="login-canvas" aria-label="Workflow canvas preview">
-          <div className="login-prompt-card" aria-hidden="true">
-            <span className="login-prompt-mark">&gt;&gt;</span>
-            <span>{isLoginMode ? "Open production workspace" : "Create owner workspace"}</span>
-            <span className="login-prompt-cursor" />
-          </div>
-
-          <div className="login-graph" aria-hidden="true">
-            <span className="login-edge login-edge-a" />
-            <span className="login-edge login-edge-b" />
-            <span className="login-node login-node-auth">
-              <b>Auth</b>
-              <small>session</small>
-            </span>
-            <span className="login-node login-node-rbac">
-              <b>RBAC</b>
-              <small>roles</small>
-            </span>
-            <span className="login-node login-node-secrets">
-              <b>Secrets</b>
-              <small>protected</small>
-            </span>
-            <span className="login-node login-node-runner">
-              <b>Runner</b>
-              <small>isolated</small>
-            </span>
-          </div>
-
-          <dl className="login-canvas-stats" aria-label="Access model summary">
-            <div><dt>Session</dt><dd>httpOnly cookie</dd></div>
-            <div><dt>Access</dt><dd>Owner/admin invites</dd></div>
-            <div><dt>Runtime</dt><dd>Trusted Python authors</dd></div>
-          </dl>
-        </section>
-
+      <main className="login-main">
         <section className="login-copy" aria-labelledby="login-heading">
-          <p className="login-status-pill">
-            <span aria-hidden="true" />
-            {isLoginMode ? "Secure workspace access" : "First owner setup"}
-          </p>
           <h1 id="login-heading">
             {isLoginMode
-              ? "Sign in to the workflow control plane."
-              : "Set up the workflow control plane."}
+              ? "Sign in to Nodyra"
+              : "Create your Nodyra workspace"}
           </h1>
           <p className="login-subcopy">
             {isLoginMode
-              ? "Continue to workflows, credentials, executions, environments, and runners in your self-hosted Nodyra workspace."
-              : "Create the first owner account. This user controls invites, roles, credentials, and workspace settings."}
+              ? "Continue to your self-hosted workflow workspace."
+              : "Set up the first owner account for this workspace."}
           </p>
 
           <div className="login-card">
@@ -303,12 +260,12 @@ export function LoginPage({
             )}
           </div>
 
-          <div className="login-proof-row" aria-label="Platform traits">
-            <span>Self-hostable</span>
-            <span>Python-native</span>
-            <span>MCP server + client</span>
-            <span>Runner pools</span>
-          </div>
+          <p className="login-footer-copy">
+            <span aria-hidden="true" />
+            {isLoginMode
+              ? "Your workflows stay inside your deployment."
+              : "Invite-only access keeps workspace ownership explicit."}
+          </p>
         </section>
       </main>
     </div>
