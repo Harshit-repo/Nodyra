@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import re
 import time
 from collections.abc import Iterable
@@ -15,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Credential
 from app.services.org_keys import decrypt_credential_for
+
+logger = logging.getLogger(__name__)
 
 REDACTED = "***REDACTED***"
 
@@ -144,11 +147,36 @@ async def _decrypt_credential_values(
     result = await session.scalars(stmt)
     values: list[str] = []
     for credential in result.all():
-        data = await decrypt_credential_for(credential, session)
+        # One credential must not take the others down with it. The caller
+        # treats this whole list as best-effort and falls back to [] on any
+        # exception, so a single unreadable row — a rotated SECRET_KEY, a
+        # half-migrated KMS, a corrupt ciphertext — would otherwise disable
+        # redaction for *every* secret in the org at once.
+        try:
+            data = await decrypt_credential_for(credential, session)
+        except Exception:  # noqa: BLE001 - one bad row, not a blind run
+            logger.warning(
+                "redaction: credential %s could not be decrypted; its value "
+                "will not be redacted from run output",
+                getattr(credential, "id", "?"),
+            )
+            continue
+        found = False
         for value in data.values():
             secret = _usable_secret(value)
             if secret is not None:
                 values.append(secret)
+                found = True
+        if not found and getattr(credential, "encrypted_data", None):
+            # Decryption returned nothing for a row that holds ciphertext
+            # (decrypt_credential_for is non-strict here and answers {}), so
+            # this credential's secret is about to flow through logs and node
+            # output unmasked. Silence is the wrong response to that.
+            logger.warning(
+                "redaction: credential %s yielded no readable values; its "
+                "secret will not be redacted from run output",
+                getattr(credential, "id", "?"),
+            )
     return sorted(set(values), key=len, reverse=True)
 
 
