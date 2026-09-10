@@ -335,7 +335,10 @@ async def _dispatch_single(
             tool = get_tool(name)
             if tool is not None:
                 await _check_permission(session, user, tool.permission, request)
-                validate_tool_arguments(tool.input_schema, arguments)
+                # Validate against the public descriptor schema so approval
+                # metadata added by ``McpTool.descriptor`` is accepted by the
+                # call path as well as advertised to clients.
+                validate_tool_arguments(tool.descriptor()["inputSchema"], arguments)
                 payload = await tool.handler(session, user, arguments)
                 return jsonrpc_result(req_id, tool_result(payload))
             # Dynamic per-workflow tool — running a workflow needs workflow:run.

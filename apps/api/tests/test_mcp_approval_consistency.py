@@ -105,3 +105,20 @@ def test_the_documented_policy_matches_the_code():
     )
     missing = [tool for tool in sorted(gated_tools()) if tool not in text]
     assert not missing, f"gated tools absent from the documented policy: {missing}"
+
+def test_gated_tools_declare_approved_by_user_in_their_schema():
+    """A gated tool demands approved_by_user at runtime, so its schema must
+    accept the flag — otherwise the caller is told to pass a field the schema
+    then rejects (and with additionalProperties:false, refuses the call)."""
+    from app.mcp.tools import STATIC_TOOLS
+
+    schemas = {tool.name: tool.input_schema or {} for tool in STATIC_TOOLS}
+    missing = sorted(
+        name
+        for name in gated_tools()
+        if "approved_by_user" not in schemas.get(name, {}).get("properties", {})
+    )
+    assert not missing, (
+        "these tools require approved_by_user at runtime but their input "
+        f"schema does not declare it: {missing}"
+    )

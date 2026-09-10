@@ -3393,6 +3393,10 @@ STATIC_TOOLS: list[McpTool] = [
         input_schema={
             "type": "object",
             "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
                 "workflow_id": {"type": "string"},
                 "graph": {"type": "object"},
                 "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
@@ -3465,6 +3469,10 @@ STATIC_TOOLS: list[McpTool] = [
         input_schema={
             "type": "object",
             "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
                 "workflow_id": {"type": "string"},
                 "operations": {"type": "array", "items": {"type": "object"}},
                 "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
@@ -3482,6 +3490,10 @@ STATIC_TOOLS: list[McpTool] = [
         input_schema={
             "type": "object",
             "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
                 "workflow_id": {"type": "string"},
                 "notes": {"type": "string"},
             },
@@ -3545,6 +3557,10 @@ STATIC_TOOLS: list[McpTool] = [
         input_schema={
             "type": "object",
             "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
                 "workflow_id": {"type": "string"},
                 "node_id": {"type": "string"},
                 "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
@@ -3591,6 +3607,10 @@ STATIC_TOOLS: list[McpTool] = [
         input_schema={
             "type": "object",
             "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
                 "workflow_id": {"type": "string"},
                 "source": {"type": "string"},
                 "target": {"type": "string"},
@@ -3609,6 +3629,10 @@ STATIC_TOOLS: list[McpTool] = [
         input_schema={
             "type": "object",
             "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
                 "workflow_id": {"type": "string"},
                 "active": {"type": "boolean"},
             },
@@ -3672,7 +3696,13 @@ STATIC_TOOLS: list[McpTool] = [
         description="Permanently delete a workflow and all its runs, versions, and events.",
         input_schema={
             "type": "object",
-            "properties": {"workflow_id": {"type": "string"}},
+            "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
+                "workflow_id": {"type": "string"},
+            },
             "required": ["workflow_id"],
         },
         permission="workflow:write",
@@ -3747,6 +3777,10 @@ STATIC_TOOLS: list[McpTool] = [
                     "type": "boolean",
                     "description": "Explicitly acknowledge unsafe nodes when policy requires it.",
                 },
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
             },
             # Scheduling is production-impacting: silently dropping a mistyped
             # field (e.g. "interval_seconds") while defaulting to hourly creates
@@ -3762,7 +3796,13 @@ STATIC_TOOLS: list[McpTool] = [
         description="Permanently delete a cron schedule.",
         input_schema={
             "type": "object",
-            "properties": {"schedule_id": {"type": "string"}},
+            "properties": {
+                "schedule_id": {"type": "string"},
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
+            },
             "required": ["schedule_id"],
         },
         permission="deployment:write",
@@ -3777,6 +3817,10 @@ STATIC_TOOLS: list[McpTool] = [
                 "schedule_id": {"type": "string"},
                 "active": {"type": "boolean"},
                 "approve_unsafe_nodes": {"type": "boolean"},
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
             },
             "required": ["schedule_id", "active"],
         },
@@ -3802,6 +3846,10 @@ STATIC_TOOLS: list[McpTool] = [
                 "active": {"type": "boolean"},
                 "workflow_version_id": {"type": "string"},
                 "approve_unsafe_nodes": {"type": "boolean"},
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
             },
             # Reject unknown fields instead of silently defaulting timing to
             # hourly (see create_schedule).
@@ -3886,6 +3934,10 @@ STATIC_TOOLS: list[McpTool] = [
         input_schema={
             "type": "object",
             "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
                 "workflow_id": {"type": "string"},
                 "node_id": {"type": "string", "description": "Unique id for the new node."},
                 "code": {
@@ -3908,6 +3960,10 @@ STATIC_TOOLS: list[McpTool] = [
         input_schema={
             "type": "object",
             "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
                 "workflow_id": {"type": "string"},
                 "node_id": {"type": "string"},
                 "code": {
@@ -4035,7 +4091,13 @@ STATIC_TOOLS: list[McpTool] = [
         description="Mark an environment pending and start a rebuild with its current packages.",
         input_schema={
             "type": "object",
-            "properties": {"environment_id": {"type": "string"}},
+            "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
+                "environment_id": {"type": "string"},
+            },
             "required": ["environment_id"],
         },
         permission="environment:write",
@@ -4241,6 +4303,10 @@ STATIC_TOOLS: list[McpTool] = [
         input_schema={
             "type": "object",
             "properties": {
+                "approved_by_user": {
+                    "type": "boolean",
+                    "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
+                },
                 "run_id": {"type": "string"},
                 "approval_id": {"type": "string"},
                 "decision": {"type": "string", "enum": ["approve", "reject", "approve_all"]},
