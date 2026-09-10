@@ -137,6 +137,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Normalize container repository names
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "IMAGE_API=ghcr.io/$owner/nodyra-api" >> "$GITHUB_ENV"
+          echo "IMAGE_WEB=ghcr.io/$owner/nodyra-web" >> "$GITHUB_ENV"
+          echo "IMAGE_RUNNER=ghcr.io/$owner/nodyra-runner" >> "$GITHUB_ENV"
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
