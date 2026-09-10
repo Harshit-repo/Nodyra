@@ -897,3 +897,92 @@ async def test_a_node_that_succeeds_first_time_emits_no_retry_events() -> None:
     await execute(graph, reg, on_event=on_event)
 
     assert [e for e in seen if e.get("type") == "node_retrying"] == []
+
+
+async def test_an_edge_from_a_port_the_node_lacks_fails_the_run() -> None:
+    """A wiring mistake must not finish "successfully" having done nothing.
+
+    The engine could not tell "this branch did not fire" from "this port does
+    not exist", so it skipped both. A graph wired to a misspelled port ran
+    green with every node after the bad edge skipped — the worst outcome for
+    automation, because nothing reports a problem.
+    """
+    reg = NodeRegistry()
+
+    @node(name="Two Ports", id="two_ports", inputs=[], outputs=["item", "index"], registry=reg)
+    def two_ports() -> dict:
+        return {"item": 1, "index": 0}
+
+    @node(name="Tail", id="wiring_tail", registry=reg)
+    def tail(input: int | None = None) -> str:
+        return f"got {input!r}"
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="src", type="two_ports"),
+            GraphNode(id="dst", type="wiring_tail"),
+        ],
+        # "main" is not one of this node's ports.
+        edges=[Edge(source="src", source_output="main", target="dst")],
+    )
+
+    result = await execute(graph, reg)
+
+    assert result.status == RunStatus.error
+    assert result.nodes["dst"].status == NodeStatus.error
+    message = result.nodes["dst"].error or ""
+    assert "has no output 'main'" in message
+    assert "index" in message and "item" in message
+
+
+async def test_a_branch_that_simply_did_not_fire_still_skips() -> None:
+    """A declared port that emitted nothing is a normal untaken branch."""
+    reg = NodeRegistry()
+
+    @node(name="One Sided", id="one_sided", inputs=[], outputs=["taken", "untaken"], registry=reg)
+    def one_sided() -> dict:
+        return {"taken": 1}
+
+    @node(name="Tail", id="branch_tail", registry=reg)
+    def tail(input: int | None = None) -> str:
+        return f"got {input!r}"
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="src", type="one_sided"),
+            GraphNode(id="dst", type="branch_tail"),
+        ],
+        edges=[Edge(source="src", source_output="untaken", target="dst")],
+    )
+
+    result = await execute(graph, reg)
+
+    assert result.status == RunStatus.success
+    assert result.nodes["dst"].status == NodeStatus.skipped
+    assert "was not taken" in (result.nodes["dst"].error or "")
+
+
+async def test_outputs_override_ports_are_accepted() -> None:
+    """Router nodes name their ports at author time; those are legitimate."""
+    reg = NodeRegistry()
+
+    @node(name="Router", id="port_router", inputs=[], outputs=["main"], registry=reg)
+    def router() -> dict:
+        return {"route_a": {"ok": True}}
+
+    @node(name="Tail", id="router_tail", registry=reg)
+    def tail(input: dict | None = None) -> str:
+        return f"got {input!r}"
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="src", type="port_router", outputs_override=["route_a"]),
+            GraphNode(id="dst", type="router_tail"),
+        ],
+        edges=[Edge(source="src", source_output="route_a", target="dst")],
+    )
+
+    result = await execute(graph, reg)
+
+    assert result.status == RunStatus.success
+    assert result.nodes["dst"].status == NodeStatus.success

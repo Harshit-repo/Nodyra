@@ -540,6 +540,37 @@ async def _run_node_hooks(
             )
 
 
+def _declared_output_names(
+    graph_node: Any, registry: NodeRegistry
+) -> set[str] | None:
+    """Output ports this node can ever emit, or None when that is unknowable.
+
+    None means "do not judge": an unregistered type, or a node whose manifest
+    declares no ports, so an edge naming any port has to be given the benefit
+    of the doubt. Mirrors the port check in the graph validator.
+    """
+    if graph_node is None:
+        return None
+    try:
+        node_def = registry.get(graph_node.type)
+    except Exception:  # noqa: BLE001 - unknown type is reported elsewhere
+        return None
+    manifest = getattr(node_def, "manifest", None)
+    outputs = getattr(manifest, "outputs", None) if manifest else None
+    if not outputs:
+        return None
+    declared = {port.name for port in outputs}
+    # Router-style nodes name their ports at author time.
+    for port in getattr(graph_node, "outputs_override", None) or ():
+        if port:
+            declared.add(str(port))
+    if getattr(graph_node, "tool_mode", False):
+        declared.add("tool")
+    # The engine routes caught failures to a node's "$error" port.
+    declared.add("$error")
+    return declared
+
+
 async def _run_one_node(
     *,
     nid: str,
@@ -575,16 +606,37 @@ async def _run_one_node(
     edges_in = incoming.get(nid, {})
 
     skip_reason = None
+    wiring_error = None
     for incoming_value in edges_in.values():
         for source, source_output in _incoming_connections(incoming_value):
             if source not in node_outputs:
                 skip_reason = f"upstream node '{source}' produced no output"
                 break
             if source_output not in node_outputs[source]:
-                skip_reason = f"branch '{source_output}' of node '{source}' was not taken"
+                # A port the source node never declares is a wiring mistake,
+                # not a branch that happened not to fire. Skipping it made a
+                # malformed graph finish "successfully" having done nothing —
+                # every node after the bad edge skipped, and the run green.
+                declared = _declared_output_names(
+                    nodes_by_id.get(source), registry
+                )
+                if declared is not None and source_output not in declared:
+                    wiring_error = (
+                        f"node '{source}' has no output '{source_output}'; "
+                        f"it emits {sorted(declared)}"
+                    )
+                else:
+                    skip_reason = (
+                        f"branch '{source_output}' of node '{source}' was not taken"
+                    )
                 break
-        if skip_reason is not None:
+        if wiring_error is not None or skip_reason is not None:
             break
+    if wiring_error is not None:
+        await finish(
+            NodeRunResult(node_id=nid, status=NodeStatus.error, error=wiring_error)
+        )
+        return RunStatus.error
     if skip_reason is not None:
         await finish(
             NodeRunResult(node_id=nid, status=NodeStatus.skipped, error=skip_reason)
