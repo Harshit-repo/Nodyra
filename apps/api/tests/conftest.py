@@ -26,6 +26,7 @@ import app.services.queue as queue_module
 import app.services.redaction as redaction_module
 import app.services.remote_dispatch as remote_dispatch_module
 import app.services.retention as retention_module
+import app.services.stuck_run_detector as stuck_run_detector_module
 import app.services.run_checkpoints as run_checkpoints_module
 import app.services.runner as runner_module
 import app.services.runtime_pool as runtime_pool_module
@@ -385,6 +386,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         queue_module: queue_module.SessionLocal,
         environment_builds_module: environment_builds_module.SessionLocal,
         retention_module: retention_module.SessionLocal,
+        stuck_run_detector_module: stuck_run_detector_module.SessionLocal,
         live_settings_module: live_settings_module.SessionLocal,
         licensing_module: licensing_module.SessionLocal,
         provider_triggers_module: provider_triggers_module.SessionLocal,
@@ -407,6 +409,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     queue_module.SessionLocal = test_session
     environment_builds_module.SessionLocal = test_session
     retention_module.SessionLocal = test_session
+    stuck_run_detector_module.SessionLocal = test_session
     live_settings_module.SessionLocal = test_session
     licensing_module.SessionLocal = test_session
     provider_triggers_module.SessionLocal = test_session

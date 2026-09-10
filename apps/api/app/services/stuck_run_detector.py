@@ -78,11 +78,20 @@ async def detect_stuck_runs() -> int:
             return 0
 
         now = datetime.now(UTC)
+        reason = (
+            "Run was stuck: no node completed in the last "
+            f"{int(grace // 60)} minutes"
+        )
         for run_id in stuck_ids:
             await session.execute(
                 update(Run)
                 .where(Run.id == run_id, Run.status == "running")
-                .values(status="error", finished_at=now)
+                # ADR-0003: a terminal failure no node owns belongs on
+                # runs.error. Publishing the reason only to the event broker
+                # left the run showing status=error with no explanation the
+                # moment the live stream was gone — and a run killed here has
+                # no node error to fall back on, so there was nothing at all.
+                .values(status="error", finished_at=now, error=reason)
             )
 
         await session.commit()
@@ -90,13 +99,7 @@ async def detect_stuck_runs() -> int:
         for run_id in stuck_ids:
             broker.publish(
                 run_id,
-                {
-                    "type": "run_error",
-                    "error": (
-                        "Run was stuck: no node completed in the last "
-                        f"{int(grace // 60)} minutes"
-                    ),
-                },
+                {"type": "run_error", "error": reason},
             )
             broker.publish(
                 run_id,
