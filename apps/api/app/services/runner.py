@@ -468,7 +468,15 @@ async def _start_run_impl(
             if chosen is None:
                 raise WorkflowNeedsTrigger("Workflow needs a trigger to run.")
             trigger_node_id = chosen["id"] if isinstance(chosen, dict) else chosen.id
-        targets = resolve_trigger_targets(graph, trigger_node_id, None)
+        # Resolve against the *expanded* graph. The engine inlines transparent
+        # metanodes before planning, so a metanode's own id stops existing —
+        # descendants are "<meta_id>/<child>". Walking the unexpanded graph
+        # handed the planner a target it could not find, and every workflow
+        # containing a transparent metanode died on the ordinary trigger path
+        # with a bare "KeyError: '<meta_id>'" and no node runs at all.
+        targets = resolve_trigger_targets(
+            _expanded_for_gating(graph), trigger_node_id, None
+        )
     elif not targets_have_trigger(_expanded_for_gating(graph), targets):
         # Step-run targets inside a transparent metanode are namespaced
         # ("<meta_id>/<child>"); they only gain their upstream trigger once the
