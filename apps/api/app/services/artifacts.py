@@ -9,9 +9,11 @@ previews, and orchestrating backend deletes.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import uuid
 from collections.abc import Iterable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal
+from app.exceptions import ArtifactRefInvalid
 from app.models import Artifact, Run
 from app.services.artifact_backends import (
     LocalBackend,
@@ -35,7 +38,7 @@ from app.services.redaction import (
     load_secret_values_for_org,
     redact_value,
 )
-from app.tenancy import run_as_system
+from app.tenancy import DEFAULT_ORG_ID, run_as_system
 from nodyra.artifacts import (
     ARTIFACT_MARKER,
     LocalArtifactStore,
@@ -78,6 +81,118 @@ def make_artifact_store(
     )
 
 
+def _stage_upload(
+    row: Artifact, store: LocalArtifactStore, destination: Path | None = None
+) -> None:
+    """Stream verified bytes into run scratch space without exposing partial files."""
+    destination = destination or store.upload_path(row.id) / sanitize_name(row.name)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{uuid.uuid4().hex}.tmp")
+    download = get_backend(row.storage_backend).open_download(row)
+    source = download.path.open("rb") if download.path is not None else None
+    chunks = iter(lambda: source.read(64 * 1024), b"") if source else download.stream
+    if chunks is None:
+        raise ValueError("Upload storage backend must provide a file or byte stream")
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with temporary.open("wb") as target:
+            for chunk in chunks:
+                total += len(chunk)
+                if total > row.size_bytes or (store.max_bytes and total > store.max_bytes):
+                    raise ValueError(
+                        "Uploaded file exceeds its declared size or the run's file limit"
+                    )
+                digest.update(chunk)
+                target.write(chunk)
+        if total != row.size_bytes or (
+            row.checksum_sha256 and digest.hexdigest() != row.checksum_sha256
+        ):
+            raise ValueError("Uploaded file failed its size or checksum integrity check")
+        os.replace(temporary, destination)
+    finally:
+        if source is not None:
+            source.close()
+        close = getattr(chunks, "close", None)
+        if close:
+            close()
+        temporary.unlink(missing_ok=True)
+
+
+async def prepare_uploaded_files(
+    session: AsyncSession, graph: dict, *, run_id: str, org_id: str | None
+) -> None:
+    """Authorize file-widget inputs before staging them for the run's runtime.
+
+    Works with local and S3 storage, including historical storage keys. The
+    explicit organization predicate remains enforced in system worker contexts.
+    Run scratch files are reclaimed by the existing run retention policy.
+    """
+    from nodyra.sdk import registry
+
+    upload_ids: set[str] = set()
+    for node in graph.get("nodes", []):
+        if node.get("type") not in registry:
+            continue
+        for param in registry.get(node["type"]).manifest.params:
+            value = node.get("params", {}).get(param.name)
+            if param.widget == "file_upload" and isinstance(value, str) and value:
+                upload_ids.add(value)
+    if not upload_ids:
+        return
+    run_org = org_id or DEFAULT_ORG_ID
+    store = make_artifact_store(run_id, org_id=run_org)
+    for upload_id in sorted(upload_ids):
+        store.upload_path(upload_id)  # Reject malformed ids before any I/O.
+        row = await session.scalar(
+            select(Artifact).where(
+                Artifact.id == upload_id,
+                Artifact.org_id == run_org,
+                Artifact.kind == "upload",
+                Artifact.run_id.is_(None),
+            )
+        )
+        if row is None:
+            raise ValueError("Uploaded file is unavailable in this organization; select it again")
+        await asyncio.to_thread(_stage_upload, row, store)
+
+
+async def prepare_artifact_inputs(
+    session: AsyncSession, value: Any, *, run_id: str, org_id: str | None
+) -> None:
+    """Rehydrate cached/pinned artifact refs into authorized run-local input files."""
+    run_org = org_id or DEFAULT_ORG_ID
+    store = make_artifact_store(run_id, org_id=run_org)
+    for ref in collect_artifact_refs(value):
+        # Everything about the ref itself is caller-supplied, so a malformed
+        # artifact id is a client error too — the store raises a plain
+        # ValueError for it, which escaped as a 500 like the checks below did.
+        try:
+            destination = store.input_path(ref)
+        except ValueError as exc:
+            raise ArtifactRefInvalid(f"Invalid artifact reference: {exc}") from exc
+        row = await session.scalar(
+            select(Artifact).where(
+                Artifact.id == ref["artifact_id"],
+                Artifact.org_id == run_org,
+            )
+        )
+        if row is None:
+            # A recovered checkpoint can refer to an output streamed to durable
+            # worker scratch before the previous attempt committed its outcome.
+            if ref.get("run_id") != run_id:
+                raise ArtifactRefInvalid(
+                    "Referenced artifact is unavailable in this organization"
+                )
+            row = _row_from_ref(ref, run_id, [], org_id=run_org)
+        for name in ("name", "run_id", "storage_key", "size_bytes", "checksum_sha256"):
+            if ref.get(name) != getattr(row, name):
+                raise ArtifactRefInvalid(
+                    "Referenced artifact metadata does not match its stored file"
+                )
+        await asyncio.to_thread(_stage_upload, row, store, destination)
+
+
 def collect_artifact_refs(value: Any) -> list[dict[str, Any]]:
     refs: dict[str, dict[str, Any]] = {}
 
@@ -105,9 +220,7 @@ def path_for_artifact(artifact: Artifact) -> Path:
     """
     backend = get_backend(artifact.storage_backend)
     if not isinstance(backend, LocalBackend):
-        raise ValueError(
-            f"path_for_artifact requires a local backend (got {backend.name!r})"
-        )
+        raise ValueError(f"path_for_artifact requires a local backend (got {backend.name!r})")
     return backend.path_for_artifact(artifact)
 
 
@@ -122,10 +235,7 @@ def canonical_storage_keys(
     key. Both address bytes inside this run's own directory, which is the whole
     point of the check.
     """
-    suffix = (
-        f"runs/{run_id}/{sanitize_name(node_id)}/"
-        f"{artifact_id}-{sanitize_name(name)}"
-    )
+    suffix = f"runs/{run_id}/{sanitize_name(node_id)}/{artifact_id}-{sanitize_name(name)}"
     cleaned = str(org_id or "").strip("/")
     return [f"{cleaned}/{suffix}", suffix] if cleaned else [suffix]
 
@@ -168,9 +278,7 @@ def _row_from_ref(
         kind=str(ref.get("kind") or "binary"),
         content_type=str(ref.get("content_type") or "application/octet-stream"),
         size_bytes=int(ref.get("size_bytes") or 0),
-        checksum_sha256=(
-            str(ref["checksum_sha256"]) if ref.get("checksum_sha256") else None
-        ),
+        checksum_sha256=(str(ref["checksum_sha256"]) if ref.get("checksum_sha256") else None),
         storage_backend=str(ref.get("storage_backend") or "local"),
         storage_key=storage_key,
         artifact_metadata=redact_value(
@@ -181,7 +289,17 @@ def _row_from_ref(
     )
 
 
-async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> None:
+async def persist_artifact_refs(
+    run_id: str,
+    refs: Iterable[dict[str, Any]],
+    *,
+    session: AsyncSession | None = None,
+    cleanup_paths: list[Path] | None = None,
+) -> None:
+    """Persist refs, optionally within the run outcome's fenced transaction.
+
+    The caller of a shared transaction removes cleanup_paths only after commit.
+    """
     unique = {
         str(ref.get("artifact_id")): ref
         for ref in refs
@@ -192,7 +310,9 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
 
     configured_backend = (settings.artifact_storage_backend or "local").lower()
 
-    async with SessionLocal() as session:
+    owns_session = session is None
+    pending_cleanup = cleanup_paths if cleanup_paths is not None else []
+    async with SessionLocal() if owns_session else nullcontext(session) as session:
         # Artifact persistence runs in workers/background tasks with no request
         # tenant context. In multi-tenant mode an unset context deliberately
         # falls back to the default org, so all reads here must opt out and then
@@ -202,9 +322,7 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
             # tenant's credentials. Loading the all-orgs list here used to pull
             # every organization's plaintext secrets into one process cache for
             # a single run's redaction (F-02).
-            run_org_id = await session.scalar(
-                select(Run.org_id).where(Run.id == run_id)
-            )
+            run_org_id = await session.scalar(select(Run.org_id).where(Run.id == run_id))
             secret_values = (
                 await load_secret_values_for_org(run_org_id, session)
                 if run_org_id
@@ -212,9 +330,7 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
             )
             existing = set(
                 (
-                    await session.scalars(
-                        select(Artifact.id).where(Artifact.id.in_(unique.keys()))
-                    )
+                    await session.scalars(select(Artifact.id).where(Artifact.id.in_(unique.keys())))
                 ).all()
             )
             for artifact_id, ref in unique.items():
@@ -248,14 +364,17 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
                         # them. The error has already been logged by the backend.
                         row.storage_backend = "local"
                     else:
-                        # Reclaim local scratch — the durable copy is in the
-                        # configured backend now.
-                        try:
-                            local_path.unlink(missing_ok=True)
-                        except OSError:
-                            pass
+                        pending_cleanup.append(local_path)
                 session.add(row)
-            await session.commit()
+            if owns_session:
+                await session.commit()
+                for path in pending_cleanup:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            else:
+                await session.flush()
 
 
 def delete_artifact_files(rows: Iterable[Artifact]) -> None:
@@ -275,18 +394,10 @@ def delete_artifact_files(rows: Iterable[Artifact]) -> None:
         backend.delete(group)
 
 
-async def delete_artifacts_for_run_ids(
-    session: AsyncSession, run_ids: list[str]
-) -> None:
+async def delete_artifacts_for_run_ids(session: AsyncSession, run_ids: list[str]) -> None:
     if not run_ids:
         return
-    rows = list(
-        (
-            await session.scalars(
-                select(Artifact).where(Artifact.run_id.in_(run_ids))
-            )
-        ).all()
-    )
+    rows = list((await session.scalars(select(Artifact).where(Artifact.run_id.in_(run_ids)))).all())
     delete_artifact_files(rows)
     await session.execute(delete(Artifact).where(Artifact.run_id.in_(run_ids)))
 

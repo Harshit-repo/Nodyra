@@ -42,6 +42,17 @@ class SingleFlightConflict(ServiceError):
     http_status = _http_status.HTTP_409_CONFLICT
 
 
+class ArtifactRefInvalid(ServiceError):
+    """A caller-supplied artifact reference failed validation.
+
+    The refs in a run's ``cache``/pinned data come from the request body, so a
+    stale or tampered one is a client error. Raised as a bare ValueError it
+    escaped as "500 Internal server error" with no detail — telling the caller
+    nothing and reporting their bad input as our bug.
+    """
+    http_status = _http_status.HTTP_400_BAD_REQUEST
+
+
 class DuplicateRun(ServiceError):
     """A run with this deduplication key already exists.
 
