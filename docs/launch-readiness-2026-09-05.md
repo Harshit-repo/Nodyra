@@ -1,6 +1,6 @@
 # Nodyra launch verification
 
-Started 2026-09-05; updated 2026-09-10. This is the working release-candidate
+Started 2026-09-05; updated 2026-09-11. This is the working release-candidate
 record. **Public production launch is not yet certified.** Local acceptance has
 exposed defects that were not caught by isolated unit tests; the fixes below
 are being checked against the actual deployment and user journeys.
@@ -32,6 +32,8 @@ does not establish public HTTPS or a production hosting account.
 | API address replacement | Web recovered after an actual backend IP change in 10.58 seconds without restarting; Helm uses a namespace/cluster-qualified service address | `.tmp/launch-dns-replacement-0910.json` |
 | External S3 deployment configuration | Renders with MinIO excluded and external settings propagated to API/worker; actual AWS credentials and bucket remain unqualified | `.tmp/launch-external-s3-render-0910.json` |
 | Engine planning budgets | All four benchmarks passed: wide/deep/fan-in-out 10k-node graphs and nested-loop indexing | `.tmp/launch-planning-benchmark-0909.json` |
+| Post-hardening regression checks | 124 targeted API/core/node tests passed, 68 client/runtime/runner tests passed, and Ruff passed through the workspace `uv` environment | terminal run on 2026-09-11 |
+| Isolated release browser suite | 11 of 11 Playwright journeys passed in 2.3 minutes, including owner setup, workflow creation and execution, credentials, publishing, deployments, runner pools, responsive pages, and operational navigation | `apps/web/e2e` via `npm run test:e2e` |
 
 These files are private local test outputs, not published release attachments.
 The recovery fixture is deliberately small; its observed restore time is not
@@ -102,7 +104,15 @@ uv run python scripts/live_workflow_acceptance.py `
   --report .tmp/live-data-acceptance.json
 ```
 
-Five complete local live passes also succeeded on September 10. The September 10
+Five complete local live passes also succeeded on September 10. The September 11
+isolated release browser suite passed all 11 journeys after the runtime-pool,
+output-store, environment-build, MCP, and homepage hardening changes. The root
+directory `python -m pytest -q` command is intentionally not treated as release
+evidence because it bypasses the workspace package installation and cannot
+import `nodyra_client`/`nodyra_runtime`; use `uv run pytest` for workspace
+packages and the API test command used for the full suite.
+
+The September 10
 requalification found that the test environment needed an explicit pandas
 declaration after the optional-dependency preflight was corrected. The fixture
 and environment were updated accordingly. Subsequent infrastructure scanning
