@@ -1520,6 +1520,26 @@ async def delete_workflow(
     )
 
 
+def _explain_node_test_error(error: str | None) -> str | None:
+    """Say when a failure belongs to this endpoint rather than the workflow.
+
+    A single-node test returns the node's entire output in the HTTP response,
+    so it enforces the output cap that a full run does not: the run stores a
+    truncated copy and still hands the complete value downstream. Left as the
+    bare engine message — "node output of N bytes exceeds limit of M bytes" —
+    it reads as a broken node, and the obvious next move (rewriting a node
+    that works) is the wrong one.
+    """
+    if not error or "exceeds limit of" not in error:
+        return error
+    return (
+        f"{error}\n\nThis cap applies to a single-node test, which returns the "
+        "whole output in the response. A full run does not fail here: it stores "
+        "a truncated copy and passes the complete value on to the next node. "
+        "Test with fewer rows, or raise max_output_bytes."
+    )
+
+
 @router.post(
     "/{workflow_id}/nodes/{node_id}/test",
     response_model=NodeTestResponse,
@@ -1630,7 +1650,7 @@ async def test_workflow_node(
         node_id=node_id,
         status=str(node_result.status),
         output=serialize_value(node_result.outputs),
-        error=node_result.error,
+        error=_explain_node_test_error(node_result.error),
         logs=serialize_value(node_result.logs),
         debug=serialize_value(node_result.debug),
         started_at=node_result.started_at,

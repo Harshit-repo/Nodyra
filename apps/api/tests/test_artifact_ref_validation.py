@@ -151,3 +151,29 @@ async def test_the_endpoint_answers_400_not_500(client: AsyncClient) -> None:
 
     assert response.status_code == 400, response.text
     assert "artifact" in response.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# The single-node test enforces an output cap that a full run does not.
+
+
+def test_an_output_cap_failure_says_it_is_a_test_limit() -> None:
+    """Otherwise it reads as a broken node and sends the reader to rewrite it."""
+    from app.routers.workflows import _explain_node_test_error
+
+    explained = _explain_node_test_error(
+        "ValueError: node output of 400000 bytes exceeds limit of 262144 bytes"
+    )
+
+    assert "400000" in explained  # the original message survives
+    assert "single-node test" in explained
+    assert "A full run does not fail here" in explained
+    assert "max_output_bytes" in explained
+
+
+def test_other_errors_are_passed_through_untouched() -> None:
+    from app.routers.workflows import _explain_node_test_error
+
+    assert _explain_node_test_error("KeyError: 'missing'") == "KeyError: 'missing'"
+    assert _explain_node_test_error(None) is None
+    assert _explain_node_test_error("") == ""
