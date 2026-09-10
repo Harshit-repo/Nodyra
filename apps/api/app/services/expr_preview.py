@@ -20,6 +20,10 @@ import os
 import sys
 from typing import Any
 
+from app.services.stream_limits import stream_limit_bytes
+
+_STREAM_LIMIT_BYTES: int = stream_limit_bytes()
+
 _DEFAULT_TIMEOUT = 5.0
 
 
@@ -73,6 +77,13 @@ async def _ensure_worker(state: _WorkerState) -> asyncio.subprocess.Process:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
         env=_minimal_env(),
+        # Same newline-framed JSON protocol as the runtime pool, and the same
+        # trap: asyncio's StreamReader defaults to a 64 KiB line buffer, and
+        # neither the worker nor this caller caps the serialized result. A
+        # preview of "{{ $json }}" over a large upstream payload would blow
+        # past it and readline() would raise "Separator is not found, and
+        # chunk exceed the limit" — while the user is simply typing.
+        limit=_STREAM_LIMIT_BYTES,
     )
     return state.proc
 

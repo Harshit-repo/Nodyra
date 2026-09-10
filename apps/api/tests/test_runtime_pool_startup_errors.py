@@ -110,23 +110,24 @@ async def test_the_worker_stream_limit_clears_the_output_cap() -> None:
     found, and chunk exceed the limit" and the run dies naming nothing.
     """
     from app.config import settings
-    from app.services.runtime_pool import _STREAM_LIMIT_BYTES, _stream_limit_bytes
+    from app.services.runtime_pool import _STREAM_LIMIT_BYTES
+    from app.services.stream_limits import stream_limit_bytes
 
     assert _STREAM_LIMIT_BYTES > 64 * 1024, "still at asyncio's default"
     assert _STREAM_LIMIT_BYTES > settings.max_output_bytes, (
         "a node at the output cap must still fit on one line, with room for "
         "the JSON envelope and escaping"
     )
-    assert _stream_limit_bytes() >= 8 * 1024 * 1024
+    assert stream_limit_bytes() >= 8 * 1024 * 1024
 
 
 async def test_the_stream_limit_follows_a_raised_output_cap(monkeypatch) -> None:
     from app.config import settings
-    from app.services import runtime_pool
+    from app.services.stream_limits import stream_limit_bytes
 
     monkeypatch.setattr(settings, "max_output_bytes", 32 * 1024 * 1024)
 
-    assert runtime_pool._stream_limit_bytes() > 32 * 1024 * 1024
+    assert stream_limit_bytes() > 32 * 1024 * 1024
 
 
 async def test_the_worker_is_spawned_with_that_limit(monkeypatch) -> None:
@@ -161,3 +162,41 @@ async def test_the_worker_is_spawned_with_that_limit(monkeypatch) -> None:
         await runtime_pool._RuntimeProcess.spawn("env-limit")
 
     assert seen.get("limit") == runtime_pool._STREAM_LIMIT_BYTES
+
+
+async def test_the_preview_worker_uses_the_same_limit(monkeypatch) -> None:
+    """The expression preview speaks the same protocol and had the same gap.
+
+    It is reached while the user is typing, over whatever the upstream node
+    produced, so "{{ $json }}" against a large payload would blow the 64 KiB
+    default and raise "Separator is not found" mid-keystroke.
+    """
+    import asyncio as _asyncio
+
+    from app.services import expr_preview
+
+    seen: dict = {}
+    real_exec = _asyncio.create_subprocess_exec
+
+    async def capturing_exec(*args, **kwargs):
+        seen.update(kwargs)
+        return await real_exec(
+            sys.executable,
+            "-c",
+            "pass",
+            stdin=_asyncio.subprocess.PIPE,
+            stdout=_asyncio.subprocess.PIPE,
+            stderr=_asyncio.subprocess.DEVNULL,
+        )
+
+    monkeypatch.setattr(_asyncio, "create_subprocess_exec", capturing_exec)
+    state = expr_preview._current_state()
+    state.proc = None
+
+    try:
+        await expr_preview._ensure_worker(state)
+    finally:
+        await expr_preview.shutdown()
+
+    assert seen.get("limit") == expr_preview._STREAM_LIMIT_BYTES
+    assert seen["limit"] > 64 * 1024
