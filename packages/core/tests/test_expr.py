@@ -45,6 +45,52 @@ def test_expression_validator_blocks_sandbox_escape() -> None:
     assert isinstance(out, str) and "expr error" in out
 
 
+def test_expression_validator_blocks_str_format_escape() -> None:
+    """EXPR-2: str.format field specs walk attributes the AST never sees.
+
+    ``"{0.__class__.__base__}".format(x)`` reaches ``__class__`` from inside a
+    string literal, so visit_Attribute never fires on it and every entry in
+    _BLOCKED_NAMES is bypassed. Format specs cannot call, so this is a
+    read-only walk rather than RCE — but it still exfiltrates module globals
+    off any callable in scope (``"{0.__globals__[SECRET]}".format(fn)``), so
+    the ``format``/``format_map`` methods themselves must be unreachable.
+    """
+    import ast
+
+    from nodyra.expr import _ExprValidator
+
+    escapes = [
+        '"{0.__class__}".format(x)',
+        '"{0.__class__.__base__.__subclasses__}".format(x)',
+        '"{0.__globals__[SECRET]}".format(fn)',
+        "x.format",
+        "x.format_map",
+        "d.format_map(m)",
+    ]
+    for expr in escapes:
+        tree = ast.parse(expr, mode="eval")
+        try:
+            _ExprValidator().visit(tree)
+        except ValueError:
+            continue
+        raise AssertionError(f"format escape was not blocked: {expr!r}")
+
+    # End-to-end: even given a callable whose module globals hold a secret, the
+    # templated walk must not resolve it — evaluate returns the error sentinel.
+    def _holder() -> None:  # pragma: no cover - only its __globals__ matters
+        pass
+
+    _holder.__globals__["SECRET_TOKEN"] = "sk-live-should-not-leak"
+    ctx = build_context(first_input={"s": "abc"})
+    ctx["fn"] = _holder
+    out = evaluate('{{ "{0.__globals__[SECRET_TOKEN]}".format(fn) }}', ctx)
+    assert isinstance(out, str) and "expr error" in out
+    assert "sk-live" not in out
+
+    # Ordinary string methods are unaffected.
+    assert evaluate("{{ $json.s.upper() }}", ctx) == "ABC"
+
+
 def test_whole_value_expression_returns_raw_type() -> None:
     ctx = build_context(first_input={"count": 7})
     assert evaluate("{{ $json.count }}", ctx) == 7
