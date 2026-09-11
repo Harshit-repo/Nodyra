@@ -1,0 +1,137 @@
+[
+  {
+    "case": "customers",
+    "workflow_ids": [
+      "96201f3f1b3049a094373379034b6972"
+    ],
+    "run_ids": [
+      "6ea889b82ff64b13bedd53e994e6d0d4"
+    ],
+    "verified_rows": 3,
+    "status": "passed",
+    "seconds": 10.39
+  },
+  {
+    "case": "routing",
+    "workflow_ids": [
+      "64d94fdcc38d4c0cb604718aed98636f"
+    ],
+    "run_ids": [
+      "354128f733c349e09609255a91c124a9",
+      "99978bfc82ea46239cd25eac512f9e63"
+    ],
+    "status": "passed",
+    "seconds": 1.24
+  },
+  {
+    "case": "extract",
+    "workflow_ids": [
+      "426e912ca82f4b838ef0a42edf72a8a6"
+    ],
+    "run_ids": [
+      "1cda5ddc1f3649e4b53154df418b5f04"
+    ],
+    "status": "passed",
+    "seconds": 0.59
+  },
+  {
+    "case": "health",
+    "workflow_ids": [
+      "a1e671c92e03411e9640185999c94c12"
+    ],
+    "run_ids": [
+      "806da8015efb4c3e87f0b605bae7488d"
+    ],
+    "status": "passed",
+    "seconds": 1.61
+  },
+  {
+    "case": "webhook",
+    "workflow_ids": [
+      "92cf8e16b99f4dbe923bc6be3a5d9526"
+    ],
+    "status": "passed",
+    "seconds": 0.33
+  },
+  {
+    "case": "failure_recovery",
+    "workflow_ids": [
+      "35327c9c2423429c8ab16f603be740d4",
+      "15d15dd231ad469e8aaa3b3ea1adfe91"
+    ],
+    "run_ids": [
+      "4a27e5a4449e421683a223e5cdee4215",
+      "113f783c49e4434a8adb58c84b5f4ff2",
+      "0d4c03c6b2494c9aa79bd6741341ebb7"
+    ],
+    "status": "passed",
+    "seconds": 1.31
+  },
+  {
+    "case": "cancellation",
+    "workflow_ids": [
+      "e192ce65fcb5493d9b06a38eb8baf15b"
+    ],
+    "run_ids": [
+      "d85c3f3b7fe9431cb2a313219c74f687"
+    ],
+    "status": "passed",
+    "seconds": 0.38
+  },
+  {
+    "case": "timeout",
+    "workflow_ids": [
+      "0a926d956a8c4106b427093b8c7036bb"
+    ],
+    "run_ids": [
+      "51d22b7c26a74e42983bce50037d8efc"
+    ],
+    "status": "passed",
+    "seconds": 18.97
+  },
+  {
+    "case": "subworkflow",
+    "workflow_ids": [
+      "68d509303f7d46f6982966b92b321c84",
+      "13d34652c9924d3593791f0fc94025b7"
+    ],
+    "run_ids": [
+      "8fc8abda26dd4192864bea9a5e560999"
+    ],
+    "status": "passed",
+    "seconds": 3.25
+  },
+  {
+    "case": "private_egress",
+    "workflow_ids": [
+      "1e5b46fdc83c4bb5b067f6793edce826"
+    ],
+    "run_ids": [
+      "171056a3dd6e4e34a1a79bdc7958d7e5"
+    ],
+    "status": "passed",
+    "seconds": 0.64
+  },
+  {
+    "case": "batch",
+    "workflow_ids": [
+      "e15c339772eb4f93af874bf7edc8fbb8"
+    ],
+    "run_ids": [
+      "bc82ab0a67824820b060cbb2a7d0168c"
+    ],
+    "status": "passed",
+    "seconds": 1.69
+  },
+  {
+    "case": "api_export",
+    "workflow_ids": [
+      "4093b15f8dd4458ca6d6b36e5be7a363"
+    ],
+    "run_ids": [
+      "d7879611f0c840f8a641745c6014d5b8"
+    ],
+    "status": "passed",
+    "seconds": 2.64
+  }
+]

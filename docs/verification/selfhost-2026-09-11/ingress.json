@@ -1,0 +1,16 @@
+{
+  "checks": [
+    "HTTP redirects to HTTPS preserving path and query",
+    "Verified test certificate, SPA deep link and security headers",
+    "Unauthenticated API access denied",
+    "Secure HttpOnly cookie login and authenticated API routing",
+    "Cross-origin state mutation rejected",
+    "Registration closed after first owner",
+    "MCP endpoint routed through HTTPS ingress",
+    "Authenticated WebSocket upgrade across both proxies",
+    "Persisted workflow, run and three artifact checksums survive ingress replacement"
+  ],
+  "status": "passed",
+  "hostname": "https://nodyra.test:28443",
+  "certificate": "temporary local trust only"
+}
