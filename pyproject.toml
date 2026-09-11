@@ -77,3 +77,10 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "f
 asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
 testpaths = ["apps", "packages"]
+# Every test directory in this monorepo is named ``tests``, so without this
+# pytest derives the same module name (``tests.conftest``) for each one and a
+# whole-repo run dies at collection with "Plugin already registered under a
+# different name" the moment a second ``tests/conftest.py`` appears. Namespace
+# packages make the name rootdir-relative and therefore unique
+# (``packages.nodes.tests.conftest``).
+consider_namespace_packages = true
