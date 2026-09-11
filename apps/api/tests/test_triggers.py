@@ -1914,6 +1914,28 @@ def test_nightly_schedule_does_not_fire_twice_on_the_fall_back_day() -> None:
     assert _is_due(NIGHTLY_0230, first_0230, _syd(2026, 4, 5, 9, 0)) is False
 
 
+def test_fall_back_guard_survives_a_tick_that_fires_a_minute_late() -> None:
+    """The guard must key off the cron slot, not the tick that fired it.
+
+    ``ScheduleState.last_fired`` records when the scheduler *noticed* the job
+    was due, which is at or after the nominal slot. A tick delayed past the
+    minute boundary — a slow previous tick, an API restart, a loaded host —
+    stores 02:31 for a 02:30 job. Comparing the repeated occurrence against
+    that stored wall-clock instead of against 02:30 disarms the guard, and the
+    nightly job runs twice on the fall-back day after all.
+    """
+    from app.services.triggers import _is_due
+
+    late_tick = _syd(2026, 4, 5, 2, 31, fold=0)
+    repeated_0230 = _syd(2026, 4, 5, 2, 30, fold=1)
+
+    assert repeated_0230 > late_tick  # the repeat is still later in real time
+    assert _is_due(NIGHTLY_0230, late_tick, repeated_0230) is False
+    assert _is_due(NIGHTLY_0230, late_tick, _syd(2026, 4, 5, 9, 0)) is False
+    # ...and the next day still runs.
+    assert _is_due(NIGHTLY_0230, late_tick, _syd(2026, 4, 6, 2, 31)) is True
+
+
 def test_nightly_schedule_still_fires_the_next_day_after_fall_back() -> None:
     from app.services.triggers import _is_due
 

@@ -98,13 +98,24 @@ def _is_due(params: dict, last: datetime, now: datetime) -> bool:
             #
             # Unix cron does not re-run a slot when the clock goes backwards,
             # and neither do we: skip an occurrence that repeats the wall-clock
-            # time already fired. The loop is bounded because only the one
-            # repeated hour can produce a match.
+            # time of the slot already fired.
+            #
+            # Compare against the *nominal slot*, not against ``last`` itself.
+            # ``last`` is the tick that fired the job, not the scheduled time,
+            # and a tick that lands a minute late (busy previous tick, restart,
+            # loaded host) has a different wall-clock minute than the cron
+            # slot — which silently disarmed this guard and let the job run
+            # twice anyway. ``get_prev`` from one second past ``last`` is the
+            # most recent slot at or before it: the one that actually fired.
+            # The loop is bounded because only the one repeated hour matches.
+            fired_slot = croniter(
+                cron, last_local + timedelta(seconds=1)
+            ).get_prev(datetime)
             for _ in range(4):
                 if (
-                    next_time.date() != last_local.date()
-                    or next_time.hour != last_local.hour
-                    or next_time.minute != last_local.minute
+                    next_time.date() != fired_slot.date()
+                    or next_time.hour != fired_slot.hour
+                    or next_time.minute != fired_slot.minute
                 ):
                     break
                 next_time = croniter(cron, next_time).get_next(datetime)
