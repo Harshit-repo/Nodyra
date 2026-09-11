@@ -185,6 +185,13 @@ def test_the_advertised_node_count_matches_the_registry():
     not follow on its own, and "512 nodes" quietly becoming false is the same
     class of error as the entitlement drift above.
 
+    Two honest forms are allowed. An exact "512 nodes" must equal the registry.
+    An approximate "500+ nodes" is a lower bound and must merely hold —
+    ``actual >= 500`` — which is the *better* claim precisely because it does
+    not go false the moment a 513th node lands (the drift this test exists to
+    catch). What stays forbidden is claiming more than exists: "600+ nodes"
+    with 512 in the registry fails either way.
+
     The count runs in a subprocess. ``registry`` is process-global and other
     tests register their own nodes into it, so counting in-process makes this
     assertion depend on test order — it passed alone and failed in the suite,
@@ -202,14 +209,24 @@ def test_the_advertised_node_count_matches_the_registry():
     assert proc.returncode == 0, proc.stderr
     actual = int(proc.stdout.strip())
 
-    claimed = {
-        int(n.replace(",", ""))
-        for n in re.findall(r"([0-9][0-9,]*)\s+nodes\b", _pricing_section())
-    }
-    assert claimed, "the pricing page no longer states a node count"
-    assert claimed == {actual}, (
-        f"the pricing page advertises {claimed} nodes; the registry has {actual}"
-    )
+    # Each claim is (count, is_lower_bound): "500+ nodes" -> (500, True),
+    # "512 nodes" -> (512, False).
+    claims = [
+        (int(n.replace(",", "")), bool(plus))
+        for n, plus in re.findall(r"([0-9][0-9,]*)\s*(\+?)\s+nodes\b", _pricing_section())
+    ]
+    assert claims, "the pricing page no longer states a node count"
+    for count, is_lower_bound in claims:
+        if is_lower_bound:
+            assert actual >= count, (
+                f"the pricing page advertises {count}+ nodes; "
+                f"the registry has only {actual}"
+            )
+        else:
+            assert count == actual, (
+                f"the pricing page advertises exactly {count} nodes; "
+                f"the registry has {actual}"
+            )
 
 
 def test_no_placeholder_survives_into_the_marketing_pages():
