@@ -51,20 +51,27 @@ brand/
     index.html               icon showcase — marks, dark variants, scale test, palette
   homepage/
     nodyra.html              ★ live brand page — full landing page with the app mark,
-                             Integrations, Environments, Runners, Enterprise, Pricing
+                             How it works, Platform, Integrations, Documentation,
+                             Environments, Runners, Enterprise, Pricing
     index.html               earlier self-contained landing page (kept for reference)
+  docs.html                  ★ documentation site — sidebar-navigated, searchable
+                             single-page app (hash-routed) covering getting started,
+                             MCP quickstart, nodes, architecture, deployment, GitOps,
+                             licensing, security, recipes, and the status matrix
 ```
 
 ## Viewing
 
-Both pages are static HTML with Google-Fonts links — just open them:
+These pages are static HTML with Google-Fonts links — just open them:
 
 - `brand/icons/index.html` — the icon system
 - `brand/homepage/nodyra.html` — the live brand page
+- `brand/docs.html` — the documentation site (also linked from the brand page)
 
 ```powershell
 start brand\icons\index.html
 start brand\homepage\nodyra.html
+start brand\docs.html
 ```
 
 ## Notes / next steps
@@ -81,6 +88,11 @@ start brand\homepage\nodyra.html
   in `packages/nodes`), 40+ v2 providers (`integrations_v2/providers`), chat
   trigger + hosted chat pages, API Endpoint node, durable queue with dead-letter
   replay, datasets + DuckDB, CLI/Python client, Helm chart, and 16 templates.
+- `docs.html` is a self-contained docs site: sidebar groups, client-side search
+  with ⌘K, on-page TOC, prev/next, copy buttons, mobile drawer. Its content is
+  condensed from the real markdown in `docs/` and `SECURITY.md`, and each page
+  links back to its source on GitHub. The brand page's Documentation section
+  routes into it via `docs.html#/<page>` hashes.
 - All copy positions Nodyra on its own merits (Python-native execution), not as a
   clone of any other tool.
 - If you adopt a distinct product brand (see the name/trademark notes), the

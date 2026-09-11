@@ -615,5 +615,15 @@ async def delete_environment(
         await _runtime_pool.drain_env(env.id)
     except Exception:  # noqa: BLE001 - deletion must proceed regardless
         logger.exception("delete_environment: could not drain runtime workers")
+    # Remove the venv directory itself. Without this, every deleted
+    # environment leaked a multi-hundred-MB venv on disk forever. Runs
+    # before the DB delete so the env row is still available for the
+    # backend dispatcher; failures are best-effort.
+    try:
+        from app.services.backends import get_backend
+
+        await get_backend(env).destroy(env.id)
+    except Exception:  # noqa: BLE001 - best-effort; the row must go regardless
+        logger.exception("delete_environment: could not remove environment directory")
     await session.delete(env)
     await session.commit()

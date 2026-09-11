@@ -474,15 +474,19 @@ async def _start_run_impl(
         # handed the planner a target it could not find, and every workflow
         # containing a transparent metanode died on the ordinary trigger path
         # with a bare "KeyError: '<meta_id>'" and no node runs at all.
-        targets = resolve_trigger_targets(
-            _expanded_for_gating(graph), trigger_node_id, None
-        )
+        targets = resolve_trigger_targets(_expanded_for_gating(graph), trigger_node_id, None)
     elif not targets_have_trigger(_expanded_for_gating(graph), targets):
         # Step-run targets inside a transparent metanode are namespaced
         # ("<meta_id>/<child>"); they only gain their upstream trigger once the
         # metanode is inlined (the engine does this at execute time), so gate
-        # against the expanded graph too.
-        raise StepNeedsUpstreamTrigger("Connect a trigger upstream before running this step.")
+        # against the expanded graph too. The same message also covers a
+        # retry-after-edit case: the retried node's upstream wiring changed
+        # since the original run, so its trigger is no longer reachable.
+        raise StepNeedsUpstreamTrigger(
+            "Connect a trigger upstream before running this step (the workflow "
+            "graph may have changed since the run — the target node no longer "
+            "has a trigger upstream)."
+        )
 
     cache = _seed_parameters(graph, cache, parameters, trigger_id=trigger_node_id)
 
@@ -1230,7 +1234,9 @@ async def _prepare_run_context(
         if cache is not None:
             cache = await resolve_credential_refs(session, cache, workflow_id=workflow_id)
         await prepare_uploaded_files(session, graph_dict, run_id=run_id, org_id=run_org_id)
-        await prepare_artifact_inputs(session, [graph_dict, cache], run_id=run_id, org_id=run_org_id)
+        await prepare_artifact_inputs(
+            session, [graph_dict, cache], run_id=run_id, org_id=run_org_id
+        )
         await session.commit()
 
         # Code modules: tolerate legacy DB.

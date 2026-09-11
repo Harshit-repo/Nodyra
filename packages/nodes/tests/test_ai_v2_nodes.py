@@ -1428,3 +1428,11 @@ def test_agent_v2_parser_failure_after_retry_propagates() -> None:
     with pytest.raises(Exception):  # noqa: B017 - parser's own error surfaces
         fn(input={"task": "Go"}, model=model, parser=parser)
     assert len(model.requests) == 2
+
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch):
+    """These tests verify the BLOCKED posture of nodyra_nodes.http_security;
+    single-tenant API processes default to allowing private egress (mirroring
+    workers), so pin the env explicitly."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+

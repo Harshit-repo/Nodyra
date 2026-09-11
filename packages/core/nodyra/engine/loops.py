@@ -30,8 +30,8 @@ MAX_CONDITIONAL_LOOP_ITERATIONS = 10_000
 class LoopRegion:
     start_id: str
     end_id: str
-    body_ids: frozenset[str]      # nodes strictly between start and end
-    parent_start_id: str | None   # enclosing loop's start_id, or None
+    body_ids: frozenset[str]  # nodes strictly between start and end
+    parent_start_id: str | None  # enclosing loop's start_id, or None
 
 
 def _loop_regions(graph: WorkflowGraph) -> dict[str, LoopRegion]:
@@ -63,16 +63,16 @@ def _loop_regions(graph: WorkflowGraph) -> dict[str, LoopRegion]:
         for other_sid, other in regions.items():
             if other_sid != sid and sid in other.body_ids:
                 regions[sid] = LoopRegion(
-                    start_id=r.start_id, end_id=r.end_id,
-                    body_ids=r.body_ids, parent_start_id=other_sid,
+                    start_id=r.start_id,
+                    end_id=r.end_id,
+                    body_ids=r.body_ids,
+                    parent_start_id=other_sid,
                 )
                 break
     return regions
 
 
-def _validate_loop_regions(
-    graph: WorkflowGraph, regions: dict[str, LoopRegion]
-) -> None:
+def _validate_loop_regions(graph: WorkflowGraph, regions: dict[str, LoopRegion]) -> None:
     """Raise GraphError unless every loop region is single-entry/single-exit
     and any two regions are disjoint or strictly nested."""
     for r in regions.values():
@@ -95,15 +95,13 @@ def _validate_loop_regions(
         # Every body node must reach end (no dead-ends inside the region).
         for nid in body:
             if r.end_id not in (_descendants(graph, nid) | {r.end_id}):
-                raise GraphError(
-                    f"Loop '{r.start_id}': body node '{nid}' does not reach Loop End"
-                )
+                raise GraphError(f"Loop '{r.start_id}': body node '{nid}' does not reach Loop End")
 
     # Well-nestedness: regions overlap only by strict containment.
     items = list(regions.values())
     for i, a in enumerate(items):
         a_set = set(a.body_ids) | {a.start_id, a.end_id}
-        for b in items[i + 1:]:
+        for b in items[i + 1 :]:
             b_set = set(b.body_ids) | {b.start_id, b.end_id}
             inter = a_set & b_set
             if inter and not (a_set <= b_set or b_set <= a_set):
@@ -130,25 +128,21 @@ def _bounded_loop_rows(max_rows: int | None) -> int:
 def _bounded_loop_concurrency(concurrency: int | None) -> int:
     cap = max(1, int(concurrency or 1))
     if cap > MAX_LOOP_CONCURRENCY:
-        raise ValueError(
-            f"loop_start: concurrency must be <= {MAX_LOOP_CONCURRENCY}"
-        )
+        raise ValueError(f"loop_start: concurrency must be <= {MAX_LOOP_CONCURRENCY}")
     return cap
 
 
 def _bounded_conditional_iterations(max_iterations: int | None) -> int:
     cap = max(0, int(max_iterations or 1000))
     if cap > MAX_CONDITIONAL_LOOP_ITERATIONS:
-        raise ValueError(
-            "loop_start: max_iterations must be <= "
-            f"{MAX_CONDITIONAL_LOOP_ITERATIONS}"
-        )
+        raise ValueError(f"loop_start: max_iterations must be <= {MAX_CONDITIONAL_LOOP_ITERATIONS}")
     return cap
 
 
 def _as_loop_rows(value: Any, *, max_rows: int) -> list[Any]:
     """Resolve a loop_start input into an ordered list of rows (one per item)."""
     from nodyra.datasets import is_dataset_ref, materialize_dataset_rows
+
     total_cap = _bounded_loop_rows(max_rows)
     if is_dataset_ref(value):
         return materialize_dataset_rows(value, cap=total_cap, allow_truncate=False)
@@ -156,9 +150,7 @@ def _as_loop_rows(value: Any, *, max_rows: int) -> list[Any]:
         return []
     if isinstance(value, list):
         if len(value) > total_cap:
-            raise ValueError(
-                f"loop received {len(value)} rows but max_rows is {total_cap}"
-            )
+            raise ValueError(f"loop received {len(value)} rows but max_rows is {total_cap}")
         return value
     if isinstance(value, dict):
         # Trigger payloads and pinned data commonly wrap a row array under a
@@ -171,9 +163,7 @@ def _as_loop_rows(value: Any, *, max_rows: int) -> list[Any]:
             only = value[keys[0]]
             if keys[0] in ("items", "rows", "records") and isinstance(only, list):
                 if len(only) > total_cap:
-                    raise ValueError(
-                        f"loop received {len(only)} rows but max_rows is {total_cap}"
-                    )
+                    raise ValueError(f"loop received {len(only)} rows but max_rows is {total_cap}")
                 return only
     return [value]
 
@@ -270,9 +260,13 @@ async def _run_loop(
         step = int(start.params.get("step", 1) or 1)
     except (TypeError, ValueError) as exc:
         node_outputs[region.end_id] = {"results": [], "errors": []}
-        await finish(NodeRunResult(
-            node_id=region.end_id, status=NodeStatus.error, error=str(exc),
-        ))
+        await finish(
+            NodeRunResult(
+                node_id=region.end_id,
+                status=NodeStatus.error,
+                error=str(exc),
+            )
+        )
         return RunStatus.error
 
     # The loop_start input is the value on its 'input' port (from the graph).
@@ -284,22 +278,35 @@ async def _run_loop(
         raw_input = (node_outputs.get(src) or {}).get(out)
     try:
         items = _loop_items(
-            raw_input, mode=mode, batch_size=batch_size, group_key=group_key,
-            count=count, start=range_start, step=step, max_rows=max_rows,
+            raw_input,
+            mode=mode,
+            batch_size=batch_size,
+            group_key=group_key,
+            count=count,
+            start=range_start,
+            step=step,
+            max_rows=max_rows,
         )
     except ValueError as exc:
         node_outputs[region.end_id] = {"results": [], "errors": []}
-        await finish(NodeRunResult(
-            node_id=region.end_id, status=NodeStatus.error, error=str(exc),
-        ))
+        await finish(
+            NodeRunResult(
+                node_id=region.end_id,
+                status=NodeStatus.error,
+                error=str(exc),
+            )
+        )
         return RunStatus.error
 
     if len(items) > max_rows:
         node_outputs[region.end_id] = {"results": [], "errors": []}
-        await finish(NodeRunResult(
-            node_id=region.end_id, status=NodeStatus.error,
-            error=f"loop received {len(items)} rows but max_rows is {max_rows}",
-        ))
+        await finish(
+            NodeRunResult(
+                node_id=region.end_id,
+                status=NodeStatus.error,
+                error=f"loop received {len(items)} rows but max_rows is {max_rows}",
+            )
+        )
         return RunStatus.error
 
     # Multi-tenancy C5: the org's loop-iteration ceiling beats the node's own
@@ -307,13 +314,16 @@ async def _run_loop(
     org_loop_cap = int((org_run_limits.get() or {}).get("max_loop_iterations") or 0)
     if org_loop_cap and len(items) > org_loop_cap:
         node_outputs[region.end_id] = {"results": [], "errors": []}
-        await finish(NodeRunResult(
-            node_id=region.end_id, status=NodeStatus.error,
-            error=(
-                f"loop received {len(items)} rows but this organization's "
-                f"iteration cap is {org_loop_cap}"
-            ),
-        ))
+        await finish(
+            NodeRunResult(
+                node_id=region.end_id,
+                status=NodeStatus.error,
+                error=(
+                    f"loop received {len(items)} rows but this organization's "
+                    f"iteration cap is {org_loop_cap}"
+                ),
+            )
+        )
         return RunStatus.error
 
     # Skip-set for the body run: only nodes owned by *directly nested* loops
@@ -333,6 +343,7 @@ async def _run_loop(
     # and the value into Loop End becomes the next accumulator.
     if bool(start.params.get("accumulate", False)):
         from nodyra.expr import build_context, evaluate
+
         acc = evaluate(
             start.params.get("initial"),
             build_context(node_outputs=node_outputs),
@@ -340,38 +351,54 @@ async def _run_loop(
         err = _expr_error(acc)
         if err is not None:
             node_outputs[region.end_id] = {"results": None, "errors": []}
-            await finish(NodeRunResult(
-                node_id=region.end_id, status=NodeStatus.error,
-                error=f"loop initial state {err}",
-            ))
+            await finish(
+                NodeRunResult(
+                    node_id=region.end_id,
+                    status=NodeStatus.error,
+                    error=f"loop initial state {err}",
+                )
+            )
             return RunStatus.error
         for i, unit in enumerate(items):
             path_token = iteration_path.set(iteration_path.get() + (i,))
             try:
                 iter_outputs = dict(node_outputs)
                 iter_outputs[region.start_id] = {
-                    "item": {"acc": acc, "item": unit}, "index": i, "state": acc,
+                    "item": {"acc": acc, "item": unit},
+                    "index": i,
+                    "state": acc,
                 }
                 st = await _execute_nodes(
-                    plan=body_plan, graph=graph, registry=registry,
-                    nodes_by_id=nodes_by_id, incoming=incoming,
-                    node_outputs=iter_outputs, cache=cache,
-                    emit=emit, finish=finish, default_timeouts=default_timeouts,
+                    plan=body_plan,
+                    graph=graph,
+                    registry=registry,
+                    nodes_by_id=nodes_by_id,
+                    incoming=incoming,
+                    node_outputs=iter_outputs,
+                    cache=cache,
+                    emit=emit,
+                    finish=finish,
+                    default_timeouts=default_timeouts,
                     max_node_output_bytes=max_node_output_bytes,
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
-                    loop_regions=loop_regions, owned=child_owned,
-                    node_sem=node_sem, type_sems=type_sems,
+                    loop_regions=loop_regions,
+                    owned=child_owned,
+                    node_sem=node_sem,
+                    type_sems=type_sems,
                     process_isolator=process_isolator,
                 )
             finally:
                 iteration_path.reset(path_token)
             if st is RunStatus.error:
                 node_outputs[region.end_id] = {"results": None, "errors": []}
-                await finish(NodeRunResult(
-                    node_id=region.end_id, status=NodeStatus.error,
-                    error=f"loop reduce iteration {i} failed",
-                ))
+                await finish(
+                    NodeRunResult(
+                        node_id=region.end_id,
+                        status=NodeStatus.error,
+                        error=f"loop reduce iteration {i} failed",
+                    )
+                )
                 return RunStatus.error
             if end_in is not None:
                 esrc, eout = end_in
@@ -379,9 +406,13 @@ async def _run_loop(
             iter_outputs.clear()
         out = {"results": acc, "errors": []}
         node_outputs[region.end_id] = out
-        await finish(NodeRunResult(
-            node_id=region.end_id, status=NodeStatus.success, outputs=out,
-        ))
+        await finish(
+            NodeRunResult(
+                node_id=region.end_id,
+                status=NodeStatus.success,
+                outputs=out,
+            )
+        )
         return RunStatus.success
 
     collected: list[tuple[int, Any]] = []
@@ -400,15 +431,23 @@ async def _run_loop(
                 iter_outputs = dict(node_outputs)
                 iter_outputs[region.start_id] = {"item": item, "index": i}
                 st = await _execute_nodes(
-                    plan=body_plan, graph=graph, registry=registry,
-                    nodes_by_id=nodes_by_id, incoming=incoming,
-                    node_outputs=iter_outputs, cache=cache,
-                    emit=emit, finish=finish, default_timeouts=default_timeouts,
+                    plan=body_plan,
+                    graph=graph,
+                    registry=registry,
+                    nodes_by_id=nodes_by_id,
+                    incoming=incoming,
+                    node_outputs=iter_outputs,
+                    cache=cache,
+                    emit=emit,
+                    finish=finish,
+                    default_timeouts=default_timeouts,
                     max_node_output_bytes=max_node_output_bytes,
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
-                    loop_regions=loop_regions, owned=child_owned,
-                    node_sem=node_sem, type_sems=type_sems,
+                    loop_regions=loop_regions,
+                    owned=child_owned,
+                    node_sem=node_sem,
+                    type_sems=type_sems,
                     process_isolator=process_isolator,
                 )
                 if st is RunStatus.error:
@@ -433,10 +472,13 @@ async def _run_loop(
                 await _one_iteration(i, item)
             except _LoopRowError as exc:
                 node_outputs[region.end_id] = {"results": [], "errors": errors}
-                await finish(NodeRunResult(
-                    node_id=region.end_id, status=NodeStatus.error,
-                    error=f"loop row {exc.index} failed (on_error=fail)",
-                ))
+                await finish(
+                    NodeRunResult(
+                        node_id=region.end_id,
+                        status=NodeStatus.error,
+                        error=f"loop row {exc.index} failed (on_error=fail)",
+                    )
+                )
                 return RunStatus.error
     else:
         # ENG-1: drive iterations as explicit tasks so an on_error="fail" abort
@@ -445,10 +487,7 @@ async def _run_loop(
         # running detached — they keep executing body nodes (emitting events,
         # consuming compute, mutating shared state) for a run we've already marked
         # failed. Same orphaned-task class as REL-2.
-        tasks = [
-            asyncio.ensure_future(_one_iteration(i, it))
-            for i, it in enumerate(items)
-        ]
+        tasks = [asyncio.ensure_future(_one_iteration(i, it)) for i, it in enumerate(items)]
         try:
             await asyncio.gather(*tasks)
         except _LoopRowError as exc:
@@ -458,10 +497,13 @@ async def _run_loop(
             # Drain the cancellations so no iteration runs past this point.
             await asyncio.gather(*tasks, return_exceptions=True)
             node_outputs[region.end_id] = {"results": [], "errors": errors}
-            await finish(NodeRunResult(
-                node_id=region.end_id, status=NodeStatus.error,
-                error=f"loop row {exc.index} failed (on_error=fail)",
-            ))
+            await finish(
+                NodeRunResult(
+                    node_id=region.end_id,
+                    status=NodeStatus.error,
+                    error=f"loop row {exc.index} failed (on_error=fail)",
+                )
+            )
             return RunStatus.error
 
     collected.sort(key=lambda t: t[0])
@@ -469,15 +511,20 @@ async def _run_loop(
     end = nodes_by_id[region.end_id]
     if str(end.params.get("output_mode", "records") or "records") == "dataset":
         from nodyra.datasets import dataset_from_records
+
         rows = [v if isinstance(v, dict) else {"result": v} for v in values]
         results_out: Any = dataset_from_records(rows, name="loop_output.parquet")
     else:
         results_out = values
     out = {"results": results_out, "errors": errors}
     node_outputs[region.end_id] = out
-    await finish(NodeRunResult(
-        node_id=region.end_id, status=NodeStatus.success, outputs=out,
-    ))
+    await finish(
+        NodeRunResult(
+            node_id=region.end_id,
+            status=NodeStatus.success,
+            outputs=out,
+        )
+    )
     return RunStatus.success
 
 
@@ -519,14 +566,16 @@ async def _run_conditional_loop(
     end = nodes_by_id[region.end_id]
     mode = str(start.params.get("mode", "while") or "while")
     try:
-        max_iterations = _bounded_conditional_iterations(
-            start.params.get("max_iterations", 1000)
-        )
+        max_iterations = _bounded_conditional_iterations(start.params.get("max_iterations", 1000))
     except (TypeError, ValueError) as exc:
         node_outputs[region.end_id] = {"results": None, "errors": []}
-        await finish(NodeRunResult(
-            node_id=region.end_id, status=NodeStatus.error, error=str(exc),
-        ))
+        await finish(
+            NodeRunResult(
+                node_id=region.end_id,
+                status=NodeStatus.error,
+                error=str(exc),
+            )
+        )
         return RunStatus.error
     # Multi-tenancy C5: the org's iteration ceiling clamps the node's own cap
     # (while/until loops have no row count to reject up front).
@@ -535,15 +584,17 @@ async def _run_conditional_loop(
         max_iterations = org_loop_cap
     on_max = str(start.params.get("on_max_iterations", "fail") or "fail")
     condition_expr = start.params.get("condition", "")
-    conditional_output = str(
-        end.params.get("conditional_output", "final_state") or "final_state"
-    )
+    conditional_output = str(end.params.get("conditional_output", "final_state") or "final_state")
 
     async def _fail(message: str) -> RunStatus:
         node_outputs[region.end_id] = {"results": None, "errors": []}
-        await finish(NodeRunResult(
-            node_id=region.end_id, status=NodeStatus.error, error=message,
-        ))
+        await finish(
+            NodeRunResult(
+                node_id=region.end_id,
+                status=NodeStatus.error,
+                error=message,
+            )
+        )
         return RunStatus.error
 
     def _ctx(state: Any, i: int) -> dict[str, Any]:
@@ -587,15 +638,23 @@ async def _run_conditional_loop(
             iter_outputs = dict(node_outputs)
             iter_outputs[region.start_id] = {"item": state, "index": i, "state": state}
             st = await _execute_nodes(
-                plan=body_plan, graph=graph, registry=registry,
-                nodes_by_id=nodes_by_id, incoming=incoming,
-                node_outputs=iter_outputs, cache=cache,
-                emit=emit, finish=finish, default_timeouts=default_timeouts,
+                plan=body_plan,
+                graph=graph,
+                registry=registry,
+                nodes_by_id=nodes_by_id,
+                incoming=incoming,
+                node_outputs=iter_outputs,
+                cache=cache,
+                emit=emit,
+                finish=finish,
+                default_timeouts=default_timeouts,
                 max_node_output_bytes=max_node_output_bytes,
                 pause_on_approval=pause_on_approval,
                 agent_action_resume=agent_action_resume,
-                loop_regions=loop_regions, owned=child_owned,
-                node_sem=node_sem, type_sems=type_sems,
+                loop_regions=loop_regions,
+                owned=child_owned,
+                node_sem=node_sem,
+                type_sems=type_sems,
                 process_isolator=process_isolator,
             )
         finally:
@@ -619,12 +678,9 @@ async def _run_conditional_loop(
     logs: list[str] = []
     if hit_cap:
         if on_max == "fail":
-            return await _fail(
-                f"loop exceeded max_iterations ({max_iterations})"
-            )
+            return await _fail(f"loop exceeded max_iterations ({max_iterations})")
         logs.append(
-            f"loop stopped at the max_iterations cap ({max_iterations}); "
-            "emitting the current state"
+            f"loop stopped at the max_iterations cap ({max_iterations}); emitting the current state"
         )
 
     if conditional_output == "all_states":
@@ -633,7 +689,12 @@ async def _run_conditional_loop(
         results_out = state
     out = {"results": results_out, "errors": []}
     node_outputs[region.end_id] = out
-    await finish(NodeRunResult(
-        node_id=region.end_id, status=NodeStatus.success, outputs=out, logs=logs,
-    ))
+    await finish(
+        NodeRunResult(
+            node_id=region.end_id,
+            status=NodeStatus.success,
+            outputs=out,
+            logs=logs,
+        )
+    )
     return RunStatus.success

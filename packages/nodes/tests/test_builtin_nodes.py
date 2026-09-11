@@ -521,6 +521,9 @@ def test_http_request_blocks_private_targets(monkeypatch) -> None:
     def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
         raise AssertionError("private target should be blocked before requests")
 
+    # Hosted/posture-blocked deployments set this explicitly; single-tenant
+    # API processes default to allowing private egress (mirroring workers).
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
     monkeypatch.setattr(requests, "request", fake_request)
     try:
         registry.get("http_request").func(url="http://127.0.0.1:8000/internal")
@@ -550,6 +553,7 @@ def test_graphql_request_blocks_private_targets(monkeypatch) -> None:
     def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
         raise AssertionError("private target should be blocked before requests")
 
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
     monkeypatch.setattr(requests, "request", fake_request)
     try:
         registry.get("graphql_request").func(

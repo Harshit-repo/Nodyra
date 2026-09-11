@@ -210,6 +210,60 @@ class SandboxWorker:
                 self.dead = True
                 raise RuntimeError(f"sandbox socket write failed: {exc}") from exc
 
+    async def _handle_call_mcp_tool(
+        self,
+        event: dict,
+        loop: asyncio.AbstractEventLoop,
+        *,
+        run_id: str,
+        org_id: str,
+    ) -> None:
+        """Mirror of the in-process MCP hook over the attach socket."""
+        from app.services.mcp_client import (
+            _load_conn_with_secret as _load_conn,
+        )
+        from app.services.mcp_client import call_tool as _call_tool
+        from app.services.mcp_client import ensure_tool_allowed
+
+        callback_id = event.get("callback_id", "")
+        try:
+            connection_id = str(event.get("connection_id") or "")
+            tool_name = str(event.get("tool_name") or "")
+            arguments = event.get("arguments") or {}
+            from app.db import SessionLocal
+
+            async with SessionLocal() as session:
+                conn, secret = await _load_conn(connection_id, org_id, session)
+                ensure_tool_allowed(conn, tool_name)
+                result = await _call_tool(
+                    conn,
+                    tool_name,
+                    arguments,
+                    decrypted_secret=secret,
+                    audit_session=session,
+                    run_id=run_id,
+                )
+            await self._send(
+                {
+                    "type": "call_mcp_tool_response",
+                    "callback_id": callback_id,
+                    "result": result,
+                },
+                loop,
+            )
+        except Exception as exc:  # noqa: BLE001 - surface back into the run
+            try:
+                await self._send(
+                    {
+                        "type": "call_mcp_tool_error",
+                        "callback_id": callback_id,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                    loop,
+                )
+            except RuntimeError:
+                pass  # container died; the read loop reports it
+
     async def run(
         self,
         run_id: str,
@@ -309,6 +363,18 @@ class SandboxWorker:
                     last_progress_at = now
                     task = asyncio.create_task(
                         self._handle_call_workflow(event, subworkflow_resolver, loop, artifacts)
+                    )
+                    callbacks.add(task)
+                    task.add_done_callback(callbacks.discard)
+                elif etype == "call_mcp_tool":
+                    last_progress_at = now
+                    task = asyncio.create_task(
+                        self._handle_call_mcp_tool(
+                            event,
+                            loop,
+                            run_id=run_id,
+                            org_id=self.key[0] or DEFAULT_ORG_ID,
+                        )
                     )
                     callbacks.add(task)
                     task.add_done_callback(callbacks.discard)

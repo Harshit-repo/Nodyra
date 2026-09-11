@@ -199,31 +199,26 @@ class TestDiscoverTools:
         with pytest.raises(MCPError, match="bad request"):
             await discover_tools(conn, decrypted_secret=None)
 
-    async def test_ssrf_blocked(self, httpx_mock):
+    async def test_ssrf_blocked(self, httpx_mock, monkeypatch):
         conn = AsyncMock(spec=MCPConnection)
         conn.url = "http://localhost:3000/"
         conn.headers = {}
         conn.auth_type = "none"
 
-        with patch(
-            "nodyra_nodes.http_security.private_egress_allowed",
-            return_value=False,
-        ):
-            with pytest.raises(Exception, match="private|blocked"):
-                await discover_tools(conn, decrypted_secret=None)
+        # Hosted multi-tenant posture: private/loopback targets are blocked.
+        monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+        with pytest.raises(Exception, match="private|blocked"):
+            await discover_tools(conn, decrypted_secret=None)
 
-    async def test_private_ip_blocked(self, httpx_mock):
+    async def test_private_ip_blocked(self, httpx_mock, monkeypatch):
         conn = AsyncMock(spec=MCPConnection)
         conn.url = "http://192.168.1.1:3000/"
         conn.headers = {}
         conn.auth_type = "none"
 
-        with patch(
-            "nodyra_nodes.http_security.private_egress_allowed",
-            return_value=False,
-        ):
-            with pytest.raises(Exception, match="private|blocked"):
-                await discover_tools(conn, decrypted_secret=None)
+        monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+        with pytest.raises(Exception, match="private|blocked"):
+            await discover_tools(conn, decrypted_secret=None)
 
 
 class TestCallTool:
@@ -238,9 +233,7 @@ class TestCallTool:
         conn.headers = {}
         conn.auth_type = "none"
 
-        result = await call_tool(
-            conn, "echo", {"message": "hello"}, decrypted_secret=None
-        )
+        result = await call_tool(conn, "echo", {"message": "hello"}, decrypted_secret=None)
         assert result == "hello world"
 
     async def test_jsonrpc_error(self, httpx_mock):
@@ -255,9 +248,7 @@ class TestCallTool:
         conn.auth_type = "none"
 
         with pytest.raises(MCPError, match="Tool execution failed"):
-            await call_tool(
-                conn, "bad_tool", {}, decrypted_secret=None
-            )
+            await call_tool(conn, "bad_tool", {}, decrypted_secret=None)
 
     async def test_http_error(self, httpx_mock):
         httpx_mock.add_response(
@@ -271,9 +262,7 @@ class TestCallTool:
         conn.auth_type = "none"
 
         with pytest.raises(httpx.HTTPStatusError):
-            await call_tool(
-                conn, "echo", {}, decrypted_secret=None
-            )
+            await call_tool(conn, "echo", {}, decrypted_secret=None)
 
 
 class TestEncryptDecrypt:
@@ -569,9 +558,7 @@ class TestMCPConnectionsAPI:
         async with SessionLocal() as session:
             conn = await session.get(MCPConnection, conn_id)
             conn.tool_cache = _MOCK_TOOLS_RESPONSE["result"]["tools"]
-            conn.last_synced_at = __import__(
-                "datetime"
-            ).datetime.now(__import__("datetime").UTC)
+            conn.last_synced_at = __import__("datetime").datetime.now(__import__("datetime").UTC)
             await session.commit()
 
         resp = await client.get(f"{self.BASE_URL}/{conn_id}/tools")

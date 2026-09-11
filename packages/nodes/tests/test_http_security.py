@@ -144,3 +144,11 @@ def test_redirect_loop_is_bounded() -> None:
             request_fn=fake_request,
             max_redirects=3,
         )
+
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch):
+    """These tests verify the BLOCKED posture of nodyra_nodes.http_security;
+    single-tenant API processes default to allowing private egress (mirroring
+    workers), so pin the env explicitly."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+

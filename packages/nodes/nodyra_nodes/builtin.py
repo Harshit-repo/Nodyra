@@ -1499,17 +1499,17 @@ def _http_backoff_seconds(attempt: int) -> float:
             "group": "Options",
             "description": "Per-request timeout in seconds.",
         },
-          "max_retries": {
+        "max_retries": {
             "group": "Options",
             "description": (
                 "Retries on a transient failure (429/5xx or a connection/timeout "
                 "error) with exponential backoff. 0 = a single attempt."
-              ),
-          },
-          "include_response_metadata": {
-              "group": "Options",
-              "description": "Return status_code, headers and body instead of only the response body.",
-          },
+            ),
+        },
+        "include_response_metadata": {
+            "group": "Options",
+            "description": "Return status_code, headers and body instead of only the response body.",
+        },
     },
 )
 def http_request(

@@ -775,8 +775,10 @@ async def test_while_loop_max_iterations_zero_uses_default_e13():
 
 def test_bounded_conditional_iterations_zero_returns_default_e13():
     from nodyra.engine.loops import _bounded_conditional_iterations
+
     assert _bounded_conditional_iterations(0) == 1000
     assert _bounded_conditional_iterations(None) == 1000
+
 
 def test_loop_items_unwraps_single_key_items_wrapper():
     """Trigger payloads commonly wrap rows under "items" (the same convention

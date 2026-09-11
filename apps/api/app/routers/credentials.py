@@ -586,6 +586,18 @@ async def create_credential(
     session: AsyncSession = Depends(get_session),
     actor: User | None = Depends(optional_current_user),
 ):
+    # A caller passing a scope-id field (workflow_id, ...) without setting
+    # scope used to get a *global* credential with the id silently dropped —
+    # a secrets-management trap where the author believes the secret is
+    # workflow-scoped while every workflow can read it. Infer the scope from
+    # the supplied id field when scope was not explicitly set.
+    if "scope" not in body.model_fields_set:
+        if body.workflow_id:
+            body.scope = "workflow"
+        elif body.environment_id:
+            body.scope = "environment"
+        elif body.runner_pool_id:
+            body.scope = "runner_pool"
     await _validate_scope(
         session,
         body.scope,
@@ -634,6 +646,16 @@ async def update_credential(
     cred = await _load(session, cred_id)
     if body.name is not None:
         cred.name = body.name
+    # Same silent-drop trap as create: a scope-id field supplied without an
+    # explicit scope keeps the old scope while the id is ignored. Infer the
+    # scope from the id field when scope was not explicitly set.
+    if "scope" not in body.model_fields_set:
+        if body.workflow_id is not None:
+            body.scope = "workflow"
+        elif body.environment_id is not None:
+            body.scope = "environment"
+        elif body.runner_pool_id is not None:
+            body.scope = "runner_pool"
     scope = body.scope or cred.scope
     workflow_id = body.workflow_id if body.workflow_id is not None else cred.workflow_id
     environment_id = body.environment_id if body.environment_id is not None else cred.environment_id

@@ -86,3 +86,11 @@ def test_message_escapes_xml_injection():
 def test_audio_url_ssrf_blocked():
     with pytest.raises(UnsafeHttpTargetError):
         _call(action="play", audio_url="http://169.254.169.254/latest/meta-data/")
+
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch):
+    """These tests verify the BLOCKED posture of nodyra_nodes.http_security;
+    single-tenant API processes default to allowing private egress (mirroring
+    workers), so pin the env explicitly."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+

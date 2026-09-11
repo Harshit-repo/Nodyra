@@ -40,6 +40,7 @@
 <style>
 /* tokens — verbatim from apps/web/src/index.css */
 :root{
+  color-scheme:dark;
   --bg:#090b10;--surface:#10141c;--surface-2:#161b25;--surface-3:#1f2632;
   --canvas:#0b0e14;--line:#242c3a;--line-2:#1a2029;
   --ink:#e9eef6;--ink-2:#98a4ba;--ink-3:#8a93a6;
@@ -52,9 +53,10 @@
   --font-sans:"Hanken Grotesk",system-ui,sans-serif;
   --font-mono:"IBM Plex Mono",ui-monospace,monospace;
 }
-*{box-sizing:border-box;margin:0;padding:0;scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent}
+*{box-sizing:border-box;margin:0;padding:0;scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent;-webkit-tap-highlight-color:transparent}
 html{scroll-behavior:smooth}
 body{font-family:var(--font-sans);font-size:14px;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.55;overflow-x:hidden}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
   background:radial-gradient(900px 520px at 12% -8%,rgba(76,158,255,0.09),transparent 60%),
              radial-gradient(760px 620px at 102% 108%,rgba(76,158,255,0.06),transparent 55%)}
@@ -76,6 +78,8 @@ h1,h2,h3{margin:0;letter-spacing:-0.02em}
 .field-input{width:100%;font-family:var(--font-sans);font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-sm);padding:8px 10px;outline:none;transition:border-color 120ms ease,box-shadow 120ms ease}
 .field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
 .field-input::placeholder{color:var(--ink-3)}
+.field-input[aria-invalid="true"]{border-color:rgba(240,116,122,0.65);box-shadow:0 0 0 3px rgba(240,116,122,0.14)}
+.field-input[aria-invalid="true"]:focus{border-color:rgba(240,116,122,0.85);box-shadow:0 0 0 3px rgba(240,116,122,0.2)}
 
 /* nav */
 #site-nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);background:rgba(9,11,16,0.72);border-bottom:1px solid transparent;transition:border-color 200ms ease}
@@ -107,11 +111,11 @@ h1,h2,h3{margin:0;letter-spacing:-0.02em}
 @media(max-width:820px){.nav-links,.nav-cta .btn{display:none}.nav-toggle{display:flex}}
 
 /* hero */
-#hero{min-height:100vh;display:grid;grid-template-columns:55fr 45fr;align-items:center}
+#hero{min-height:100vh;min-height:100dvh;display:grid;grid-template-columns:55fr 45fr;align-items:center}
 @media(max-width:940px){#hero{grid-template-columns:1fr;min-height:auto}.hero-canvas-wrap{height:360px!important}}
 
 /* canvas panel */
-.hero-canvas-wrap{position:relative;height:100vh;background:radial-gradient(ellipse at 50% 50%,rgba(255,255,255,0.015) 0%,transparent 60%),var(--canvas);overflow:hidden}
+.hero-canvas-wrap{position:relative;height:100vh;height:100dvh;background:radial-gradient(ellipse at 50% 50%,rgba(255,255,255,0.015) 0%,transparent 60%),var(--canvas);overflow:hidden}
 .hero-canvas-wrap::before{content:"";position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(circle,rgba(255,255,255,0.04) 1px,transparent 1px);background-size:28px 28px}
 .canvas-stage{position:absolute;inset:0;transition:opacity 300ms ease}
 
@@ -131,7 +135,7 @@ h1,h2,h3{margin:0;letter-spacing:-0.02em}
 .canvas-edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
 
 /* graph/python toggle */
-.canvas-toggle{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);display:inline-flex;background:rgba(9,11,16,0.82);border:1px solid var(--line);border-radius:999px;padding:4px;backdrop-filter:blur(8px);z-index:10;gap:2px}
+.canvas-toggle{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);display:inline-flex;background:rgba(9,11,16,0.82);border:1px solid var(--line);border-radius:999px;padding:4px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:10;gap:2px}
 .canvas-toggle button{font-family:var(--font-mono);font-size:12px;font-weight:500;color:var(--ink-3);background:transparent;border:0;padding:6px 16px;border-radius:999px;cursor:pointer;transition:background 200ms,color 200ms}
 .canvas-toggle button.active{background:linear-gradient(180deg,var(--accent-2),var(--accent));color:#06101e;font-weight:600}
 .canvas-toggle button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -178,7 +182,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 
 /* ---- NDV (Node Detail View) — copied from apps/web/src/editor.css + index.css ---- */
 .modal-overlay{position:fixed;inset:0;z-index:200;background:rgba(4,6,10,0.72);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:28px 20px 20px}
-.ndv-modal{position:relative;width:min(1320px,96vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column;background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 4%,var(--surface)) 0%,var(--surface) 120px);border:1px solid color-mix(in srgb,var(--accent) 9%,var(--line));border-radius:14px;box-shadow:0 1px 0 rgba(255,255,255,0.05) inset,0 40px 90px -36px rgba(0,0,0,0.86),0 0 0 1px rgba(0,0,0,0.35);height:65vh;min-height:35vh;overflow:hidden;animation:pop 170ms cubic-bezier(0.2,0.8,0.2,1)}
+.ndv-modal{position:relative;width:min(1320px,96vw);max-height:calc(100vh - 48px);max-height:calc(100dvh - 48px);display:flex;flex-direction:column;background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 4%,var(--surface)) 0%,var(--surface) 120px);border:1px solid color-mix(in srgb,var(--accent) 9%,var(--line));border-radius:14px;box-shadow:0 1px 0 rgba(255,255,255,0.05) inset,0 40px 90px -36px rgba(0,0,0,0.86),0 0 0 1px rgba(0,0,0,0.35);height:65vh;height:65dvh;min-height:35vh;min-height:35dvh;overflow:hidden;animation:pop 170ms cubic-bezier(0.2,0.8,0.2,1)}
 .ndv-modal::before{content:'';position:absolute;left:18px;right:18px;top:0;height:1px;border-radius:1px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 70%,transparent),transparent);opacity:0.7;pointer-events:none;z-index:1}
 .ndv-modal.ndv-edge-ok::before{background:linear-gradient(90deg,transparent,#57c98a,transparent);opacity:0.85}
 @keyframes pop{from{transform:translateY(-10px) scale(0.985);opacity:0}}
@@ -360,6 +364,29 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .demo-mode-tip{font-family:var(--font-mono);font-size:11px;color:var(--accent);margin:6px 0 10px;letter-spacing:0.01em}
 .demo-mode-tip strong{font-weight:700;color:var(--accent)}
 
+/* Fallbacks for engines without color-mix() (Chrome < 111, Safari < 16.2, Firefox < 113) */
+@supports not (color: color-mix(in srgb, red 50%, blue)) {
+  .ndv-modal{background:var(--surface);border-color:var(--line)}
+  .ndv-modal::before{background:linear-gradient(90deg,transparent,rgba(76,158,255,0.6),transparent)}
+  .ndv-modal.ndv-edge-ok::before{background:linear-gradient(90deg,transparent,#57c98a,transparent)}
+  .ndv-drag-handle{background:var(--line-2);border-top-color:var(--line-2)}
+  .ndv-drag-dots span{background:var(--line)}
+  .ndv-drag-tip{border-color:var(--line)}
+  .ndv-head{border-bottom-color:var(--line-2)}
+  .mono-tag-cat{background:var(--surface-2);border-color:var(--line-2)}
+  .inspector-glyph{background:var(--surface-2);border-color:var(--line-2);box-shadow:none}
+  .ndv-middle{border-right-color:var(--line-2);border-left-color:var(--line-2)}
+  .ndv-tabs button.active::after{background:var(--accent);box-shadow:none}
+  .ndv-tabs button:hover:not(.active){background:var(--surface-2)}
+  .ndv-mode-toggle{background:var(--surface-3)}
+  .btn-run{background:rgba(87,201,138,0.16);border-color:rgba(87,201,138,0.45)}
+  .code-view{border-color:var(--line)}
+  .ndv-count-badge{border-color:rgba(76,158,255,0.26)}
+  .ndv-panel-head,.ndv-panel-foot{background:var(--surface)}
+  .price-card-featured{background:var(--surface);border-color:var(--line-2);box-shadow:0 28px 60px -28px rgba(76,158,255,0.24)}
+  .price-card-featured::before{background:var(--accent)}
+}
+
 /* ===== Deployments & Environments ===== */
 .deploy-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:start}
 @media(max-width:860px){.deploy-grid{grid-template-columns:1fr;gap:44px}}
@@ -423,6 +450,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .price-tagline{font-size:13px;color:var(--ink-2);line-height:1.6;padding-bottom:20px;border-bottom:1px solid var(--line-2);margin-bottom:20px}
 /* Resource caps, straight from TIER_DEFAULTS in app/services/licensing.py. */
 .price-limits{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding-bottom:20px;border-bottom:1px solid var(--line-2);margin-bottom:20px}
+@media(max-width:420px){.price-limits{grid-template-columns:repeat(2,1fr);gap:12px 8px}}
 .price-limit{display:flex;flex-direction:column;gap:2px;min-width:0}
 .price-limit-n{font-family:var(--font-display);font-size:19px;font-weight:800;color:var(--ink);line-height:1;font-variant-numeric:tabular-nums}
 .price-limit-l{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);line-height:1.3}
@@ -528,7 +556,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .fleet-stat-val{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:5px}
 .fleet-dot-ok{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;flex-shrink:0}
 .fleet-dot-warn{width:7px;height:7px;border-radius:50%;background:var(--amber);display:inline-block;flex-shrink:0}
-.pool-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden}
+.pool-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);overflow-x:auto;overflow-y:hidden}
 .pool-head{padding:12px 18px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .pool-name-row{display:flex;align-items:center;gap:9px;flex:1;min-width:0;flex-wrap:wrap}
 .pool-name{font-size:14px;font-weight:600;color:var(--ink)}
@@ -542,6 +570,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .pool-meta-line{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);padding:7px 18px;border-bottom:1px solid var(--line-2)}
 .pool-actions{display:flex;gap:7px;flex-shrink:0}
 .health-strip{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line-2)}
+@media(max-width:680px){.health-strip{grid-template-columns:repeat(2,1fr)}.hs-cell:nth-child(odd){border-left:none}.hs-cell:nth-child(n+3){border-top:1px solid var(--line-2)}}
 .hs-cell{padding:10px 16px}
 .hs-cell+.hs-cell{border-left:1px solid var(--line-2)}
 .hs-label{font-size:9.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-3);margin-bottom:5px}
@@ -574,6 +603,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .tact-warn{background:transparent;color:var(--amber);border:1px solid rgba(255,212,121,0.3)}
 /* reduced motion */
 @media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
   .node{opacity:1!important;transform:none!important;transition:none!important}
   .node-cursor{display:none}
   .python-pane,.canvas-stage{transition:none!important}
@@ -583,8 +613,9 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 
 /* sections */
 .section-pad{padding:80px 0}
+section[id],footer[id]{scroll-margin-top:84px}
 .eyebrow{font-family:var(--font-mono);font-size:11.5px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);margin-bottom:14px}
-h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);font-weight:800;line-height:1.05;letter-spacing:-0.03em;max-width:22ch}
+h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);font-weight:800;line-height:1.05;letter-spacing:-0.03em;max-width:22ch;text-wrap:balance}
 
 /* scroll reveal — hidden only when JS is available to reveal it */
 .js .reveal{opacity:0;transform:translateY(22px);transition:opacity 560ms ease,transform 560ms ease}
@@ -624,6 +655,25 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
 .bento-card h3{font-size:15px;font-weight:700;margin:0}
 .bento-card p{font-size:13px;color:var(--ink-2);line-height:1.55;margin:0}
 
+/* ===== Documentation ===== */
+.docs-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:48px}
+@media(max-width:1060px){.docs-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:540px){.docs-grid{grid-template-columns:1fr}}
+.doc-card{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);padding:20px;transition:border-color 140ms ease,background 140ms ease,transform 140ms ease}
+.doc-card:hover{border-color:var(--accent-deep);background:var(--surface-2);transform:translateY(-2px)}
+.doc-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.doc-card h3{font-size:14.5px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px}
+.doc-card h3 .doc-ext{color:var(--ink-3);font-size:11px;font-weight:500;margin-left:auto;opacity:0;transition:opacity 140ms ease}
+.doc-card:hover h3 .doc-ext{opacity:1}
+.doc-card p{font-size:12.5px;color:var(--ink-2);line-height:1.55;margin:0;flex:1}
+.doc-path{font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);border-top:1px solid var(--line-2);padding-top:9px;margin-top:2px;display:flex;align-items:center;gap:6px;overflow:hidden}
+.doc-path svg{flex-shrink:0;color:var(--ink-3)}
+.doc-path span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-cta{display:flex;justify-content:center;margin-top:36px}
+.docs-head{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center;margin-top:24px}
+@media(max-width:860px){.docs-head{grid-template-columns:1fr;gap:36px}}
+.docs-head .mini-terminal{margin-top:0}
+
 /* ===== Integrations ===== */
 .provider-cloud{display:flex;flex-wrap:wrap;gap:8px;margin-top:36px}
 .provider-pill{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--ink-2);background:var(--surface);border:1px solid var(--line-2);border-radius:999px;padding:7px 14px;transition:border-color 140ms ease,color 140ms ease,background 140ms ease}
@@ -631,14 +681,14 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
 .provider-pill .pd{width:7px;height:7px;border-radius:50%;background:var(--accent);opacity:0.85;flex-shrink:0}
 .provider-pill.pill-ai{color:var(--accent-2);border-color:rgba(76,158,255,0.35)}
 .provider-pill.pill-ai .pd{background:var(--accent-2);box-shadow:0 0 8px rgba(76,158,255,0.6)}
-.int-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:48px}
-@media(max-width:860px){.int-grid{grid-template-columns:1fr}}
+.int-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:48px}
+@media(max-width:860px){.int-grid{grid-template-columns:minmax(0,1fr)}}
 .int-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);padding:24px 22px;display:flex;flex-direction:column;gap:10px;transition:border-color 140ms ease,background 140ms ease}
 .int-card:hover{border-color:var(--accent-deep);background:var(--surface-2)}
 .int-card-icon{width:38px;height:38px;display:grid;place-items:center;border-radius:10px;background:var(--accent-glow);border:1px solid rgba(76,158,255,0.22);color:var(--accent);margin-bottom:4px}
 .int-card h3{font-size:15px;font-weight:700;margin:0}
 .int-card p{font-size:13px;color:var(--ink-2);line-height:1.6;margin:0}
-.int-card code{font-family:var(--font-mono);font-size:11.5px;color:var(--accent)}
+.int-card code{font-family:var(--font-mono);font-size:11.5px;color:var(--accent);overflow-wrap:anywhere;min-width:0}
 .chat-link-bar{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-family:var(--font-mono);font-size:11px;color:var(--ink-2);overflow:hidden;margin-top:2px}
 .chat-link-bar .cl-domain{color:var(--accent-2)}
 .chat-link-bar .cl-path{color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -694,11 +744,11 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
       <a href="#how">How it works</a>
       <a href="#platform">Platform</a>
       <a href="#integrations">Integrations</a>
+      <a href="docs.html">Docs</a>
       <a href="#environments">Environments</a>
       <a href="#runners">Runners</a>
       <a href="#enterprise">Enterprise</a>
       <a href="#pricing">Pricing</a>
-      <a href="https://github.com/Harshit-repo/noodle/tree/main/docs" rel="noopener">Docs</a>
       <a href="https://github.com/Harshit-repo/noodle" rel="noopener">GitHub</a>
     </nav>
     <div class="nav-cta">
@@ -713,11 +763,11 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
     <a href="#how">How it works</a>
     <a href="#platform">Platform</a>
     <a href="#integrations">Integrations</a>
+    <a href="docs.html">Docs</a>
     <a href="#environments">Environments</a>
     <a href="#runners">Runners</a>
     <a href="#enterprise">Enterprise</a>
     <a href="#pricing">Pricing</a>
-    <a href="https://github.com/Harshit-repo/noodle/tree/main/docs" rel="noopener">Docs</a>
     <a href="https://github.com/Harshit-repo/noodle" rel="noopener">GitHub</a>
     <div class="nav-mobile-cta">
       <a href="#pricing" class="btn">View pricing</a>
@@ -1241,6 +1291,144 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           <div class="api-route-row"><span class="api-method post">POST</span> /signups/ingest → Ingest branch</div>
         </div>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- DOCUMENTATION -->
+<section id="docs" class="layer section-pad" style="background:linear-gradient(180deg,rgba(76,158,255,0.03),transparent)">
+  <div class="wrap">
+    <p class="eyebrow reveal">Documentation</p>
+    <h2 class="section-h reveal">Docs you can ship from.</h2>
+
+    <div class="docs-head">
+      <div class="reveal">
+        <p style="font-size:16px;color:var(--ink-2);line-height:1.7;max-width:46ch">
+          Quickstarts, architecture, deployment, and security — all open markdown in the repo.
+          Connect an MCP client in one line, and the same docs that ship with the source are one click away.
+        </p>
+      </div>
+      <div class="mini-terminal reveal" role="img" aria-label="Connecting an MCP client to Nodyra">
+        <div class="mini-terminal-bar">
+          <div class="term-circles">
+            <span style="background:#f47067"></span>
+            <span style="background:#ffd479"></span>
+            <span style="background:#57c98a"></span>
+          </div>
+          <span class="term-title">mcp — connect an agent</span>
+        </div>
+        <div class="mini-terminal-body">
+<span class="t-dim">→ </span><span class="t-cmd">claude mcp add --transport http nodyra https://your-instance.example/mcp \</span>
+<span class="t-dim">→ </span><span class="t-cmd">    --header "Authorization: Bearer &lt;api-token&gt;"</span>
+<span class="t-ok">✓</span> Connected — ask your agent to <span class="t-accent">build, run &amp; publish</span> workflows
+        </div>
+      </div>
+    </div>
+
+    <div class="docs-grid">
+      <a class="doc-card reveal" href="docs.html#/getting-started">
+        <h3>Getting started <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Bring up the full stack with Docker Compose, create your first workflow, and run a credential-free template end to end.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/getting-started.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/mcp-quickstart">
+        <h3>MCP quickstart <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Point Claude Code — or any MCP client — at a running instance. Authentication, tool calls, and letting the agent validate and publish.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/mcp-quickstart.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/nodes">
+        <h3>Writing nodes <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Decorate a function with <code style="font-family:var(--font-mono);font-size:11.5px;color:var(--accent)">@node</code> and it appears on the canvas. Ports, credentials, artifacts, datasets, and tests.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/nodes.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/architecture">
+        <h3>Architecture <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Control plane, durable run queue, dispatch workers, per-environment subprocesses or sandboxes — the full execution model.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/architecture.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/deployment">
+        <h3>Deployment <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Docker Compose for single boxes, the Helm chart for Kubernetes, backups, migrations, and runtime-mode configuration.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/deployment.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/gitops">
+        <h3>GitOps sync <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Bidirectional sync between workflows and a GitHub repo — branches, pull requests, and review before anything runs.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/gitops.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/licensing">
+        <h3>Licensing <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Fair-code Community edition, Pro and Enterprise tiers, offline license verification, and soft-downgrade behavior.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/licensing.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/security">
+        <h3>Security model <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Trust boundaries, the single-tenant / trusted-author model, sandboxing, credential encryption, and the pen-test checklist.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>SECURITY.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="https://github.com/Harshit-repo/noodle/blob/main/docs/workflow-templates.md" rel="noopener">
+        <h3>Workflow templates <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Every starter workflow explained — webhook-to-Slack, RSS digests, data-quality gates, PDF indexing, scheduled reports.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/workflow-templates.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/recipes">
+        <h3>Recipes <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Copy-paste patterns for the work that comes up every week — batching, error handling, datasets, scheduling, and more.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/recipes.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="https://github.com/Harshit-repo/noodle/blob/main/docs/community-nodes.md" rel="noopener">
+        <h3>Community nodes <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Upload, version, and share Python nodes with your team or the community — every node is just source.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/community-nodes.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/status-matrix">
+        <h3>Status matrix <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>The live map of what is shipped, beta, experimental, or planned — updated as features land, not as marketing promises.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/status-matrix.md</span>
+        </div>
+      </a>
+    </div>
+
+    <div class="doc-cta reveal">
+      <a href="docs.html" class="btn" style="font-size:14px;padding:10px 22px">
+        Browse all docs
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 17L17 7M17 7H8M17 7v9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
     </div>
   </div>
 </section>
@@ -2119,13 +2307,13 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
       <nav class="foot-links" aria-label="Footer links">
         <a href="#how">How it works</a>
         <a href="#integrations">Integrations</a>
+        <a href="docs.html">Docs</a>
         <a href="#environments">Environments</a>
         <a href="#runners">Runners</a>
         <a href="#enterprise">Enterprise</a>
         <a href="#pricing">Pricing</a>
-        <a href="https://github.com/Harshit-repo/noodle/tree/main/docs" rel="noopener">Docs</a>
         <a href="https://github.com/Harshit-repo/noodle" rel="noopener">GitHub</a>
-        <a href="https://github.com/Harshit-repo/noodle/blob/main/SECURITY.md" rel="noopener">Security</a>
+        <a href="docs.html#/security">Security</a>
         <a href="https://github.com/Harshit-repo/noodle/blob/main/LICENSE" rel="noopener">License</a>
         <a href="#cta">Get early access</a>
       </nav>

@@ -61,6 +61,10 @@ For a credential-free first run, create a workflow from the **Dataset filter
 and CSV export** template. The complete walkthrough is in
 [Getting started](docs/getting-started.md).
 
+For a persistent single-host installation without MinIO or a cloud bucket, use
+the [trusted-team self-hosting profile](docs/deployment/self-hosted.md). It also
+covers HTTPS, automatic service restarts, storage, and backups.
+
 ## Build workflows with an AI agent
 
 Nodyra includes an MCP server. For example, connect Claude Code to a running

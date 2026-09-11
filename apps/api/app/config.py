@@ -1,3 +1,4 @@
+import os
 from typing import Literal
 
 from pydantic import AliasChoices, Field, model_validator
@@ -296,9 +297,7 @@ class Settings(BaseSettings):
     runtime_heartbeat_timeout_seconds: float = Field(default=45.0, gt=0.0, le=3600.0)
     # 0 disables no-progress detection. Keep this above the default Code-node
     # timeout so legitimate long-running nodes fail at their more specific cap.
-    runtime_no_progress_timeout_seconds: float = Field(
-        default=900.0, ge=0.0, le=86_400.0
-    )
+    runtime_no_progress_timeout_seconds: float = Field(default=900.0, ge=0.0, le=86_400.0)
     # Multi-tenancy master switch. Off (default): single-tenant behaviour,
     # zero filtering, the existing suite must pass unchanged. On: every
     # request resolves an organization (X-Org-Id header validated against
@@ -687,8 +686,7 @@ class Settings(BaseSettings):
             )
         if self.mcp_authorization_server_url or self.mcp_oauth_introspection_url:
             reasons.append(
-                "MCP OAuth introspection cache is per-replica without Redis-backed "
-                "coordination"
+                "MCP OAuth introspection cache is per-replica without Redis-backed coordination"
             )
         return [f"{reason} ({'; '.join(signals)})" for reason in reasons]
 
@@ -779,9 +777,9 @@ class Settings(BaseSettings):
         if self.kms_provider == "vault" and not self.vault_token:
             errors.append("kms_provider=vault requires VAULT_TOKEN to be set.")
         if self.kms_provider == "vault" and self.vault_url:
-            errors.extend(_vault_transport_errors(
-                self.vault_url, self.vault_allow_insecure_transport
-            ))
+            errors.extend(
+                _vault_transport_errors(self.vault_url, self.vault_allow_insecure_transport)
+            )
         if self.kms_provider == "aws" and not self.aws_kms_key_id:
             errors.append(
                 "kms_provider=aws requires AWS_KMS_KEY_ID to be set (key ID, ARN, or alias)."
@@ -868,6 +866,19 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Egress policy default for code running in THIS process (MCP connection
+# targets, credential-test probes, …). ``nodyra_nodes.http_security`` reads
+# only the environment, and ``runtime_pool._worker_env`` computes this same
+# default for runtime workers — applying it here keeps the API/worker process
+# consistent with its spawned workers: single-tenant deployments may reach
+# private/loopback targets (local MCP servers are the norm) unless the
+# operator explicitly opted out; hosted multi-tenant deployments block them.
+if (
+    "NODYRA_ALLOW_PRIVATE_EGRESS" not in os.environ
+    and "NOODLE_ALLOW_PRIVATE_EGRESS" not in os.environ
+):
+    os.environ["NODYRA_ALLOW_PRIVATE_EGRESS"] = "0" if settings.multi_tenancy_enabled else "1"
 
 
 def _vault_transport_errors(vault_url: str, allow_insecure: bool) -> list[str]:

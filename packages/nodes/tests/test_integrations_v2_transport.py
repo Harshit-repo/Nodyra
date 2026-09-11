@@ -255,3 +255,11 @@ def test_microsoft_graph_transport_sets_base_url_and_bearer(monkeypatch) -> None
     assert result == {"value": []}
     assert calls[0]["url"] == "https://graph.microsoft.com/v1.0/me/messages"
     assert calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer graph-token"
+
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch):
+    """These tests verify the BLOCKED posture of nodyra_nodes.http_security;
+    single-tenant API processes default to allowing private egress (mirroring
+    workers), so pin the env explicitly."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+

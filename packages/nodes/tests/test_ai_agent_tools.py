@@ -720,3 +720,11 @@ def test_internal_tool_output_untrusted_wrapper_before_prompt() -> None:
 )
 def test_all_phase1_nodes_registered(node_id) -> None:
     assert node_id in registry
+
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch):
+    """These tests verify the BLOCKED posture of nodyra_nodes.http_security;
+    single-tenant API processes default to allowing private egress (mirroring
+    workers), so pin the env explicitly."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+

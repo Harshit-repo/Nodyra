@@ -475,6 +475,51 @@ class _RuntimeProcess:
                 }
             )
 
+    async def _handle_call_mcp_tool(self, event: dict, run_id: str) -> None:
+        """Mirror of the in-process MCP hook: resolve the connection (org
+        scoping, secret decryption, allowlist, audit) and answer the runtime."""
+        from app.services.mcp_client import (
+            _load_conn_with_secret as _load_conn,
+        )
+        from app.services.mcp_client import call_tool as _call_tool
+        from app.services.mcp_client import ensure_tool_allowed
+
+        callback_id = event.get("callback_id", "")
+        try:
+            connection_id = str(event.get("connection_id") or "")
+            tool_name = str(event.get("tool_name") or "")
+            arguments = event.get("arguments") or {}
+            org_id = await _resolve_run_org(run_id)
+            async with SessionLocal() as session:
+                conn, secret = await _load_conn(connection_id, org_id, session)
+                ensure_tool_allowed(conn, tool_name)
+                result = await _call_tool(
+                    conn,
+                    tool_name,
+                    arguments,
+                    decrypted_secret=secret,
+                    audit_session=session,
+                    run_id=run_id,
+                )
+            await self._write_message(
+                {
+                    "type": "call_mcp_tool_response",
+                    "callback_id": callback_id,
+                    "result": result,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - surface back to the runtime
+            try:
+                await self._write_message(
+                    {
+                        "type": "call_mcp_tool_error",
+                        "callback_id": callback_id,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+            except RuntimeError:
+                pass  # worker died; the read loop reports it
+
     async def run(
         self,
         run_id: str,
@@ -583,6 +628,14 @@ class _RuntimeProcess:
                         task = asyncio.create_task(
                             self._handle_call_workflow(event, subworkflow_resolver)
                         )
+                        callbacks.add(task)
+                        task.add_done_callback(callbacks.discard)
+                        continue
+
+                    # MCP tool call from the subprocess — same task pattern.
+                    if kind == "call_mcp_tool":
+                        last_progress_at = now
+                        task = asyncio.create_task(self._handle_call_mcp_tool(event, run_id))
                         callbacks.add(task)
                         task.add_done_callback(callbacks.discard)
                         continue

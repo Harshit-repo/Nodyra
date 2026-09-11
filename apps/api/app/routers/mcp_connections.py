@@ -43,9 +43,7 @@ def _validated_allowed_tools(value: Any) -> list[str] | None:
     """
     if value is None:
         return None
-    if not isinstance(value, list) or not all(
-        isinstance(t, str) and t.strip() for t in value
-    ):
+    if not isinstance(value, list) or not all(isinstance(t, str) and t.strip() for t in value):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "allowed_tools must be null or a list of non-empty tool-name strings",
@@ -75,14 +73,17 @@ async def create_mcp_connection(
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
-    from nodyra_nodes.http_security import assert_public_http_url
+    from nodyra_nodes.http_security import UnsafeHttpTargetError, assert_public_http_url
 
     url = str(body.get("url", "")).rstrip("/")
-    assert_public_http_url(url, context="MCP connection")
+    try:
+        assert_public_http_url(url, context="MCP connection")
+    except UnsafeHttpTargetError as exc:
+        # A blocked target is a validation failure, not a server fault — the
+        # raw ValueError used to escape as a 500 with no detail.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
-    transport = str(
-        body.get("transport", "streamable-http") or "streamable-http"
-    )
+    transport = str(body.get("transport", "streamable-http") or "streamable-http")
     if transport == "sse":
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -157,10 +158,13 @@ async def update_mcp_connection(
     if "name" in body:
         conn.name = str(body["name"])
     if "url" in body:
-        from nodyra_nodes.http_security import assert_public_http_url
+        from nodyra_nodes.http_security import UnsafeHttpTargetError, assert_public_http_url
 
         new_url = str(body["url"]).rstrip("/")
-        assert_public_http_url(new_url, context="MCP connection")
+        try:
+            assert_public_http_url(new_url, context="MCP connection")
+        except UnsafeHttpTargetError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
         conn.url = new_url
     if "transport" in body:
         t = str(body["transport"])
@@ -179,9 +183,7 @@ async def update_mcp_connection(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "Org KEK not available",
             )
-        conn.auth_secret = encrypt_auth_secret(
-            str(body["auth_secret"]), org_kek
-        )
+        conn.auth_secret = encrypt_auth_secret(str(body["auth_secret"]), org_kek)
     if "headers" in body:
         conn.headers = body["headers"] or {}
     if "enabled" in body:
@@ -241,9 +243,7 @@ async def sync_mcp_connection(
 ) -> dict:
     org_id = _org()
     try:
-        conn, secret = await _load_conn_with_secret(
-            connection_id, org_id, session
-        )
+        conn, secret = await _load_conn_with_secret(connection_id, org_id, session)
     except ValueError:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
     tools = await discover_tools(conn, decrypted_secret=secret)
@@ -364,9 +364,7 @@ def _row_to_dict(conn: MCPConnection) -> dict:
         "enabled": conn.enabled,
         "allowed_tools": conn.allowed_tools,
         "tool_cache": conn.tool_cache,
-        "last_synced_at": (
-            conn.last_synced_at.isoformat() if conn.last_synced_at else None
-        ),
+        "last_synced_at": (conn.last_synced_at.isoformat() if conn.last_synced_at else None),
         "created_at": conn.created_at.isoformat() if conn.created_at else None,
         "updated_at": conn.updated_at.isoformat() if conn.updated_at else None,
     }

@@ -63,6 +63,7 @@ from nodyra.engine.subworkflows import (
     SubworkflowCall,
     SubworkflowMeta,
 )
+from nodyra.engine.types import _call_mcp_tool_impl, set_call_mcp_tool_impl
 from nodyra.models import WorkflowGraph
 from nodyra.process_isolation import PooledProcessIsolator
 from nodyra.sdk import register_module_functions, registry, unregister_module
@@ -168,6 +169,32 @@ async def _run_subworkflow_via_host(call: SubworkflowCall) -> Any:
         _pending_callbacks.pop(callback_id, None)
 
 
+async def _call_mcp_tool_via_host(connection_id: str, tool_name: str, arguments: dict) -> Any:
+    """``RuntimeContext.call_mcp_tool`` impl that round-trips through the host.
+
+    The host resolves the MCP connection (org scoping, secret decryption,
+    allowlist checks, auditing) and answers with the tool result — the runtime
+    subprocess has no DB access of its own.
+    """
+    callback_id = uuid.uuid4().hex
+    future: asyncio.Future = asyncio.get_event_loop().create_future()
+    _pending_callbacks[callback_id] = future
+    _emit(
+        {
+            "type": "call_mcp_tool",
+            "callback_id": callback_id,
+            "request_id": _active_request_id,
+            "connection_id": connection_id,
+            "tool_name": tool_name,
+            "arguments": arguments,
+        }
+    )
+    try:
+        return await future
+    finally:
+        _pending_callbacks.pop(callback_id, None)
+
+
 async def _handle_run(request: dict[str, Any]) -> None:
     global _active_request_id
     request_id = request.get("request_id", "")
@@ -210,6 +237,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
     # warm process doesn't leak state across workflows.
     workflow_modules = request.get("workflow_modules") or []
     loaded_module_ids: list[str] = []
+    module_errors: dict[str, str] = {}
     for module in workflow_modules:
         module_id = str(module.get("id") or "")
         source = str(module.get("contents") or "")
@@ -224,12 +252,13 @@ async def _handle_run(request: dict[str, Any]) -> None:
             )
             loaded_module_ids.append(module_id)
         except Exception as exc:  # noqa: BLE001 - bad user code shouldn't crash the runner
+            module_errors[module_id] = f"{type(exc).__name__}: {exc}"
             _emit(
                 {
                     "request_id": request_id,
                     "type": "module_error",
                     "module_id": module_id,
-                    "error": f"{type(exc).__name__}: {exc}",
+                    "error": module_errors[module_id],
                 }
             )
 
@@ -264,8 +293,32 @@ async def _handle_run(request: dict[str, Any]) -> None:
             )
         )
     heartbeat_task = asyncio.create_task(emit_heartbeats())
+    # The mcp_tool node resolves its calls through RuntimeContext.call_mcp_tool;
+    # install the host round-trip so connections resolve on the API side.
+    set_call_mcp_tool_impl(_call_mcp_tool_via_host)
     try:
         graph = WorkflowGraph.model_validate(request["graph"])
+        # A graph referencing a node from a module that failed to register
+        # (e.g. rejected by the sandbox validator) would otherwise fail with a
+        # misleading "Unknown node type" from graph validation. Surface the
+        # module error instead.
+        if module_errors:
+            referenced = {
+                str(node.type or "").split(":", 2)[1]
+                for node in graph.nodes
+                if str(node.type or "").startswith("user:")
+            }
+            offenders = referenced & set(module_errors)
+            if offenders:
+                _emit(
+                    {
+                        "request_id": request_id,
+                        "type": "error",
+                        "error": "module registration failed: "
+                        + module_errors[sorted(offenders)[0]],
+                    }
+                )
+                return
         raw_agent_resume = request.get("agent_action_resume") or {}
         agent_action_resume = (
             {
@@ -309,6 +362,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
         heartbeat_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
+        _call_mcp_tool_impl.set(None)
         if artifact_token is not None:
             if artifacts_upload_url:
                 try:
@@ -332,8 +386,10 @@ def _resolve_callback(message: dict[str, Any]) -> bool:
     future = _pending_callbacks.pop(callback_id, None)
     if future is None or future.done():
         return True
-    if message.get("type") == "call_workflow_error":
-        future.set_exception(RuntimeError(message.get("error", "remote call_workflow error")))
+    if message.get("type") in ("call_workflow_error", "call_mcp_tool_error"):
+        future.set_exception(RuntimeError(message.get("error", "remote host callback error")))
+    elif message.get("type") == "call_mcp_tool_response":
+        future.set_result(deserialize_value(message.get("result")))
     elif "inline_graph" in message:
         # Inline directive — the ENGINE adapter executes it with correct
         # depth/chain meta (nodyra.engine.subworkflows.make_workflow_caller).
@@ -350,15 +406,17 @@ def _resolve_callback(message: dict[str, Any]) -> bool:
     return True
 
 
-# Node types that call ``workflow_caller`` and therefore need the host-side
-# stdin reader loop to stay alive so ``call_workflow_response`` messages can
-# be dispatched. If a new node type uses ``workflow_caller``, add it here.
+# Node types that call back into the host (workflow_caller for sub-workflows,
+# RuntimeContext.call_mcp_tool for MCP connections) and therefore need the
+# host-side stdin reader loop to stay alive so callback responses can be
+# dispatched. If a new node type uses either hook, add it here.
 _HOST_CALLBACK_NODE_TYPES: frozenset[str] = frozenset(
     {
         "execute_workflow",
         "map_items",
         "map_group",
         "map_dataset",
+        "mcp_tool",
     }
 )
 

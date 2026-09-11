@@ -1301,6 +1301,23 @@ async def publish_workflow(
     # matching requests — but the operator should know so they can
     # disambiguate if needed.
     _colliding_paths: list[str] = []
+    # Batch-load every other active workflow's published graph ONCE. The
+    # previous implementation fetched a single arbitrary workflow per path
+    # (``.limit(1)`` without a path filter) and checked only that one, so a
+    # collision was missed whenever any other active workflow existed.
+    _other_published_graphs = (
+        await session.execute(
+            select(Workflow.id, WorkflowVersion.graph)
+            .join(WorkflowVersion, WorkflowVersion.workflow_id == Workflow.id)
+            .where(
+                Workflow.id != workflow.id,
+                Workflow.active.is_(True),
+                # Latest version only — see _latest_versions_by_id pattern.
+                WorkflowVersion.version == Workflow.published_version,
+                WorkflowVersion.graph != None,  # noqa: E711
+            )
+        )
+    ).all()
     _seen_in_graph: set[str] = set()
     for node in graph.get("nodes", []):
         node_type = node.get("type")
@@ -1314,46 +1331,23 @@ async def publish_workflow(
         if not p or p in _seen_in_graph:
             continue
         _seen_in_graph.add(p)
-        # Look for any other *active* workflow whose latest version has
-        # a matching trigger path.
-        clash = await session.scalar(
-            select(Workflow.id)
-            .join(WorkflowVersion, WorkflowVersion.workflow_id == Workflow.id)
-            .where(
-                Workflow.id != workflow.id,
-                Workflow.active.is_(True),
-                # Latest version only — see _latest_versions_by_id pattern.
-                WorkflowVersion.version == Workflow.published_version,
-                WorkflowVersion.graph != None,  # noqa: E711
-            )
-            .limit(1)
-        )
-        if clash is not None:
-            # Verify the other workflow actually has a matching path.
-            clash_wf = await session.scalar(select(Workflow).where(Workflow.id == clash))
-            if clash_wf is not None:
-                clash_graph = clash_wf.draft_graph or (
-                    (
-                        await session.scalar(
-                            select(WorkflowVersion.graph).where(
-                                WorkflowVersion.workflow_id == clash_wf.id,
-                                WorkflowVersion.version == clash_wf.published_version,
-                            )
-                        )
-                    )
-                    or {}
-                )
-                for cn in clash_graph.get("nodes", []):
-                    cnp = cn.get("params") or {}
-                    if cn.get("type") == "webhook_trigger":
-                        cp = str(cnp.get("path") or "").strip("/")
-                    elif cn.get("type") == "api_endpoint":
-                        cp = str(cnp.get("base_path") or "").strip("/")
-                    else:
-                        continue
-                    if cp == p:
-                        _colliding_paths.append(p)
-                        break
+        for _other_wf_id, other_version_graph in _other_published_graphs:
+            other_graph = other_version_graph or {}
+            matched = False
+            for cn in other_graph.get("nodes", []):
+                cnp = cn.get("params") or {}
+                if cn.get("type") == "webhook_trigger":
+                    cp = str(cnp.get("path") or "").strip("/")
+                elif cn.get("type") == "api_endpoint":
+                    cp = str(cnp.get("base_path") or "").strip("/")
+                else:
+                    continue
+                if cp == p:
+                    matched = True
+                    break
+            if matched:
+                _colliding_paths.append(p)
+                break
     if _colliding_paths:
         logger.warning(
             "webhook path collision detected — workflow %s (%s) shares paths %s "
