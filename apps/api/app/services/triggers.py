@@ -367,6 +367,16 @@ def _webhook_hmac_passes(
 
     GitHub/Stripe/Slack style: ``<prefix><hexdigest>`` in a configurable header,
     computed with a shared secret. Off unless ``hmac_verification == "on"``.
+
+    When ``hmac_timestamp_header`` is set the timestamp is checked for freshness
+    *and* folded into the signed content, because freshness alone provides no
+    replay protection: the timestamp header is attacker-controlled, so a signer
+    that covers the body only lets a captured signature be replayed under any
+    fresh timestamp the attacker stamps on it — the window never binds to the
+    signature. This also matches how Stripe (``{ts}.{body}``) and Slack
+    (``v0:{ts}:{body}``) actually sign, so their webhooks verify here. The
+    signed layout follows ``hmac_signed_payload`` (default Stripe's
+    ``{ts}.{body}``); ``{ts}`` is the raw header value, ``{body}`` the raw bytes.
     """
     import hashlib
     import hmac
@@ -375,6 +385,7 @@ def _webhook_hmac_passes(
         return True
     lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
     ts_header = str(node_params.get("hmac_timestamp_header") or "").lower()
+    raw_ts = ""
     if ts_header:
         import time as _time
 
@@ -400,7 +411,19 @@ def _webhook_hmac_passes(
     provided = lower_headers.get(header_name, "")
     if prefix and provided.startswith(prefix):
         provided = provided[len(prefix) :]
-    expected = hmac.new(secret.encode(), raw_body or b"", digestmod).hexdigest()
+    body = raw_body or b""
+    if ts_header:
+        # Interleave the raw timestamp and the raw body bytes per the template,
+        # so the signature is bound to the timestamp the freshness window
+        # accepted. Split on {body} to keep the body as exact bytes.
+        template = str(node_params.get("hmac_signed_payload") or "{ts}.{body}")
+        left, sep, right = template.partition("{body}")
+        signed = left.replace("{ts}", raw_ts).encode() + body
+        if sep:
+            signed += right.replace("{ts}", raw_ts).encode()
+    else:
+        signed = body
+    expected = hmac.new(secret.encode(), signed, digestmod).hexdigest()
     return hmac.compare_digest(provided.strip(), expected)
 
 

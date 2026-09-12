@@ -978,6 +978,13 @@ def test_hmac_rejects_stale_timestamp() -> None:
     )
 
 
+def _stripe_signed_headers(body: bytes, secret: str, ts: str) -> dict[str, str]:
+    """Sign ``{ts}.{body}`` — Stripe's layout, the default when a timestamp
+    header is configured."""
+    sig = hmac.new(secret.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+    return {"x-signature": sig, "x-timestamp": ts}
+
+
 def test_hmac_accepts_fresh_timestamp() -> None:
     import time
 
@@ -989,10 +996,87 @@ def test_hmac_accepts_fresh_timestamp() -> None:
         "hmac_timestamp_header": "X-Timestamp",
         "hmac_max_age_seconds": 300,
     }
-    headers = _signed_headers(body, secret)
-    headers["x-timestamp"] = str(int(time.time()))
+    headers = _stripe_signed_headers(body, secret, str(int(time.time())))
     assert (
         triggers._webhook_hmac_passes(node_params, {"hmac_secret": secret}, headers, body) is True
+    )
+
+
+def test_hmac_timestamp_is_bound_to_the_signature() -> None:
+    """When a timestamp header is configured, the signature must cover it.
+
+    Otherwise the freshness window is inert: the timestamp header is
+    attacker-controlled, so a signature over the body alone replays under any
+    fresh timestamp. Regression for that — a captured signature must not
+    validate once presented with a different timestamp, and a body-only
+    signature must be rejected outright when a timestamp header is in play.
+    """
+    import time
+
+    body = b'{"order": 42}'
+    secret = "whsec_test"
+    node_params = {
+        "hmac_verification": "on",
+        "hmac_header": "X-Signature",
+        "hmac_timestamp_header": "X-Timestamp",
+        "hmac_max_age_seconds": 300,
+    }
+    resolved = {"hmac_secret": secret}
+    now = int(time.time())
+
+    # A signature bound to ts=now validates only with that timestamp...
+    headers = _stripe_signed_headers(body, secret, str(now))
+    assert triggers._webhook_hmac_passes(node_params, resolved, headers, body) is True
+
+    # ...and not when the same signature is replayed under a different, still
+    # fresh timestamp (the attacker cannot forge a signature for a new ts).
+    replayed = dict(headers, **{"x-timestamp": str(now - 100)})
+    assert triggers._webhook_hmac_passes(node_params, resolved, replayed, body) is False
+
+    # A body-only signature (the old forgeable form) is rejected outright.
+    body_only = {
+        "x-signature": hmac.new(secret.encode(), body, hashlib.sha256).hexdigest(),
+        "x-timestamp": str(now),
+    }
+    assert triggers._webhook_hmac_passes(node_params, resolved, body_only, body) is False
+
+
+def test_hmac_supports_slack_v0_signed_payload() -> None:
+    import time
+
+    body = b"token=abc&team_id=T1"
+    secret = "whsec_test"
+    ts = str(int(time.time()))
+    node_params = {
+        "hmac_verification": "on",
+        "hmac_header": "X-Slack-Signature",
+        "hmac_prefix": "v0=",
+        "hmac_timestamp_header": "X-Slack-Request-Timestamp",
+        "hmac_max_age_seconds": 300,
+        "hmac_signed_payload": "v0:{ts}:{body}",
+    }
+    sig = hmac.new(secret.encode(), f"v0:{ts}:".encode() + body, hashlib.sha256).hexdigest()
+    headers = {"x-slack-signature": "v0=" + sig, "x-slack-request-timestamp": ts}
+    assert (
+        triggers._webhook_hmac_passes(node_params, {"hmac_secret": secret}, headers, body) is True
+    )
+
+
+def test_hmac_without_timestamp_header_stays_body_only() -> None:
+    """GitHub-style (no timestamp) is unchanged: HMAC over the raw body."""
+    body = b'{"order": 42}'
+    secret = "whsec_test"
+    node_params = {
+        "hmac_verification": "on",
+        "hmac_header": "X-Signature",
+        "hmac_prefix": "sha256=",
+    }
+    sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    assert (
+        triggers._webhook_hmac_passes(
+            node_params, {"hmac_secret": secret}, {"x-signature": sig}, body
+        )
+        is True
     )
 
 
