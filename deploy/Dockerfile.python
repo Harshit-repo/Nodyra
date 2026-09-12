@@ -49,8 +49,10 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.30 /uv /bin/uv
 ARG NODYRA_UID=10001
 ARG NODYRA_GID=10001
 
+# Refresh PCRE2 from Debian security updates even when the Python base image
+# has not been rebuilt yet (the base's 10.42-1 predates the security fixes).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu \
+    && apt-get install -y --no-install-recommends gosu libpcre2-8-0 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid "${NODYRA_GID}" nodyra \
     && useradd --create-home --uid "${NODYRA_UID}" --gid "${NODYRA_GID}" nodyra
