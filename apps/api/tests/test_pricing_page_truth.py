@@ -255,7 +255,9 @@ def test_no_placeholder_survives_into_the_marketing_pages():
 # silently passes. Both places a tier is asserted are matched explicitly
 # instead.
 
-PAGES = sorted(PAGE.parent.glob("*.html"))
+# These landing pages advertise pricing tiers. The adjacent docs.html is a
+# deployment guide, so requiring pricing cards there would test the wrong surface.
+PAGES = [PAGE.parent / name for name in ("index.html", "nodyra.html")]
 
 #: A badge pinned to a feature card, e.g. ``<span class="tag pro">Pro</span>``
 #: or ``<span class="pro-badge">Pro</span>``. Whatever follows it, up to the
