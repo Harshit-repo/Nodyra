@@ -7,4 +7,4 @@ not into the agent process itself, so the agent stays small and its own
 dependency surface (httpx + websockets) never collides with workflow code.
 """
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
