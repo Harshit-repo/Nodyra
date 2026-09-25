@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2 - 2026-09-25
+
+- Fix release publishing by pinning the Cosign installer to its verified
+  v4.1.2 commit. The v1.0.1 tag did not produce a published distribution.
+- Include all self-hosted improvements listed under 1.0.1 below.
+
 ## 1.0.1 - 2026-09-25
 
 - Self-hosted installation with persistent local artifacts and documented HTTPS setup.

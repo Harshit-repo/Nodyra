@@ -1,4 +1,4 @@
-# Rollback notes for 1.0.1
+# Rollback notes for 1.0.2
 
 Follow `docs/operations/upgrade-rollback.md`. Drain new work, preserve the
 database and artifact store together, and roll application images back only
