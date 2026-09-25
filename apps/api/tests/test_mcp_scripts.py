@@ -152,3 +152,64 @@ def test_smoke_does_not_publish_a_failed_run(monkeypatch):
     with pytest.raises(SystemExit, match="did not finish successfully"):
         smoke.main()
     assert "publish_workflow" not in calls
+
+
+def _load_ci_smoke():
+    path = Path(__file__).resolve().parents[3] / "scripts" / "ci_mcp_approval_smoke.py"
+    spec = importlib.util.spec_from_file_location("ci_mcp_approval_smoke", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("url", [
+    "https://nodyra.example", "http://localhost.example", "file:///tmp/fixture",
+    "http://user:password@localhost:8000", "http://localhost:8000/production",
+    "http://127.0.0.1:8000?token=secret", "http://127.0.0.1:8000#fragment",
+])
+def test_ci_approval_fixture_rejects_non_disposable_targets(monkeypatch, url):
+    smoke = _load_ci_smoke()
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("NODYRA_CI_DISPOSABLE_INSTANCE", "1")
+    with pytest.raises(RuntimeError, match="disposable"):
+        smoke.require_disposable_ci(url)
+
+
+@pytest.mark.parametrize("missing", ["GITHUB_ACTIONS", "NODYRA_CI_DISPOSABLE_INSTANCE"])
+def test_ci_approval_fixture_requires_both_explicit_guards(monkeypatch, missing):
+    smoke = _load_ci_smoke()
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("NODYRA_CI_DISPOSABLE_INSTANCE", "1")
+    monkeypatch.delenv(missing)
+    with pytest.raises(RuntimeError, match="disposable"):
+        smoke.require_disposable_ci("http://127.0.0.1:8000")
+
+
+async def test_ci_approval_smoke_runs_real_request_review_and_replay_protocol(client, monkeypatch):
+    import httpx
+    from sqlalchemy import select
+
+    from app.config import settings
+    from app.main import app
+    from app.models import ApiToken, MCPCommandApproval, Run, Workflow
+    from app.services import runner
+
+    smoke = _load_ci_smoke()
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("NODYRA_CI_DISPOSABLE_INSTANCE", "1")
+    monkeypatch.setattr(settings, "session_cookie_secure", False)
+    evidence = await smoke.run("http://localhost", transport=httpx.ASGITransport(app=app))
+    assert evidence["status"] == "success"
+    assert evidence["reviewed_actions"] == [
+        "create_workflow", "set_workflow_graph", "run_workflow", "publish_workflow",
+    ]
+    async with runner.SessionLocal() as session:
+        tokens = (await session.scalars(select(ApiToken))).all()
+        assert len(tokens) == 1 and tokens[0].revoked_at is not None
+        approvals = (await session.scalars(select(MCPCommandApproval))).all()
+        assert len(approvals) == 4
+        assert all(approval.status == "consumed" for approval in approvals)
+        # Replay failures must not hide a duplicate create or run effect.
+        assert len((await session.scalars(select(Workflow))).all()) == 1
+        assert len((await session.scalars(select(Run))).all()) == 1

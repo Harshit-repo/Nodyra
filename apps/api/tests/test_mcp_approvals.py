@@ -11,11 +11,13 @@ from app.config import settings
 from app.mcp import tools as mcp_tools
 from app.models import (
     ApiToken,
+    AuditEvent,
     CustomRole,
     MCPCommandApproval,
     MCPGatewayInvocation,
     Membership,
     Run,
+    RunApproval,
     User,
     Workflow,
 )
@@ -316,21 +318,23 @@ async def test_approval_records_follow_audit_retention(client, monkeypatch):
 
 
 async def test_run_approval_target_is_distinct_from_command_grant(client, monkeypatch):
-    from types import SimpleNamespace
-
     workflow_id = (await client.post("/workflows", json={"name": "Paused agent"})).json()["id"]
     async with mcp_tools.SessionLocal() as session:
         run = Run(workflow_id=workflow_id, status="waiting")
         session.add(run)
+        await session.flush()
+        session.add(RunApproval(
+            id="underlying-run-approval", run_id=run.id, approval_key="agent|0|call|tool",
+            tool_call_id="call", tool_name="tool", status="pending",
+        ))
         await session.commit()
     observed = []
 
-    async def decide(run_id, run_approval_id, request, session):
-        observed.append((run_id, run_approval_id, request.decision))
-        return SimpleNamespace(model_dump=lambda **kwargs: {"status": "approved"})
+    async def resume(run_id, run_approval_id, *, approve_all):
+        observed.append((run_id, run_approval_id, approve_all))
 
-    monkeypatch.setattr("app.routers.runs.decide_run_approval", decide)
-    approval, body, pat, browser, _ = await request_approval(
+    monkeypatch.setattr("app.routers.runs.resume_waiting_run_from_approval", resume)
+    approval, body, pat, browser, actor_id = await request_approval(
         client,
         "resolve_run_approval",
         {
@@ -344,7 +348,15 @@ async def test_run_approval_target_is_distinct_from_command_grant(client, monkey
     body["params"]["arguments"]["approval_id"] = approval["approval_id"]
     response = await client.post("/mcp", json=body, headers={"Authorization": f"Bearer {pat}"})
     assert response.json()["result"]["isError"] is False, response.text
-    assert observed == [(run.id, "underlying-run-approval", "approve")]
+    assert observed == [(run.id, "underlying-run-approval", False)]
+    assert payload(response)["id"] == "underlying-run-approval"
+    assert payload(response)["status"] == "approved"
+    async with mcp_tools.SessionLocal() as session:
+        audit = await session.scalar(select(AuditEvent).where(
+            AuditEvent.action == "approval_decision", AuditEvent.target_id == run.id,
+        ))
+        assert audit is not None
+        assert audit.actor_id == actor_id
 
 
 def test_approval_digests_are_keyed_and_normalized(monkeypatch):

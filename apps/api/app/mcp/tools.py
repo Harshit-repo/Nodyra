@@ -43,7 +43,7 @@ from app.models import (
     WorkflowVersion,
 )
 from app.routers.workflows import STRUCTURAL_NODE_TYPES
-from app.services.audit import log_audit
+from app.services.audit import AuditRecorder, log_audit
 from app.services.data_ref import resolve_ref
 from app.services.environment_builds import (
     enqueue_environment_build,
@@ -3078,7 +3078,7 @@ async def _list_run_approvals(session: AsyncSession, user: User | None, args: di
 async def _resolve_run_approval(session: AsyncSession, user: User | None, args: dict) -> Any:
     _require_explicit_mcp_approval(args, "resolve_run_approval", "resolve a pending human approval")
     from app.routers.runs import decide_run_approval
-    from app.schemas import RunApprovalDecisionRequest
+    from app.schemas import RunApprovalDecisionRequest, RunApprovalInfo
 
     run_id = str(args.get("run_id") or "").strip()
     approval_id = str(args.get("run_approval_id") or "").strip()
@@ -3094,8 +3094,9 @@ async def _resolve_run_approval(session: AsyncSession, user: User | None, args: 
             resolved_by=user.email if user else "mcp",
         ),
         session,
+        audit=AuditRecorder(session, user),
     )
-    return result.model_dump(mode="json")
+    return RunApprovalInfo.model_validate(result).model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------

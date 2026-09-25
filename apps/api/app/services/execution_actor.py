@@ -7,6 +7,7 @@ calls resolve the initiator from the durable Run row instead.
 import hashlib
 import hmac
 import json
+from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -26,6 +27,14 @@ class ExecutionActor:
 SYSTEM_ACTOR = ExecutionActor()
 current_execution_actor: ContextVar[ExecutionActor] = ContextVar(
     "current_execution_actor", default=SYSTEM_ACTOR
+)
+
+# Trusted ingress may bind an authorization check to the transaction that
+# creates a run. Consume it before execution so child workflows cannot inherit
+# the parent's one-use command approval.
+RunAdmissionGuard = Callable[[AsyncSession, str], Awaitable[None]]
+current_run_admission_guard: ContextVar[RunAdmissionGuard | None] = ContextVar(
+    "current_run_admission_guard", default=None
 )
 
 
@@ -139,8 +148,10 @@ class ExecutionActorMiddleware:
             return
         token = current_execution_actor.set(ExecutionActor(kind="anonymous"))
         attempt_token = current_execution_attempt.set(None)
+        admission_token = current_run_admission_guard.set(None)
         try:
             await self.app(scope, receive, send)
         finally:
+            current_run_admission_guard.reset(admission_token)
             current_execution_attempt.reset(attempt_token)
             current_execution_actor.reset(token)

@@ -36,6 +36,9 @@ GUARD_DEPENDENCIES = GUARD_FACTORIES | {
     "current_user",
     "optional_current_user",
     "audit_recorder",
+    # MCP approvals require a session cookie, then _load checks the stored
+    # action permission and exact actor/org. Bearer tokens cannot review.
+    "browser_reviewer",
 }
 
 # Routes that are unauthenticated by design, each with the mechanism that

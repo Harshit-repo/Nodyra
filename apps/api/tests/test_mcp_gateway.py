@@ -203,7 +203,10 @@ async def test_tool_error_is_distinct_from_uncertain_transport_failure(setup):
     peer.override = timeout
     result = await call(client, cid)
     assert result["isError"]
-    assert (await events(client, cid))[0]["outcome"] == "outcome_unknown"
+    # SQLite's server timestamp has second precision: two calls may tie.
+    # Correlate the evidence by ID rather than assuming UUID sort order.
+    observed = {row["id"]: row for row in await events(client, cid)}
+    assert observed[result["_meta"]["io.nodyra/correlationId"]]["outcome"] == "outcome_unknown"
     assert peer.calls == 2  # Exactly one attempt per request, no write retry.
     assert "private" not in str(await events(client, cid))
 

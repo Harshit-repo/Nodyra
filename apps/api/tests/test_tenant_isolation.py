@@ -7,6 +7,8 @@ import json
 from httpx import AsyncClient
 
 from app.config import settings
+from app.mcp.tools import get_tool
+from tests.mcp_approval_helpers import review
 
 
 def _rpc(method: str, params: dict | None = None, req_id: int = 1) -> dict:
@@ -29,6 +31,41 @@ async def _mcp_tool(
     )
     assert response.status_code == 200, response.text
     return response.json()["result"]
+
+
+async def _approved_mcp_tool(
+    client: AsyncClient,
+    browser_headers: dict[str, str],
+    name: str,
+    arguments: dict,
+) -> dict:
+    descriptor = get_tool(name)
+    assert descriptor is not None and descriptor.requires_approval
+    token_response = await client.post(
+        "/auth/api-tokens",
+        headers=browser_headers,
+        json={"name": "tenant-reviewed-mutation", "scopes": [descriptor.permission], "expires_in_days": 1},
+    )
+    assert token_response.status_code == 201, token_response.text
+    assert token_response.json()["org_id"] == browser_headers["X-Org-Id"]
+    automation_headers = {
+        **browser_headers,
+        "Authorization": f"Bearer {token_response.json()['token']}",
+    }
+    pending_result = await _mcp_tool(client, automation_headers, name, arguments)
+    assert pending_result["isError"] is True
+    pending = json.loads(pending_result["content"][0]["text"])
+    assert pending["error"] == "human_approval_required"
+    decision = await review(
+        client,
+        pending["approval_id"],
+        browser_headers["Authorization"].removeprefix("Bearer "),
+        org_id=browser_headers["X-Org-Id"],
+    )
+    assert decision.status_code == 200, decision.text
+    return await _mcp_tool(
+        client, automation_headers, name, {**arguments, "approval_id": pending["approval_id"]},
+    )
 
 
 async def _create_org(client: AsyncClient, token: str, name: str, slug: str) -> str:
@@ -239,13 +276,13 @@ async def test_tenant_isolation_across_rest_and_mcp_surfaces(
     )
     assert own_credential.status_code == 200, own_credential.text
 
-    enabled_a = await _mcp_tool(
+    enabled_a = await _approved_mcp_tool(
         client,
         headers_a,
         "enable_mcp_tool",
         {"workflow_id": wf_a, "tool_name": "tenant_a_tool"},
     )
-    enabled_b = await _mcp_tool(
+    enabled_b = await _approved_mcp_tool(
         client,
         headers_b,
         "enable_mcp_tool",

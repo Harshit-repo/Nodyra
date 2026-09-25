@@ -64,6 +64,7 @@ from app.services.artifacts import (
 )
 from app.services.credentials import resolve_credential_refs
 from app.services.events import broker
+from app.services.execution_actor import RunAdmissionGuard, current_run_admission_guard
 from app.services.executors.base import RunExecutionContext
 from app.services.executors.local import LocalExecutor
 from app.services.executors.remote import RemoteExecutor
@@ -388,6 +389,8 @@ async def start_run(
                 )
         if _wf_org:
             org_token = current_org_id.set(_wf_org)
+    admission_guard = current_run_admission_guard.get()
+    admission_token = current_run_admission_guard.set(None)
     try:
         return await _start_run_impl(
             workflow_id,
@@ -408,8 +411,10 @@ async def start_run(
             runner_pool_id=runner_pool_id,
             execution_mode=execution_mode,
             required_labels=required_labels,
+            admission_guard=admission_guard,
         )
     finally:
+        current_run_admission_guard.reset(admission_token)
         if org_token is not None:
             current_org_id.reset(org_token)
 
@@ -451,6 +456,7 @@ async def _start_run_impl(
     runner_pool_id: str | None = None,
     execution_mode: str | None = None,
     required_labels: dict | None = None,
+    admission_guard: RunAdmissionGuard | None = None,
 ) -> str:
     """Create a run record and launch execution in the background.
 
@@ -527,6 +533,11 @@ async def _start_run_impl(
 
     inline_lease_token: str | None = None
     async with SessionLocal() as session:
+        if admission_guard is not None:
+            # Validate and lock the approved target in this admission
+            # transaction. A request-owned lock would block our FK insert or
+            # the single-flight lock below while the request waits for us.
+            await admission_guard(session, workflow_id)
         # Resolve runner pool with a clear precedence chain:
         #   1. Deployment override (most specific)
         #   2. Workflow default pool

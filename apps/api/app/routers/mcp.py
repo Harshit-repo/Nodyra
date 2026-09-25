@@ -61,12 +61,15 @@ from app.security import (
     current_user,
     require_permission,
 )
+from app.services.execution_actor import current_run_admission_guard
 from app.services.json_responses import NodyraJSONResponse
 from app.services.mcp_approvals import (
+    RUN_COMMANDS,
     ApprovalError,
     ApprovalRequired,
     approved_command,
     authorize_command,
+    run_admission_guard,
 )
 from app.services.rate_limit import allow as _rate_allow
 from app.tenancy import current_org_id
@@ -342,13 +345,25 @@ async def _dispatch_single(
                 # call path as well as advertised to clients.
                 validate_tool_arguments(tool.descriptor()["inputSchema"], arguments)
                 if tool.requires_approval:
-                    await authorize_command(session, user, request, tool_name=name,
-                                            permission=tool.permission, arguments=arguments,
-                                            input_schema=tool.descriptor()["inputSchema"])
+                    approval = await authorize_command(
+                        session, user, request, tool_name=name,
+                        permission=tool.permission, arguments=arguments,
+                        input_schema=tool.descriptor()["inputSchema"],
+                    )
                     token = approved_command.set(name)
+                    guard_token = current_run_admission_guard.set(
+                        run_admission_guard(approval, arguments) if name in RUN_COMMANDS else None
+                    )
                     try:
+                        if name in RUN_COMMANDS:
+                            # Runner owns its own admission transaction; it
+                            # rechecks the snapshot under its own row locks.
+                            # Keeping these locks while awaiting it deadlocks
+                            # PostgreSQL FK checks and single-flight admission.
+                            await session.close()
                         payload = await tool.handler(session, user, arguments)
                     finally:
+                        current_run_admission_guard.reset(guard_token)
                         approved_command.reset(token)
                 else:
                     payload = await tool.handler(session, user, arguments)

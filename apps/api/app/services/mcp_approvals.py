@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models import Deployment, Environment, MCPCommandApproval, Run, User, Workflow
 from app.services.audit import log_audit
+from app.services.execution_actor import RunAdmissionGuard
 from app.services.redaction import load_secret_values_for_org, redact_value
 from app.tenancy import DEFAULT_ORG_ID, active_org_id
 from nodyra import __version__ as NODYRA_VERSION
@@ -29,6 +30,7 @@ approved_command: ContextVar[str | None] = ContextVar("approved_mcp_command", de
 APPROVAL_TTL = timedelta(minutes=15)
 MAX_ARGUMENT_BYTES = 1_000_000
 MAX_PENDING_APPROVALS = 25
+RUN_COMMANDS = frozenset({"run_workflow", "retry_run"})
 
 
 class ApprovalError(ValueError):
@@ -130,7 +132,7 @@ async def target_snapshot(session: AsyncSession, arguments: dict, *, lock: bool 
             continue
         stmt = select(model).where(model.id == str(value)).execution_options(populate_existing=True)
         if lock:
-            stmt = stmt.with_for_update()
+            stmt = stmt.with_for_update(key_share=True)
         row = await session.scalar(stmt)
         if row is None:
             raise ApprovalError(f"{field.removesuffix('_id').title()} not found: {value}")
@@ -147,7 +149,9 @@ async def target_snapshot(session: AsyncSession, arguments: dict, *, lock: bool 
             .execution_options(populate_existing=True)
         )
         if lock:
-            stmt = stmt.with_for_update()
+            # FOR NO KEY UPDATE excludes configuration edits while allowing
+            # other transactions to reference this row via a foreign key.
+            stmt = stmt.with_for_update(key_share=True)
         workflow = await session.scalar(stmt)
         if workflow is None:
             raise ApprovalError(f"Workflow not found: {workflow_id}")
@@ -307,6 +311,32 @@ async def authorize_command(
             "The workflow or target changed before execution. Request a new review."
         )
     return approval
+
+
+def run_admission_guard(approval: MCPCommandApproval, arguments: dict) -> RunAdmissionGuard:
+    """Carry exact approval binding across the request-to-runner boundary."""
+    expected = dict(approval.target_snapshot)
+    expected.pop("tool_contract_digest", None)
+    target_arguments = {
+        key: value for key, value in arguments.items()
+        if key in {"workflow_id", "run_id", "schedule_id", "environment_id"}
+    }
+    used = False
+
+    async def guard(session: AsyncSession, workflow_id: str) -> None:
+        nonlocal used
+        if used:
+            raise ApprovalError("Run admission approval has already been used.")
+        used = True
+        if workflow_id != expected.get("workflow_id"):
+            raise ApprovalError("Approval does not match the workflow being admitted.")
+        current = await target_snapshot(session, target_arguments, lock=True)
+        if current != expected:
+            raise ApprovalError(
+                "The workflow or target changed before run admission. Request a new review."
+            )
+
+    return guard
 
 
 def approval_payload(approval: MCPCommandApproval) -> dict:
