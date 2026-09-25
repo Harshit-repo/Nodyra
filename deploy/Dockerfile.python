@@ -8,7 +8,7 @@
 # ── Stage 1: dependency installer ─────────────────────────────────────────────
 # Chainguard Python 3.14.7 dev, pinned after vulnerability verification. Keep
 # glibc support for manylinux workflow dependencies (including data packages).
-FROM cgr.dev/chainguard/python:latest-dev@sha256:e55c66e1405ff03cf60c56c8c11bba46a272796ace158cd913dad5998caaf58a AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:5f6f93d032512513505fde2128398a057fbef2e7da98e818cd8d887a6a744114 AS builder
 
 USER root
 
@@ -46,7 +46,7 @@ RUN for pkg in apps/api packages/client packages/core packages/nodes packages/ex
 RUN uv sync --locked --no-dev --all-packages
 
 # ── Stage 2: production image ──────────────────────────────────────────────────
-FROM cgr.dev/chainguard/python:latest-dev@sha256:e55c66e1405ff03cf60c56c8c11bba46a272796ace158cd913dad5998caaf58a
+FROM cgr.dev/chainguard/python:latest-dev@sha256:5f6f93d032512513505fde2128398a057fbef2e7da98e818cd8d887a6a744114
 
 USER root
 
