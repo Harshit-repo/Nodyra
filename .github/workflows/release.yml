@@ -52,7 +52,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v8.3.2
         with:
-          python-version: "3.12"
+          # Match the production container interpreter; CI also covers 3.12.
+          python-version: "3.14"
       - uses: actions/setup-node@v7
         with:
           node-version: "20"

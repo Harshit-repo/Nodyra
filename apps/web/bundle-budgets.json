@@ -4,6 +4,6 @@
   "routeChunkGzipBytes": 110000,
   "iconChunkGzipBytes": 125000,
   "plotlyChunkGzipBytes": 450000,
-  "monacoChunkGzipBytes": 650000,
-  "totalGzipBytes": 1800000
+  "monacoChunkGzipBytes": 1000000,
+  "totalGzipBytes": 2100000
 }

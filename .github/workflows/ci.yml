@@ -327,6 +327,25 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
+      # Match the release gate before tagging, including unfixed findings and
+      # interpreter/binary packages that the complementary Trivy scan may miss.
+      - name: Release-grade API vulnerability gate
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: nodyra-api:ci
+          fail-build: true
+          severity-cutoff: high
+          output-format: json
+          output-file: vulnerability-api-ci.json
+      - name: Release-grade web vulnerability gate
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: nodyra-web:ci
+          fail-build: true
+          severity-cutoff: high
+          output-format: json
+          output-file: vulnerability-web-ci.json
+
   deploy-config:
     runs-on: ubuntu-latest
     steps:
@@ -681,8 +700,12 @@ jobs:
         working-directory: apps/web
       - run: npx playwright install --with-deps chromium
         working-directory: apps/web
+      - run: npm run build
+        working-directory: apps/web
       - run: npm run test:e2e
         working-directory: apps/web
+        env:
+          E2E_PRODUCTION: "1"
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

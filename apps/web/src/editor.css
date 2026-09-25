@@ -6531,9 +6531,11 @@ body.is-resizing {
 .node-code-save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* Inline editor with an expand-to-modal affordance. */
-.node-code-editor-wrap { position: relative; }
+.node-code-editor-wrap { position: relative; isolation: isolate; }
 .node-code-expand {
   position: absolute;
+  /* Stay above the highlighted textarea's input and line-number layers. */
+  z-index: 4;
   top: 6px;
   right: 6px;
   width: 24px;

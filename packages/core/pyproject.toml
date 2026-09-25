@@ -1,6 +1,6 @@
 [project]
 name = "nodyra-core"
-version = "1.0.2"
+version = "1.0.3"
 description = "Nodyra execution engine, node SDK, and shared models"
 requires-python = ">=3.12"
 dependencies = ["pydantic>=2.6,<3.0.0", "jsonschema>=4.23,<5.0.0"]

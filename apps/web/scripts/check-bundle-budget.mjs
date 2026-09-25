@@ -25,6 +25,14 @@ function budgetFor(name) {
 }
 
 const failures = [];
+// These runtimes are intentionally on demand. Checking their individual size
+// alone misses shared-helper changes that pull them into the initial page.
+const entryHtml = await readFile(join(root, "dist", "index.html"), "utf8");
+for (const runtime of ["monaco", "plotly"]) {
+  if (new RegExp(`<[^>]+(?:src|href)=["'][^"']*vendor-${runtime}-`).test(entryHtml)) {
+    failures.push(`${runtime}: lazy runtime is included in the initial HTML`);
+  }
+}
 for (const asset of assets) {
   const [budgetName, budgetBytes] = budgetFor(asset.name);
   asset.budget = budgetName;

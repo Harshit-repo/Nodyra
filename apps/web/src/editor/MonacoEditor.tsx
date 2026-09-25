@@ -3,14 +3,14 @@ import { Suspense, lazy, useEffect, useRef, useState } from "react";
 /**
  * Lazy-loaded Monaco code editor for Python nodes.
  *
- * Monaco is ~5 MB gzipped — we only load it when a code node is actually opened
- * for editing. The Suspense fallback shows a styled textarea so the user isn't
+ * The bundled runtime only loads when a code node is opened for editing.
+ * The Suspense fallback shows a styled textarea so the user isn't
  * staring at a blank panel while the editor loads.
  */
 
 // ── lazy load ──────────────────────────────────────────────────────────────
 
-const MonacoReact = lazy(() => import("@monaco-editor/react"));
+const MonacoReact = lazy(() => import("./MonacoRuntime"));
 
 // ── skeleton / fallback ────────────────────────────────────────────────────
 
@@ -211,6 +211,11 @@ export function MonacoEditor({
           onChange={(v) => onChange?.(v ?? "")}
           onMount={handleMount}
           options={{
+            ariaLabel: label,
+            // Use Monaco's stable textarea input. Its experimental EditContext
+            // div is not recognized as a text field by canvas keyboard shortcuts,
+            // which otherwise consume spaces and letters while editing code.
+            editContext: false,
             readOnly,
             minimap: { enabled: false },
             lineNumbers: "on",
@@ -242,7 +247,6 @@ export function MonacoEditor({
             ...(placeholder ? { placeholder } : {}),
           }}
           loading={<CodeEditorSkeleton value={value} />}
-          aria-label={label}
         />
       </div>
     </Suspense>

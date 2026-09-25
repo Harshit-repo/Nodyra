@@ -1,6 +1,6 @@
 [project]
 name = "nodyra-exporter"
-version = "1.0.2"
+version = "1.0.3"
 description = "Nodyra workflow exporter: .py codegen and Docker image packaging"
 requires-python = ">=3.12"
 dependencies = ["nodyra-core"]

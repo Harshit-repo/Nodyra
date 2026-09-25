@@ -4324,6 +4324,7 @@ export function NodeCodePanel({
               type="button"
               className="node-code-expand"
               title="Open full editor with input data"
+              aria-label="Open full editor with input data"
               onClick={() => setExpanded(true)}
             >
               ✎

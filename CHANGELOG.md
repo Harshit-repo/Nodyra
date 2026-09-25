@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.3 - 2026-09-25
+
+- Move API and worker images to a digest-pinned, patched Python 3.14.7 base
+  with glibc compatibility and an updated gosu privilege-switching runtime.
+- Apply the release's full high/critical vulnerability gate in CI before tagging.
+- Use a patched, digest-pinned nginx image with non-root startup and support for
+  the chart's read-only filesystem and writable configuration/cache volumes.
+- Bundle the Python editor and worker locally so the production security policy
+  and deployments without access to public script CDNs can load them.
+- Fix full-editor button clicks, page-error recovery, and invalid public-chat URLs.
+- Add production browser coverage for the Python editor and lazy loading.
+- The v1.0.2 tag passed functional certification but did not publish a release
+  because its base image failed the stricter release vulnerability scan.
+
 ## 1.0.2 - 2026-09-25
 
 - Fix release publishing by pinning the Cosign installer to its verified

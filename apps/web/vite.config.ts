@@ -5,6 +5,9 @@ const apiTarget = process.env.VITE_API_PROXY ?? "http://localhost:8000";
 
 function manualChunks(id: string): string | undefined {
   const normalized = id.replaceAll("\\", "/");
+  // This helper is shared by eager routes and lazy imports. If it is folded
+  // into Monaco, the router imports the whole editor during initial startup.
+  if (normalized === "\0vite/preload-helper.js") return "preload-helper";
   if (!normalized.includes("/node_modules/")) return undefined;
   if (
     normalized.includes("/node_modules/react/") ||

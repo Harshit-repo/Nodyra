@@ -13,6 +13,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // dispatch worker) instead of booting servers here. The external stack must
 // start from a fresh DB for the first-user setup test to pass.
 const externalBaseURL = process.env.E2E_EXTERNAL_BASE_URL;
+const productionBuild = process.env.E2E_PRODUCTION === "1";
 
 export default defineConfig({
   testDir: ".",
@@ -34,7 +35,9 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: "npm run dev -- --port 5191 --strictPort",
+      command: productionBuild
+        ? "npm run preview -- --port 5191 --strictPort"
+        : "npm run dev -- --port 5191 --strictPort",
       cwd: path.resolve(here, ".."),
       url: "http://localhost:5191",
       reuseExistingServer: false,
