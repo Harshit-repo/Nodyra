@@ -9,7 +9,7 @@ RUN npm run build
 # Stage 2: Serve the static bundle with nginx
 FROM nginx:1.30.4-alpine3.24 AS production
 # The nginx image can lag Alpine security updates between image rebuilds.
-RUN apk add --no-cache 'libuuid>=2.42.3-r1'
+RUN apk add --no-cache 'libuuid>=2.42.3-r1' 'libexpat>=2.8.5-r0'
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY --chmod=755 15-nodyra-dns.envsh /docker-entrypoint.d/15-nodyra-dns.envsh
