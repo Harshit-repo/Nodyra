@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { useState } from "react";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PageErrorBoundary } from "./PageErrorBoundary";
@@ -85,5 +86,39 @@ describe("PageErrorBoundary", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(screen.getByText("recovered")).toBeTruthy();
     expect(screen.queryByText("This page ran into a problem")).toBeNull();
+  });
+
+  it("recovers when navigating from a failed sibling route", () => {
+    render(
+      <MemoryRouter initialEntries={["/broken"]}>
+        <Link to="/settings">Settings</Link>
+        <Routes>
+          <Route path="/broken" element={<PageErrorBoundary><Boom /></PageErrorBoundary>} />
+          <Route path="/" element={<PageErrorBoundary><h1>Workflows</h1></PageErrorBoundary>} />
+          <Route path="/settings" element={<PageErrorBoundary><h1>Settings</h1></PageErrorBoundary>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Back to workflows" }));
+    expect(screen.getByRole("heading", { name: "Workflows" })).toBeVisible();
+    fireEvent.click(screen.getByRole("link", { name: "Settings" }));
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("preserves healthy form state when query navigation changes", () => {
+    function Form() {
+      const [name, setName] = useState("");
+      return <input aria-label="Name" value={name} onChange={(event) => setName(event.target.value)} />;
+    }
+    render(
+      <MemoryRouter>
+        <Link to="/?tab=advanced">Advanced</Link>
+        <PageErrorBoundary><Form /></PageErrorBoundary>
+      </MemoryRouter>,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Unsaved draft" } });
+    fireEvent.click(screen.getByRole("link", { name: "Advanced" }));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Unsaved draft");
   });
 });

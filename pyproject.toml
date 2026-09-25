@@ -1,6 +1,6 @@
 [project]
 name = "nodyra"
-version = "1.0.2"
+version = "1.0.3"
 description = "Self-hostable, Python-native workflow automation platform where node logic is pure Python"
 requires-python = ">=3.12"
 dependencies = []

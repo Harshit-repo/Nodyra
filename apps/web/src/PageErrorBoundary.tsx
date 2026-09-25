@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Plugs } from "@phosphor-icons/react";
 
 interface Props {
@@ -10,7 +10,11 @@ interface State {
   error: Error | null;
 }
 
-export class PageErrorBoundary extends Component<Props, State> {
+interface BoundaryProps extends Props {
+  resetKey: string;
+}
+
+class PageErrorBoundaryContent extends Component<BoundaryProps, State> {
   state: State = { error: null };
 
   static getDerivedStateFromError(error: Error): State {
@@ -19,6 +23,12 @@ export class PageErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error("Page error:", error, info.componentStack);
+  }
+
+  componentDidUpdate(previous: BoundaryProps): void {
+    if (previous.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
   }
 
   render(): ReactNode {
@@ -47,4 +57,15 @@ export class PageErrorBoundary extends Component<Props, State> {
       </div>
     );
   }
+}
+
+// Sibling routes reuse the same boundary component. Reset it on navigation so
+// both the sidebar and "Back to workflows" can recover from a page failure.
+export function PageErrorBoundary({ children }: Props) {
+  const location = useLocation();
+  return (
+    <PageErrorBoundaryContent resetKey={location.key}>
+      {children}
+    </PageErrorBoundaryContent>
+  );
 }

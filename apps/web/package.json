@@ -1,7 +1,7 @@
 {
   "name": "nodyra-web",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -22,6 +22,7 @@
     "dompurify": "^3.4.12",
     "lucide-react": "^1.18.0",
     "marked": "^18.0.5",
+    "monaco-editor": "^0.55.1",
     "plotly.js-basic-dist-min": "^2.35.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

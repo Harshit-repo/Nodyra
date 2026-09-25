@@ -28,12 +28,13 @@ configure_docker_socket_group() {
     gid="$(stat -c '%g' "$sock" 2>/dev/null || true)"
     [ -n "$gid" ] || return 0
 
-    if ! getent group "$gid" >/dev/null 2>&1; then
+    if ! python -c 'import grp, sys; grp.getgrgid(int(sys.argv[1]))' "$gid" >/dev/null 2>&1; then
         groupadd --gid "$gid" dockerhost >/dev/null 2>&1 || true
     fi
-    if ! id -nG "$NODYRA_USER" | tr ' ' '\n' | grep -qx "$(getent group "$gid" | cut -d: -f1)"; then
-        usermod -aG "$gid" "$NODYRA_USER" >/dev/null 2>&1 || true
-    fi
+    case " $(id -G "$NODYRA_USER") " in
+        *" $gid "*) ;;
+        *) usermod -aG "$gid" "$NODYRA_USER" >/dev/null 2>&1 || true ;;
+    esac
 }
 
 if [ "$(id -u)" = "0" ]; then
