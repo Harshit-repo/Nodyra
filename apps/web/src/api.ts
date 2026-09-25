@@ -616,6 +616,22 @@ export const api = {
       body: JSON.stringify(body),
     }),
   getLicense: () => request<LicenseInfo>("/system-settings/license"),
+  /**
+   * Editions this build supports and which one is active. Served from the same
+   * TIER_DEFAULTS the enforcement code reads, so the comparison shown to a
+   * capped user cannot drift from what a licence actually grants.
+   */
+  listPlans: () =>
+    request<
+      Array<{
+        edition: string;
+        name: string;
+        price_id: string;
+        features: string[];
+        limits: Record<string, number>;
+        current: boolean;
+      }>
+    >("/billing/plans"),
   applyLicense: (license_key: string) =>
     request<LicenseInfo>("/system-settings/license", {
       method: "PUT",

@@ -57,6 +57,15 @@ describe("WorkflowSettingsModal", () => {
     expect(screen.getByLabelText(/tool name/i)).toBeInTheDocument();
   });
 
+  it("says the MCP toggle also grants permission to run", () => {
+    // With MCP_RUN_REQUIRES_OPT_IN on, this toggle is the allowlist: it decides
+    // whether an agent may execute the workflow, not just whether it can see it.
+    // Copy that mentions only discovery understates what the operator is granting.
+    render(<WorkflowSettingsModal {...baseProps} />);
+    const blurb = screen.getByText(/let ai agents discover and call/i);
+    expect(blurb.textContent).toMatch(/permits an agent to run it/i);
+  });
+
   it("calls onExecutionModeChange when isolation mode changes", async () => {
     const onExecutionModeChange = vi.fn();
     render(

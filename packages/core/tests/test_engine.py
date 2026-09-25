@@ -839,3 +839,150 @@ async def test_hooks_never_break_the_node() -> None:
     result = await execute(g, reg)
     assert result.nodes["o"].status == NodeStatus.success
     assert result.nodes["o"].outputs["main"] == 1
+
+
+async def test_retry_emits_an_event_per_attempt() -> None:
+    """A retried node must leave a trace on the run.
+
+    Only the final attempt is recorded as the node run, so without these
+    events four attempts and one slow attempt look identical afterwards —
+    and "did this retry, or was the upstream just slow?" is the first
+    question anyone asks about a flaky node.
+    """
+    reg = NodeRegistry()
+    attempts: list[int] = [0]
+
+    @node(name="Flaky", id="flaky_events", inputs=[], registry=reg)
+    def flaky() -> int:
+        attempts[0] += 1
+        if attempts[0] < 3:
+            raise RuntimeError("upstream 503")
+        return attempts[0]
+
+    seen: list[dict] = []
+
+    async def on_event(event: dict) -> None:
+        seen.append(event)
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="f", type="flaky_events", retry_on_fail=True, retries=3)
+        ],
+    )
+    result = await execute(graph, reg, on_event=on_event)
+
+    assert result.status == RunStatus.success
+    retries = [e for e in seen if e.get("type") == "node_retrying"]
+    assert [e["attempt"] for e in retries] == [2, 3]
+    assert all(e["of"] == 4 for e in retries)
+    assert all(e["node_id"] == "f" for e in retries)
+    assert "upstream 503" in retries[0]["error"]
+
+
+async def test_a_node_that_succeeds_first_time_emits_no_retry_events() -> None:
+    reg = NodeRegistry()
+
+    @node(name="Fine", id="fine_first_time", inputs=[], registry=reg)
+    def fine() -> int:
+        return 1
+
+    seen: list[dict] = []
+
+    async def on_event(event: dict) -> None:
+        seen.append(event)
+
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="f", type="fine_first_time", retry_on_fail=True, retries=3)],
+    )
+    await execute(graph, reg, on_event=on_event)
+
+    assert [e for e in seen if e.get("type") == "node_retrying"] == []
+
+
+async def test_an_edge_from_a_port_the_node_lacks_fails_the_run() -> None:
+    """A wiring mistake must not finish "successfully" having done nothing.
+
+    The engine could not tell "this branch did not fire" from "this port does
+    not exist", so it skipped both. A graph wired to a misspelled port ran
+    green with every node after the bad edge skipped — the worst outcome for
+    automation, because nothing reports a problem.
+    """
+    reg = NodeRegistry()
+
+    @node(name="Two Ports", id="two_ports", inputs=[], outputs=["item", "index"], registry=reg)
+    def two_ports() -> dict:
+        return {"item": 1, "index": 0}
+
+    @node(name="Tail", id="wiring_tail", registry=reg)
+    def tail(input: int | None = None) -> str:
+        return f"got {input!r}"
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="src", type="two_ports"),
+            GraphNode(id="dst", type="wiring_tail"),
+        ],
+        # "main" is not one of this node's ports.
+        edges=[Edge(source="src", source_output="main", target="dst")],
+    )
+
+    result = await execute(graph, reg)
+
+    assert result.status == RunStatus.error
+    assert result.nodes["dst"].status == NodeStatus.error
+    message = result.nodes["dst"].error or ""
+    assert "has no output 'main'" in message
+    assert "index" in message and "item" in message
+
+
+async def test_a_branch_that_simply_did_not_fire_still_skips() -> None:
+    """A declared port that emitted nothing is a normal untaken branch."""
+    reg = NodeRegistry()
+
+    @node(name="One Sided", id="one_sided", inputs=[], outputs=["taken", "untaken"], registry=reg)
+    def one_sided() -> dict:
+        return {"taken": 1}
+
+    @node(name="Tail", id="branch_tail", registry=reg)
+    def tail(input: int | None = None) -> str:
+        return f"got {input!r}"
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="src", type="one_sided"),
+            GraphNode(id="dst", type="branch_tail"),
+        ],
+        edges=[Edge(source="src", source_output="untaken", target="dst")],
+    )
+
+    result = await execute(graph, reg)
+
+    assert result.status == RunStatus.success
+    assert result.nodes["dst"].status == NodeStatus.skipped
+    assert "was not taken" in (result.nodes["dst"].error or "")
+
+
+async def test_outputs_override_ports_are_accepted() -> None:
+    """Router nodes name their ports at author time; those are legitimate."""
+    reg = NodeRegistry()
+
+    @node(name="Router", id="port_router", inputs=[], outputs=["main"], registry=reg)
+    def router() -> dict:
+        return {"route_a": {"ok": True}}
+
+    @node(name="Tail", id="router_tail", registry=reg)
+    def tail(input: dict | None = None) -> str:
+        return f"got {input!r}"
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="src", type="port_router", outputs_override=["route_a"]),
+            GraphNode(id="dst", type="router_tail"),
+        ],
+        edges=[Edge(source="src", source_output="route_a", target="dst")],
+    )
+
+    result = await execute(graph, reg)
+
+    assert result.status == RunStatus.success
+    assert result.nodes["dst"].status == NodeStatus.success

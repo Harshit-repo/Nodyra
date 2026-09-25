@@ -268,6 +268,33 @@ async def test_loop_runs_body_once_per_item_in_order():
     assert str(result.nodes["e"].status) == "success"
     assert result.nodes["e"].outputs["results"] == [2, 4, 6]
     assert result.nodes["e"].outputs["errors"] == []
+    assert result.nodes["e"].finished_at is not None
+
+
+async def test_loop_end_aliases_results_as_main_and_feeds_downstream():
+    # loop_end is the only node without a single-value `main` port; the driver
+    # must alias `results` so the universal `main` wiring convention works.
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3]}),
+            _n("s", "loop_start"),
+            _n("b", "code", {"code": "output = input * 2"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+            _n("d", "code", {"code": "output = {'saw': input}"}),
+        ],
+        [
+            _e("trig", "s"),
+            _e("s", "b", src_out="item"),
+            _e("b", "e"),
+            _e("e", "d"),  # default source_output is "main"
+        ],
+    )
+    result = await execute(g, registry)
+    e = result.nodes["e"]
+    assert str(e.status) == "success"
+    assert e.outputs["main"] == [2, 4, 6]
+    assert result.nodes["d"].outputs["main"]["saw"] == [2, 4, 6]
+    assert e.finished_at is not None
 
 
 async def test_loop_on_error_continue_collects_errors():
@@ -775,5 +802,22 @@ async def test_while_loop_max_iterations_zero_uses_default_e13():
 
 def test_bounded_conditional_iterations_zero_returns_default_e13():
     from nodyra.engine.loops import _bounded_conditional_iterations
+
     assert _bounded_conditional_iterations(0) == 1000
     assert _bounded_conditional_iterations(None) == 1000
+
+
+def test_loop_items_unwraps_single_key_items_wrapper():
+    """Trigger payloads commonly wrap rows under "items" (the same convention
+    the stripe and ai-v2 nodes unwrap). A single-key wrapper iterates its
+    array; a real record with multiple keys still iterates once."""
+    assert _loop_items({"items": [1, 2, 3]}, mode="each", max_rows=100) == [1, 2, 3]
+    assert _loop_items({"rows": [{"a": 1}, {"a": 2}]}, mode="each", max_rows=100) == [
+        {"a": 1},
+        {"a": 2},
+    ]
+    # multi-key records are single rows, not wrappers
+    record = {"name": "x", "items": [1, 2]}
+    assert _loop_items(record, mode="each", max_rows=100) == [record]
+    # non-list single-key values stay single rows
+    assert _loop_items({"items": 5}, mode="each", max_rows=100) == [{"items": 5}]

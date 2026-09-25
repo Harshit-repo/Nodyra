@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv-*/
 venv/
 .pytest_cache/
 .ruff_cache/
@@ -40,6 +41,11 @@ Thumbs.db
 envs/
 apps/api/envs/
 data/
+# ...but apps/api/app/data is shipped source, not runtime data. The broad
+# rule above silently swallowed twelve generated workflow templates: they
+# existed locally, git add -A said nothing, and CI checked out three.
+!apps/api/app/data/
+!apps/api/app/data/**
 *.db
 *.log
 .superpowers/
@@ -73,7 +79,24 @@ apps/web/playwright-report/
 # Playwright MCP session artifacts
 .playwright-mcp/
 
+# Local coding-agent and review artifacts
+.codex-remote-attachments/
+.hermes/
+/audit/
+/docs/audits/
+/docs/superpowers/
+
 # Session artifacts — screenshots and scratch dirs dropped at repo root
 /*.png
 .tmp/
 .fable5-tmp/
+
+# Benchmark and evidence artifacts written by CI scripts into the workspace.
+engine-planning-benchmark.json
+engine-throughput-benchmark.json
+
+# Local API run outputs and extracted acceptance-test bundles.
+/apps/api/artifacts/
+/apps/api/testdata_extract/
+/apps/api/testdata_out.zip
+/.impeccable/

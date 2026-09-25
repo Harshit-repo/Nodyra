@@ -172,3 +172,119 @@ def test_position_defaults() -> None:
     p = Position()
     assert p.x == 0.0
     assert p.y == 0.0
+
+
+# ── ParamSpec description fallback ─────────────────────────────────────────
+#
+# A tool param with no description reaches an LLM as a bare name. The fallback
+# fills what can be filled from the param itself; the rule that matters is that
+# it never invents anything.
+
+
+def test_an_authored_description_is_never_overwritten():
+    from nodyra.models import ParamSpec
+
+    spec = ParamSpec(
+        name="limit", description="Rows to keep after sorting.", choices=["1", "2"]
+    )
+    assert spec.description == "Rows to keep after sorting."
+
+
+def test_choices_become_the_description():
+    """Accurate by construction: it restates the param's own declared values."""
+    from nodyra.models import ParamSpec
+
+    spec = ParamSpec(name="operation", choices=["create", "get", "list", "delete"])
+    assert spec.description == "One of: create, get, list, delete."
+
+
+def test_choice_objects_render_their_values():
+    from nodyra.models import ParamSpec
+
+    spec = ParamSpec(
+        name="mode", choices=[{"value": "fast", "label": "Fast"}, {"value": "slow"}]
+    )
+    assert spec.description == "One of: fast, slow."
+
+
+def test_a_long_choice_list_is_truncated_not_dumped():
+    """A hundred-entry enum in a description is noise to a model, not signal."""
+    from nodyra.models import ParamSpec
+
+    spec = ParamSpec(name="country", choices=[f"c{i}" for i in range(40)])
+    assert spec.description.endswith(", ….")
+    assert len(spec.description) < 200
+
+
+def test_a_known_generic_name_gets_its_shared_meaning():
+    from nodyra.models import ParamSpec
+
+    assert ParamSpec(name="limit").description == "Maximum number of items to return."
+    assert "owner/name" in ParamSpec(name="repo").description
+
+
+def test_an_unknown_name_is_left_blank_rather_than_guessed():
+    """The whole point. A plausible wrong description is worse than none,
+    because the model believes it."""
+    from nodyra.models import ParamSpec
+
+    assert ParamSpec(name="widget_frobnicator").description == ""
+
+
+def test_deliberately_ambiguous_names_are_not_in_the_vocabulary():
+    """``state`` is an OAuth nonce on one node and an issue status on another;
+    ``right`` is a join side or a boundary. One sentence cannot be true of
+    both, so neither is documented generically."""
+    from nodyra.models import GENERIC_PARAM_DOCS
+
+    for ambiguous in ("state", "right", "flags", "type", "value", "key"):
+        assert ambiguous not in GENERIC_PARAM_DOCS, (
+            f"{ambiguous!r} means different things on different nodes; a shared "
+            "description would be wrong somewhere"
+        )
+
+
+def test_choices_win_over_the_generic_vocabulary():
+    """A param's own declared values are more specific than a shared sentence."""
+    from nodyra.models import ParamSpec
+
+    spec = ParamSpec(name="provider", choices=["openai", "anthropic"])
+    assert spec.description == "One of: openai, anthropic."
+
+
+# ---------------------------------------------------------------------------
+# Edge — React Flow handle aliases
+
+
+def test_edge_accepts_react_flow_handle_names() -> None:
+    """``sourceHandle``/``targetHandle`` must reach the same fields.
+
+    These are React Flow's names, so they are what the editor uses internally
+    and what anyone driving the API by hand or over MCP reaches for first.
+    Ignoring them silently rewired a branch back to "main", and the mistake
+    only surfaced later as a confusing data-shape error in another node.
+    """
+    edge = Edge(source="validate", target="outliers", sourceHandle="valid")
+
+    assert edge.source_output == "valid"
+    assert edge.target_input == "input"
+
+
+def test_edge_still_accepts_its_own_field_names() -> None:
+    edge = Edge(
+        source="validate",
+        target="outliers",
+        source_output="invalid",
+        target_input="right",
+    )
+
+    assert (edge.source_output, edge.target_input) == ("invalid", "right")
+
+
+def test_edge_serializes_under_the_snake_case_names() -> None:
+    """The alias is input-only; stored graphs keep one spelling."""
+    edge = Edge(source="a", target="b", sourceHandle="valid")
+
+    dumped = edge.model_dump()
+    assert dumped["source_output"] == "valid"
+    assert "sourceHandle" not in dumped

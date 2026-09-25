@@ -1,0 +1,104 @@
+{
+  "id": "data_quality_gate",
+  "name": "Data quality gate",
+  "description": "Profile an incoming dataset, flag statistical outliers, and stop the run before bad data reaches anything downstream.",
+  "tags": [
+    "data-quality",
+    "validation",
+    "etl"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": false,
+  "prerequisites": [
+    "A CSV file readable by the Nodyra process",
+    "pandas>=2.0, ydata-profiling>=4.0,<5, and setuptools>=78.1.1,<81 installed in the workflow environment"
+  ],
+  "expected_result": "A profile report plus a separate outliers collection; the run fails when outliers exceed your threshold.",
+  "permissions": [
+    "Filesystem: the input path you configure"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
+  "screenshot_url": "/template-previews/data-quality-gate.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "manual_trigger",
+        "params": {
+          "data": {}
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "read",
+        "type": "read_csv_file",
+        "params": {
+          "path": "data/metrics.csv",
+          "has_header": true
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "outliers",
+        "type": "outlier_detect_statistical",
+        "params": {
+          "column": "value",
+          "method": "zscore",
+          "threshold": 3.0
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      },
+      {
+        "id": "profile",
+        "type": "data_profile_report",
+        "params": {
+          "title": "Incoming metrics"
+        },
+        "position": {
+          "x": 840,
+          "y": -100
+        }
+      },
+      {
+        "id": "gate",
+        "type": "code",
+        "params": {
+          "code": "summary = input or {}\nif summary.get('n_numeric', 0) != summary.get('n_rows', 0):\n    raise ValueError('quality gate failed: non-numeric or missing values')\nif summary.get('n_outliers', 0) > 0:\n    raise ValueError(f\"quality gate failed: {summary['n_outliers']} outliers\")\noutput = {**summary, 'quality_passed': True}"
+        },
+        "position": {
+          "x": 840,
+          "y": 160
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "start",
+        "target": "read"
+      },
+      {
+        "source": "read",
+        "target": "outliers"
+      },
+      {
+        "source": "read",
+        "target": "profile"
+      },
+      {
+        "source": "outliers",
+        "target": "gate"
+      }
+    ]
+  }
+}

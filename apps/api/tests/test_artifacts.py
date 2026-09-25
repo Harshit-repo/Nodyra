@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -7,6 +8,50 @@ from sqlalchemy import select
 from app.config import settings
 from app.models import Artifact, Run, Workflow
 from app.services import retention
+
+
+async def test_run_success_is_not_visible_until_artifact_metadata_commits(client, monkeypatch):
+    """Slow storage must not leave a green run whose download returns 404."""
+    from app.services import artifacts as artifacts_svc
+    from app.services import runner
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    persist = artifacts_svc.persist_artifact_refs
+    publish = runner.broker.publish
+
+    async def slow_persist(*args, **kwargs):
+        entered.set()
+        await asyncio.wait_for(release.wait(), timeout=15)
+        await persist(*args, **kwargs)
+
+    def record_event(run_id, event):
+        if event.get("type") == "run_finished":
+            finished.set()
+        return publish(run_id, event)
+
+    monkeypatch.setattr(artifacts_svc, "persist_artifact_refs", slow_persist)
+    monkeypatch.setattr(runner.broker, "publish", record_event)
+    monkeypatch.setattr(settings, "run_synchronously", False)
+    wid = (
+        await client.post("/templates/csv_clean_dedupe/instantiate", json={"name": "Atomic export"})
+    ).json()["id"]
+    rid = (await client.post(f"/workflows/{wid}/run", json={})).json()["run_id"]
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=15)
+        assert not finished.is_set(), "Terminal event escaped before artifacts were persisted"
+        assert (await client.get(f"/runs/{rid}")).json()["status"] == "running"
+    finally:
+        release.set()
+    await asyncio.wait_for(finished.wait(), timeout=15)
+    run = (await client.get(f"/runs/{rid}")).json()
+    assert run["status"] == "success"
+    artifacts = (await client.get(f"/artifacts?run_id={rid}")).json()["items"]
+    exported = next(a for a in artifacts if a["name"] == "cleaned.csv")
+    download = await client.get(f"/artifacts/{exported['id']}/download")
+    assert download.status_code == 200
+    assert b"ada@example.com" in download.content
 
 
 async def test_retention_prune_deletes_artifact_metadata_and_file(

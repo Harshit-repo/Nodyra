@@ -18,10 +18,18 @@ def _pd():
 
 
 def _parse_data(data: Any) -> list[dict]:
+    if data is None:
+        return []
     if isinstance(data, str):
+        text = data.strip()
+        if not text:
+            return []
         import json
 
-        parsed = json.loads(data)
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"data must be valid JSON: {exc}") from exc
         if isinstance(parsed, list):
             return parsed
         raise ValueError("data must be a JSON array of objects")

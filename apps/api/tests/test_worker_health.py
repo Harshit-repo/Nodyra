@@ -28,6 +28,11 @@ class _Conn:
     async def execute(self, _query):
         return None
 
+    async def scalar(self, _query):
+        # A migrated database answers the alembic_version probe that
+        # readiness_checks runs alongside SELECT 1 (F-04).
+        return health._expected_schema_head()
+
 
 class _Engine:
     def connect(self):

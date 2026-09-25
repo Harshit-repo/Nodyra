@@ -30,12 +30,13 @@ from app.schemas import (
 )
 from app.security import (
     CUSTOM_ROLE_PERMISSION_REGISTRY,
+    audit_recorder,
     current_user,
     require_instance_permission,
     require_permission,
     validate_custom_role_permissions,
 )
-from app.services.audit import log_audit
+from app.services.audit import AuditRecorder, log_audit
 from app.services.licensing import Feature, require_feature
 from app.services.org_keys import get_org_kek
 from app.tenancy import active_org_id
@@ -105,6 +106,7 @@ async def get_custom_role(
 async def create_custom_role(
     payload: CustomRoleCreate,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ):
     org_id = active_org_id() or "default"
     validate_custom_role_permissions(payload.permissions)
@@ -129,6 +131,10 @@ async def create_custom_role(
     session.add(role)
     await session.commit()
     await session.refresh(role)
+    await audit(
+        "create", "custom_role", role.id,
+        f"name={role.name} permissions={sorted(role.permissions)}",
+    )
     return role
 
 
@@ -144,6 +150,7 @@ async def update_custom_role(
     role_id: str,
     payload: CustomRoleUpdate,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ):
     org_id = active_org_id() or "default"
     role = await session.scalar(
@@ -175,6 +182,10 @@ async def update_custom_role(
         role.permissions = payload.permissions
 
     await session.commit()
+    await audit(
+        "update", "custom_role", role.id,
+        f"name={role.name} permissions={sorted(role.permissions)}",
+    )
     await session.refresh(role)
     return role
 
@@ -190,6 +201,7 @@ async def update_custom_role(
 async def delete_custom_role(
     role_id: str,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ):
     org_id = active_org_id() or "default"
     role = await session.scalar(
@@ -200,6 +212,7 @@ async def delete_custom_role(
     if role is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Custom role not found")
     # ON DELETE SET NULL on memberships.custom_role_id handles the cascade
+    await audit("delete", "custom_role", role.id, f"name={role.name}")
     await session.delete(role)
     await session.commit()
 
@@ -545,12 +558,19 @@ async def delete_sso_config(
 async def test_sso_connection(
     body: dict[str, Any],
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
     current_user: User = Depends(current_user),
     _: None = Depends(require_admin),
     __: None = Depends(require_feature(Feature.SSO)),
 ):
     """Test SSO connection by checking provider reachability."""
     protocol = body.get("protocol", "oidc")
+    # Probes an operator-supplied identity-provider URL from inside the
+    # deployment's network, so who tested which endpoint is worth recording.
+    await audit(
+        "test", "sso_config", protocol,
+        f"discovery_url={body.get('discovery_url') or body.get('metadata_url') or ''}",
+    )
 
     if protocol == "oidc":
         discovery_url = body.get("discovery_url")

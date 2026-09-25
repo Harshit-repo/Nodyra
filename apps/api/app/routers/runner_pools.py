@@ -9,7 +9,10 @@ Also hosts the batch-runs endpoint that dispatches a parameter matrix as
 N parallel workflow runs.
 """
 
+import asyncio
+import hashlib
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -57,8 +60,9 @@ from app.schemas import (
     SSHOnboardRequest,
     SSHOnboardResponse,
 )
-from app.security import require_permission
+from app.security import audit_recorder, require_permission
 from app.services.artifacts import _artifact_path, atomic_write_bytes
+from app.services.audit import AuditRecorder
 from app.services.crypto import (
     decode_payload_token,
     encrypt_data,
@@ -276,6 +280,7 @@ _DOCKER_HOST_SCHEMES = ("tcp://", "ssh://", "unix://", "npipe://")
 
 def _validate_docker_pool_config(cfg: dict) -> None:
     from app.config import settings as _s
+
     host = cfg.get("docker_host") or ""
     if host and not host.startswith(_DOCKER_HOST_SCHEMES):
         raise HTTPException(422, f"docker_host must start with one of {_DOCKER_HOST_SCHEMES}")
@@ -361,6 +366,7 @@ async def list_runner_pools(
 async def create_runner_pool(
     body: RunnerPoolCreate,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> RunnerPoolInfo:
     from app.services.licensing import enforce_resource_cap
 
@@ -381,6 +387,12 @@ async def create_runner_pool(
     session.add(pool)
     await session.commit()
     await session.refresh(pool)
+    await audit(
+        "create",
+        "runner_pool",
+        pool.id,
+        f"name={pool.name} provider={pool.provider} max_concurrent_runs={pool.max_concurrent_runs}",
+    )
     return _pool_info(pool, [])
 
 
@@ -407,6 +419,7 @@ async def update_runner_pool(
     pool_id: str,
     body: RunnerPoolUpdate,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> RunnerPoolInfo:
     pool = await session.get(RunnerPool, pool_id)
     if pool is None:
@@ -421,6 +434,12 @@ async def update_runner_pool(
         pool.max_concurrent_runs = body.max_concurrent_runs
     pool.updated_at = datetime.now(UTC)
     await session.commit()
+    await audit(
+        "update",
+        "runner_pool",
+        pool.id,
+        "fields=" + ",".join(sorted(body.model_dump(exclude_unset=True))),
+    )
     runners = (await session.scalars(select(Runner).where(Runner.pool_id == pool_id))).all()
     return _pool_info(pool, list(runners))
 
@@ -433,10 +452,15 @@ async def update_runner_pool(
         Depends(require_feature(Feature.DEDICATED_POOLS)),
     ],
 )
-async def delete_runner_pool(pool_id: str, session: AsyncSession = Depends(get_session)) -> None:
+async def delete_runner_pool(
+    pool_id: str,
+    session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
+) -> None:
     pool = await session.get(RunnerPool, pool_id)
     if pool is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner pool not found")
+    await audit("delete", "runner_pool", pool.id, f"name={pool.name} provider={pool.provider}")
     await session.delete(pool)
     await session.commit()
 
@@ -469,10 +493,12 @@ async def delete_runner(
     pool_id: str,
     runner_id: str,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> None:
     runner = await session.get(Runner, runner_id)
     if runner is None or runner.pool_id != pool_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner not found")
+    await audit("delete", "runner", runner.id, f"pool={pool_id} name={runner.name}")
     await session.delete(runner)
     await session.commit()
 
@@ -487,6 +513,7 @@ async def update_runner(
     runner_id: str,
     body: RunnerUpdate,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> RunnerInfo:
     """Update editable machine metadata for a registered runner.
 
@@ -506,6 +533,12 @@ async def update_runner(
         runner.capabilities = body.capabilities
     runner.updated_at = datetime.now(UTC)
     await session.commit()
+    await audit(
+        "update",
+        "runner",
+        runner.id,
+        "fields=" + ",".join(sorted(body.model_dump(exclude_unset=True))),
+    )
     await session.refresh(runner)
     return _runner_info(runner)
 
@@ -525,6 +558,7 @@ async def create_registration_token(
     request: Request,
     body: RegistrationTokenRequest | None = None,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> RegistrationTokenResponse:
     """Generate a registration token for a new agent runner.
 
@@ -556,6 +590,14 @@ async def create_registration_token(
     # request came in on (correct in single-host setups). The web origin is
     # never used — a runner must reach the API directly, not the SPA.
     api_url = (settings.public_api_url or "").rstrip("/") or str(request.base_url).rstrip("/")
+    # A registration token lets a new host join the pool and execute workflow
+    # code; minting one is privileged even though the token is short-lived.
+    await audit(
+        "mint_registration_token",
+        "runner",
+        runner.id,
+        f"pool={pool_id} expires_at={expires_at}",
+    )
     return RegistrationTokenResponse(
         token=token, runner_id=runner.id, expires_at=expires_at, api_url=api_url
     )
@@ -576,6 +618,7 @@ async def add_docker_runner(
     pool_id: str,
     body: dict | None = None,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> RunnerInfo:
     from app.services import docker_workers
 
@@ -583,14 +626,14 @@ async def add_docker_runner(
     if pool is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner pool not found")
     if pool.provider != "agent":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            "Docker runners attach to agent pools")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Docker runners attach to agent pools")
     try:
         runner = await docker_workers.spawn_docker_runner(
             session, pool, name=(body or {}).get("name")
         )
     except docker_workers.DaemonUnreachable as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    await audit("create", "runner", runner.id, f"pool={pool_id} provider=docker")
     return _runner_info(runner)
 
 
@@ -604,6 +647,7 @@ async def remove_docker_runner_ep(
     runner_id: str,
     force: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> None:
     from app.services import docker_workers
 
@@ -624,6 +668,7 @@ async def remove_docker_runner_ep(
         # Removing would orphan a live container (daemon down). Surface a
         # retryable 502 — matching the spawn endpoint — not an opaque 500.
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    await audit("delete", "runner", runner_id, f"pool={pool_id} provider=docker force={force}")
 
 
 # ---------------------------------------------------------------------------
@@ -640,6 +685,7 @@ async def ssh_onboard(
     pool_id: str,
     body: SSHOnboardRequest,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> SSHOnboardResponse:
     """SSH into a host, install + register + start ``nodyra-runner``, and add
     it to this (agent) pool. SSH credentials are stored encrypted on the runner
@@ -693,6 +739,15 @@ async def ssh_onboard(
     )
     await session.commit()
 
+    # Onboarding installs and starts the Nodyra agent on a remote host over
+    # SSH. Credentials are never recorded — only who onboarded which host.
+    await audit(
+        "ssh_onboard",
+        "runner",
+        runner.id,
+        f"pool={pool_id} host={body.host}:{body.port} "
+        f"username={body.username} auth_method={body.auth_method}",
+    )
     return SSHOnboardResponse(runner_id=runner.id, runner_name=name, install_log=install_log)
 
 
@@ -754,6 +809,77 @@ async def runner_ws(
 # ---------------------------------------------------------------------------
 # Artifact upload (runner-authenticated)
 # ---------------------------------------------------------------------------
+
+
+@router.get("/artifacts/input")
+async def download_run_input(
+    run_id: str = Query(...),
+    artifact_id: str = Query(...),
+    input_kind: Literal["upload", "artifact"] = Query(default="upload"),
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Serve only files already authorized and staged for this assigned run."""
+    from app.services.artifacts import make_artifact_store
+    from app.tenancy import run_as_system
+
+    token = (
+        authorization.removeprefix("Bearer ")
+        if authorization and authorization.startswith("Bearer ")
+        else ""
+    )
+    payload = decode_payload_token(token) if token else None
+    if payload is None or payload.get("kind") != "runner_registration":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid runner token")
+    with run_as_system():
+        runner = await session.get(Runner, payload.get("sub"))
+        run = await session.get(Run, run_id)
+    if runner is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Runner has been revoked")
+    if payload.get("pool_id") not in (None, runner.pool_id) or payload.get("org_id") not in (
+        None,
+        runner.org_id,
+    ):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Runner token scope mismatch")
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+    if run.org_id != runner.org_id or run.runner_id != runner.id or run.status != "running":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Runner is not assigned to this active run")
+    store = make_artifact_store(run_id, org_id=run.org_id)
+    try:
+        directory = (
+            store.upload_path(artifact_id)
+            if input_kind == "upload"
+            else store.input_path({"artifact_id": artifact_id}).parent
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    files = (
+        [
+            p
+            for p in directory.iterdir()
+            if p.is_file() and not p.is_symlink() and not p.name.startswith(".")
+        ]
+        if directory.is_dir()
+        else []
+    )
+    if len(files) != 1:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "File was not staged for this run")
+    path = files[0]
+
+    def checksum():
+        with path.open("rb") as source:
+            return hashlib.file_digest(source, "sha256").hexdigest()
+
+    return FileResponse(
+        path,
+        filename=path.name,
+        headers={
+            "X-Nodyra-Artifact-Name": path.name,
+            "X-Nodyra-Checksum-SHA256": await asyncio.to_thread(checksum),
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/artifact-upload", status_code=status.HTTP_201_CREATED)
@@ -834,7 +960,7 @@ async def upload_artifact(
                 status.HTTP_400_BAD_REQUEST,
                 "Artifact storage key must be namespaced under the assigned run.",
             )
-    elif not storage_key.startswith(f"runs/{run_id}/"):
+    elif not storage_key.startswith((f"runs/{run_id}/", f"{run.org_id}/runs/{run_id}/")):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Artifact storage key must be namespaced under the assigned run.",
@@ -908,6 +1034,7 @@ async def create_batch_run(
     workflow_id: str,
     body: RunBatchCreate,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
     _: None = Depends(require_permission("workflow:run")),
 ) -> dict:
     """Dispatch a parameter matrix as N parallel workflow runs.
@@ -997,6 +1124,7 @@ async def create_batch_run(
         await reconcile_batch(reconcile_session, batch.id)
         await reconcile_session.commit()
 
+    await audit("create", "run_batch", batch.id, f"workflow={workflow_id} runs={len(run_ids)}")
     return {
         "batch_id": batch.id,
         "run_ids": run_ids,
@@ -1031,6 +1159,7 @@ async def get_batch(batch_id: str, session: AsyncSession = Depends(get_session))
 async def cancel_batch(
     batch_id: str,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
     _: None = Depends(require_permission("workflow:run")),
 ) -> dict:
     batch = await session.get(RunBatch, batch_id)
@@ -1047,6 +1176,12 @@ async def cancel_batch(
             )
         )
     ).all()
+    # Recorded before the cancellations start: the recorder commits this
+    # request's session, and each cancel_run tears its run down through a
+    # separate session, so auditing afterwards would put a write transaction in
+    # the way of that teardown (see cancel_workflow_run). What an auditor needs
+    # is that this operator stopped this batch, which is true either way.
+    await audit("cancel", "run_batch", batch_id, f"cancelling {len(queued_runs)} run(s)")
     cancelled = 0
     for run in queued_runs:
         await cancel_run(run.id)
@@ -1094,6 +1229,7 @@ async def drain_runner(
     runner_id: str,
     body: DrainRequest,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> RunnerInfo:
     """Toggle drain mode on a runner.
 
@@ -1111,6 +1247,12 @@ async def drain_runner(
         runner.status = "online" if runner.last_seen_at is not None else "offline"
     runner.updated_at = datetime.now(UTC)
     await session.commit()
+    await audit(
+        "drain" if body.draining else "undrain",
+        "runner",
+        runner.id,
+        f"pool={pool_id} status={runner.status}",
+    )
     await session.refresh(runner)
     return _runner_info(runner)
 
@@ -1129,6 +1271,7 @@ async def restart_runner(
     pool_id: str,
     runner_id: str,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> dict:
     """SSH into a previously onboarded runner and restart the nodyra-runner service.
 
@@ -1151,6 +1294,7 @@ async def restart_runner(
         log = await onboard_restart(creds)
     except Exception as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    await audit("restart", "runner", runner_id, f"pool={pool_id}")
     return {"runner_id": runner_id, "log": log}
 
 
@@ -1167,6 +1311,7 @@ async def restart_runner(
 async def cleanup_pool_ghosts(
     pool_id: str,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> dict:
     """Delete ghost runners: offline rows that were never registered.
 
@@ -1176,6 +1321,7 @@ async def cleanup_pool_ghosts(
     from app.services.ghost_cleanup import cleanup_ghost_runners
 
     deleted = await cleanup_ghost_runners(session, pool_id=pool_id)
+    await audit("cleanup_ghosts", "runner_pool", pool_id, f"deleted={deleted}")
     return {"pool_id": pool_id, "deleted": deleted}
 
 

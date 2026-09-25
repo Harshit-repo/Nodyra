@@ -49,8 +49,10 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.30 /uv /bin/uv
 ARG NODYRA_UID=10001
 ARG NODYRA_GID=10001
 
+# Refresh PCRE2 from Debian security updates even when the Python base image
+# has not been rebuilt yet (the base's 10.42-1 predates the security fixes).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu \
+    && apt-get install -y --no-install-recommends gosu libpcre2-8-0 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid "${NODYRA_GID}" nodyra \
     && useradd --create-home --uid "${NODYRA_UID}" --gid "${NODYRA_GID}" nodyra
@@ -68,13 +70,21 @@ COPY --from=builder /app/.venv /app/.venv
 # Application source only — no tests, no design files, no CI scripts.
 # Paths must match the editable-install .pth pointers left by uv in the venv.
 COPY pyproject.toml pyproject.toml
-COPY apps/api/ apps/api/
-COPY packages/ packages/
+COPY apps/api/app/ apps/api/app/
+COPY apps/api/alembic/ apps/api/alembic/
+COPY apps/api/alembic.ini apps/api/pyproject.toml apps/api/
+COPY packages/client/ packages/client/
+COPY packages/core/ packages/core/
+COPY packages/nodes/ packages/nodes/
+COPY packages/exporter/ packages/exporter/
+COPY packages/runtime/ packages/runtime/
+COPY packages/importer/ packages/importer/
+COPY packages/runner/ packages/runner/
 COPY deploy/python-entrypoint.sh deploy/python-entrypoint.sh
 
 RUN mkdir -p /app/envs /app/artifacts \
     && chmod +x /app/deploy/python-entrypoint.sh \
-    && chown -R nodyra:nodyra /app
+    && chown nodyra:nodyra /app/envs /app/artifacts
 
 ENTRYPOINT ["/app/deploy/python-entrypoint.sh"]
 
@@ -84,4 +94,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD gosu nodyra python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3).status == 200 else 1)"
 
 # Default command is overridden per service in docker-compose.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

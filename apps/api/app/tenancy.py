@@ -1,6 +1,6 @@
 """Request-scoped tenant context + the ORM enforcement layer (Layer 2).
 
-Two enforcement layers keep tenants apart (see docs/multi-tenancy-plan.md A3):
+Two enforcement layers keep tenants apart:
 
 * **Layer 2 (this module, all backends):** a ``do_orm_execute`` hook appends
   ``org_id = :current_org`` to every ORM SELECT against any model that has an
@@ -166,15 +166,23 @@ def install_org_filter() -> None:
     _installed = True
 
     @event.listens_for(Session, "do_orm_execute")
-    def _scope_selects_to_org(execute_state) -> None:
+    def _scope_orm_operations_to_org(execute_state) -> None:
         org_id = active_org_id()
-        if org_id is None or not execute_state.is_select:
+        if org_id is None or not (
+            execute_state.is_select
+            or execute_state.is_update
+            or execute_state.is_delete
+        ):
             return
         # Explicit, per-query escape for legitimate cross-org reads (e.g.
         # "list MY orgs" joins memberships across orgs). Postgres RLS still
         # applies underneath — this only lifts the ORM-layer criteria.
         if execute_state.execution_options.get("skip_org_filter"):
             return
+        # ``with_loader_criteria`` is also applied by SQLAlchemy to ORM
+        # UPDATE/DELETE statements.  Scoping writes here closes the SQLite
+        # gap where Postgres RLS is unavailable and a bulk mutation without
+        # an explicit org predicate could otherwise cross tenant boundaries.
         for model in org_scoped_models():
             execute_state.statement = execute_state.statement.options(
                 with_loader_criteria(

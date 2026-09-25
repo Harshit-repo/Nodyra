@@ -17,10 +17,10 @@ export const NO_AUTH_FALLBACK: AuthState = {
  * Transient failures — the API still starting up (network/fetch error) or a
  * 5xx — should retry so the app waits for the backend instead of falling
  * through and rendering against a dead API (which shows a black screen).
- * A definitive 404 means the endpoint isn't there (legacy backend): don't
- * retry, fall back to no-auth.
+ * Only a definitive 404 means the endpoint isn't there (legacy backend).
+ * Every other failure must remain fail-closed and retry; treating a 401/403,
+ * proxy error, or malformed response as "no auth" can expose the application.
  */
 export function shouldRetryAuthError(err: unknown): boolean {
-  if (err instanceof ApiError) return err.status >= 500;
-  return true; // network / fetch failure → API likely not ready yet
+  return !(err instanceof ApiError && err.status === 404);
 }

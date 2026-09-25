@@ -1,0 +1,117 @@
+{
+  "id": "json_api_to_csv",
+  "name": "JSON API to CSV export",
+  "description": "Fetch a JSON list from an API, pick the fields you care about, sort it, and export a CSV artifact.",
+  "tags": [
+    "api",
+    "csv",
+    "export",
+    "etl"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "Outbound HTTPS to the API you are calling"
+  ],
+  "expected_result": "A CSV artifact containing the selected fields, sorted.",
+  "permissions": [
+    "Network: the API URL you configure"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
+  "screenshot_url": "/template-previews/json-api-to-csv.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "manual_trigger",
+        "params": {
+          "data": {}
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "fetch",
+        "type": "http_request",
+        "params": {
+          "url": "https://jsonplaceholder.typicode.com/users",
+          "method": "GET"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "select",
+        "type": "code",
+        "params": {
+          "code": "body = input.get('body') if isinstance(input, dict) else input\nrows = body if isinstance(body, list) else []\noutput = [{'id': r.get('id'), 'name': r.get('name'),\n           'email': r.get('email')} for r in rows]"
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      },
+      {
+        "id": "sort_rows",
+        "type": "sort",
+        "params": {
+          "field": "name",
+          "order": "ascending"
+        },
+        "position": {
+          "x": 840,
+          "y": 40
+        }
+      },
+      {
+        "id": "to_dataset",
+        "type": "records_to_dataset",
+        "params": {},
+        "position": {
+          "x": 1120,
+          "y": 40
+        }
+      },
+      {
+        "id": "export",
+        "type": "csv_write",
+        "params": {
+          "filename": "users.csv",
+          "include_header": true
+        },
+        "position": {
+          "x": 1400,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "start",
+        "target": "fetch"
+      },
+      {
+        "source": "fetch",
+        "target": "select"
+      },
+      {
+        "source": "select",
+        "target": "sort_rows"
+      },
+      {
+        "source": "sort_rows",
+        "target": "to_dataset"
+      },
+      {
+        "source": "to_dataset",
+        "target": "export"
+      }
+    ]
+  }
+}

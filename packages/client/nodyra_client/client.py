@@ -20,7 +20,7 @@ from nodyra_client.models import (
     WorkflowSummary,
 )
 
-TERMINAL_RUN_STATUSES = frozenset({"success", "error", "cancelled"})
+TERMINAL_RUN_STATUSES = frozenset({"success", "error", "timed_out", "cancelled"})
 
 
 class NodyraError(Exception):

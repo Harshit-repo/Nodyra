@@ -206,6 +206,19 @@ function CreateModal({
   const templatesQuery = useTemplates();
   const templates = templatesQuery.data ?? [];
   const [templateId, setTemplateId] = useState(initialTemplateId);
+  // Show a first screenful rather than the whole catalogue: sixteen templates
+  // made the dialog taller than a laptop viewport, which pushed Create below
+  // the fold. Expanded automatically when arriving with a template preselected,
+  // so a deep link to one further down the list still shows it as chosen.
+  const [showAllTemplates, setShowAllTemplates] = useState(
+    initialTemplateId !== "blank",
+  );
+  const allTemplates = [BLANK_TEMPLATE, ...templates];
+  const TEMPLATE_PREVIEW_COUNT = 10;
+  const visibleTemplates = showAllTemplates
+    ? allTemplates
+    : allTemplates.slice(0, TEMPLATE_PREVIEW_COUNT);
+  const hiddenTemplateCount = allTemplates.length - visibleTemplates.length;
   const [name, setName] = useState(
     initialTemplateId === "blank" ? "Untitled workflow" : "",
   );
@@ -281,7 +294,7 @@ function CreateModal({
           onKeyDown={(e) => e.key === "Enter" && void submit()}
         />
         <div className="template-picker">
-          {[BLANK_TEMPLATE, ...templates].map((template) => (
+          {visibleTemplates.map((template) => (
             <button
               type="button"
               key={template.id}
@@ -302,6 +315,16 @@ function CreateModal({
               <span>{template.description}</span>
             </button>
           ))}
+          {hiddenTemplateCount > 0 ? (
+            <button
+              type="button"
+              className="template-picker-more"
+              onClick={() => setShowAllTemplates(true)}
+            >
+              <strong>Show {hiddenTemplateCount} more templates</strong>
+              <span>Browse the full catalogue.</span>
+            </button>
+          ) : null}
         </div>
         {selectedTemplate && "version" in selectedTemplate && (
           <section className="template-selection-details" aria-label="Selected template details">

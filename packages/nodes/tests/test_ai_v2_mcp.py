@@ -152,3 +152,11 @@ async def test_list_tools_node(fake_transport) -> None:
     listing = await mcp_list_tools(credentials=CREDS)
     assert listing[0]["name"] == "echo"
     assert listing[0]["input_schema"]["type"] == "object"
+
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch):
+    """These tests verify the BLOCKED posture of nodyra_nodes.http_security;
+    single-tenant API processes default to allowing private egress (mirroring
+    workers), so pin the env explicitly."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+

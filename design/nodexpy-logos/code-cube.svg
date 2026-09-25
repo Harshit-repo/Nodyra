@@ -1,9 +1,0 @@
-<svg width="380" height="96" viewBox="0 0 380 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Code Cube logo">
-  <path d="M48 6L84 27V69L48 90L12 69V27L48 6Z" fill="#111B29" stroke="#36506F" stroke-width="3"/>
-  <path d="M12 27L48 48L84 27M48 48V90" stroke="#263A52" stroke-width="3"/>
-  <path d="M34 38L25 48L34 58M62 38L71 48L62 58M55 32L41 64" stroke="#4C9EFF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  <rect x="43" y="83" width="10" height="10" rx="3" fill="#35D4D0"/>
-  <text x="108" y="62" fill="#EDF3FA" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text>
-  <text x="213" y="62" fill="#4C9EFF" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text>
-  <text x="235" y="62" fill="#35D4D0" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
-</svg>

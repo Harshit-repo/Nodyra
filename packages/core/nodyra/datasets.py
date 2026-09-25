@@ -15,6 +15,7 @@ dependency out of core.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -44,7 +45,18 @@ def is_dataset_ref(value: Any) -> bool:
 def _store():
     store = artifact_store.get()
     if store is None:
-        raise RuntimeError("datasets are not available in this execution context")
+        # Most often a Code node: those run in a separate process, which does
+        # not inherit the artifact store, so no dataset helper works there.
+        # The engine hands Code nodes a DatasetRef unexpanded once a value is
+        # large enough (>1000 rows or >256 KB from another Code node), so this
+        # is reachable simply by growing the data — and the reader needs to
+        # know the way out rather than just that the door is shut.
+        raise RuntimeError(
+            "datasets are not available in this execution context. A Code node "
+            "runs in an isolated process and cannot read a DatasetRef; put a "
+            "Dataset To Records node between the two, or keep the upstream "
+            "value under 1000 rows so it stays inline."
+        )
     return store
 
 
@@ -161,6 +173,16 @@ def finalize_artifact_ref(
     store._written += 1  # noqa: SLF001
     ref = dict(partial)
     ref["size_bytes"] = size
+    # The buffered path (LocalArtifactStore.write_bytes) hashes the payload it
+    # already holds. This path exists so a large parquet or CSV is never held in
+    # memory, so hash it back off disk in chunks — same guarantee, same peak
+    # memory. Without this every streamed artifact reached the database with a
+    # NULL checksum, and "verify its checksum" had nothing to verify.
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    ref["checksum_sha256"] = digest.hexdigest()
     if metadata:
         ref["metadata"] = metadata
     if preview is not None:

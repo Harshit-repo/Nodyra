@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class CredentialSpec(BaseModel):
@@ -75,6 +75,94 @@ class ParamSpec(BaseModel):
     advanced: bool = False
     documentation_url: str = ""
     validation: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _describe_if_blank(self) -> "ParamSpec":
+        """Fill an empty description from what the param already tells us.
+
+        A param with no description reaches an LLM as a bare name, so a
+        tool-enabled node hands the model ``resource`` and ``operation`` and
+        expects it to guess. 702 params across 188 tool nodes were in that
+        state, and hand-writing them is node-author work that a fabricated
+        description would actively damage — a confident wrong description is
+        worse than none, because the model believes it.
+
+        So nothing is invented here. Only two sources are used, both already
+        true of the param: its own declared choices, and a vocabulary of names
+        whose meaning is unambiguous wherever they appear. Anything else keeps
+        its empty description and stays visible in the ratchet.
+        """
+        if self.description.strip():
+            return self
+        if self.choices:
+            rendered = ", ".join(
+                str(c.get("value") if isinstance(c, dict) else c) for c in self.choices[:12]
+            )
+            if rendered:
+                suffix = "" if len(self.choices) <= 12 else ", …"
+                self.description = f"One of: {rendered}{suffix}."
+                return self
+        fallback = GENERIC_PARAM_DOCS.get(self.name)
+        if fallback:
+            self.description = fallback
+        return self
+
+
+# Param names whose meaning is the same wherever they appear. Deliberately
+# conservative: a name is listed only when one sentence is accurate for every
+# node that uses it. Ambiguous names (``state`` — OAuth state or issue state?
+# ``right`` — a join side or a boundary?) are left out on purpose, because the
+# cost of a plausible-but-wrong description is higher than the cost of none.
+GENERIC_PARAM_DOCS: dict[str, str] = {
+    # Pagination and bounds
+    "limit": "Maximum number of items to return.",
+    "max_results": "Maximum number of items to return.",
+    "per_page": "Number of items to request per page from the provider.",
+    "page": "Page number to fetch, starting at 1.",
+    "offset": "Number of items to skip before collecting results.",
+    # Common content fields
+    "title": "Title text.",
+    "name": "Name to set.",
+    "description": "Longer descriptive text.",
+    "body": "Main body content.",
+    "text": "Text content.",
+    "message": "Message content to send.",
+    "subject": "Subject line.",
+    "prompt": "Prompt text sent to the model.",
+    "content": "Content payload.",
+    "comment": "Comment text.",
+    # Identity and addressing
+    "email": "Email address.",
+    "url": "Target URL.",
+    "path": "Path to operate on.",
+    "filename": "File name to use.",
+    "encoding": "Character encoding to read or write with, e.g. utf-8.",
+    "content_type": "MIME type of the content, e.g. application/json.",
+    "query": "Query string used to filter or search.",
+    "time_zone": "IANA timezone name, e.g. Europe/London.",
+    "timezone": "IANA timezone name, e.g. Europe/London.",
+    # Tabular / dataset shapes
+    "columns": "Column names to operate on.",
+    "column": "Column name to operate on.",
+    "sheet_name": "Worksheet name.",
+    "metadata": "Additional key/value metadata to attach.",
+    # Provider record identifiers. Each is unambiguous within the provider
+    # whose nodes use it, and no two providers use the same name differently.
+    "customer_id": "Identifier of the customer record.",
+    "message_id": "Identifier of the message.",
+    "record_id": "Identifier of the record.",
+    "team_id": "Identifier of the team.",
+    "assignee_id": "Identifier of the user to assign.",
+    "issue_number": "Issue number within the repository.",
+    "spreadsheet_id": "Identifier of the spreadsheet.",
+    "base_id": "Identifier of the Airtable base.",
+    "table_name": "Name of the table to operate on.",
+    "repo": "Repository in owner/name form.",
+    # Model selection
+    "model": "Model identifier to use for this call.",
+    "provider": "Which provider to call.",
+    "system": "System instruction that sets the model's role and constraints.",
+}
 
 
 class PortDataKind(StrEnum):
@@ -221,13 +309,29 @@ class GraphNode(BaseModel):
 
 
 class Edge(BaseModel):
-    """Connects a source node's output port to a target node's input port."""
+    """Connects a source node's output port to a target node's input port.
+
+    ``sourceHandle``/``targetHandle`` are accepted as aliases. They are what
+    React Flow calls these fields, so they are what the editor uses internally
+    and what anyone reading the canvas — or driving the API by hand or over
+    MCP — reaches for first. Without the alias an edge naming a branch as
+    ``sourceHandle`` was silently dropped and quietly rewired to "main",
+    which fails much later as a data-shape error in an unrelated node.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     id: str = ""
     source: str
-    source_output: str = "main"
+    source_output: str = Field(
+        default="main",
+        validation_alias=AliasChoices("source_output", "sourceHandle"),
+    )
     target: str
-    target_input: str = "input"
+    target_input: str = Field(
+        default="input",
+        validation_alias=AliasChoices("target_input", "targetHandle"),
+    )
 
 
 class WorkflowGraph(BaseModel):

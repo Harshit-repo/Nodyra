@@ -1,8 +1,0 @@
-<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Threaded Hex logo">
-  <path d="M10 62C22 15 81 17 92 55" stroke="#4C9EFF" stroke-width="8" stroke-linecap="round"/>
-  <path d="M50 13L82 31V69L50 87L18 69V31L50 13Z" fill="#111A27" stroke="#40536D" stroke-width="3"/>
-  <path d="M35 58V39L50 50L65 39V58" stroke="#35D4D0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M8 63C25 85 75 85 92 55" stroke="#FFD34E" stroke-width="8" stroke-linecap="round"/>
-  <circle cx="10" cy="62" r="6" fill="#4C9EFF"/><rect x="86" y="49" width="12" height="12" rx="3" fill="#FFD34E"/>
-  <text x="120" y="65" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text><text x="225" y="65" fill="#4C9EFF" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text><text x="247" y="65" fill="#35D4D0" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
-</svg>

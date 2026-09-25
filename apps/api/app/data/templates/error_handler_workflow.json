@@ -1,0 +1,51 @@
+{
+  "id": "error_handler_workflow",
+  "name": "Catch failures from other workflows",
+  "description": "A dedicated error workflow: attach it to any workflow and it receives the failure details so you can route them one place.",
+  "tags": [
+    "errors",
+    "operations",
+    "reliability"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "Set this workflow as another workflow's error handler"
+  ],
+  "expected_result": "One structured failure record per upstream failure.",
+  "permissions": [],
+  "compatibility": ">=1.0.0,<2.0.0",
+  "screenshot_url": "/template-previews/error-handler-workflow.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "failure",
+        "type": "error_trigger",
+        "params": {},
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "summarise",
+        "type": "code",
+        "params": {
+          "code": "detail = input or {}\noutput = {\n    'workflow': detail.get('workflow_name') or detail.get('workflow_id'),\n    'run_id': detail.get('run_id'),\n    'node': detail.get('failed_node_id'),\n    'error': str(detail.get('error', ''))[:500],\n}"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "failure",
+        "target": "summarise"
+      }
+    ]
+  }
+}

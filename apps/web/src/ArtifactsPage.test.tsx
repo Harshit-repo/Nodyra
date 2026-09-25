@@ -41,6 +41,7 @@ describe("ArtifactsPage", () => {
     renderPage();
 
     expect(await screen.findByText("report.csv")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Upload artifact/i })).toBeEnabled();
     expect(screen.getAllByText("dataset").length).toBeGreaterThan(0);
     expect(screen.getByText("2.0 KB")).toBeTruthy();
     expect(screen.getByText(/sha256:abcdef123456/)).toBeTruthy();

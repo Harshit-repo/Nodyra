@@ -4,6 +4,7 @@ Run manually on a machine with Docker:
     NODYRA_SANDBOX_IT=1 python -m pytest tests/test_sandbox_integration.py -v
 Builds a real nodyra-env image on first run (slow); subsequent runs reuse it.
 """
+
 import asyncio
 import os
 
@@ -66,15 +67,27 @@ def test_run_executes_in_real_container(monkeypatch):
             events.append(e)
 
         status = await fresh.dispatch(
-            "it-run-1", org_id="it-org", env_id=None,
-            env_payload=ENV_PAYLOAD, graph=GRAPH, cache=None, targets=None,
-            workflow_modules=[], on_event=on_event,
+            "it-run-1",
+            org_id="it-org",
+            env_id=None,
+            env_payload=ENV_PAYLOAD,
+            graph=GRAPH,
+            cache=None,
+            targets=None,
+            workflow_modules=[],
+            on_event=on_event,
         )
         # Warm reuse: same (org, env) key — must reuse the idle container.
         status2 = await fresh.dispatch(
-            "it-run-2", org_id="it-org", env_id=None,
-            env_payload=ENV_PAYLOAD, graph=GRAPH, cache=None, targets=None,
-            workflow_modules=[], on_event=on_event,
+            "it-run-2",
+            org_id="it-org",
+            env_id=None,
+            env_payload=ENV_PAYLOAD,
+            graph=GRAPH,
+            cache=None,
+            targets=None,
+            workflow_modules=[],
+            on_event=on_event,
         )
         await fresh.flush()
         return status, status2, events
@@ -83,3 +96,67 @@ def test_run_executes_in_real_container(monkeypatch):
     assert status == "success", f"events: {events}"
     assert status2 == "success"
     assert any(e["type"] == "node_finished" for e in events)
+
+
+def test_uploaded_csv_and_generated_artifacts_cross_real_sandbox(monkeypatch, tmp_path):
+    from app.config import settings
+    from app.services import sandbox_pool as sp
+    from app.services.artifacts import make_artifact_store
+
+    monkeypatch.setattr(settings, "execution_sandbox", "required")
+    monkeypatch.setattr(settings, "artifacts_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "sandbox_owner_id", "launch-upload-integration")
+    fresh = sp.SandboxPool()
+    monkeypatch.setattr(sp, "pool", fresh)
+    upload_id = "b" * 32
+    store = make_artifact_store("it-upload", org_id="it-org")
+    source = store.upload_path(upload_id) / "customers.csv"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"name,total\nAda,120\nGrace,250\n")
+    graph = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}},
+            {"id": "read", "type": "read_csv_file", "params": {"file": upload_id}},
+            {"id": "export", "type": "csv_write", "params": {"filename": "customers-export.csv"}},
+        ],
+        "edges": [
+            {"source": "t", "source_output": "main", "target": "read", "target_input": "input"},
+            {
+                "source": "read",
+                "source_output": "main",
+                "target": "export",
+                "target_input": "input",
+            },
+        ],
+    }
+
+    async def scenario():
+        await sp.init_sandbox()
+        events = []
+
+        async def on_event(event):
+            events.append(event)
+
+        try:
+            status = await fresh.dispatch(
+                "it-upload",
+                org_id="it-org",
+                env_id=None,
+                env_payload=ENV_PAYLOAD,
+                graph=graph,
+                cache=None,
+                targets=None,
+                workflow_modules=[],
+                on_event=on_event,
+            )
+            assert status == "success", events
+            exported = next(
+                e for e in events if e.get("node_id") == "export" and e["type"] == "node_finished"
+            )
+            ref = exported["outputs"]["main"]
+            assert b"Ada,120" in store.path_for_ref(ref).read_bytes()
+            assert fresh.status()["idle"] == 0, "File-bearing containers must be recycled"
+        finally:
+            await fresh.flush()
+
+    asyncio.run(scenario())

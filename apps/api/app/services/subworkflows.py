@@ -5,7 +5,7 @@ resolves credentials, seeds the trigger, creates a child Run row, and runs
 the child on the right substrate. Cycle detection and depth limits live in
 the ENGINE adapter (``nodyra.engine.subworkflows``) — not here.
 
-Concurrency invariants preserved from the pre-A3 code (HANDOFF.md §7):
+Concurrency invariants preserved by the sub-workflow execution contract:
 
 * Child runs NEVER acquire the global ``max_concurrent_runs`` slot — the
   parent already holds one; waiting would deadlock at the cap.
@@ -28,6 +28,12 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.db import SessionLocal
 from app.models import PinnedData, Run, Workflow
+from app.services.artifacts import (
+    collect_artifact_refs,
+    persist_artifact_refs,
+    prepare_artifact_inputs,
+    prepare_uploaded_files,
+)
 from app.services.credentials import resolve_credential_refs
 from app.services.graph_utils import first_trigger_node, resolve_trigger_targets
 from nodyra.engine import execute
@@ -67,9 +73,7 @@ async def _load_workflow_graph(
     draft" so iteration works without publishing every dependent workflow.
     """
     workflow = await session.scalar(
-        select(Workflow)
-        .where(Workflow.id == workflow_id)
-        .options(selectinload(Workflow.versions))
+        select(Workflow).where(Workflow.id == workflow_id).options(selectinload(Workflow.versions))
     )
     if workflow is None:
         raise ValueError(f"workflow '{workflow_id}' not found")
@@ -137,7 +141,10 @@ async def _finalize_child_run(child_run_id: str, status: str) -> None:
 
 
 async def resolve_subworkflow(
-    call: SubworkflowCall, *, parent_env_id: str | None = None
+    call: SubworkflowCall,
+    *,
+    parent_env_id: str | None = None,
+    parent_sandboxed: bool = False,
 ) -> Any:
     """``SubworkflowRunner`` for the API host.
 
@@ -180,23 +187,29 @@ async def resolve_subworkflow(
         cache: dict[str, dict] = deserialize_value(dict(pinned_cache))
         trigger = first_trigger_node(graph)
         if trigger is not None and trigger.id not in cache:
-            cache[trigger.id] = {
-                "main": call.parameters if call.parameters is not None else {}
-            }
+            cache[trigger.id] = {"main": call.parameters if call.parameters is not None else {}}
         sub_targets = (
-            resolve_trigger_targets(graph_dict, trigger.id, None)
-            if trigger is not None
-            else None
+            resolve_trigger_targets(graph_dict, trigger.id, None) if trigger is not None else None
         )
 
         if (
-            settings.use_subprocess_runner
-            and parent_env_id is not None
-            and parent_env_id == sub_env_id
-        ):
+            parent_sandboxed or (settings.use_subprocess_runner and parent_env_id is not None)
+        ) and parent_env_id == sub_env_id:
+            async with SessionLocal() as session:
+                await prepare_uploaded_files(
+                    session, graph_dict, run_id=call.parent_run_id or "", org_id=resolved_org
+                )
+                await prepare_artifact_inputs(
+                    session,
+                    [graph_dict, cache],
+                    run_id=call.parent_run_id or "",
+                    org_id=resolved_org,
+                )
             logger.info(
                 "sub-workflow inline workflow_id=%s env_id=%s depth=%s",
-                call.workflow_id, sub_env_id, call.depth,
+                call.workflow_id,
+                sub_env_id,
+                call.depth,
             )
             return InlineSubworkflow(
                 graph=graph_dict,
@@ -215,12 +228,26 @@ async def resolve_subworkflow(
             org_id=resolved_org,
         )
         status = "error"
+        node_status: dict[str, str] = {}
+        node_outputs: dict[str, dict] = {}
         try:
-            if settings.use_subprocess_runner:
-                from app.services.runtime_pool import pool as runtime_pool
+            from nodyra.context import artifact_store
 
-                node_status: dict[str, str] = {}
-                node_outputs: dict[str, dict] = {}
+            current_store = artifact_store.get()
+            input_run_id = (
+                current_store.run_id
+                if not settings.use_subprocess_runner and current_store is not None
+                else child_run_id
+            )
+            async with SessionLocal() as session:
+                await prepare_uploaded_files(
+                    session, graph_dict, run_id=input_run_id, org_id=resolved_org
+                )
+                await prepare_artifact_inputs(
+                    session, [graph_dict, cache], run_id=input_run_id, org_id=resolved_org
+                )
+            if settings.use_subprocess_runner or parent_sandboxed:
+                from app.services.runtime_pool import pool as runtime_pool
 
                 async def collect(event: dict) -> None:
                     if event.get("type") != "node_finished":
@@ -235,18 +262,44 @@ async def resolve_subworkflow(
 
                 logger.info(
                     "sub-workflow spawn workflow_id=%s env_id=%s parent_env_id=%s",
-                    call.workflow_id, sub_env_id, parent_env_id,
-                )
-                status = await runtime_pool.dispatch_subworkflow(
-                    child_run_id,
+                    call.workflow_id,
                     sub_env_id,
-                    graph_dict,
-                    cache or None,
-                    sub_targets,
-                    collect,
-                    subworkflow_resolver=resolve_subworkflow,
-                    subworkflow_meta=child_meta,
+                    parent_env_id,
                 )
+                if parent_sandboxed:
+                    from app.services import runner as _runner
+                    from app.services import sandbox_pool
+
+                    async with runtime_pool.subworkflow_slot():
+                        status = await sandbox_pool.pool.dispatch(
+                            child_run_id,
+                            org_id=resolved_org,
+                            env_id=sub_env_id,
+                            env_payload=await _runner._build_env_payload_for_run(sub_env_id),
+                            graph=graph_dict,
+                            cache=cache or None,
+                            targets=sub_targets,
+                            workflow_modules=[],
+                            on_event=collect,
+                            subworkflow_resolver=resolve_subworkflow,
+                            subworkflow_meta=child_meta.to_payload(),
+                            run_timeout=workflow.run_timeout_seconds if workflow else None,
+                        )
+                else:
+                    status = await runtime_pool.dispatch_subworkflow(
+                        child_run_id,
+                        sub_env_id,
+                        graph_dict,
+                        cache or None,
+                        sub_targets,
+                        collect,
+                        subworkflow_resolver=resolve_subworkflow,
+                        subworkflow_meta=child_meta,
+                    )
+                if status != "success":
+                    raise RuntimeError(
+                        f"Sub-workflow {call.workflow_id} ended with status {status}"
+                    )
                 return extract_leaf_value(sources, node_status, node_outputs)
 
             from app.services import runner as _runner
@@ -262,11 +315,21 @@ async def resolve_subworkflow(
                 subworkflow_meta=child_meta,
             )
             status = str(result.status)
+            if status != "success":
+                failure = next((r.error for r in result.nodes.values() if r.error), status)
+                raise RuntimeError(f"Sub-workflow {call.workflow_id} failed: {failure}")
             node_status = {nid: str(r.status) for nid, r in result.nodes.items()}
             node_outputs = {nid: dict(r.outputs) for nid, r in result.nodes.items()}
             return extract_leaf_value(sources, node_status, node_outputs)
         finally:
-            await _finalize_child_run(child_run_id, status)
+            try:
+                if settings.use_subprocess_runner or parent_sandboxed:
+                    await persist_artifact_refs(child_run_id, collect_artifact_refs(node_outputs))
+            except Exception:
+                status = "error"
+                raise
+            finally:
+                await _finalize_child_run(child_run_id, status)
     finally:
         if org_token is not None:
             current_org_id.reset(org_token)

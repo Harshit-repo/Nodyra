@@ -12,6 +12,7 @@ from sqlalchemy.pool import NullPool
 import app.main as main_module
 import app.mcp.tools as mcp_tools_module
 import app.routers.chat_public as chat_public_module
+import app.routers.provider_webhooks as provider_webhooks_module
 import app.routers.runner_pools as runner_pools_module
 import app.services.agentic_builder as agentic_builder_module
 import app.services.artifact_reconcile as artifact_reconcile_module
@@ -29,6 +30,7 @@ import app.services.retention as retention_module
 import app.services.run_checkpoints as run_checkpoints_module
 import app.services.runner as runner_module
 import app.services.runtime_pool as runtime_pool_module
+import app.services.stuck_run_detector as stuck_run_detector_module
 import app.services.subworkflows as subworkflows_module
 import app.services.triggers as triggers_module
 from app import models  # noqa: F401 - registers ORM models on Base.metadata
@@ -385,6 +387,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         queue_module: queue_module.SessionLocal,
         environment_builds_module: environment_builds_module.SessionLocal,
         retention_module: retention_module.SessionLocal,
+        stuck_run_detector_module: stuck_run_detector_module.SessionLocal,
         live_settings_module: live_settings_module.SessionLocal,
         licensing_module: licensing_module.SessionLocal,
         provider_triggers_module: provider_triggers_module.SessionLocal,
@@ -392,6 +395,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         remote_dispatch_module: remote_dispatch_module.SessionLocal,
         runner_pools_module: runner_pools_module.SessionLocal,
         chat_public_module: chat_public_module.SessionLocal,
+        provider_webhooks_module: provider_webhooks_module.SessionLocal,
         subworkflows_module: subworkflows_module.SessionLocal,
         mcp_tools_module: mcp_tools_module.SessionLocal,
         main_module: main_module.SessionLocal,
@@ -407,6 +411,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     queue_module.SessionLocal = test_session
     environment_builds_module.SessionLocal = test_session
     retention_module.SessionLocal = test_session
+    stuck_run_detector_module.SessionLocal = test_session
     live_settings_module.SessionLocal = test_session
     licensing_module.SessionLocal = test_session
     provider_triggers_module.SessionLocal = test_session
@@ -414,6 +419,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     remote_dispatch_module.SessionLocal = test_session
     runner_pools_module.SessionLocal = test_session
     chat_public_module.SessionLocal = test_session
+    provider_webhooks_module.SessionLocal = test_session
     subworkflows_module.SessionLocal = test_session
     mcp_tools_module.SessionLocal = test_session
     main_module.SessionLocal = test_session

@@ -4,13 +4,43 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nodyra — Your AI agent builds the workflow</title>
-<meta name="description" content="Connect any LLM via MCP. It writes Python workflows and you see them as nodes on a canvas. Self-hostable, Python-native, no lock-in.">
+<meta name="description" content="Connect any LLM via MCP. It writes Python workflows and you see them as nodes on a canvas. 500+ nodes, 40+ integrations, shareable chat pages, REST endpoints, and a hardened self-hosted runtime — no lock-in.">
+<meta name="theme-color" content="#090b10">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Nodyra">
+<meta property="og:title" content="Nodyra — Your AI agent builds the workflow">
+<meta property="og:description" content="Python-native workflow automation: MCP-driven builds, 500+ nodes, 40+ integrations, chat pages, REST endpoints, sandboxed runners. Self-hosted, fair-code.">
+<meta property="og:url" content="https://nodyra.io/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Nodyra — Your AI agent builds the workflow">
+<meta name="twitter:description" content="Python-native workflow automation: MCP-driven builds, 500+ nodes, 40+ integrations, chat pages, REST endpoints, sandboxed runners.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20512%20512%27%3E%20%20%3Cpath%20d%3D%27M%206.5%2091.5L%206.7%2088.1L%207.4%2083.8L%208.4%2079.1L%209.9%2074.2L%2011.8%2069.1L%2014.1%2064L%2016.7%2058.9L%2019.7%2053.9L%2023.1%2048.9L%2026.8%2044.1L%2030.7%2039.4L%2035%2035L%2039.4%2030.7L%2044.1%2026.8L%2048.9%2023.1L%2053.9%2019.7L%2058.9%2016.7L%2064%2014.1L%2069.1%2011.8L%2074.2%209.9L%2079.1%208.4L%2083.8%207.4L%2088.1%206.7L%2091.5%206.5%20%20L%20505.5%206.5%20L%20505.5%206.5%20%20L%20505.3%2088.1%20L%20504.6%2083.8%20L%20503.6%2079.1%20L%20502.1%2074.2%20L%20500.2%2069.1%20L%20497.9%2064%20L%20495.3%2058.9%20L%20492.3%2053.9%20L%20488.9%2048.9%20L%20485.2%2044.1%20L%20481.3%2039.4%20L%20477%2035%20L%20472.6%2030.7%20L%20467.9%2026.8%20L%20463.1%2023.1%20L%20458.1%2019.7%20L%20453.1%2016.7%20L%20448%2014.1%20L%20442.9%2011.8%20L%20437.8%209.9%20L%20432.9%208.4%20L%20428.2%207.4%20L%20423.9%206.7%20L%20420.5%206.5%20L%20505.5%20505.5%20L%20505.5%20505.5%20%20L%20505.3%20423.9%20L%20504.6%20428.2%20L%20503.6%20432.9%20L%20502.1%20437.8%20L%20500.2%20442.9%20L%20497.9%20448%20L%20495.3%20453.1%20L%20492.3%20458.1%20L%20488.9%20463.1%20L%20485.2%20467.9%20L%20481.3%20472.6%20L%20477%20477%20L%20472.6%20481.3%20L%20467.9%20485.2%20L%20463.1%20488.9%20L%20458.1%20492.3%20L%20453.1%20495.3%20L%20448%20497.9%20L%20442.9%20500.2%20L%20437.8%20502.1%20L%20432.9%20503.6%20L%20428.2%20504.6%20L%20423.9%20505.3%20L%20420.5%20505.5%20L%206.5%20505.5%20L%206.5%20505.5%20%20L%206.7%20423.9%20L%207.4%20428.2%20L%208.4%20432.9%20L%209.9%20437.8%20L%2011.8%20442.9%20L%2014.1%20448%20L%2016.7%20453.1%20L%2019.7%20458.1%20L%2023.1%20463.1%20L%2026.8%20467.9%20L%2030.7%20472.6%20L%2035%20477%20L%2039.4%20481.3%20L%2044.1%20485.2%20L%2048.9%20488.9%20L%2053.9%20492.3%20L%2058.9%20495.3%20L%2064%20497.9%20L%2069.1%20500.2%20L%2074.2%20502.1%20L%2079.1%20503.6%20L%2083.8%20504.6%20L%2088.1%20505.3%20L%2091.5%20505.5%20L%206.5%206.5%20L%206.5%206.5%20%20L%206.7%2088.1%20L%207.4%2083.8%20L%208.4%2079.1%20L%209.9%2074.2%20L%2011.8%2069.1%20L%2014.1%2064%20L%2016.7%2058.9%20L%2019.7%2053.9%20L%2023.1%2048.9%20L%2026.8%2044.1%20L%2030.7%2039.4%20L%2035%2035%20L%2039.4%2030.7%20L%2044.1%2026.8%20L%2048.9%2023.1%20L%2053.9%2019.7%20L%2058.9%2016.7%20L%2064%2014.1%20L%2069.1%2011.8%20L%2074.2%209.9%20L%2079.1%208.4%20L%2083.8%207.4%20L%2088.1%206.7%20L%2091.5%206.5%20Z%27%20fill%3D%27%231456D0%27%2F%3E%20%20%3Cpath%20d%3D%27M%206.5%2091.5L%206.7%2088.1L%207.4%2083.8L%208.4%2079.1L%209.9%2074.2L%2011.8%2069.1L%2014.1%2064L%2016.7%2058.9L%2019.7%2053.9L%2023.1%2048.9L%2026.8%2044.1L%2030.7%2039.4L%2035%2035L%2039.4%2030.7L%2044.1%2026.8L%2048.9%2023.1L%2053.9%2019.7L%2058.9%2016.7L%2064%2014.1L%2069.1%2011.8L%2074.2%209.9L%2079.1%208.4L%2083.8%207.4L%2088.1%206.7L%2091.5%206.5%20%20L%20505.5%206.5%20L%20505.5%206.5%20%20L%20505.3%2088.1%20L%20504.6%2083.8%20L%20503.6%2079.1%20L%20502.1%2074.2%20L%20500.2%2069.1%20L%20497.9%2064%20L%20495.3%2058.9%20L%20492.3%2053.9%20L%20488.9%2048.9%20L%20485.2%2044.1%20L%20481.3%2039.4%20L%20477%2035%20L%20472.6%2030.7%20L%20467.9%2026.8%20L%20463.1%2023.1%20L%20458.1%2019.7%20L%20453.1%2016.7%20L%20448%2014.1%20L%20442.9%2011.8%20L%20437.8%209.9%20L%20432.9%208.4%20L%20428.2%207.4%20L%20423.9%206.7%20L%20420.5%206.5%20L%20505.5%20505.5%20L%20505.5%20505.5%20%20L%20505.3%20423.9%20L%20504.6%20428.2%20L%20503.6%20432.9%20L%20502.1%20437.8%20L%20500.2%20442.9%20L%20497.9%20448%20L%20495.3%20453.1%20L%20492.3%20458.1%20L%20488.9%20463.1%20L%20485.2%20467.9%20L%20481.3%20472.6%20L%20477%20477%20L%20472.6%20481.3%20L%20467.9%20485.2%20L%20463.1%20488.9%20L%20458.1%20492.3%20L%20453.1%20495.3%20L%20448%20497.9%20L%20442.9%20500.2%20L%20437.8%20502.1%20L%20432.9%20503.6%20L%20428.2%20504.6%20L%20423.9%20505.3%20L%20420.5%20505.5%20L%206.5%20505.5%20L%206.5%20505.5%20%20L%206.7%20423.9%20L%207.4%20428.2%20L%208.4%20432.9%20L%209.9%20437.8%20L%2011.8%20442.9%20L%2014.1%20448%20L%2016.7%20453.1%20L%2019.7%20458.1%20L%2023.1%20463.1%20L%2026.8%20467.9%20L%2030.7%20472.6%20L%2035%20477%20L%2039.4%20481.3%20L%2044.1%20485.2%20L%2048.9%20488.9%20L%2053.9%20492.3%20L%2058.9%20495.3%20L%2064%20497.9%20L%2069.1%20500.2%20L%2074.2%20502.1%20L%2079.1%20503.6%20L%2083.8%20504.6%20L%2088.1%20505.3%20L%2091.5%20505.5%20L%206.5%206.5%20L%206.5%206.5%20%20L%206.7%2088.1%20L%207.4%2083.8%20L%208.4%2079.1%20L%209.9%2074.2%20L%2011.8%2069.1%20L%2014.1%2064%20L%2016.7%2058.9%20L%2019.7%2053.9%20L%2023.1%2048.9%20L%2026.8%2044.1%20L%2030.7%2039.4%20L%2035%2035%20L%2039.4%2030.7%20L%2044.1%2026.8%20L%2048.9%2023.1%20L%2053.9%2019.7%20L%2058.9%2016.7%20L%2064%2014.1%20L%2069.1%2011.8%20L%2074.2%209.9%20L%2079.1%208.4%20L%2083.8%207.4%20L%2088.1%206.7%20L%2091.5%206.5%20Z%27%20fill%3D%27none%27%20stroke%3D%27%237fb6ff%27%20stroke-opacity%3D%270.2%27%20stroke-width%3D%272%27%2F%3E%20%20%3Cpath%20d%3D%27M%20144%20125%20L%20159.5%20125%20L%20175%20125%20L%20175.5%20126%20L%20176%20127%20L%20181.5%20128%20L%20187%20129%20L%20195.5%20134%20L%20204%20139%20L%20287.5%20224%20L%20371%20309%20L%20382%20316%20L%20393%20323%20L%20400.5%20325%20L%20408%20327%20L%20416%20327.5%20L%20424%20328%20L%20433.5%20326.5%20L%20443%20325%20L%20452%20321%20L%20461%20317%20L%20466.5%20313%20L%20472%20309%20L%20480.5%20299.5%20L%20489%20290%20L%20494.5%20280.5%20L%20500%20271%20L%20502.5%20263%20L%20505%20255%20L%20505%20315.5%20L%20505%20376%20L%20501%20379%20L%20497%20382%20L%20497%20383%20L%20497%20384%20L%20495.5%20384%20L%20494%20384%20L%20486.5%20390%20L%20479%20396%20L%20471%20400%20L%20463%20404%20L%20460.5%20404%20L%20458%20404%20L%20457.5%20405%20L%20457%20406%20L%20451.5%20407%20L%20446%20408%20L%20445.5%20409%20L%20445%20410%20L%20441%20410%20L%20437%20410%20L%20436%20411%20L%20435%20412%20L%20420.5%20413%20L%20406%20414%20L%20405%20413%20L%20404%20412%20L%20397%20412%20L%20390%20412%20L%20389.5%20411%20L%20389%20410%20L%20385.5%20410%20L%20382%20410%20L%20381.5%20409%20L%20381%20408%20L%20375.5%20407%20L%20370%20406%20L%20360%20401%20L%20350%20396%20L%20348.5%20394%20L%20347%20392%20L%20345.5%20392%20L%20344%20392%20L%20344%20391%20L%20344%20390%20L%20339%20387%20L%20334%20384%20L%20334%20383%20L%20334%20382%20L%20333%20382%20L%20332%20382%20L%20332%20381%20L%20332%20380%20L%20331%20380%20L%20330%20380%20L%20330%20379%20L%20330%20378%20L%20329%20378%20L%20328%20378%20L%20328%20377%20L%20328%20376%20L%20327%20376%20L%20326%20376%20L%20326%20375%20L%20326%20374%20L%20312.5%20360.5%20L%20299%20347%20L%20298%20347%20L%20297%20347%20L%20297%20346%20L%20297%20345%20L%20296%20345%20L%20295%20345%20L%20295%20344%20L%20295%20343%20L%20294%20343%20L%20293%20343%20L%20293%20342%20L%20293%20341%20L%20292%20341%20L%20291%20341%20L%20291%20340%20L%20291%20339%20L%20290%20339%20L%20289%20339%20L%20289%20338%20L%20289%20337%20L%20288%20337%20L%20287%20337%20L%20287%20336%20L%20287%20335%20L%20286%20335%20L%20285%20335%20L%20285%20334%20L%20285%20333%20L%20284%20333%20L%20283%20333%20L%20283%20332%20L%20283%20331%20L%20282%20331%20L%20281%20331%20L%20281%20330%20L%20281%20329%20L%20280%20329%20L%20279%20329%20L%20279%20328%20L%20279%20327%20L%20278%20327%20L%20277%20327%20L%20277%20326%20L%20277%20325%20L%20276%20325%20L%20275%20325%20L%20275%20324%20L%20275%20323%20L%20274%20323%20L%20273%20323%20L%20273%20322%20L%20273%20321%20L%20272%20321%20L%20271%20321%20L%20271%20320%20L%20271%20319%20L%20270%20319%20L%20269%20319%20L%20269%20318%20L%20269%20317%20L%20268%20317%20L%20267%20317%20L%20267%20316%20L%20267%20315%20L%20266%20315%20L%20265%20315%20L%20265%20314%20L%20265%20313%20L%20264%20313%20L%20263%20313%20L%20263%20312%20L%20263%20311%20L%20262%20311%20L%20261%20311%20L%20261%20310%20L%20261%20309%20L%20260%20309%20L%20259%20309%20L%20259%20308%20L%20259%20307%20L%20258%20307%20L%20257%20307%20L%20257%20306%20L%20257%20305%20L%20256%20305%20L%20255%20305%20L%20255%20304%20L%20255%20303%20L%20253%20302%20L%20251%20301%20L%20251%20300%20L%20251%20299%20L%20250%20299%20L%20249%20299%20L%20249%20298%20L%20249%20297%20L%20248%20297%20L%20247%20297%20L%20247%20296%20L%20247%20295%20L%20227.5%20275.5%20L%20208%20256%20L%20206.5%20255%20L%20205%20254%20L%20200%20254%20L%20195%20254%20L%20193.5%20255.5%20L%20192%20257%20L%20192%20355.5%20L%20192%20454%20L%20194%20462.5%20L%20196%20471%20L%20201%20479.5%20L%20206%20488%20L%20211%20493%20L%20216%20498%20L%20222%20501.5%20L%20228%20505%20L%20176%20505%20L%20124%20505%20L%20118.5%20500%20L%20113%20495%20L%20113%20494%20L%20113%20493%20L%20112%20493%20L%20111%20493%20L%20111%20492%20L%20111%20491%20L%20110%20491%20L%20109%20491%20L%20109%20489.5%20L%20109%20488%20L%20107%20486.5%20L%20105%20485%20L%20104%20482%20L%20103%20479%20L%20102%20479%20L%20101%20479%20L%2095%20461%20L%2089%20443%20L%2088.5%20319%20L%2088%20195%20L%2089.5%20184.5%20L%2091%20174%20L%2092%20173.5%20L%2093%20173%20L%2093%20171%20L%2093%20169%20L%2096%20163%20L%2099%20157%20L%20101%20155.5%20L%20103%20154%20L%20103%20152.5%20L%20103%20151%20L%20112%20143%20L%20121%20135%20L%20132.5%20130.5%20L%20144%20126%20Z%27%20fill%3D%27%23ffffff%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%271.4%27%20stroke-linejoin%3D%27round%27%20stroke-linecap%3D%27round%27%2F%3E%3C%2Fsvg%3E">
+<link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAViSURBVFhHtZdtbFNVGMfP1pd17W27rb13420xE0qgjiABhAwN5PJax0bL2o29sCVoGAsfIPDFD5oMY3wBjJGEKFESiboERVAHihFBUaJjXYtsDBiwl8AEpoIwGGs3//rcrmO9ve1KnP/knzS35/T59Z7nOec5jDGWwRgTRzrFYhMNOYtFQ/YYWnhSNAjTRPO0StGQUygashdKZvr0nBVqnRmMMWiMk5D29JvIKm6AsOYs+OIzY2Kh7CKsjs+g0VvA2dwQVv8AYW0XBE8jmNmWL2qM46G15kJwn0ZW1VXwJS2wFv86di5pBe9ugEqXJv1RNTcOlvzDEMrawAw5+aJ5xnpYC48hq+IyeI8PVo9/jH0GQul5pPAzJQAJwpAFwXkCjNZhQmUbMssu/E/BQxYqOqB/3DkMQOamuAhggZhVcAh8ydmoSWNpoaITpllbIwDUKUYwlUolplimP1x3hckW95AVvkvUfNllpC/cHQEwZCaqtEZYXT/CShDhCR4/Mtx+qB1eaPO90Bc2QfOsVzLByAOM6jXnYcmvR1KyKhogiTFkLN8PvvRiKHixHyaXD4bCJlTuaEf9L7dx6lwvDp66hbLXryAl34u01T4JMipQLBc3g3efhtqQGQ1AH9LytoMvb5cGpxf5YHT68MnJP6Gk977ukd6E2fUoEKH9ICVztjIAl1sNoaJLGpy8ohEvf9wtjxuhvUd/h8rR+EgQlIiGKW5lgNTsJRDKryC9KDS480a/PGaU9hzpkWBpOeTBlMxTJcx+QRlAm24DX9IMzumHfX0L+vr/lsdT1O76m0hKEEKqhEV7lAFUWg5W5/fgXM2YWdOC/mBiAKRdn99A0vIEIKgSVn6FZJUmGoCcsbQOxqILmLGhBQ8CiQOQ3joYgqAEjgocdvFZ8B4v1NwEZQDz/Fdh9FxBbjUtwaA8xqja8el1sLgQVAlt0I2bpwzA2Z+DqaQjLgDtCe8e6ZE/HtZr+38DWxYbQqqEqaWheBwXCaCbuAgmzyU8sb4F92MA1H7UDTbvZ+z+8qb8q2G9UheCyBiqqJGmSjA/9ZIUr6qqMhJAY86ByeWHvboV9x8oA+w8cB1syWmp/N45HBui9sNusKXRb0IovwzV3F3IEqzo6uyMBEjWpIJzfAv7hjbciwNAyUYbEO2Gdcf/kA8ZFkEQKNmwqgmpBU1gy/wY7/oGjd4maUwEAFm/8APYazpGBaDdj84LOhfqTsSGOOr9C4W1lzCz5hzmb2rFlj1d6OwJ/XZ/f380gG5WLewbr6K3Lz6AtJ50aDmHIOK8CVJwILqsFQHUkytg33gNdxMAGAlBR3a8nFBSIBCIBkgS8jC9piNhAAnC45dygp4/KkQUAEudhGnPN+Nun3xoSEoAIyF0K73SITWaBoJ92Lx5kwIA02Bq+XHceSCfElIsgDAEnQeU9VU72+Ftu4dB2dLf7h1AfcNdLN78UzimHIBhsnMf7gQiJ4YVDyBs6h1VDq9UJZT5FW+0o/rtTri2XYJtXTO0K/3QFfigMT0GZrDYRBV1pyMAchZvw73opJW0IwGAsKmnpF6S+kp6K5So1GkRILV/xqluMLqrSf35CADT9DJ03ZaHDmk7HTjLEgOIbR+spReRWfAF3YwKRWH1Saj1wkMI/RzsPaachYdO3fqPAD6p97Q4DsKcuy50M6KLIt3V1MaJIYBkHgu2nIfSKgQGgLwtbUh2+KUOis74hL2mFcLaa7Cu+g5qUza05mww/YS8FXRLpXOadx4HZyuChhOQ/MwBbH2/G/f7AggGBxAIBiUPDg6gpaMXczY2w7SqAby7MTF7mmB1noB57otQ6dKlP6r+97L6D9uYrvPzgOymAAAAAElFTkSuQmCC">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script>document.documentElement.classList.add('js');</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Nodyra",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux, macOS, Windows",
+  "description": "Python-native, self-hosted workflow automation platform. AI agents build workflows via MCP; every node runs as real Python with sandboxed execution, remote runner pools, versioned deployments, and enterprise controls.",
+  "offers": [
+    { "@type": "Offer", "name": "Community", "price": "0", "priceCurrency": "USD" },
+    { "@type": "Offer", "name": "Pro", "price": "49", "priceCurrency": "USD" },
+    { "@type": "Offer", "name": "Enterprise", "price": "0", "priceCurrency": "USD" }
+  ],
+  "url": "https://nodyra.io/",
+  "license": "https://github.com/Harshit-repo/noodle/blob/main/LICENSE"
+}
+</script>
 <style>
 /* tokens — verbatim from apps/web/src/index.css */
 :root{
+  color-scheme:dark;
   --bg:#090b10;--surface:#10141c;--surface-2:#161b25;--surface-3:#1f2632;
   --canvas:#0b0e14;--line:#242c3a;--line-2:#1a2029;
   --ink:#e9eef6;--ink-2:#98a4ba;--ink-3:#8a93a6;
@@ -23,9 +53,10 @@
   --font-sans:"Hanken Grotesk",system-ui,sans-serif;
   --font-mono:"IBM Plex Mono",ui-monospace,monospace;
 }
-*{box-sizing:border-box;margin:0;padding:0;scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent}
+*{box-sizing:border-box;margin:0;padding:0;scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent;-webkit-tap-highlight-color:transparent}
 html{scroll-behavior:smooth}
 body{font-family:var(--font-sans);font-size:14px;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.55;overflow-x:hidden}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
   background:radial-gradient(900px 520px at 12% -8%,rgba(76,158,255,0.09),transparent 60%),
              radial-gradient(760px 620px at 102% 108%,rgba(76,158,255,0.06),transparent 55%)}
@@ -47,6 +78,8 @@ h1,h2,h3{margin:0;letter-spacing:-0.02em}
 .field-input{width:100%;font-family:var(--font-sans);font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-sm);padding:8px 10px;outline:none;transition:border-color 120ms ease,box-shadow 120ms ease}
 .field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
 .field-input::placeholder{color:var(--ink-3)}
+.field-input[aria-invalid="true"]{border-color:rgba(240,116,122,0.65);box-shadow:0 0 0 3px rgba(240,116,122,0.14)}
+.field-input[aria-invalid="true"]:focus{border-color:rgba(240,116,122,0.85);box-shadow:0 0 0 3px rgba(240,116,122,0.2)}
 
 /* nav */
 #site-nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);background:rgba(9,11,16,0.72);border-bottom:1px solid transparent;transition:border-color 200ms ease}
@@ -59,14 +92,30 @@ h1,h2,h3{margin:0;letter-spacing:-0.02em}
 .nav-links a:hover{color:var(--ink);background:var(--surface-2)}
 .nav-links a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:7px}
 .nav-cta{display:flex;align-items:center;gap:12px;flex-shrink:0}
-@media(max-width:820px){.nav-links{display:none}}
+.nav-toggle{display:none;width:38px;height:38px;border:1px solid var(--line);background:var(--surface-2);border-radius:9px;cursor:pointer;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:0}
+.nav-toggle span{display:block;width:16px;height:2px;border-radius:2px;background:var(--ink-2);transition:transform 160ms ease,opacity 160ms ease}
+.nav-toggle[aria-expanded="true"] span:nth-child(1){transform:translateY(6px) rotate(45deg)}
+.nav-toggle[aria-expanded="true"] span:nth-child(2){opacity:0}
+.nav-toggle[aria-expanded="true"] span:nth-child(3){transform:translateY(-6px) rotate(-45deg)}
+.nav-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.nav-mobile{display:none;position:absolute;top:66px;left:0;right:0;z-index:49;background:rgba(9,11,16,0.96);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line-2);padding:10px 32px 16px;flex-direction:column;gap:2px}
+.nav-mobile.open{display:flex}
+.nav-mobile a{font-size:15px;font-weight:600;color:var(--ink-2);padding:11px 6px;border-radius:8px}
+.nav-mobile a:hover{color:var(--ink);background:var(--surface-2)}
+.nav-mobile a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.nav-mobile .nav-mobile-cta{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.skip-link{position:absolute;left:12px;top:-60px;z-index:100;background:var(--accent);color:#fff;font-weight:700;font-size:13px;padding:10px 16px;border-radius:8px;transition:top 140ms ease}
+.skip-link:focus{top:12px;outline:2px solid #fff;outline-offset:2px}
+.brand-mark{width:28px;height:28px;flex-shrink:0;border-radius:6.5px;box-shadow:0 4px 14px -6px rgba(20,86,208,0.65)}
+.foot-brand .brand-mark{width:22px;height:22px;border-radius:5px}
+@media(max-width:820px){.nav-links,.nav-cta .btn{display:none}.nav-toggle{display:flex}}
 
 /* hero */
-#hero{min-height:100vh;display:grid;grid-template-columns:55fr 45fr;align-items:center}
+#hero{min-height:100vh;min-height:100dvh;display:grid;grid-template-columns:55fr 45fr;align-items:center}
 @media(max-width:940px){#hero{grid-template-columns:1fr;min-height:auto}.hero-canvas-wrap{height:360px!important}}
 
 /* canvas panel */
-.hero-canvas-wrap{position:relative;height:100vh;background:radial-gradient(ellipse at 50% 50%,rgba(255,255,255,0.015) 0%,transparent 60%),var(--canvas);overflow:hidden}
+.hero-canvas-wrap{position:relative;height:100vh;height:100dvh;background:radial-gradient(ellipse at 50% 50%,rgba(255,255,255,0.015) 0%,transparent 60%),var(--canvas);overflow:hidden}
 .hero-canvas-wrap::before{content:"";position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(circle,rgba(255,255,255,0.04) 1px,transparent 1px);background-size:28px 28px}
 .canvas-stage{position:absolute;inset:0;transition:opacity 300ms ease}
 
@@ -86,7 +135,7 @@ h1,h2,h3{margin:0;letter-spacing:-0.02em}
 .canvas-edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
 
 /* graph/python toggle */
-.canvas-toggle{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);display:inline-flex;background:rgba(9,11,16,0.82);border:1px solid var(--line);border-radius:999px;padding:4px;backdrop-filter:blur(8px);z-index:10;gap:2px}
+.canvas-toggle{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);display:inline-flex;background:rgba(9,11,16,0.82);border:1px solid var(--line);border-radius:999px;padding:4px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:10;gap:2px}
 .canvas-toggle button{font-family:var(--font-mono);font-size:12px;font-weight:500;color:var(--ink-3);background:transparent;border:0;padding:6px 16px;border-radius:999px;cursor:pointer;transition:background 200ms,color 200ms}
 .canvas-toggle button.active{background:linear-gradient(180deg,var(--accent-2),var(--accent));color:#06101e;font-weight:600}
 .canvas-toggle button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -133,7 +182,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 
 /* ---- NDV (Node Detail View) — copied from apps/web/src/editor.css + index.css ---- */
 .modal-overlay{position:fixed;inset:0;z-index:200;background:rgba(4,6,10,0.72);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:28px 20px 20px}
-.ndv-modal{position:relative;width:min(1320px,96vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column;background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 4%,var(--surface)) 0%,var(--surface) 120px);border:1px solid color-mix(in srgb,var(--accent) 9%,var(--line));border-radius:14px;box-shadow:0 1px 0 rgba(255,255,255,0.05) inset,0 40px 90px -36px rgba(0,0,0,0.86),0 0 0 1px rgba(0,0,0,0.35);height:65vh;min-height:35vh;overflow:hidden;animation:pop 170ms cubic-bezier(0.2,0.8,0.2,1)}
+.ndv-modal{position:relative;width:min(1320px,96vw);max-height:calc(100vh - 48px);max-height:calc(100dvh - 48px);display:flex;flex-direction:column;background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 4%,var(--surface)) 0%,var(--surface) 120px);border:1px solid color-mix(in srgb,var(--accent) 9%,var(--line));border-radius:14px;box-shadow:0 1px 0 rgba(255,255,255,0.05) inset,0 40px 90px -36px rgba(0,0,0,0.86),0 0 0 1px rgba(0,0,0,0.35);height:65vh;height:65dvh;min-height:35vh;min-height:35dvh;overflow:hidden;animation:pop 170ms cubic-bezier(0.2,0.8,0.2,1)}
 .ndv-modal::before{content:'';position:absolute;left:18px;right:18px;top:0;height:1px;border-radius:1px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 70%,transparent),transparent);opacity:0.7;pointer-events:none;z-index:1}
 .ndv-modal.ndv-edge-ok::before{background:linear-gradient(90deg,transparent,#57c98a,transparent);opacity:0.85}
 @keyframes pop{from{transform:translateY(-10px) scale(0.985);opacity:0}}
@@ -315,6 +364,29 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .demo-mode-tip{font-family:var(--font-mono);font-size:11px;color:var(--accent);margin:6px 0 10px;letter-spacing:0.01em}
 .demo-mode-tip strong{font-weight:700;color:var(--accent)}
 
+/* Fallbacks for engines without color-mix() (Chrome < 111, Safari < 16.2, Firefox < 113) */
+@supports not (color: color-mix(in srgb, red 50%, blue)) {
+  .ndv-modal{background:var(--surface);border-color:var(--line)}
+  .ndv-modal::before{background:linear-gradient(90deg,transparent,rgba(76,158,255,0.6),transparent)}
+  .ndv-modal.ndv-edge-ok::before{background:linear-gradient(90deg,transparent,#57c98a,transparent)}
+  .ndv-drag-handle{background:var(--line-2);border-top-color:var(--line-2)}
+  .ndv-drag-dots span{background:var(--line)}
+  .ndv-drag-tip{border-color:var(--line)}
+  .ndv-head{border-bottom-color:var(--line-2)}
+  .mono-tag-cat{background:var(--surface-2);border-color:var(--line-2)}
+  .inspector-glyph{background:var(--surface-2);border-color:var(--line-2);box-shadow:none}
+  .ndv-middle{border-right-color:var(--line-2);border-left-color:var(--line-2)}
+  .ndv-tabs button.active::after{background:var(--accent);box-shadow:none}
+  .ndv-tabs button:hover:not(.active){background:var(--surface-2)}
+  .ndv-mode-toggle{background:var(--surface-3)}
+  .btn-run{background:rgba(87,201,138,0.16);border-color:rgba(87,201,138,0.45)}
+  .code-view{border-color:var(--line)}
+  .ndv-count-badge{border-color:rgba(76,158,255,0.26)}
+  .ndv-panel-head,.ndv-panel-foot{background:var(--surface)}
+  .price-card-featured{background:var(--surface);border-color:var(--line-2);box-shadow:0 28px 60px -28px rgba(76,158,255,0.24)}
+  .price-card-featured::before{background:var(--accent)}
+}
+
 /* ===== Deployments & Environments ===== */
 .deploy-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:start}
 @media(max-width:860px){.deploy-grid{grid-template-columns:1fr;gap:44px}}
@@ -376,6 +448,12 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .price-custom{font-family:var(--font-display);font-size:28px;font-weight:800;color:var(--ink);line-height:1;margin-bottom:0}
 .price-cycle{font-size:13px;color:var(--ink-3);margin-top:5px;margin-bottom:16px}
 .price-tagline{font-size:13px;color:var(--ink-2);line-height:1.6;padding-bottom:20px;border-bottom:1px solid var(--line-2);margin-bottom:20px}
+/* Resource caps, straight from TIER_DEFAULTS in app/services/licensing.py. */
+.price-limits{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding-bottom:20px;border-bottom:1px solid var(--line-2);margin-bottom:20px}
+@media(max-width:420px){.price-limits{grid-template-columns:repeat(2,1fr);gap:12px 8px}}
+.price-limit{display:flex;flex-direction:column;gap:2px;min-width:0}
+.price-limit-n{font-family:var(--font-display);font-size:19px;font-weight:800;color:var(--ink);line-height:1;font-variant-numeric:tabular-nums}
+.price-limit-l{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);line-height:1.3}
 .price-features{display:flex;flex-direction:column;gap:9px;flex:1}
 .price-feat{display:flex;align-items:flex-start;gap:9px;font-size:13px;color:var(--ink-2)}
 .price-feat-check{flex-shrink:0;width:16px;height:16px;color:var(--ok);margin-top:1px}
@@ -478,7 +556,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .fleet-stat-val{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:5px}
 .fleet-dot-ok{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;flex-shrink:0}
 .fleet-dot-warn{width:7px;height:7px;border-radius:50%;background:var(--amber);display:inline-block;flex-shrink:0}
-.pool-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden}
+.pool-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);overflow-x:auto;overflow-y:hidden}
 .pool-head{padding:12px 18px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .pool-name-row{display:flex;align-items:center;gap:9px;flex:1;min-width:0;flex-wrap:wrap}
 .pool-name{font-size:14px;font-weight:600;color:var(--ink)}
@@ -492,6 +570,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .pool-meta-line{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);padding:7px 18px;border-bottom:1px solid var(--line-2)}
 .pool-actions{display:flex;gap:7px;flex-shrink:0}
 .health-strip{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line-2)}
+@media(max-width:680px){.health-strip{grid-template-columns:repeat(2,1fr)}.hs-cell:nth-child(odd){border-left:none}.hs-cell:nth-child(n+3){border-top:1px solid var(--line-2)}}
 .hs-cell{padding:10px 16px}
 .hs-cell+.hs-cell{border-left:1px solid var(--line-2)}
 .hs-label{font-size:9.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-3);margin-bottom:5px}
@@ -524,20 +603,22 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .tact-warn{background:transparent;color:var(--amber);border:1px solid rgba(255,212,121,0.3)}
 /* reduced motion */
 @media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
   .node{opacity:1!important;transform:none!important;transition:none!important}
   .node-cursor{display:none}
   .python-pane,.canvas-stage{transition:none!important}
-  .reveal{opacity:1!important;transform:none!important;transition:none!important}
+  .js .reveal{opacity:1!important;transform:none!important;transition:none!important}
   *{animation-duration:0.01ms!important;transition-duration:0.01ms!important}
 }
 
 /* sections */
 .section-pad{padding:80px 0}
+section[id],footer[id]{scroll-margin-top:84px}
 .eyebrow{font-family:var(--font-mono);font-size:11.5px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);margin-bottom:14px}
-h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);font-weight:800;line-height:1.05;letter-spacing:-0.03em;max-width:22ch}
+h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);font-weight:800;line-height:1.05;letter-spacing:-0.03em;max-width:22ch;text-wrap:balance}
 
-/* scroll reveal */
-.reveal{opacity:0;transform:translateY(22px);transition:opacity 560ms ease,transform 560ms ease}
+/* scroll reveal — hidden only when JS is available to reveal it */
+.js .reveal{opacity:0;transform:translateY(22px);transition:opacity 560ms ease,transform 560ms ease}
 .reveal.in{opacity:1;transform:none}
 
 /* how it works */
@@ -574,6 +655,48 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
 .bento-card h3{font-size:15px;font-weight:700;margin:0}
 .bento-card p{font-size:13px;color:var(--ink-2);line-height:1.55;margin:0}
 
+/* ===== Documentation ===== */
+.docs-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:48px}
+@media(max-width:1060px){.docs-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:540px){.docs-grid{grid-template-columns:1fr}}
+.doc-card{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);padding:20px;transition:border-color 140ms ease,background 140ms ease,transform 140ms ease}
+.doc-card:hover{border-color:var(--accent-deep);background:var(--surface-2);transform:translateY(-2px)}
+.doc-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.doc-card h3{font-size:14.5px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px}
+.doc-card h3 .doc-ext{color:var(--ink-3);font-size:11px;font-weight:500;margin-left:auto;opacity:0;transition:opacity 140ms ease}
+.doc-card:hover h3 .doc-ext{opacity:1}
+.doc-card p{font-size:12.5px;color:var(--ink-2);line-height:1.55;margin:0;flex:1}
+.doc-path{font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);border-top:1px solid var(--line-2);padding-top:9px;margin-top:2px;display:flex;align-items:center;gap:6px;overflow:hidden}
+.doc-path svg{flex-shrink:0;color:var(--ink-3)}
+.doc-path span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-cta{display:flex;justify-content:center;margin-top:36px}
+.docs-head{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center;margin-top:24px}
+@media(max-width:860px){.docs-head{grid-template-columns:1fr;gap:36px}}
+.docs-head .mini-terminal{margin-top:0}
+
+/* ===== Integrations ===== */
+.provider-cloud{display:flex;flex-wrap:wrap;gap:8px;margin-top:36px}
+.provider-pill{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--ink-2);background:var(--surface);border:1px solid var(--line-2);border-radius:999px;padding:7px 14px;transition:border-color 140ms ease,color 140ms ease,background 140ms ease}
+.provider-pill:hover{border-color:var(--accent-deep);color:var(--ink);background:var(--surface-2)}
+.provider-pill .pd{width:7px;height:7px;border-radius:50%;background:var(--accent);opacity:0.85;flex-shrink:0}
+.provider-pill.pill-ai{color:var(--accent-2);border-color:rgba(76,158,255,0.35)}
+.provider-pill.pill-ai .pd{background:var(--accent-2);box-shadow:0 0 8px rgba(76,158,255,0.6)}
+.int-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:48px}
+@media(max-width:860px){.int-grid{grid-template-columns:minmax(0,1fr)}}
+.int-card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);padding:24px 22px;display:flex;flex-direction:column;gap:10px;transition:border-color 140ms ease,background 140ms ease}
+.int-card:hover{border-color:var(--accent-deep);background:var(--surface-2)}
+.int-card-icon{width:38px;height:38px;display:grid;place-items:center;border-radius:10px;background:var(--accent-glow);border:1px solid rgba(76,158,255,0.22);color:var(--accent);margin-bottom:4px}
+.int-card h3{font-size:15px;font-weight:700;margin:0}
+.int-card p{font-size:13px;color:var(--ink-2);line-height:1.6;margin:0}
+.int-card code{font-family:var(--font-mono);font-size:11.5px;color:var(--accent);overflow-wrap:anywhere;min-width:0}
+.chat-link-bar{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-family:var(--font-mono);font-size:11px;color:var(--ink-2);overflow:hidden;margin-top:2px}
+.chat-link-bar .cl-domain{color:var(--accent-2)}
+.chat-link-bar .cl-path{color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-link-bar .cl-token{color:var(--amber);margin-left:auto;flex-shrink:0}
+.api-route-row{display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11.5px;padding:6px 0}
+.api-method{font-weight:700;color:var(--ink);background:var(--surface-3);border:1px solid var(--line);border-radius:5px;padding:1px 7px;font-size:10px;letter-spacing:0.04em;flex-shrink:0}
+.api-method.get{color:#7be0a0}.api-method.post{color:var(--amber)}
+
 /* CTA band */
 .cta-band{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:72px 56px;position:relative;overflow:hidden;text-align:center;margin:0 0 40px}
 .cta-band::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(700px 340px at 90% -20%,rgba(76,158,255,0.10),transparent 60%)}
@@ -599,44 +722,61 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
 </style>
 </head>
 <body>
+<a href="#main" class="skip-link">Skip to content</a>
+
+<!-- App mark sprite: same white-N tile used by the Nodyra app (apps/web/public/brand/nodyra-mark.png) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="nodyra-mark" viewBox="0 0 512 512">
+    <path d="M 6.5 91.5L 6.7 88.1L 7.4 83.8L 8.4 79.1L 9.9 74.2L 11.8 69.1L 14.1 64L 16.7 58.9L 19.7 53.9L 23.1 48.9L 26.8 44.1L 30.7 39.4L 35 35L 39.4 30.7L 44.1 26.8L 48.9 23.1L 53.9 19.7L 58.9 16.7L 64 14.1L 69.1 11.8L 74.2 9.9L 79.1 8.4L 83.8 7.4L 88.1 6.7L 91.5 6.5  L 505.5 6.5 L 505.5 6.5  L 505.3 88.1 L 504.6 83.8 L 503.6 79.1 L 502.1 74.2 L 500.2 69.1 L 497.9 64 L 495.3 58.9 L 492.3 53.9 L 488.9 48.9 L 485.2 44.1 L 481.3 39.4 L 477 35 L 472.6 30.7 L 467.9 26.8 L 463.1 23.1 L 458.1 19.7 L 453.1 16.7 L 448 14.1 L 442.9 11.8 L 437.8 9.9 L 432.9 8.4 L 428.2 7.4 L 423.9 6.7 L 420.5 6.5 L 505.5 505.5 L 505.5 505.5  L 505.3 423.9 L 504.6 428.2 L 503.6 432.9 L 502.1 437.8 L 500.2 442.9 L 497.9 448 L 495.3 453.1 L 492.3 458.1 L 488.9 463.1 L 485.2 467.9 L 481.3 472.6 L 477 477 L 472.6 481.3 L 467.9 485.2 L 463.1 488.9 L 458.1 492.3 L 453.1 495.3 L 448 497.9 L 442.9 500.2 L 437.8 502.1 L 432.9 503.6 L 428.2 504.6 L 423.9 505.3 L 420.5 505.5 L 6.5 505.5 L 6.5 505.5  L 6.7 423.9 L 7.4 428.2 L 8.4 432.9 L 9.9 437.8 L 11.8 442.9 L 14.1 448 L 16.7 453.1 L 19.7 458.1 L 23.1 463.1 L 26.8 467.9 L 30.7 472.6 L 35 477 L 39.4 481.3 L 44.1 485.2 L 48.9 488.9 L 53.9 492.3 L 58.9 495.3 L 64 497.9 L 69.1 500.2 L 74.2 502.1 L 79.1 503.6 L 83.8 504.6 L 88.1 505.3 L 91.5 505.5 L 6.5 6.5 L 6.5 6.5  L 6.7 88.1 L 7.4 83.8 L 8.4 79.1 L 9.9 74.2 L 11.8 69.1 L 14.1 64 L 16.7 58.9 L 19.7 53.9 L 23.1 48.9 L 26.8 44.1 L 30.7 39.4 L 35 35 L 39.4 30.7 L 44.1 26.8 L 48.9 23.1 L 53.9 19.7 L 58.9 16.7 L 64 14.1 L 69.1 11.8 L 74.2 9.9 L 79.1 8.4 L 83.8 7.4 L 88.1 6.7 L 91.5 6.5 Z" fill="#1456D0"/>
+    <path d="M 6.5 91.5L 6.7 88.1L 7.4 83.8L 8.4 79.1L 9.9 74.2L 11.8 69.1L 14.1 64L 16.7 58.9L 19.7 53.9L 23.1 48.9L 26.8 44.1L 30.7 39.4L 35 35L 39.4 30.7L 44.1 26.8L 48.9 23.1L 53.9 19.7L 58.9 16.7L 64 14.1L 69.1 11.8L 74.2 9.9L 79.1 8.4L 83.8 7.4L 88.1 6.7L 91.5 6.5  L 505.5 6.5 L 505.5 6.5  L 505.3 88.1 L 504.6 83.8 L 503.6 79.1 L 502.1 74.2 L 500.2 69.1 L 497.9 64 L 495.3 58.9 L 492.3 53.9 L 488.9 48.9 L 485.2 44.1 L 481.3 39.4 L 477 35 L 472.6 30.7 L 467.9 26.8 L 463.1 23.1 L 458.1 19.7 L 453.1 16.7 L 448 14.1 L 442.9 11.8 L 437.8 9.9 L 432.9 8.4 L 428.2 7.4 L 423.9 6.7 L 420.5 6.5 L 505.5 505.5 L 505.5 505.5  L 505.3 423.9 L 504.6 428.2 L 503.6 432.9 L 502.1 437.8 L 500.2 442.9 L 497.9 448 L 495.3 453.1 L 492.3 458.1 L 488.9 463.1 L 485.2 467.9 L 481.3 472.6 L 477 477 L 472.6 481.3 L 467.9 485.2 L 463.1 488.9 L 458.1 492.3 L 453.1 495.3 L 448 497.9 L 442.9 500.2 L 437.8 502.1 L 432.9 503.6 L 428.2 504.6 L 423.9 505.3 L 420.5 505.5 L 6.5 505.5 L 6.5 505.5  L 6.7 423.9 L 7.4 428.2 L 8.4 432.9 L 9.9 437.8 L 11.8 442.9 L 14.1 448 L 16.7 453.1 L 19.7 458.1 L 23.1 463.1 L 26.8 467.9 L 30.7 472.6 L 35 477 L 39.4 481.3 L 44.1 485.2 L 48.9 488.9 L 53.9 492.3 L 58.9 495.3 L 64 497.9 L 69.1 500.2 L 74.2 502.1 L 79.1 503.6 L 83.8 504.6 L 88.1 505.3 L 91.5 505.5 L 6.5 6.5 L 6.5 6.5  L 6.7 88.1 L 7.4 83.8 L 8.4 79.1 L 9.9 74.2 L 11.8 69.1 L 14.1 64 L 16.7 58.9 L 19.7 53.9 L 23.1 48.9 L 26.8 44.1 L 30.7 39.4 L 35 35 L 39.4 30.7 L 44.1 26.8 L 48.9 23.1 L 53.9 19.7 L 58.9 16.7 L 64 14.1 L 69.1 11.8 L 74.2 9.9 L 79.1 8.4 L 83.8 7.4 L 88.1 6.7 L 91.5 6.5 Z" fill="none" stroke="#7fb6ff" stroke-opacity="0.22" stroke-width="2"/>
+    <path d="M 144 125 L 159.5 125 L 175 125 L 175.5 126 L 176 127 L 181.5 128 L 187 129 L 195.5 134 L 204 139 L 287.5 224 L 371 309 L 382 316 L 393 323 L 400.5 325 L 408 327 L 416 327.5 L 424 328 L 433.5 326.5 L 443 325 L 452 321 L 461 317 L 466.5 313 L 472 309 L 480.5 299.5 L 489 290 L 494.5 280.5 L 500 271 L 502.5 263 L 505 255 L 505 315.5 L 505 376 L 501 379 L 497 382 L 497 383 L 497 384 L 495.5 384 L 494 384 L 486.5 390 L 479 396 L 471 400 L 463 404 L 460.5 404 L 458 404 L 457.5 405 L 457 406 L 451.5 407 L 446 408 L 445.5 409 L 445 410 L 441 410 L 437 410 L 436 411 L 435 412 L 420.5 413 L 406 414 L 405 413 L 404 412 L 397 412 L 390 412 L 389.5 411 L 389 410 L 385.5 410 L 382 410 L 381.5 409 L 381 408 L 375.5 407 L 370 406 L 360 401 L 350 396 L 348.5 394 L 347 392 L 345.5 392 L 344 392 L 344 391 L 344 390 L 339 387 L 334 384 L 334 383 L 334 382 L 333 382 L 332 382 L 332 381 L 332 380 L 331 380 L 330 380 L 330 379 L 330 378 L 329 378 L 328 378 L 328 377 L 328 376 L 327 376 L 326 376 L 326 375 L 326 374 L 312.5 360.5 L 299 347 L 298 347 L 297 347 L 297 346 L 297 345 L 296 345 L 295 345 L 295 344 L 295 343 L 294 343 L 293 343 L 293 342 L 293 341 L 292 341 L 291 341 L 291 340 L 291 339 L 290 339 L 289 339 L 289 338 L 289 337 L 288 337 L 287 337 L 287 336 L 287 335 L 286 335 L 285 335 L 285 334 L 285 333 L 284 333 L 283 333 L 283 332 L 283 331 L 282 331 L 281 331 L 281 330 L 281 329 L 280 329 L 279 329 L 279 328 L 279 327 L 278 327 L 277 327 L 277 326 L 277 325 L 276 325 L 275 325 L 275 324 L 275 323 L 274 323 L 273 323 L 273 322 L 273 321 L 272 321 L 271 321 L 271 320 L 271 319 L 270 319 L 269 319 L 269 318 L 269 317 L 268 317 L 267 317 L 267 316 L 267 315 L 266 315 L 265 315 L 265 314 L 265 313 L 264 313 L 263 313 L 263 312 L 263 311 L 262 311 L 261 311 L 261 310 L 261 309 L 260 309 L 259 309 L 259 308 L 259 307 L 258 307 L 257 307 L 257 306 L 257 305 L 256 305 L 255 305 L 255 304 L 255 303 L 253 302 L 251 301 L 251 300 L 251 299 L 250 299 L 249 299 L 249 298 L 249 297 L 248 297 L 247 297 L 247 296 L 247 295 L 227.5 275.5 L 208 256 L 206.5 255 L 205 254 L 200 254 L 195 254 L 193.5 255.5 L 192 257 L 192 355.5 L 192 454 L 194 462.5 L 196 471 L 201 479.5 L 206 488 L 211 493 L 216 498 L 222 501.5 L 228 505 L 176 505 L 124 505 L 118.5 500 L 113 495 L 113 494 L 113 493 L 112 493 L 111 493 L 111 492 L 111 491 L 110 491 L 109 491 L 109 489.5 L 109 488 L 107 486.5 L 105 485 L 104 482 L 103 479 L 102 479 L 101 479 L 95 461 L 89 443 L 88.5 319 L 88 195 L 89.5 184.5 L 91 174 L 92 173.5 L 93 173 L 93 171 L 93 169 L 96 163 L 99 157 L 101 155.5 L 103 154 L 103 152.5 L 103 151 L 112 143 L 121 135 L 132.5 130.5 L 144 126 Z" fill="#ffffff" stroke="#ffffff" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+  </symbol>
+</svg>
 
 <!-- NAV -->
 <nav id="site-nav" aria-label="Main navigation">
   <div class="wrap nav-in">
     <a href="#" class="nav-brand" aria-label="Nodyra home">
-      <svg width="28" height="28" viewBox="0 0 50 50" fill="none" aria-hidden="true">
-        <rect width="50" height="50" rx="11" fill="#090b10"/>
-        <path d="M10 39 C 10 22, 40 28, 40 11" stroke="url(#nb-gb)" stroke-width="4" stroke-linecap="round" fill="none"/>
-        <circle cx="10" cy="39" r="5" fill="#4c9eff"/>
-        <circle cx="10" cy="39" r="5" stroke="#79b6ff" stroke-width="1" opacity="0.4"/>
-        <circle cx="40" cy="11" r="3.8" fill="#79b6ff"/>
-        <circle cx="25" cy="25" r="2" fill="#ffd479" opacity="0.85"/>
-        <defs>
-          <linearGradient id="nb-gb" x1="10" y1="39" x2="40" y2="11" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#4c9eff"/><stop offset="50%" stop-color="#79b6ff"/><stop offset="100%" stop-color="#c8a6ff"/>
-          </linearGradient>
-        </defs>
-      </svg>
+      <svg class="brand-mark" aria-hidden="true"><use href="#nodyra-mark"/></svg>
       <span class="nav-brand-name">Nodyra</span>
     </a>
     <nav class="nav-links" aria-label="Site sections">
       <a href="#how">How it works</a>
+      <a href="#platform">Platform</a>
+      <a href="#integrations">Integrations</a>
+      <a href="docs.html">Docs</a>
       <a href="#environments">Environments</a>
       <a href="#runners">Runners</a>
       <a href="#enterprise">Enterprise</a>
       <a href="#pricing">Pricing</a>
-      <!-- TODO: replace REPLACE-ORG/REPLACE-REPO with the final GitHub location -->
-      <a href="https://github.com/REPLACE-ORG/REPLACE-REPO/tree/main/docs" rel="noopener">Docs</a>
-      <a href="https://github.com/REPLACE-ORG/REPLACE-REPO" rel="noopener">GitHub</a>
+      <a href="https://github.com/Harshit-repo/noodle" rel="noopener">GitHub</a>
     </nav>
     <div class="nav-cta">
       <a href="#pricing" class="btn" style="font-size:13px">View pricing</a>
       <a href="#cta" class="btn btn-primary">Join waitlist</a>
     </div>
+    <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="nav-mobile" aria-label="Toggle navigation menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+  <div class="nav-mobile" id="nav-mobile">
+    <a href="#how">How it works</a>
+    <a href="#platform">Platform</a>
+    <a href="#integrations">Integrations</a>
+    <a href="docs.html">Docs</a>
+    <a href="#environments">Environments</a>
+    <a href="#runners">Runners</a>
+    <a href="#enterprise">Enterprise</a>
+    <a href="#pricing">Pricing</a>
+    <a href="https://github.com/Harshit-repo/noodle" rel="noopener">GitHub</a>
+    <div class="nav-mobile-cta">
+      <a href="#pricing" class="btn">View pricing</a>
+      <a href="#cta" class="btn btn-primary">Join waitlist</a>
+    </div>
   </div>
 </nav>
 
-<main>
+<main id="main">
 
 <!-- HERO -->
 <section id="hero" class="layer">
@@ -785,7 +925,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
       You're on the list. We'll be in touch.
     </div>
 
-    <p class="hero-note">Self-hostable &nbsp;·&nbsp; Python-native &nbsp;·&nbsp; MCP server + client &nbsp;·&nbsp; Docker sandboxing &nbsp;·&nbsp; Runner Pools</p>
+    <p class="hero-note">Self-hostable &nbsp;·&nbsp; Python-native &nbsp;·&nbsp; 500+ nodes &amp; 40+ integrations &nbsp;·&nbsp; MCP server + client &nbsp;·&nbsp; Chat pages &amp; REST endpoints &nbsp;·&nbsp; Docker sandboxing &nbsp;·&nbsp; Runner Pools</p>
   </div>
 </section>
 
@@ -870,7 +1010,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </div>
         </div>
         <h3>AI &amp; ML suite</h3>
-        <p>AI Agent, LLM chain, embeddings, vector store, text splitter, and output parser nodes — all wired for tool-calling and streaming.</p>
+        <p>AI Agents with tool-calling, guardrails, memory, and prompt-safety checks; LLM chains, embeddings, vector stores, RAG loaders &amp; retrievers; evals, fine-tuning, and synthetic data. OpenAI-compatible, Azure OpenAI, and Anthropic providers with token streaming and cost estimates.</p>
       </div>
       <div class="bento-card reveal">
         <div class="bento-head">
@@ -904,10 +1044,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
               <path d="M9 9h6M9 12h6M9 15h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </div>
-          <span class="pro-badge">Pro</span>
         </div>
         <h3>Sandboxed execution</h3>
-        <p>Run untrusted code in isolated Docker containers with CPU, memory, and network limits. Safe multi-tenant execution.</p>
+        <p>Run untrusted code in isolated Docker containers with CPU, memory and network limits &mdash; kata or gVisor where available. Off by default for single-tenant installs; one setting makes it required, and multi-tenancy turns it on for you.</p>
       </div>
       <div class="bento-card reveal">
         <div class="bento-head">
@@ -930,7 +1069,6 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
               <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </div>
-          <span class="pro-badge">Pro</span>
         </div>
         <h3>Runner Pools</h3>
         <p>Agent (outbound WebSocket), Docker, or Kubernetes providers. Bind Python environments to a pool for isolated remote execution.</p>
@@ -959,6 +1097,338 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
         <h3>GitHub Sync</h3>
         <p>Bidirectional sync between Nodyra workflows and a GitHub repo. Push changes to a branch, pull updates back — keep your code where your team lives.</p>
       </div>
+      <div class="bento-card reveal">
+        <div class="bento-head">
+          <div class="bento-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2"/>
+              <rect x="14" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2"/>
+              <rect x="3" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2"/>
+              <rect x="14" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2"/>
+              <path d="M10 6.5h4M10 17.5h4M6.5 10v4M17.5 10v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <h3>Sub-workflows</h3>
+        <p>Call any workflow from another workflow as a node. Compose big automations from tested, versioned pieces — no copy-paste.</p>
+      </div>
+      <div class="bento-card reveal">
+        <div class="bento-head">
+          <div class="bento-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M21 12a9 9 0 1 1-9-9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <polyline points="21 3 21 9 15 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+        <h3>Durable queue &amp; retries</h3>
+        <p>Every run goes through a durable queue with leases, heartbeats, and graceful drain. Dead-lettered runs wait for replay; failed nodes can retry from where they stopped — upstream outputs are reused.</p>
+      </div>
+      <div class="bento-card reveal">
+        <div class="bento-head">
+          <div class="bento-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <ellipse cx="12" cy="5" rx="9" ry="3" stroke="currentColor" stroke-width="2"/>
+              <path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5" stroke="currentColor" stroke-width="2"/>
+              <path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3" stroke="currentColor" stroke-width="2"/>
+            </svg>
+          </div>
+        </div>
+        <h3>Datasets &amp; DuckDB</h3>
+        <p>Typed serialization plus artifact-backed datasets. Pass large data between nodes by reference, filter and join with DuckDB SQL, promote results into datasets.</p>
+      </div>
+      <div class="bento-card reveal">
+        <div class="bento-head">
+          <div class="bento-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <polyline points="4 17 10 11 4 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <line x1="12" y1="19" x2="20" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <h3>CLI &amp; Python client</h3>
+        <p>Drive Nodyra from the terminal: list, create, run, publish, and export workflows with the <code style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">nodyra</code> CLI or the typed Python client.</p>
+      </div>
+      <div class="bento-card reveal">
+        <div class="bento-head">
+          <div class="bento-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M4 4h11a4 4 0 0 1 0 8H4z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M4 12h15a4 4 0 0 1 0 8H7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="pro-badge">New</span>
+        </div>
+        <h3>Template library</h3>
+        <p>16 starter workflows — webhook to Slack, RSS digests, data-quality gates, PDF text indexing, scheduled reports — each with a canvas preview. Remix instead of starting from zero.</p>
+      </div>
+      <div class="bento-card reveal">
+        <div class="bento-head">
+          <div class="bento-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M21 8v13H3V8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M1 3h22v5H1z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M10 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <h3>Artifact storage</h3>
+        <p>Pluggable backends — local disk or S3-compatible object storage. Upload files from the browser, store run outputs and datasets as artifacts, keep your workers stateless.</p>
+      </div>
+      <div class="bento-card reveal">
+        <div class="bento-head">
+          <div class="bento-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="2"/>
+            </svg>
+          </div>
+        </div>
+        <h3>Local auth &amp; registration</h3>
+        <p>The first account to register becomes the owner, then registration closes unless you re-enable it. Local accounts, no external identity provider required.</p>
+      </div>
+      <div class="bento-card reveal">
+        <div class="bento-head">
+          <div class="bento-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2l10 5-10 5L2 7z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M2 17l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+        <h3>Kubernetes &amp; Helm</h3>
+        <p>A maintained Helm chart: API, worker, scheduler, and web deployment with a pre-upgrade migration job, autoscaling, and network policies. Docker Compose for everything smaller.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INTEGRATIONS -->
+<section id="integrations" class="layer section-pad" style="background:linear-gradient(180deg,transparent,rgba(76,158,255,0.025) 50%,transparent)">
+  <div class="wrap">
+    <p class="eyebrow reveal">Integrations</p>
+    <h2 class="section-h reveal">40+ connectors. One Python-native contract.</h2>
+    <p class="reveal" style="font-size:16px;color:var(--ink-2);line-height:1.7;max-width:56ch;margin-top:16px">
+      Spec-driven v2 providers share one transport, one credential model, and one retry path — and every generated node
+      still shows you ordinary Python source. Triggers include signed webhooks, polling, Kafka, MQTT,
+      Postgres <code style="font-family:var(--font-mono);font-size:13px;color:var(--accent)">LISTEN</code>, S3 events, WebSockets, and filesystem watchers.
+    </p>
+
+    <div class="provider-cloud reveal">
+      <span class="provider-pill pill-ai"><span class="pd"></span>OpenAI &amp; compatible</span>
+      <span class="provider-pill pill-ai"><span class="pd"></span>Azure OpenAI</span>
+      <span class="provider-pill pill-ai"><span class="pd"></span>Anthropic Claude</span>
+      <span class="provider-pill pill-ai"><span class="pd"></span>Ollama</span>
+      <span class="provider-pill pill-ai"><span class="pd"></span>Qdrant</span>
+      <span class="provider-pill"><span class="pd"></span>Slack</span>
+      <span class="provider-pill"><span class="pd"></span>GitHub</span>
+      <span class="provider-pill"><span class="pd"></span>GitLab</span>
+      <span class="provider-pill"><span class="pd"></span>Google Sheets</span>
+      <span class="provider-pill"><span class="pd"></span>Google Drive</span>
+      <span class="provider-pill"><span class="pd"></span>Google Calendar</span>
+      <span class="provider-pill"><span class="pd"></span>Gmail</span>
+      <span class="provider-pill"><span class="pd"></span>Microsoft Outlook</span>
+      <span class="provider-pill"><span class="pd"></span>Microsoft Teams</span>
+      <span class="provider-pill"><span class="pd"></span>Notion</span>
+      <span class="provider-pill"><span class="pd"></span>Airtable</span>
+      <span class="provider-pill"><span class="pd"></span>Stripe</span>
+      <span class="provider-pill"><span class="pd"></span>HubSpot</span>
+      <span class="provider-pill"><span class="pd"></span>Salesforce</span>
+      <span class="provider-pill"><span class="pd"></span>Pipedrive</span>
+      <span class="provider-pill"><span class="pd"></span>Jira</span>
+      <span class="provider-pill"><span class="pd"></span>Asana</span>
+      <span class="provider-pill"><span class="pd"></span>ClickUp</span>
+      <span class="provider-pill"><span class="pd"></span>Trello</span>
+      <span class="provider-pill"><span class="pd"></span>Linear</span>
+      <span class="provider-pill"><span class="pd"></span>Discord</span>
+      <span class="provider-pill"><span class="pd"></span>Telegram</span>
+      <span class="provider-pill"><span class="pd"></span>Twilio</span>
+      <span class="provider-pill"><span class="pd"></span>Shopify</span>
+      <span class="provider-pill"><span class="pd"></span>WooCommerce</span>
+      <span class="provider-pill"><span class="pd"></span>Zoom</span>
+      <span class="provider-pill"><span class="pd"></span>Mailchimp</span>
+      <span class="provider-pill"><span class="pd"></span>SendGrid</span>
+      <span class="provider-pill"><span class="pd"></span>Supabase</span>
+      <span class="provider-pill"><span class="pd"></span>Calendly</span>
+      <span class="provider-pill"><span class="pd"></span>RSS / Atom</span>
+      <span class="provider-pill"><span class="pd"></span>Kafka</span>
+      <span class="provider-pill"><span class="pd"></span>MQTT</span>
+      <span class="provider-pill"><span class="pd"></span>Postgres LISTEN</span>
+      <span class="provider-pill"><span class="pd"></span>S3 events</span>
+      <span class="provider-pill"><span class="pd"></span>WebSocket</span>
+      <span class="provider-pill"><span class="pd"></span>ElevenLabs</span>
+      <span class="provider-pill"><span class="pd"></span>Retell</span>
+      <span class="provider-pill"><span class="pd"></span>Vapi</span>
+      <span class="provider-pill"><span class="pd"></span>Hugging Face</span>
+      <span class="provider-pill"><span class="pd"></span>IMAP</span>
+    </div>
+
+    <div class="int-grid">
+      <div class="int-card reveal">
+        <div class="int-card-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h3>Share any workflow as a chat page</h3>
+        <p>A <code>chat_trigger</code> node turns a workflow into a hosted conversation. Share a secret link — or require a Nodyra login — and the chat panel animates the canvas live as the run streams through each node. Test it right in the editor first.</p>
+        <div class="chat-link-bar" role="img" aria-label="Example shareable chat URL">
+          <span class="cl-domain">https://nodyra.io/chat/</span><span class="cl-path">support-triage</span><span class="cl-token">?token=9f2c…</span>
+        </div>
+      </div>
+      <div class="int-card reveal">
+        <div class="int-card-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h3>Turn any workflow into a REST API</h3>
+        <p>Drop an <code>api_endpoint</code> trigger and define routes — method, sub-path, and a branch per route. The canvas derives one output handle per route, and the whole workflow becomes a versioned HTTP service.</p>
+        <div aria-hidden="true">
+          <div class="api-route-row"><span class="api-method get">GET</span> /signups/report → Report branch</div>
+          <div class="api-route-row"><span class="api-method post">POST</span> /signups/ingest → Ingest branch</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DOCUMENTATION -->
+<section id="docs" class="layer section-pad" style="background:linear-gradient(180deg,rgba(76,158,255,0.03),transparent)">
+  <div class="wrap">
+    <p class="eyebrow reveal">Documentation</p>
+    <h2 class="section-h reveal">Docs you can ship from.</h2>
+
+    <div class="docs-head">
+      <div class="reveal">
+        <p style="font-size:16px;color:var(--ink-2);line-height:1.7;max-width:46ch">
+          Quickstarts, architecture, deployment, and security — all open markdown in the repo.
+          Connect an MCP client in one line, and the same docs that ship with the source are one click away.
+        </p>
+      </div>
+      <div class="mini-terminal reveal" role="img" aria-label="Connecting an MCP client to Nodyra">
+        <div class="mini-terminal-bar">
+          <div class="term-circles">
+            <span style="background:#f47067"></span>
+            <span style="background:#ffd479"></span>
+            <span style="background:#57c98a"></span>
+          </div>
+          <span class="term-title">mcp — connect an agent</span>
+        </div>
+        <div class="mini-terminal-body">
+<span class="t-dim">→ </span><span class="t-cmd">claude mcp add --transport http nodyra https://your-instance.example/mcp \</span>
+<span class="t-dim">→ </span><span class="t-cmd">    --header "Authorization: Bearer &lt;api-token&gt;"</span>
+<span class="t-ok">✓</span> Connected — ask your agent to <span class="t-accent">build, run &amp; publish</span> workflows
+        </div>
+      </div>
+    </div>
+
+    <div class="docs-grid">
+      <a class="doc-card reveal" href="docs.html#/getting-started">
+        <h3>Getting started <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Bring up the full stack with Docker Compose, create your first workflow, and run a credential-free template end to end.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/getting-started.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/mcp-quickstart">
+        <h3>MCP quickstart <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Point Claude Code — or any MCP client — at a running instance. Authentication, tool calls, and letting the agent validate and publish.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/mcp-quickstart.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/nodes">
+        <h3>Writing nodes <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Decorate a function with <code style="font-family:var(--font-mono);font-size:11.5px;color:var(--accent)">@node</code> and it appears on the canvas. Ports, credentials, artifacts, datasets, and tests.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/nodes.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/architecture">
+        <h3>Architecture <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Control plane, durable run queue, dispatch workers, per-environment subprocesses or sandboxes — the full execution model.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/architecture.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/deployment">
+        <h3>Deployment <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Docker Compose for single boxes, the Helm chart for Kubernetes, backups, migrations, and runtime-mode configuration.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/deployment.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/gitops">
+        <h3>GitOps sync <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Bidirectional sync between workflows and a GitHub repo — branches, pull requests, and review before anything runs.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/gitops.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/licensing">
+        <h3>Licensing <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Fair-code Community edition, Pro and Enterprise tiers, offline license verification, and soft-downgrade behavior.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/licensing.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/security">
+        <h3>Security model <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Trust boundaries, the single-tenant / trusted-author model, sandboxing, credential encryption, and the pen-test checklist.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>SECURITY.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="https://github.com/Harshit-repo/noodle/blob/main/docs/workflow-templates.md" rel="noopener">
+        <h3>Workflow templates <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Every starter workflow explained — webhook-to-Slack, RSS digests, data-quality gates, PDF indexing, scheduled reports.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/workflow-templates.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/recipes">
+        <h3>Recipes <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Copy-paste patterns for the work that comes up every week — batching, error handling, datasets, scheduling, and more.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/recipes.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="https://github.com/Harshit-repo/noodle/blob/main/docs/community-nodes.md" rel="noopener">
+        <h3>Community nodes <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>Upload, version, and share Python nodes with your team or the community — every node is just source.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/community-nodes.md</span>
+        </div>
+      </a>
+      <a class="doc-card reveal" href="docs.html#/status-matrix">
+        <h3>Status matrix <span class="doc-ext" aria-hidden="true">↗</span></h3>
+        <p>The live map of what is shipped, beta, experimental, or planned — updated as features land, not as marketing promises.</p>
+        <div class="doc-path" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>docs/status-matrix.md</span>
+        </div>
+      </a>
+    </div>
+
+    <div class="doc-cta reveal">
+      <a href="docs.html" class="btn" style="font-size:14px;padding:10px 22px">
+        Browse all docs
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 17L17 7M17 7H8M17 7v9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
     </div>
   </div>
 </section>
@@ -1500,7 +1970,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             <div class="ent-check-icon" aria-hidden="true">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </div>
-            Immutable audit log — exportable to your SIEM
+            Append-only audit log — exported as NDJSON
           </div>
         </div>
       </div>
@@ -1526,7 +1996,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </svg>
         </div>
         <h3>Encrypted Credential Vault</h3>
-        <p>All secrets stored with Fernet AES-128-CBC, scoped per environment. No credential ever leaves its environment.</p>
+        <p>Envelope encryption throughout: every credential gets its own data key, wrapped by a per-organisation key, wrapped by a master key derived with HKDF-SHA256. Bring your own KMS &mdash; HashiCorp Vault, AWS KMS or GCP KMS &mdash; and the master key never touches Nodyra's storage at all.</p>
       </div>
       <div class="ent-card reveal">
         <div class="ent-card-icon" aria-hidden="true">
@@ -1547,8 +2017,8 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             <polyline points="10 9 9 9 8 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           </svg>
         </div>
-        <h3>Immutable Audit Log</h3>
-        <p>Every run, edit, and access event recorded with user, timestamp, and delta. Exportable to any SIEM or S3 bucket.</p>
+        <h3>Append-Only Audit Log</h3>
+        <p>Every run, edit, and access event recorded with actor, timestamp and delta. Nothing in the product updates an audit row. Stream the whole log out as NDJSON from a single endpoint and pipe it into Splunk, Datadog or object storage; a retention window you set is the only thing that ever removes an entry.</p>
       </div>
       <div class="ent-card reveal">
         <div class="ent-card-icon" aria-hidden="true">
@@ -1569,6 +2039,37 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
         <h3>Workflow Versioning</h3>
         <p>Every save creates a versioned snapshot. Compare diffs between versions, roll back in one click, or branch a workflow for experimentation.</p>
       </div>
+      <div class="ent-card reveal">
+        <div class="ent-card-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h3>Unsafe-Node Policy</h3>
+        <p>Nodes that touch the filesystem, network, or subprocesses are flagged at publish time. Your policy decides: warn, require approval, or block activation outright.</p>
+      </div>
+      <div class="ent-card reveal">
+        <div class="ent-card-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 11l3 3L22 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h3>Credential Testing</h3>
+        <p>Test every connection before you run anything. Per-type test handlers verify API keys, OAuth tokens, and database credentials, and report exactly why a connection fails.</p>
+      </div>
+      <div class="ent-card reveal">
+        <div class="ent-card-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="3" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="2"/>
+            <rect x="13" y="13" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="2"/>
+            <line x1="10" y1="10" x2="14" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h3>Multi-Tenancy</h3>
+        <p>Run isolated organisations on one installation with row-level separation across workflows, credentials, environments, and audit events — sandboxing enforced automatically.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -1578,7 +2079,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
   <div class="wrap">
     <p class="eyebrow reveal">Pricing</p>
     <h2 class="section-h reveal">Start free. Scale when you need to.</h2>
-    <p class="reveal" style="margin-top:16px;font-size:16px;color:var(--ink-2);max-width:48ch;line-height:1.65">All features are license-gated and verified offline. An expired license soft-downgrades to Community — your workflows never stop running.</p>
+    <p class="reveal" style="margin-top:16px;font-size:16px;color:var(--ink-2);max-width:52ch;line-height:1.65">Community is the whole platform, not a demo &mdash; sandboxing included. Paid tiers raise the limits and add the things a team of teams needs.</p>
 
     <div class="pricing-grid">
 
@@ -1586,16 +2087,21 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
       <div class="price-card reveal">
         <div class="price-tier-name">Community</div>
         <div class="price-amount"><span>Free</span></div>
-        <div class="price-cycle">forever · fair-code licensed</div>
+        <div class="price-cycle">forever &middot; fair-code licensed</div>
         <div class="price-tagline">The full Nodyra platform, self-hosted. Free for internal business and personal use under the Sustainable Use License.</div>
+        <div class="price-limits"><div class="price-limit"><span class="price-limit-n">5</span><span class="price-limit-l">users</span></div><div class="price-limit"><span class="price-limit-n">3</span><span class="price-limit-l">environments</span></div><div class="price-limit"><span class="price-limit-n">1</span><span class="price-limit-l">runner</span></div><div class="price-limit"><span class="price-limit-n">10</span><span class="price-limit-l">deployments</span></div></div>
         <div class="price-features">
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Unlimited local workflows
+            500+ nodes &amp; 40+ integrations
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Python nodes — full language access
+            Python nodes &mdash; full language access
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Sandboxed execution (Docker-isolated)
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1611,15 +2117,31 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Webhook + HTTP triggers
+            Webhook, HTTP &amp; cron triggers
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Workflow versioning + diff view
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Template library + import/export
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Chat pages + REST endpoints
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Encrypted credential vault
           </div>
           <div class="price-feat price-feat-muted">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            Sandboxed execution
+            Observability &mdash; traces &amp; timelines
           </div>
           <div class="price-feat price-feat-muted">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            Runner Pools (agent, Docker, K8s)
+            Git sync (workflows as code)
           </div>
         </div>
         <a href="#cta" class="btn price-btn">Get started free</a>
@@ -1630,8 +2152,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
         <span class="price-featured-tag">Most popular</span>
         <div class="price-tier-name price-tier-name-featured">Pro</div>
         <div class="price-amount"><sup>$</sup><span>49</span></div>
-        <div class="price-cycle">per month · per instance</div>
-        <div class="price-tagline">Sandboxed execution, runner pools, observability, and the full security suite.</div>
+        <div class="price-cycle">per month &middot; per instance</div>
+        <div class="price-tagline">For a team running Nodyra in production: full run visibility, GitOps, and room to grow.</div>
+        <div class="price-limits"><div class="price-limit"><span class="price-limit-n">10</span><span class="price-limit-l">users</span></div><div class="price-limit"><span class="price-limit-n">10</span><span class="price-limit-l">environments</span></div><div class="price-limit"><span class="price-limit-n">5</span><span class="price-limit-l">runners</span></div><div class="price-limit"><span class="price-limit-n">&infin;</span><span class="price-limit-l">deployments</span></div></div>
         <div class="price-features">
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1639,35 +2162,31 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Sandboxed execution (Docker-isolated)
+            Observability &mdash; traces, logs, timelines
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Runner Pools (agent, Docker, K8s)
+            Git sync &mdash; workflows as code in your repo
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Observability — traces, logs, timelines
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            RBAC + Encrypted credential vault
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Audit log export
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Cron triggers + retry policies
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Workflow versioning + diff view
+            Higher limits on every resource
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             Email support
+          </div>
+          <div class="price-feat price-feat-muted">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            SSO (SAML 2.0 + OIDC)
+          </div>
+          <div class="price-feat price-feat-muted">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Audit log export
+          </div>
+          <div class="price-feat price-feat-muted">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none" style="color:var(--line)"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Custom roles (advanced RBAC)
           </div>
         </div>
         <a href="#cta" class="btn btn-primary price-btn">Join the waitlist</a>
@@ -1677,8 +2196,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
       <div class="price-card reveal">
         <div class="price-tier-name">Enterprise</div>
         <div class="price-custom">Custom</div>
-        <div class="price-cycle">volume pricing · annual contract</div>
-        <div class="price-tagline">Dedicated support, SLA, air-gap deployment, and custom auth integrations.</div>
+        <div class="price-cycle">volume pricing &middot; annual contract</div>
+        <div class="price-tagline">For regulated and air-gapped environments: single sign-on, your own key management, and an auditable trail.</div>
+        <div class="price-limits"><div class="price-limit"><span class="price-limit-n">&infin;</span><span class="price-limit-l">users</span></div><div class="price-limit"><span class="price-limit-n">&infin;</span><span class="price-limit-l">environments</span></div><div class="price-limit"><span class="price-limit-n">&infin;</span><span class="price-limit-l">runners</span></div><div class="price-limit"><span class="price-limit-n">&infin;</span><span class="price-limit-l">deployments</span></div></div>
         <div class="price-features">
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1686,7 +2206,27 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Dedicated support + SLA
+            SSO &mdash; SAML 2.0 + OIDC
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Audit log export
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Custom roles (advanced RBAC)
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            External KMS &mdash; Vault, AWS, GCP
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Multi-tenancy with row-level isolation
+          </div>
+          <div class="price-feat">
+            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Dedicated runner pools
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1694,26 +2234,17 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           </div>
           <div class="price-feat">
             <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            SSO (SAML 2.0 + OIDC) + SCIM provisioning
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Multi-instance volume licensing
-          </div>
-          <div class="price-feat">
-            <svg class="price-feat-check" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Onboarding, training &amp; SOC 2 docs
+            Dedicated support + SLA
           </div>
         </div>
-        <a href="mailto:sharma.har97@gmail.com" class="btn price-btn">Contact sales →</a>
+        <a href="mailto:sharma.har97@gmail.com" class="btn price-btn">Contact sales &rarr;</a>
       </div>
     </div>
 
     <p class="price-note reveal">
-      All paid features are license-gated, verified offline — no phone-home, air-gap friendly.<br>
-      An expired license soft-downgrades to Community; your workflows never stop running.<br>
-      <!-- TODO: replace REPLACE-ORG/REPLACE-REPO with the final GitHub location -->
-      Nodyra is <a href="https://github.com/REPLACE-ORG/REPLACE-REPO/blob/main/LICENSE" rel="noopener">fair-code</a>: the source is public, self-hosting is free for your own use, and hosting Nodyra for others requires a commercial license.
+      Paid tiers are unlocked by a signed licence file that is verified offline &mdash; no phone-home, air-gap friendly.<br>
+      When a licence expires, Nodyra reverts to Community rather than stopping: your workflows keep running.<br>
+      Nodyra is <a href="https://github.com/Harshit-repo/noodle/blob/main/LICENSE" rel="noopener">fair-code</a>: the source is public, self-hosting is free for your own use, and hosting Nodyra for others requires a commercial licence.
     </p>
   </div>
 </section>
@@ -1756,6 +2287,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
       </div>
       <p class="cta-note">
         Self-hostable &nbsp;·&nbsp; Air-gap friendly &nbsp;·&nbsp; Fair-code Community edition &nbsp;·&nbsp;
+        Docker Compose or Helm chart &nbsp;·&nbsp;
         One <code style="font-family:var(--font-mono);color:var(--accent)">docker compose up</code> away
       </p>
     </div>
@@ -1769,35 +2301,25 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
   <div class="wrap">
     <div class="foot-in">
       <a href="#" class="foot-brand" aria-label="Nodyra home">
-        <svg width="22" height="22" viewBox="0 0 50 50" fill="none" aria-hidden="true">
-          <rect width="50" height="50" rx="11" fill="#090b10"/>
-          <path d="M10 39 C 10 22, 40 28, 40 11" stroke="url(#nf-gb)" stroke-width="4" stroke-linecap="round" fill="none"/>
-          <circle cx="10" cy="39" r="5" fill="#4c9eff"/>
-          <circle cx="40" cy="11" r="3.8" fill="#79b6ff"/>
-          <circle cx="25" cy="25" r="2" fill="#ffd479" opacity="0.85"/>
-          <defs>
-            <linearGradient id="nf-gb" x1="10" y1="39" x2="40" y2="11" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="#4c9eff"/><stop offset="50%" stop-color="#79b6ff"/><stop offset="100%" stop-color="#c8a6ff"/>
-            </linearGradient>
-          </defs>
-        </svg>
+        <svg class="brand-mark" aria-hidden="true"><use href="#nodyra-mark"/></svg>
         <span class="foot-brand-name">Nodyra</span>
       </a>
       <nav class="foot-links" aria-label="Footer links">
         <a href="#how">How it works</a>
+        <a href="#integrations">Integrations</a>
+        <a href="docs.html">Docs</a>
         <a href="#environments">Environments</a>
         <a href="#runners">Runners</a>
         <a href="#enterprise">Enterprise</a>
         <a href="#pricing">Pricing</a>
-        <!-- TODO: replace REPLACE-ORG/REPLACE-REPO with the final GitHub location -->
-        <a href="https://github.com/REPLACE-ORG/REPLACE-REPO/tree/main/docs" rel="noopener">Docs</a>
-        <a href="https://github.com/REPLACE-ORG/REPLACE-REPO" rel="noopener">GitHub</a>
-        <a href="https://github.com/REPLACE-ORG/REPLACE-REPO/blob/main/LICENSE" rel="noopener">License</a>
+        <a href="https://github.com/Harshit-repo/noodle" rel="noopener">GitHub</a>
+        <a href="docs.html#/security">Security</a>
+        <a href="https://github.com/Harshit-repo/noodle/blob/main/LICENSE" rel="noopener">License</a>
         <a href="#cta">Get early access</a>
       </nav>
     </div>
     <div class="foot-copy">
-      <span>© 2026 Nodyra &nbsp;·&nbsp; Fair-code: <a href="https://github.com/REPLACE-ORG/REPLACE-REPO/blob/main/LICENSE" rel="noopener" style="color:inherit">Sustainable Use License</a> &nbsp;·&nbsp; Pro &amp; Enterprise features license-gated</span>
+      <span>© 2026 Nodyra &nbsp;·&nbsp; Fair-code: <a href="https://github.com/Harshit-repo/noodle/blob/main/LICENSE" rel="noopener" style="color:inherit">Sustainable Use License</a> &nbsp;·&nbsp; Pro &amp; Enterprise features license-gated</span>
       <span>Built with Python &amp; caffeine</span>
     </div>
   </div>
@@ -1812,6 +2334,29 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
   }, { passive: true });
 })();
 
+// mobile nav toggle
+(function () {
+  var toggle = document.getElementById('nav-toggle');
+  var panel = document.getElementById('nav-mobile');
+  if (!toggle || !panel) return;
+  function setOpen(open) {
+    toggle.setAttribute('aria-expanded', String(open));
+    panel.classList.toggle('open', open);
+  }
+  toggle.addEventListener('click', function () {
+    setOpen(toggle.getAttribute('aria-expanded') !== 'true');
+  });
+  panel.addEventListener('click', function (e) {
+    if (e.target.tagName === 'A') setOpen(false);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && panel.classList.contains('open')) {
+      setOpen(false);
+      toggle.focus();
+    }
+  });
+})();
+
 // waitlist form handler
 function handleWaitlistForm(formId, btnId, successId) {
   var form = document.getElementById(formId);
@@ -1820,8 +2365,14 @@ function handleWaitlistForm(formId, btnId, successId) {
   if (!form) return;
   form.addEventListener('submit', function (e) {
     e.preventDefault();
-    var email = form.querySelector('input[type="email"]').value.trim();
-    if (!email || !email.includes('@')) return;
+    var input = form.querySelector('input[type="email"]');
+    var email = input.value.trim();
+    var valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
+    input.setAttribute('aria-invalid', String(!valid));
+    if (!valid) {
+      input.focus();
+      return;
+    }
     btn.disabled = true;
     btn.innerHTML = '<span class="waitlist-spinner" aria-hidden="true"></span> Joining…';
     setTimeout(function () {

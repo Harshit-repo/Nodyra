@@ -156,6 +156,19 @@ def test_ast_blocks_eval() -> None:
         _ast_security_check("eval('1')", set())
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "getattr(object, '__subclasses__')",
+        "setattr(target, 'value', 1)",
+        "globals()",
+    ],
+)
+def test_ast_blocks_dynamic_introspection_calls(source: str) -> None:
+    with pytest.raises(PermissionError):
+        _ast_security_check(source, set())
+
+
 def test_ast_blocks_dunder_import_call() -> None:
     with pytest.raises(PermissionError):
         _ast_security_check("__import__('os')", set())
@@ -707,3 +720,11 @@ def test_internal_tool_output_untrusted_wrapper_before_prompt() -> None:
 )
 def test_all_phase1_nodes_registered(node_id) -> None:
     assert node_id in registry
+
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch):
+    """These tests verify the BLOCKED posture of nodyra_nodes.http_security;
+    single-tenant API processes default to allowing private egress (mirroring
+    workers), so pin the env explicitly."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+

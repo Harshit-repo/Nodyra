@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 from nodyra import __version__ as NODYRA_VERSION
+from nodyra.serialization import sanitize_nonfinite
 
 PROTOCOL_VERSION = "2025-11-25"
 SUPPORTED_PROTOCOL_VERSIONS = frozenset(
@@ -70,12 +71,18 @@ def initialize_result(client_protocol_version: Any) -> dict:
 
 def tool_result(payload: Any, *, is_error: bool = False) -> dict:
     """Wrap a tool handler's return value as an MCP ``tools/call`` result."""
-    if isinstance(payload, str):
-        text = payload
+    # Run outputs can contain NaN/Inf (legacy rows predating serialization-side
+    # sanitization). json.dumps would emit a literal ``NaN`` token — invalid
+    # JSON for the calling model — and structuredContent would carry the raw
+    # float into the response envelope. Degrade non-finite floats to null once,
+    # here, so text and structured content agree.
+    safe = sanitize_nonfinite(payload) if not isinstance(payload, str) else payload
+    if isinstance(safe, str):
+        text = safe
         structured = None
     else:
-        text = json.dumps(payload, ensure_ascii=False, default=str)
-        structured = payload if isinstance(payload, dict) else None
+        text = json.dumps(safe, ensure_ascii=False, default=str)
+        structured = safe if isinstance(safe, dict) else None
     result: dict[str, Any] = {
         "content": [{"type": "text", "text": text}],
         "isError": bool(is_error),

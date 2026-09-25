@@ -1,7 +1,9 @@
 # packages/nodes/tests/test_ai_agent_v2_enhanced.py
 from __future__ import annotations
 
+import importlib.util as _importlib_util
 import json
+from pathlib import Path
 
 import pytest
 
@@ -24,7 +26,18 @@ from nodyra_nodes.ai_v2.agents import (
     _strip_control_messages,
     ai_agent_v2,
 )
-from packages.nodes.tests.ai_v2_test_helpers import DummyTool, ScriptedChatModel
+
+# Same reason as TEST-1 in test_ai_agent_tools.py: a dotted absolute import
+# only resolves when the repo root happens to be on sys.path, so this file
+# could not be run on its own or in a shard - only in a full-suite run that
+# started from the repo root. Loading by explicit file path always works.
+_helpers_spec = _importlib_util.spec_from_file_location(
+    "_ai_v2_test_helpers", Path(__file__).parent / "ai_v2_test_helpers.py"
+)
+_ai_v2_test_helpers = _importlib_util.module_from_spec(_helpers_spec)
+_helpers_spec.loader.exec_module(_ai_v2_test_helpers)
+DummyTool = _ai_v2_test_helpers.DummyTool
+ScriptedChatModel = _ai_v2_test_helpers.ScriptedChatModel
 
 
 def test_apply_persona_prepends_template() -> None:

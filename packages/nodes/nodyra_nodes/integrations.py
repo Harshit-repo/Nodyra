@@ -420,7 +420,11 @@ def notion_create_page(
     properties: dict | None = None,
     content: str = "",
 ) -> Any:
-    """Create a page in Notion."""
+    """Create a page in a Notion database or under a parent page.
+
+    Sets the page title and properties and returns the new page id and URL.
+    The integration must be shared with the target database or page.
+    """
     props = dict(properties or {})
     page_title = title or _text_from_input(input)
     if database_id:
@@ -504,7 +508,11 @@ def github_create_issue(
     body: str = "",
     labels: list | None = None,
 ) -> Any:
-    """Create a GitHub issue."""
+    """Open a new issue on a GitHub repository.
+
+    Creates a titled issue with a Markdown body in the given owner/repo and
+    returns its number and URL. Requires a token with issue write access.
+    """
     payload: dict[str, Any] = {"title": title, "body": _text_from_input(input, body)}
     if labels:
         payload["labels"] = labels
@@ -520,6 +528,7 @@ def github_create_issue(
 @node(
     name="MySQL Query",
     id="mysql_query",
+    requirements=["pymysql>=1.0"],
     param_groups={"Options": ["port", "parameters"]},
     category="Integrations",
     icon="database",

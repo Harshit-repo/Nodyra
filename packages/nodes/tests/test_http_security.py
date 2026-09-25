@@ -18,6 +18,37 @@ class _FakeResp:
         self.headers = headers or {}
 
 
+@pytest.mark.parametrize(
+    "target,keep_credentials",
+    [
+        ("https://api.example.test:8443/result", False),
+        ("http://api.example.test/result", False),
+        ("https://api.example.test:443/result", True),
+        ("https://api.example.test/result", True),
+    ],
+)
+def test_redirect_credentials_are_scoped_to_origin(target, keep_credentials):
+    calls = []
+
+    def request(method, url, **kwargs):
+        calls.append(kwargs.get("headers", {}))
+        return _FakeResp(302, {"location": target}) if len(calls) == 1 else _FakeResp(200)
+
+    safe_request(
+        "GET",
+        "https://api.example.test/start",
+        request_fn=request,
+        headers={
+            "Authorization": "Bearer synthetic",
+            "Cookie": "session=synthetic",
+            "Accept": "application/json",
+        },
+    )
+    assert ("Authorization" in calls[1]) is keep_credentials
+    assert ("Cookie" in calls[1]) is keep_credentials
+    assert calls[1]["Accept"] == "application/json"
+
+
 def test_literal_private_targets_are_blocked() -> None:
     for url in (
         "http://169.254.169.254/latest/meta-data/",
@@ -78,9 +109,7 @@ def test_redirect_to_private_target_is_blocked() -> None:
         return _FakeResp(302, {"location": "http://169.254.169.254/latest/meta-data/"})
 
     with pytest.raises(UnsafeHttpTargetError):
-        safe_request(
-            "GET", "https://public.example.com/start", request_fn=fake_request
-        )
+        safe_request("GET", "https://public.example.com/start", request_fn=fake_request)
     # The redirect target was validated (and rejected) before any second call.
     assert calls == ["https://public.example.com/start"]
 
@@ -96,9 +125,7 @@ def test_public_redirect_is_followed() -> None:
         seen.append(url)
         return seq[len(seen) - 1]
 
-    resp = safe_request(
-        "GET", "https://public.example.com/start", request_fn=fake_request
-    )
+    resp = safe_request("GET", "https://public.example.com/start", request_fn=fake_request)
     assert resp.status_code == 200
     assert seen == [
         "https://public.example.com/start",
@@ -117,3 +144,11 @@ def test_redirect_loop_is_bounded() -> None:
             request_fn=fake_request,
             max_redirects=3,
         )
+
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch):
+    """These tests verify the BLOCKED posture of nodyra_nodes.http_security;
+    single-tenant API processes default to allowing private egress (mirroring
+    workers), so pin the env explicitly."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+

@@ -1,0 +1,91 @@
+{
+  "id": "scheduled_dataset_snapshot",
+  "name": "Nightly dataset snapshot",
+  "description": "On a nightly schedule, fetch the current API dataset and export a dated Excel snapshot with the UTC snapshot date recorded on every row.",
+  "tags": [
+    "schedule",
+    "snapshot",
+    "excel",
+    "etl"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": false,
+  "prerequisites": [
+    "Outbound HTTPS to the API you are calling",
+    "openpyxl installed in the workflow environment"
+  ],
+  "expected_result": "A dated Excel artifact per nightly run.",
+  "permissions": [
+    "Network: the API URL you configure"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
+  "screenshot_url": "/template-previews/scheduled-dataset-snapshot.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "nightly",
+        "type": "schedule_trigger",
+        "params": {
+          "interval": "days",
+          "cron": "0 2 * * *",
+          "tz": "UTC"
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "fetch",
+        "type": "http_request",
+        "params": {
+          "url": "https://jsonplaceholder.typicode.com/posts",
+          "method": "GET"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "recent",
+        "type": "code",
+        "params": {
+          "code": "from datetime import datetime, timezone\nrows = input.get('body', []) if isinstance(input, dict) else (input or [])\nstamp = datetime.now(timezone.utc).strftime('%Y-%m-%d')\noutput = [{**row, 'snapshot_date': stamp} for row in rows]"
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      },
+      {
+        "id": "snapshot",
+        "type": "write_excel_file",
+        "params": {
+          "sheet_name": "snapshot",
+          "filename": "snapshot-{{ $json[0].snapshot_date }}.xlsx"
+        },
+        "position": {
+          "x": 840,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "nightly",
+        "target": "fetch"
+      },
+      {
+        "source": "fetch",
+        "target": "recent"
+      },
+      {
+        "source": "recent",
+        "target": "snapshot"
+      }
+    ]
+  }
+}

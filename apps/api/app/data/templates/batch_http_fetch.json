@@ -1,0 +1,112 @@
+{
+  "id": "batch_http_fetch",
+  "name": "Fetch many URLs in parallel",
+  "description": "Loop over a list of URLs, fetch each one concurrently, and collect the successes and failures separately.",
+  "tags": [
+    "http",
+    "loop",
+    "batch",
+    "concurrency"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "Outbound HTTPS to the URLs you supply"
+  ],
+  "expected_result": "One results collection with every successful response, and a separate errors collection for the ones that failed.",
+  "permissions": [
+    "Network: the URLs you supply at run time"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
+  "screenshot_url": "/template-previews/batch-http-fetch.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "manual_trigger",
+        "params": {
+          "data": {
+            "urls": [
+              "https://httpbin.org/json",
+              "https://httpbin.org/uuid"
+            ]
+          }
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "expand",
+        "type": "code",
+        "params": {
+          "code": "output = (input or {}).get('urls', [])"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "each",
+        "type": "loop_start",
+        "params": {
+          "mode": "each",
+          "concurrency": 4,
+          "on_error": "continue"
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      },
+      {
+        "id": "fetch",
+        "type": "http_request",
+        "params": {
+          "url": "{{ $json }}",
+          "method": "GET",
+          "timeout_seconds": 10
+        },
+        "position": {
+          "x": 840,
+          "y": 40
+        }
+      },
+      {
+        "id": "collect",
+        "type": "loop_end",
+        "params": {
+          "loop_start_id": "each",
+          "output_mode": "records"
+        },
+        "position": {
+          "x": 1120,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "start",
+        "target": "expand"
+      },
+      {
+        "source": "expand",
+        "target": "each"
+      },
+      {
+        "source": "each",
+        "target": "fetch",
+        "source_output": "item"
+      },
+      {
+        "source": "fetch",
+        "target": "collect"
+      }
+    ]
+  }
+}

@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from nodyra.engine.scheduler import execute
+from nodyra.engine.timestamps import stamp_finish
 from nodyra.engine.types import EventCallback
 from nodyra.models import NodeRunResult, NodeStatus, RunStatus, WorkflowGraph
 from nodyra.sdk import NodeRegistry
@@ -190,7 +191,7 @@ async def _run_metanode(
                 status=NodeStatus.error,
                 error=f"{type(exc).__name__}: {exc}",
                 started_at=started,
-                finished_at=time.time(),
+                finished_at=stamp_finish(),
             )
         )
         return RunStatus.error
@@ -211,7 +212,7 @@ async def _run_metanode(
                 error="metanode sub-graph failed",
                 outputs=outputs,
                 started_at=started,
-                finished_at=time.time(),
+                finished_at=stamp_finish(),
             )
         )
         return RunStatus.error
@@ -221,7 +222,7 @@ async def _run_metanode(
             status=NodeStatus.success,
             outputs=outputs,
             started_at=started,
-            finished_at=time.time(),
+            finished_at=stamp_finish(),
         )
     )
     return RunStatus.success

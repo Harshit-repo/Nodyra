@@ -33,6 +33,40 @@ TEST_DATABASE_URL = os.environ.get("NODYRA_TEST_DATABASE_URL")
 SQLITE_TMP_DIR = Path(__file__).resolve().parents[3] / ".tmp" / "pytest-sqlite"
 
 
+@pytest.fixture(autouse=True)
+def _available_at_from_the_client_clock():
+    """Stop the queue tests racing the database's clock.
+
+    ``RunQueueEntry.available_at`` carries ``server_default=func.now()``, so the
+    *database* stamps it. ``lease()`` then filters ``available_at <= now`` with
+    ``now`` taken from the *client*. Those are two different clocks that agree
+    only to within a few milliseconds, and the ordering flips on scheduling
+    jitter: measured on this checkout, 4 of 20 inserts landed available_at
+    between 1.3ms and 5.1ms in the client's future, and every one of those makes
+    the row invisible to the very next lease() call.
+
+    That is a test problem, not a product one — a real worker polls again a
+    second later and picks the row up — but here each lease is a single shot, so
+    roughly one insert in five is a coin flip. It never appeared on SQLite
+    because CURRENT_TIMESTAMP truncates to whole seconds, so available_at is
+    always comfortably in the past.
+
+    Filling available_at from the same clock lease() reads makes the comparison
+    self-consistent. Tests that set it themselves are untouched.
+    """
+    from datetime import UTC, datetime
+
+    def _fill(_mapper, _connection, target: RunQueueEntry) -> None:
+        if target.available_at is None:
+            target.available_at = datetime.now(UTC)
+
+    event.listen(RunQueueEntry, "before_insert", _fill)
+    try:
+        yield
+    finally:
+        event.remove(RunQueueEntry, "before_insert", _fill)
+
+
 @pytest_asyncio.fixture
 async def session_maker() -> AsyncIterator[async_sessionmaker]:
     if TEST_DATABASE_URL:
@@ -341,6 +375,88 @@ async def test_heartbeat_extends_lease(session) -> None:
 
     assert ok is True
     assert new_expiry > first_expiry
+
+
+@pytest.mark.asyncio
+async def test_released_attempt_token_cannot_mutate_replacement_lease(session) -> None:
+    """A worker from an expired lease is fenced after another worker leases it."""
+    from app.services import queue
+
+    start = datetime.now(UTC)
+    # available_at defaults to the *database's* now(), which lands after the
+    # start captured above, so the available_at <= now predicate matches
+    # nothing and lease() returns None. SQLite hides this because
+    # CURRENT_TIMESTAMP truncates to whole seconds; PostgreSQL does not. Pin it,
+    # as every other time-sensitive test in this file does.
+    session.add(
+        RunQueueEntry(
+            run_id="fenced", workflow_id="wf", max_attempts=3, available_at=start
+        )
+    )
+    await session.commit()
+
+    first = await queue.lease(
+        session, worker_id="worker-a", lease_seconds=3, now=start
+    )
+    await session.commit()
+    assert first is not None and first.lease_token
+    stale_token = first.lease_token
+
+    await queue.requeue_expired_leases(
+        session, now=start + timedelta(seconds=4)
+    )
+    await session.commit()
+    second = await queue.lease(
+        session,
+        worker_id="worker-b",
+        lease_seconds=30,
+        now=start + timedelta(seconds=5),
+    )
+    await session.commit()
+    assert second is not None and second.lease_token
+    assert second.lease_token != stale_token
+    current_token = second.lease_token
+
+    assert (
+        await queue.heartbeat(
+            session, run_id="fenced", lease_token=stale_token
+        )
+        is False
+    )
+    assert (
+        await queue.complete(session, run_id="fenced", lease_token=stale_token)
+        is False
+    )
+    assert (
+        await queue.fail(
+            session,
+            run_id="fenced",
+            lease_token=stale_token,
+            retryable=False,
+            error="stale",
+        )
+        is None
+    )
+    await session.refresh(second)
+    assert second.status == "leased"
+    assert second.lease_token == current_token
+
+    assert (
+        await queue.mark_running(
+            session, run_id="fenced", lease_token=current_token
+        )
+        is True
+    )
+    assert (
+        await queue.complete(
+            session, run_id="fenced", lease_token=current_token
+        )
+        is True
+    )
+    await session.commit()
+    await session.refresh(second)
+    assert second.status == "completed"
+    assert second.lease_token is None
 
 
 @pytest.mark.asyncio

@@ -263,7 +263,11 @@ GITHUB_CREATE_PULL_REQUEST_SPEC = OperationSpec(
     provider="github",
     resource="pull_request",
     operation="create",
-    description="Create a pull request.",
+    description=(
+        "Open a pull request from a head branch into a base branch on a "
+        "GitHub repository. Returns the new PR number and URL. Set draft to "
+        "open it without requesting review."
+    ),
     icon="brand:github",
     params=(
         _credentials_param(),
@@ -288,7 +292,11 @@ GITHUB_MERGE_PULL_REQUEST_SPEC = OperationSpec(
     provider="github",
     resource="pull_request",
     operation="merge",
-    description="Merge a pull request.",
+    description=(
+        "Merge an open pull request by number. This writes to the base branch "
+        "and cannot be undone from here. Fails if the PR is closed, already "
+        "merged, or blocked by required checks."
+    ),
     icon="brand:github",
     params=(
         _credentials_param(),

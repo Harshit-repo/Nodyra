@@ -1,0 +1,49 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- /*
+  A PDB is only meaningful above one replica. With replicas=1, minAvailable=1
+  makes the pod undrainable and blocks every node upgrade — worse than having
+  no budget at all — so each one is emitted only when it can actually be
+  satisfied.
+*/ -}}
+{{- if gt (int .Values.api.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "nodyra.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-api
+---
+{{- end }}
+{{- if gt (int .Values.worker.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-worker
+  labels:
+    {{- include "nodyra.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-worker
+---
+{{- end }}
+{{- if gt (int .Values.web.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-web
+  labels:
+    {{- include "nodyra.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-web
+{{- end }}
+{{- end }}

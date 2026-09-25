@@ -20,7 +20,10 @@ class VaultKMSProvider(KMSProvider):
     Parameters
     ----------
     vault_url : str
-        Base URL of the Vault server (e.g. ``http://vault:8200``).
+        Base URL of the Vault server (e.g. ``https://vault.internal:8200``).
+        Must be https outside loopback: this provider sends the plaintext
+        org KEK to Vault, so plaintext transport exposes the very key it
+        exists to protect. See ``vault_allow_insecure_transport``.
     token : str
         Static Vault token with ``write`` capability on the Transit mount.
     mount : str

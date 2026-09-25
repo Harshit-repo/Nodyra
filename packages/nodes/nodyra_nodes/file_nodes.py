@@ -13,20 +13,14 @@ from nodyra_nodes.datasets import csv_parse as csv_parse  # re-exported for patc
 def _read_upload_bytes(artifact_id: str) -> tuple[bytes, str]:
     """Read bytes for a browser-uploaded artifact given its artifact_id.
 
-    Uploaded artifacts are stored at:  uploads/{artifact_id}/{filename}
+    The host authorizes the upload and stages its bytes for this run.
     """
     from nodyra.context import artifact_store
 
     store = artifact_store.get()
-    upload_dir = store.base_dir / "uploads" / artifact_id
-    if upload_dir.exists():
-        for entry in upload_dir.iterdir():
-            if entry.is_file():
-                return entry.read_bytes(), entry.name
-    raise FileNotFoundError(
-        f"No uploaded artifact found for id {artifact_id!r}. "
-        "Make sure the artifact_id refers to a file uploaded via the browser."
-    )
+    if store is None:
+        raise RuntimeError("Reading an uploaded file requires an active workflow run")
+    return store.read_upload(artifact_id)
 
 
 @node(
@@ -430,9 +424,7 @@ def read_s3_file(
         import boto3  # type: ignore[import-untyped]
         import boto3.session  # type: ignore[import-untyped]
     except ImportError:
-        raise ImportError(
-            "boto3 is required to read from S3. Install it with: pip install boto3"
-        )
+        raise ImportError("boto3 is required to read from S3. Install it with: pip install boto3")
 
     creds = credentials if isinstance(credentials, dict) else {}
     endpoint = creds.get("endpoint_url") or None
@@ -832,6 +824,7 @@ def stream_large_file(
 # Parquet nodes
 # ---------------------------------------------------------------------------
 
+
 @node(
     id="read_parquet_file",
     name="Read Parquet File",
@@ -891,6 +884,7 @@ def read_parquet_file(
         raise ValueError("read_parquet_file requires either path or file")
 
     import io
+
     buf = io.BytesIO(raw)
     col_list = [c.strip() for c in columns.split(",") if c.strip()] or None
     pf = _pq.ParquetFile(buf)
@@ -962,6 +956,7 @@ def write_parquet_file(
         import shutil
 
         from nodyra.datasets import dataset_path_for_ref
+
         src = dataset_path_for_ref(input)
         shutil.copy2(src, out_path)
     elif isinstance(input, list):
@@ -976,6 +971,7 @@ def write_parquet_file(
         )
 
     import pyarrow.parquet as _pq2
+
     meta = _pq2.read_metadata(str(out_path))
     result = _finalize_parquet(out_path, out_partial)
     result["row_count"] = meta.num_rows
@@ -992,6 +988,7 @@ _XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetm
 
 @node(
     id="read_excel_file",
+    requirements=["openpyxl>=3.1"],
     name="Read Excel File",
     category="Files",
     description="Read an Excel (.xlsx) file from a server path or browser-uploaded artifact and return it as a dataset.",
@@ -1095,11 +1092,13 @@ def read_excel_file(
 
 @node(
     id="write_excel_file",
+    requirements=["openpyxl>=3.1"],
     name="Write Excel File",
     category="Files",
     description="Write data to an Excel (.xlsx) file. Accepts a list of records or a dataset ref.",
     icon="file",
     params={
+        "filename": {"description": "Download filename for the Excel workbook, including .xlsx."},
         "sheet_name": {
             "type": "string",
             "display_name": "Sheet name",
@@ -1114,6 +1113,7 @@ def write_excel_file(
     input: Any,
     *,
     sheet_name: str = "Sheet1",
+    filename: str = "output.xlsx",
 ) -> dict:
     """Write a list of records or DatasetRef to an Excel artifact."""
     try:
@@ -1132,6 +1132,7 @@ def write_excel_file(
         except ImportError:
             raise RuntimeError("pyarrow is required: pip install pyarrow")
         from nodyra.datasets import dataset_path_for_ref
+
         src = dataset_path_for_ref(input)
         table = _pq.read_table(str(src))
         records = table.to_pylist()
@@ -1155,7 +1156,7 @@ def write_excel_file(
             ws.append([row.get(h) for h in headers])
 
     out_path, out_partial = reserve_artifact_path(
-        "output.xlsx",
+        filename,
         content_type=_XLSX_CONTENT_TYPE,
         kind="excel_export",
     )

@@ -11,26 +11,32 @@ it and drives ``/internal/scheduler/tick`` externally).
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Collection
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal
+from app.exceptions import DuplicateRun
 from app.models import (
     Deployment,
     ProviderTriggerSubscription,
     Run,
+    ScheduleOccurrence,
     ScheduleState,
     Workflow,
     WorkflowVersion,
 )
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
+from app.tenancy import run_as_org, run_as_system
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +90,35 @@ def _is_due(params: dict, last: datetime, now: datetime) -> bool:
         last_local = last.astimezone(tz)
         try:
             next_time = croniter(cron, last_local).get_next(datetime)
+            # On a daylight-saving fall-back day the local clock repeats an
+            # hour, so the next matching wall-clock time can be the *same*
+            # nominal slot an hour later: 02:30 AEDT, then 02:30 AEST. Firing
+            # on both runs a nightly job twice — for an invoicing or payout
+            # workflow, that is the money moved twice, once a year.
+            #
+            # Unix cron does not re-run a slot when the clock goes backwards,
+            # and neither do we: skip an occurrence that repeats the wall-clock
+            # time of the slot already fired.
+            #
+            # Compare against the *nominal slot*, not against ``last`` itself.
+            # ``last`` is the tick that fired the job, not the scheduled time,
+            # and a tick that lands a minute late (busy previous tick, restart,
+            # loaded host) has a different wall-clock minute than the cron
+            # slot — which silently disarmed this guard and let the job run
+            # twice anyway. ``get_prev`` from one second past ``last`` is the
+            # most recent slot at or before it: the one that actually fired.
+            # The loop is bounded because only the one repeated hour matches.
+            fired_slot = croniter(
+                cron, last_local + timedelta(seconds=1)
+            ).get_prev(datetime)
+            for _ in range(4):
+                if (
+                    next_time.date() != fired_slot.date()
+                    or next_time.hour != fired_slot.hour
+                    or next_time.minute != fired_slot.minute
+                ):
+                    break
+                next_time = croniter(cron, next_time).get_next(datetime)
             return next_time <= now
         except (ValueError, KeyError):
             return False  # malformed cron — never fire rather than crash
@@ -332,6 +367,16 @@ def _webhook_hmac_passes(
 
     GitHub/Stripe/Slack style: ``<prefix><hexdigest>`` in a configurable header,
     computed with a shared secret. Off unless ``hmac_verification == "on"``.
+
+    When ``hmac_timestamp_header`` is set the timestamp is checked for freshness
+    *and* folded into the signed content, because freshness alone provides no
+    replay protection: the timestamp header is attacker-controlled, so a signer
+    that covers the body only lets a captured signature be replayed under any
+    fresh timestamp the attacker stamps on it — the window never binds to the
+    signature. This also matches how Stripe (``{ts}.{body}``) and Slack
+    (``v0:{ts}:{body}``) actually sign, so their webhooks verify here. The
+    signed layout follows ``hmac_signed_payload`` (default Stripe's
+    ``{ts}.{body}``); ``{ts}`` is the raw header value, ``{body}`` the raw bytes.
     """
     import hashlib
     import hmac
@@ -340,6 +385,7 @@ def _webhook_hmac_passes(
         return True
     lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
     ts_header = str(node_params.get("hmac_timestamp_header") or "").lower()
+    raw_ts = ""
     if ts_header:
         import time as _time
 
@@ -365,8 +411,34 @@ def _webhook_hmac_passes(
     provided = lower_headers.get(header_name, "")
     if prefix and provided.startswith(prefix):
         provided = provided[len(prefix) :]
-    expected = hmac.new(secret.encode(), raw_body or b"", digestmod).hexdigest()
+    body = raw_body or b""
+    if ts_header:
+        # Interleave the raw timestamp and the raw body bytes per the template,
+        # so the signature is bound to the timestamp the freshness window
+        # accepted. Split on {body} to keep the body as exact bytes.
+        template = str(node_params.get("hmac_signed_payload") or "{ts}.{body}")
+        left, sep, right = template.partition("{body}")
+        signed = left.replace("{ts}", raw_ts).encode() + body
+        if sep:
+            signed += right.replace("{ts}", raw_ts).encode()
+    else:
+        signed = body
+    expected = hmac.new(secret.encode(), signed, digestmod).hexdigest()
     return hmac.compare_digest(provided.strip(), expected)
+
+
+def _proxy_headers_trusted() -> bool:
+    """True when the ASGI server may have rewritten the client address.
+
+    uvicorn's ProxyHeadersMiddleware overwrites ``scope["client"]`` from
+    X-Forwarded-For for any peer in its trusted set — 127.0.0.1 by default —
+    and keeps no copy of the original. Read off the live server config, so
+    this reflects how the process was actually launched rather than what a
+    settings file claims.
+    """
+    from app.state import proxy_headers_enabled
+
+    return proxy_headers_enabled()
 
 
 def _webhook_ip_allowed(node_params: dict, client_ip: str | None, headers: dict) -> bool:
@@ -395,12 +467,34 @@ def _webhook_ip_allowed(node_params: dict, client_ip: str | None, headers: dict)
     if not nets:
         return False  # configured but unparseable → fail closed
 
+    lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    trust_proxy = str(node_params.get("trust_proxy") or "off").lower() == "on"
     candidate = client_ip
-    if str(node_params.get("trust_proxy") or "off").lower() == "on":
-        lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    if trust_proxy:
         xff = lower_headers.get("x-forwarded-for")
         if xff:
             candidate = xff.split(",")[0].strip()
+    elif lower_headers.get("x-forwarded-for") and _proxy_headers_trusted():
+        # trust_proxy is off, so this node's allowlist is meant to be decided
+        # on the socket peer. But uvicorn ships with --proxy-headers on and
+        # trusts X-Forwarded-For from 127.0.0.1, rewriting scope["client"]
+        # before the app ever runs — and it does not keep the original. A
+        # caller on loopback (a sidecar, a co-located proxy, anything sharing
+        # the network namespace) could therefore name any address it liked
+        # and walk through the allowlist.
+        #
+        # The true peer is unrecoverable here, so refuse rather than decide on
+        # an address that may be forged. Deployments pass --no-proxy-headers;
+        # a hand-rolled launch gets a closed door and this message instead of
+        # a silent bypass.
+        logger.error(
+            "webhook ip_allowlist cannot be enforced: the server was started "
+            "with uvicorn's proxy headers enabled, so the client address may "
+            "have come from X-Forwarded-For rather than the socket. Start the "
+            "API with --no-proxy-headers (all shipped deployments do), or set "
+            "the node's trust_proxy=on if a trusted proxy really is in front."
+        )
+        return False
     if not candidate:
         return False
     try:
@@ -421,6 +515,21 @@ def _webhook_dedup_key(node_params: dict, request_payload: dict) -> str | None:
         return None
     expr = node_params.get("dedup_key")
     if not expr:
+        return None
+    if "{{" not in str(expr):
+        # Without a template the expression cannot reference the request, so
+        # evaluate() hands back the literal text — the same key for every
+        # delivery. That silently acknowledges every event after the first as
+        # a duplicate: total event loss, and the caller still sees HTTP 200.
+        # Fail open instead; an extra run is recoverable, a dropped event is
+        # not.
+        logger.warning(
+            "webhook dedup_key %r has no {{ }} expression, so it would be the "
+            "same key for every delivery and drop every event after the first. "
+            "Deduplication is disabled for this request — write it as "
+            "'{{ $json.body.id }}'.",
+            expr,
+        )
         return None
     from nodyra.expr import build_context, evaluate
 
@@ -581,7 +690,10 @@ async def _last_node_output(session, run_id: str) -> object:
     row = await session.scalar(
         select(NodeRun.output)
         .where(NodeRun.run_id == run_id)
-        .order_by(NodeRun.finished_at.desc().nullslast())
+        .order_by(
+            NodeRun.finished_at.desc().nullslast(),
+            NodeRun.started_at.desc().nullslast(),
+        )
         .limit(1)
     )
     # A large output is stored as an offload marker; resolve it so the webhook
@@ -883,18 +995,26 @@ async def dispatch_webhook(
                 # rejects the run insert; Postgres also benefits from the
                 # shorter transaction boundary.
                 await dispatch_session.commit()
-                run_id = await start_run(
-                    workflow.id,
-                    graph,
-                    version_number,
-                    workflow_version_id=version_id,
-                    mode="test" if prefer_draft else "production",
-                    trigger_type="webhook",
-                    cache={node["id"]: {seed_output: node_payload}},
-                    trigger_node_id=node["id"],
-                    deduplication_key=dedup_key,
-                    run_id=pre_run_id,
-                )
+                try:
+                    run_id = await start_run(
+                        workflow.id,
+                        graph,
+                        version_number,
+                        workflow_version_id=version_id,
+                        mode="test" if prefer_draft else "production",
+                        trigger_type="webhook",
+                        cache={node["id"]: {seed_output: node_payload}},
+                        trigger_node_id=node["id"],
+                        deduplication_key=dedup_key,
+                        run_id=pre_run_id,
+                    )
+                except DuplicateRun:
+                    # Another delivery of this same event won the race between
+                    # the read above and the insert. That is the idempotency
+                    # guarantee holding, so acknowledge it exactly like a
+                    # duplicate caught by the read.
+                    deduped = True
+                    continue
                 run_ids.append(run_id)
                 if raw_ref is not None:
                     # Create the Artifact row (and rehome to the configured backend)
@@ -1092,6 +1212,183 @@ async def _poll_subscriptions(now: datetime) -> None:
                     await session.commit()
 
 
+@asynccontextmanager
+async def _scheduler_session():
+    """Open an explicitly cross-tenant session for scheduler bookkeeping."""
+    with run_as_system():
+        async with SessionLocal() as session:
+            yield session
+
+
+def _for_update(session: AsyncSession, stmt, *, skip_locked: bool = False):
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        return stmt.with_for_update(skip_locked=skip_locked)
+    return stmt
+
+
+@dataclass(frozen=True, slots=True)
+class _ClaimedScheduleOccurrence:
+    id: str
+    org_id: str
+    workflow_id: str
+    workflow_version_id: str | None
+    workflow_version: int
+    deployment_id: str | None
+    graph: dict
+    trigger_node_id: str | None
+    trigger_type: str
+    parameters: dict
+    dispatch_token: str
+    attempts: int
+
+
+async def _claim_schedule_occurrence(now: datetime) -> _ClaimedScheduleOccurrence | None:
+    """Lease the oldest dispatchable occurrence, recovering an expired claim."""
+    async with _scheduler_session() as session:
+        stmt = (
+            select(ScheduleOccurrence)
+            .where(
+                or_(
+                    and_(
+                        ScheduleOccurrence.status == "pending",
+                        or_(
+                            ScheduleOccurrence.next_attempt_at.is_(None),
+                            ScheduleOccurrence.next_attempt_at <= now,
+                        ),
+                    ),
+                    and_(
+                        ScheduleOccurrence.status == "dispatching",
+                        or_(
+                            ScheduleOccurrence.dispatch_expires_at.is_(None),
+                            ScheduleOccurrence.dispatch_expires_at <= now,
+                        ),
+                    ),
+                )
+            )
+            .order_by(ScheduleOccurrence.created_at, ScheduleOccurrence.id)
+            .limit(1)
+            .execution_options(skip_org_filter=True)
+        )
+        row = await session.scalar(_for_update(session, stmt, skip_locked=True))
+        if row is None:
+            return None
+        token = uuid.uuid4().hex
+        row.status = "dispatching"
+        row.dispatch_token = token
+        row.dispatch_expires_at = now + timedelta(minutes=5)
+        row.attempts += 1
+        row.next_attempt_at = None
+        await session.commit()
+        return _ClaimedScheduleOccurrence(
+            id=row.id,
+            org_id=row.org_id,
+            workflow_id=row.workflow_id,
+            workflow_version_id=row.workflow_version_id,
+            workflow_version=row.workflow_version,
+            deployment_id=row.deployment_id,
+            graph=dict(row.graph),
+            trigger_node_id=row.trigger_node_id,
+            trigger_type=row.trigger_type,
+            parameters=dict(row.parameters or {}),
+            dispatch_token=token,
+            attempts=row.attempts,
+        )
+
+
+async def _existing_occurrence_run(occurrence_id: str) -> str | None:
+    async with _scheduler_session() as session:
+        return await session.scalar(
+            select(Run.id)
+            .where(Run.deduplication_key == f"schedule-occurrence:{occurrence_id}")
+            .execution_options(skip_org_filter=True)
+        )
+
+
+async def _finish_schedule_occurrence(
+    occurrence: _ClaimedScheduleOccurrence,
+    *,
+    now: datetime,
+    run_id: str | None = None,
+    error: Exception | None = None,
+) -> None:
+    """Complete or release a claim, fenced by its dispatch token."""
+    async with _scheduler_session() as session:
+        stmt = (
+            select(ScheduleOccurrence)
+            .where(ScheduleOccurrence.id == occurrence.id)
+            .execution_options(skip_org_filter=True, populate_existing=True)
+        )
+        row = await session.scalar(_for_update(session, stmt))
+        if row is None or row.dispatch_token != occurrence.dispatch_token:
+            await session.rollback()
+            return
+        row.dispatch_token = None
+        row.dispatch_expires_at = None
+        if run_id is not None:
+            row.status = "dispatched"
+            row.run_id = run_id
+            row.dispatched_at = now
+            row.next_attempt_at = None
+            row.last_error = None
+        else:
+            row.last_error = str(error or "schedule dispatch failed")[:2000]
+            if occurrence.attempts >= 10:
+                row.status = "failed"
+                row.next_attempt_at = None
+            else:
+                row.status = "pending"
+                delay = min(300, 2 ** min(occurrence.attempts, 8))
+                row.next_attempt_at = now + timedelta(seconds=delay)
+        await session.commit()
+
+
+async def _dispatch_schedule_occurrences(now: datetime, *, limit: int = 100) -> int:
+    """Dispatch durable occurrences; failures remain retryable for later ticks."""
+    dispatched = 0
+    for _ in range(limit):
+        occurrence = await _claim_schedule_occurrence(now)
+        if occurrence is None:
+            break
+        run_id = await _existing_occurrence_run(occurrence.id)
+        error: Exception | None = None
+        if run_id is None:
+            try:
+                with run_as_org(occurrence.org_id):
+                    run_id = await start_run(
+                        occurrence.workflow_id,
+                        occurrence.graph,
+                        occurrence.workflow_version,
+                        workflow_version_id=occurrence.workflow_version_id,
+                        deployment_id=occurrence.deployment_id,
+                        mode="production",
+                        trigger_type=occurrence.trigger_type,
+                        parameters=occurrence.parameters or None,
+                        trigger_node_id=occurrence.trigger_node_id,
+                        deduplication_key=f"schedule-occurrence:{occurrence.id}",
+                    )
+            except Exception as exc:  # noqa: BLE001 - durable retry boundary
+                error = exc
+                # Handles a crash/race after start_run committed but before the
+                # occurrence was marked dispatched: the unique key is truth.
+                run_id = await _existing_occurrence_run(occurrence.id)
+        await _finish_schedule_occurrence(
+            occurrence,
+            now=now,
+            run_id=run_id,
+            error=error,
+        )
+        if run_id is None:
+            logger.warning(
+                "schedule occurrence %s dispatch failed (attempt %d): %s",
+                occurrence.id,
+                occurrence.attempts,
+                error,
+            )
+        else:
+            dispatched += 1
+    return dispatched
+
+
 async def _tick() -> None:
     """One pass of the scheduler.
 
@@ -1101,19 +1398,29 @@ async def _tick() -> None:
     which preserves the zero-config default for legacy graphs.
     """
     now = datetime.now(UTC)
-    due_workflow: list[tuple[str, dict, int, str | None, str]] = []
-    due_deployment: list[tuple[str, dict, int, str | None, str, dict, str | None]] = []
+    due_workflows = 0
+    due_deployments = 0
 
-    async with SessionLocal() as session:
+    async with _scheduler_session() as session:
+        workflow_stmt = select(Workflow).where(Workflow.active.is_(True))
         workflows = (
-            await session.scalars(
-                select(Workflow).where(Workflow.active.is_(True))
-            )
+            await session.scalars(_for_update(session, workflow_stmt))
         ).all()
+        deployment_stmt = select(Deployment).where(Deployment.active.is_(True))
         deployments = (
-            await session.scalars(select(Deployment).where(Deployment.active.is_(True)))
+            await session.scalars(_for_update(session, deployment_stmt))
         ).all()
-        states = {s.workflow_id: s for s in (await session.scalars(select(ScheduleState))).all()}
+        states = {
+            s.workflow_id: s
+            for s in (
+                await session.scalars(
+                    _for_update(
+                        session,
+                        select(ScheduleState).execution_options(skip_org_filter=True),
+                    )
+                )
+            ).all()
+        }
 
         wf_by_id = {wf.id: wf for wf in workflows}
         # Latest version per active workflow in one grouped query — never the
@@ -1165,17 +1472,23 @@ async def _tick() -> None:
                     if isinstance(chosen_trigger, dict)
                     else getattr(chosen_trigger, "id", None)
                 )
-                due_deployment.append(
-                    (
-                        workflow.id,
-                        graph,
-                        version.version,
-                        version.id,
-                        deployment.id,
-                        deployment.default_parameters or {},
-                        trigger_id,
+                session.add(
+                    ScheduleOccurrence(
+                        org_id=workflow.org_id,
+                        source_type="deployment",
+                        source_id=deployment.id,
+                        workflow_id=workflow.id,
+                        workflow_version_id=version.id,
+                        workflow_version=version.version,
+                        deployment_id=deployment.id,
+                        graph=dict(graph),
+                        trigger_node_id=trigger_id,
+                        trigger_type="deployment",
+                        parameters=dict(deployment.default_parameters or {}),
+                        scheduled_for=now,
                     )
                 )
+                due_deployments += 1
 
         # --- 2. Fallback: workflows that are active and have no deployment
         # use their in-graph schedule_trigger as before.
@@ -1202,56 +1515,36 @@ async def _tick() -> None:
                 continue
             if _is_due(params, state.last_fired, now):
                 state.last_fired = now
-                due_workflow.append(
-                    (
-                        workflow.id,
-                        graph,
-                        latest.version,
-                        latest.id,
-                        schedule["id"],
+                session.add(
+                    ScheduleOccurrence(
+                        org_id=workflow.org_id,
+                        source_type="workflow",
+                        source_id=workflow.id,
+                        workflow_id=workflow.id,
+                        workflow_version_id=latest.id,
+                        workflow_version=latest.version,
+                        deployment_id=None,
+                        graph=dict(graph),
+                        trigger_node_id=schedule["id"],
+                        trigger_type="schedule",
+                        parameters={},
+                        scheduled_for=now,
                     )
                 )
+                due_workflows += 1
 
         await session.commit()
 
-    if due_workflow or due_deployment:
+    if due_workflows or due_deployments:
         logger.info(
             "scheduler tick: %d workflow schedule(s), %d deployment(s) due",
-            len(due_workflow),
-            len(due_deployment),
+            due_workflows,
+            due_deployments,
         )
 
-    # Dispatch outside the state transaction; start_run opens its own session.
-    for workflow_id, graph, version, version_id, trigger_id in due_workflow:
-        await start_run(
-            workflow_id,
-            graph,
-            version,
-            workflow_version_id=version_id,
-            mode="production",
-            trigger_type="schedule",
-            trigger_node_id=trigger_id,
-        )
-    for (
-        workflow_id,
-        graph,
-        version,
-        version_id,
-        deployment_id,
-        params,
-        trigger_id,
-    ) in due_deployment:
-        await start_run(
-            workflow_id,
-            graph,
-            version,
-            workflow_version_id=version_id,
-            deployment_id=deployment_id,
-            mode="production",
-            trigger_type="deployment",
-            parameters=params or None,
-            trigger_node_id=trigger_id,
-        )
+    # Occurrences are committed before dispatch and claimed with a separate
+    # lease, so process death here cannot lose or duplicate a scheduled run.
+    await _dispatch_schedule_occurrences(now)
 
     # --- 3. Fire poll hooks for due provider trigger subscriptions.
     await _poll_subscriptions(now)

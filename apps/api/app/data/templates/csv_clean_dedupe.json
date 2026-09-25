@@ -1,0 +1,129 @@
+{
+  "id": "csv_clean_dedupe",
+  "name": "Clean and de-duplicate a CSV",
+  "description": "Normalise sample customer records, remove duplicate email addresses, and export a cleaned CSV. Replace the sample node with your own records to use real data.",
+  "tags": [
+    "data",
+    "csv",
+    "cleanup",
+    "starter"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [],
+  "expected_result": "A cleaned CSV artifact with duplicate rows removed.",
+  "permissions": [],
+  "compatibility": ">=1.0.0,<2.0.0",
+  "screenshot_url": "/template-previews/csv-clean-dedupe.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "manual_trigger",
+        "params": {
+          "data": {}
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "sample",
+        "type": "code",
+        "params": {
+          "code": "output = [\n    {'name': 'Ada Lovelace', 'email': '  Ada@Example.COM '},\n    {'name': 'Grace Hopper', 'email': 'grace@example.com'},\n    {'name': 'Ada L.', 'email': 'ada@example.com'},\n    {'name': 'Alan Turing', 'email': ' Alan@Example.com'},\n]"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "normalise",
+        "type": "string_normalize",
+        "params": {
+          "columns": "email",
+          "case": "lower",
+          "trim": true
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      },
+      {
+        "id": "to_records",
+        "type": "dataset_to_records",
+        "params": {
+          "max_rows": 10000,
+          "allow_truncate": false
+        },
+        "position": {
+          "x": 840,
+          "y": 40
+        }
+      },
+      {
+        "id": "dedupe",
+        "type": "remove_duplicates",
+        "params": {
+          "field": "email"
+        },
+        "position": {
+          "x": 1120,
+          "y": 40
+        }
+      },
+      {
+        "id": "to_dataset",
+        "type": "records_to_dataset",
+        "params": {},
+        "position": {
+          "x": 1400,
+          "y": 40
+        }
+      },
+      {
+        "id": "write",
+        "type": "csv_write",
+        "params": {
+          "filename": "cleaned.csv",
+          "include_header": true
+        },
+        "position": {
+          "x": 1680,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "start",
+        "target": "sample"
+      },
+      {
+        "source": "sample",
+        "target": "normalise"
+      },
+      {
+        "source": "normalise",
+        "target": "to_records"
+      },
+      {
+        "source": "to_records",
+        "target": "dedupe"
+      },
+      {
+        "source": "dedupe",
+        "target": "to_dataset"
+      },
+      {
+        "source": "to_dataset",
+        "target": "write"
+      }
+    ]
+  }
+}

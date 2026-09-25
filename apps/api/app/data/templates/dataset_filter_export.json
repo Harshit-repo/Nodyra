@@ -1,0 +1,133 @@
+{
+  "id": "dataset_filter_export",
+  "name": "Dataset filter and CSV export",
+  "description": "Create a sample dataset, filter high-value rows, preview records, and export a checksum-backed CSV artifact.",
+  "tags": [
+    "data",
+    "csv",
+    "artifact",
+    "starter"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [],
+  "expected_result": "A filtered-sales.csv artifact containing the west-region rows worth at least 100.",
+  "permissions": [
+    "Python: deterministic sample data",
+    "Artifact: write CSV"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
+  "rating": 4.9,
+  "rating_count": 42,
+  "screenshot_url": "/template-previews/dataset-filter-export.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "manual",
+        "type": "manual_trigger",
+        "params": {
+          "data": {}
+        },
+        "position": {
+          "x": 0,
+          "y": 120
+        }
+      },
+      {
+        "id": "sample",
+        "type": "code",
+        "params": {
+          "code": "output = [\n    {'id': 1, 'region': 'west', 'amount': 120},\n    {'id': 2, 'region': 'east', 'amount': 80},\n    {'id': 3, 'region': 'west', 'amount': 240},\n    {'id': 4, 'region': 'north', 'amount': 45},\n]"
+        },
+        "position": {
+          "x": 260,
+          "y": 120
+        }
+      },
+      {
+        "id": "dataset",
+        "type": "records_to_dataset",
+        "params": {},
+        "position": {
+          "x": 520,
+          "y": 120
+        }
+      },
+      {
+        "id": "filter",
+        "type": "dataset_filter",
+        "params": {
+          "where": "region = 'west' AND amount >= 100"
+        },
+        "position": {
+          "x": 780,
+          "y": 120
+        }
+      },
+      {
+        "id": "csv",
+        "type": "csv_write",
+        "params": {
+          "filename": "filtered-sales.csv",
+          "delimiter": ",",
+          "include_header": true
+        },
+        "position": {
+          "x": 1040,
+          "y": 60
+        }
+      },
+      {
+        "id": "preview",
+        "type": "dataset_to_records",
+        "params": {
+          "max_rows": 100,
+          "allow_truncate": false
+        },
+        "position": {
+          "x": 1040,
+          "y": 200
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "manual",
+        "source_output": "main",
+        "target": "sample",
+        "target_input": "input"
+      },
+      {
+        "id": "e2",
+        "source": "sample",
+        "source_output": "main",
+        "target": "dataset",
+        "target_input": "input"
+      },
+      {
+        "id": "e3",
+        "source": "dataset",
+        "source_output": "main",
+        "target": "filter",
+        "target_input": "input"
+      },
+      {
+        "id": "e4",
+        "source": "filter",
+        "source_output": "main",
+        "target": "csv",
+        "target_input": "input"
+      },
+      {
+        "id": "e5",
+        "source": "filter",
+        "source_output": "main",
+        "target": "preview",
+        "target_input": "input"
+      }
+    ]
+  }
+}

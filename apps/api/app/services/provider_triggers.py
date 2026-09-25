@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 import nodyra_nodes  # noqa: F401 - ensure built-in provider triggers register
 from app.config import settings
 from app.db import SessionLocal
+from app.exceptions import DuplicateRun
 from app.models import (
     ProviderTriggerSubscription,
     Run,
@@ -597,17 +598,31 @@ async def dispatch_provider_webhook(
             )
             await session.commit()
 
-        run_id = await start_run(
-            workflow.id,
-            version.graph or {"nodes": [], "edges": []},
-            version.version,
-            workflow_version_id=version.id,
-            mode="production",
-            trigger_type="provider",
-            cache={row.node_id: {"main": event.payload}},
-            trigger_node_id=row.node_id,
-            deduplication_key=dedupe_key,
-        )
+        try:
+            run_id = await start_run(
+                workflow.id,
+                version.graph or {"nodes": [], "edges": []},
+                version.version,
+                workflow_version_id=version.id,
+                mode="production",
+                trigger_type="provider",
+                cache={row.node_id: {"main": event.payload}},
+                trigger_node_id=row.node_id,
+                deduplication_key=dedupe_key,
+            )
+        except DuplicateRun:
+            # Concurrent deliveries of one provider event both passed the
+            # "seen this key?" read above before either committed. The unique
+            # index settled it; answer exactly as that read would have, since
+            # anything but a 200 asks the provider to deliver it again.
+            return ProviderWebhookDispatch(
+                status=200,
+                body={
+                    "message": "Duplicate provider delivery acknowledged",
+                    "runs": [],
+                },
+                headers=event.response_headers,
+            )
         await record_provider_trigger_event(
             run_id,
             subscription_id=row.id,

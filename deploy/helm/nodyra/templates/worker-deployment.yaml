@@ -20,11 +20,21 @@ spec:
         app: {{ .Release.Name }}-worker
     spec:
       terminationGracePeriodSeconds: 120
+      serviceAccountName: {{ include "nodyra.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "nodyra.podSecurityContext" . | nindent 8 }}
+      volumes:
+        {{- include "nodyra.scratchVolumes" . | nindent 8 }}
       containers:
         - name: worker
           image: {{ include "nodyra.apiImage" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["python", "-m", "app.worker_main"]
+          securityContext:
+            {{- include "nodyra.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            {{- include "nodyra.scratchVolumeMounts" . | nindent 12 }}
           env:
             {{- include "nodyra.env" . | nindent 12 }}
             - name: DISPATCH_ROLE
@@ -38,13 +48,23 @@ spec:
           livenessProbe:
             exec:
               command:
-                - pgrep
-                - -f
-                - app.worker_main
+                - python
+                - -c
+                - "from pathlib import Path; import sys; sys.exit(0 if b'app.worker_main' in Path('/proc/1/cmdline').read_bytes() else 1)"
             initialDelaySeconds: 30
             periodSeconds: 20
             failureThreshold: 3
             timeoutSeconds: 5
+          {{- if and .Values.startupProbe.enabled (gt (int (.Values.worker.healthPort | default 0)) 0) }}
+          # Gates livenessProbe until the worker has finished booting, so a
+          # slow dependency wire-up is waited out rather than restarted.
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: {{ .Values.worker.healthPort }}
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+          {{- end }}
           {{- if gt (int (.Values.worker.healthPort | default 0)) 0 }}
           readinessProbe:
             httpGet:

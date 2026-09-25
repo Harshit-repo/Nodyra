@@ -144,8 +144,19 @@ _ALLOWED_EXPR_NODES = frozenset({
 _BLOCKED_NAMES = frozenset({
     "__class__", "__bases__", "__subclasses__", "__mro__",
     "__globals__", "__builtins__", "__import__", "__loader__",
-    "exec", "eval", "compile", "open", "__code__",
+    "exec", "eval", "compile", "open", "getattr", "setattr", "globals", "__code__",
     "__reduce__", "__reduce_ex__", "__init_subclass__",
+    # str.format / str.format_map (and dict.format_map) interpret a *template
+    # string* that can contain attribute access and indexing —
+    # "{0.__class__.__base__}".format(x) — which the AST validator never sees,
+    # because the dunder walk lives inside a string literal, not in the parse
+    # tree. That silently defeats every entry above (their entire purpose is to
+    # stop __class__/__globals__/__subclasses__ walking) and lets an expression
+    # read module globals off any callable in scope, e.g.
+    # "{0.__globals__[SECRET]}".format(fn). Format specs cannot call, so this is
+    # confidentiality-only, not RCE — but it is still a full bypass of the
+    # blocked-name boundary, so the method names themselves are blocked.
+    "format", "format_map",
 })
 
 

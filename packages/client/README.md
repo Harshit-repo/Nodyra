@@ -1,11 +1,17 @@
 # nodyra-client
 
-Python SDK and `nodyra` CLI for [Nodyra](https://github.com/Harshit-repo/nodyra),
+Python SDK and `nodyra` CLI for [Nodyra](https://github.com/Harshit-repo/Nodyra),
 the Python-native, self-hostable workflow automation platform.
 
 ```bash
-pip install nodyra-client
+git clone https://github.com/Harshit-repo/Nodyra.git
+cd Nodyra
+uv tool install ./packages/client
 ```
+
+The client has not yet been released on PyPI. From an existing checkout, you
+can also install it into the active environment with
+`python -m pip install ./packages/client`.
 
 ## CLI quickstart
 

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ReactFlowProvider } from "@xyflow/react";
 import { MagnifyingGlass } from "@phosphor-icons/react";
 
 import { SkeletonRows } from "./Skeleton";
+import "./execution-panels.css";
 
 import {
   api,
@@ -209,14 +210,13 @@ function OpsDashboard() {
           </div>
           <div className="ops-card-sub">
             {oldestWarn ? (
-              <span
+              <Link
+                to="/settings"
                 className="backpressure-link"
                 title="This run waited in the queue because the concurrency limit was reached. Check Settings to adjust max_concurrent_runs."
-                style={{ cursor: "pointer", textDecoration: "underline dotted" }}
-                onClick={() => window.location.assign("/settings")}
               >
                 ⚠ backpressure
-              </span>
+              </Link>
             ) : (
               "fresh"
             )}
@@ -368,7 +368,7 @@ function RunToolTracePanel({ runId }: { runId: string }) {
   );
 }
 
-function formatTimelineSummary(e: RunTimelineEvent): string {
+export function formatTimelineSummary(e: RunTimelineEvent): string {
   const d = e.data as Record<string, unknown>;
   if (e.type.startsWith("agent_")) {
     return formatAgentTimelineSummary(e.type, d);
@@ -381,6 +381,15 @@ function formatTimelineSummary(e: RunTimelineEvent): string {
   }
   if (typeof d.node_id === "string") {
     const parts: string[] = [d.node_id as string];
+    // A retry carries which attempt this is; without it the row says only
+    // that the node retried, which is the least useful half of the fact.
+    if (typeof d.attempt === "number") {
+      parts.push(
+        typeof d.of === "number"
+          ? `attempt ${d.attempt} of ${d.of}`
+          : `attempt ${d.attempt}`,
+      );
+    }
     if (typeof d.duration_ms === "number") {
       parts.push(`${d.duration_ms}ms`);
     }
@@ -392,7 +401,7 @@ function formatTimelineSummary(e: RunTimelineEvent): string {
   return "";
 }
 
-function formatTimelineType(type: string): string {
+export function formatTimelineType(type: string): string {
   const labels: Record<string, string> = {
     agent_action_requested: "Agent action",
     agent_tool_started: "Agent tool started",
@@ -409,6 +418,7 @@ function formatTimelineType(type: string): string {
     guardrail_redacted: "Guardrail redacted",
     node_started: "Node started",
     node_finished: "Node finished",
+    node_retrying: "Node retrying",
     queue_failed: "Queue failed",
     dead_lettered: "Dead lettered",
   };
@@ -675,7 +685,7 @@ export function ExecutionsPage() {
 
         {error && <p className="error-text">{error}</p>}
         {!runs && !error && (
-          <div className="exec-table-wrap" aria-label="Loading runs">
+          <div role="status" className="exec-table-wrap" aria-label="Loading runs">
             <SkeletonRows count={8} />
           </div>
         )}
@@ -1039,7 +1049,7 @@ function RunDetailPanel({
 
       {error && <p className="error-text">{error}</p>}
       {!run && !error && (
-        <div className="exec-nodes" aria-label="Loading run">
+        <div role="status" className="exec-nodes" aria-label="Loading run">
           {Array.from({ length: 4 }).map((_, index) => (
             <div className="exec-node skeleton-row" key={index}>
               <div className="exec-node-head">

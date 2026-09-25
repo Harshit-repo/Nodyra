@@ -1,0 +1,25 @@
+{{- if .Values.persistence.enabled }}
+{{- range $name := list "envs" "artifacts" }}
+{{- $storage := index $.Values.persistence $name }}
+{{- if not $storage.existingClaim }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}
+  labels:
+    {{- include "nodyra.labels" $ | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteMany
+  {{- with $.Values.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $storage.size | quote }}
+{{- end }}
+{{- end }}
+{{- end }}

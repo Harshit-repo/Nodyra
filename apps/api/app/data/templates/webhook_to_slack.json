@@ -2,15 +2,26 @@
   "id": "webhook_to_slack",
   "name": "Webhook to Slack alert",
   "description": "Receive a JSON webhook, format a message, and post it to Slack.",
-  "tags": ["alerting", "webhook", "starter"],
+  "tags": [
+    "alerting",
+    "webhook",
+    "notifications"
+  ],
   "version": "1.0.2",
   "creator": "Nodyra maintainers",
   "verified": true,
   "credential_free": false,
-  "prerequisites": ["Authenticated inbound webhook", "Slack credential and destination channel"],
+  "prerequisites": [
+    "Authenticated inbound webhook",
+    "Slack credential and destination channel"
+  ],
   "expected_result": "Each accepted webhook creates one formatted Slack message.",
-  "permissions": ["Inbound: webhook", "Network: Slack API", "Secret: Slack credential"],
-  "compatibility": ">=0.1.0,<0.2.0",
+  "permissions": [
+    "Inbound: webhook",
+    "Network: Slack API",
+    "Secret: Slack credential"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
   "rating": 4.7,
   "rating_count": 31,
   "screenshot_url": "/template-previews/webhook-slack.svg",
@@ -23,7 +34,10 @@
           "path": "incoming-event",
           "response_mode": "On Received"
         },
-        "position": {"x": 0, "y": 40}
+        "position": {
+          "x": 0,
+          "y": 40
+        }
       },
       {
         "id": "format",
@@ -31,7 +45,10 @@
         "params": {
           "code": "event = input or {}\noutput = {\n    'text': f\"New event: {event.get('event', 'unknown')}\",\n    'event': event,\n}"
         },
-        "position": {"x": 280, "y": 40}
+        "position": {
+          "x": 280,
+          "y": 40
+        }
       },
       {
         "id": "notify",
@@ -45,7 +62,10 @@
           "blocks": null,
           "thread_ts": ""
         },
-        "position": {"x": 560, "y": 40}
+        "position": {
+          "x": 560,
+          "y": 40
+        }
       }
     ],
     "edges": [

@@ -14,16 +14,76 @@ spec:
       labels:
         app: {{ .Release.Name }}-web
     spec:
+      serviceAccountName: {{ include "nodyra.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      # nginx:alpine ships uid/gid 101 for its worker user. The image's own
+      # `user nginx;` directive is a no-op once the master is already non-root
+      # (nginx logs one warning and carries on), so serving is unaffected.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.web.runAsUser | default 101 }}
+        runAsGroup: {{ .Values.web.runAsUser | default 101 }}
+        fsGroup: {{ .Values.web.runAsUser | default 101 }}
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        # nginx writes its pid and proxy/fastcgi scratch files at runtime, so
+        # these three paths must stay writable under a read-only root.
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        - name: nginx-config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: web
           image: {{ include "nodyra.webImage" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: VITE_API_PROXY
-              value: "http://{{ .Release.Name }}-api:{{ .Values.api.port }}"
+            - name: NODYRA_API_UPSTREAM
+              value: "{{ .Release.Name }}-api.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain | default "cluster.local" }}:{{ .Values.api.port }}"
+            - name: NODYRA_WEB_PORT
+              value: {{ .Values.web.port | quote }}
+            - name: NODYRA_MAX_BODY_SIZE
+              value: {{ .Values.web.maxBodySize | default "52m" | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.web.port }}
+          securityContext:
+            {{- include "nodyra.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+            - name: tmp
+              mountPath: /tmp
+          {{- if .Values.startupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 5
           resources:
             {{- toYaml .Values.web.resources | nindent 12 }}
 ---

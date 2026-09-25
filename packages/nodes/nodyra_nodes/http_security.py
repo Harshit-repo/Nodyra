@@ -143,14 +143,21 @@ def assert_public_http_url(url: str, *, context: str = "HTTP request") -> None:
 def _redirect_strips_credentials(old_url: str, new_url: str) -> bool:
     """True when following ``old_url`` -> ``new_url`` must drop auth headers.
 
-    Credentials leak if the redirect target is a different host, or downgrades
-    an ``https`` request to plaintext ``http`` on the same host.
+    Credentials belong to an origin (scheme, host and effective port). A
+    different port can be a different service even when the hostname matches.
     """
     old = urlsplit(old_url)
     new = urlsplit(new_url)
-    if (old.hostname or "").lower() != (new.hostname or "").lower():
-        return True
-    return old.scheme.lower() == "https" and new.scheme.lower() != "https"
+
+    def origin(parts):
+        scheme = parts.scheme.lower()
+        return (
+            scheme,
+            (parts.hostname or "").lower(),
+            parts.port or (443 if scheme == "https" else 80),
+        )
+
+    return origin(old) != origin(new)
 
 
 def _strip_sensitive_headers(body_kwargs: dict[str, Any]) -> None:

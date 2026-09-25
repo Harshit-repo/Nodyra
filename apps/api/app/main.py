@@ -32,6 +32,7 @@ from app.routers import (
     artifacts,
     audit,
     auth,
+    billing,
     chat,
     chat_public,
     code_modules,
@@ -69,6 +70,8 @@ from app.services.environment_builds import run_environment_build_dispatch_loop
 from app.services.events import broker_reaper_loop
 from app.services.ghost_cleanup import ghost_cleanup_loop
 from app.services.github_sync_jobs import github_sync_dispatch_loop
+from app.services.json_responses import NodyraJSONResponse
+from app.services.license_refresh import license_refresh_loop, refresh_enabled
 from app.services.queue import run_queue_dispatch_loop
 from app.services.remote_dispatch import (
     cloud_idle_terminate_loop,
@@ -169,6 +172,7 @@ async def _mark_interrupted_runs() -> None:
                     for entry in queue_entries:
                         entry.status = "cancelled"
                         entry.leased_by = None
+                        entry.lease_token = None
                         entry.lease_expires_at = None
 
                     await session.commit()
@@ -197,6 +201,7 @@ async def _mark_interrupted_runs() -> None:
                     for entry in orphaned:
                         entry.status = "cancelled"
                         entry.leased_by = None
+                        entry.lease_token = None
                         entry.lease_expires_at = None
                     await session.commit()
                     logger.warning(
@@ -406,6 +411,14 @@ async def lifespan(app: FastAPI):
         if settings.audit_webhook_url and settings.audit_webhook_secret
         else None
     )
+    # Renews this instance's licence before it lapses. Started only when a
+    # licence server is configured, so an air-gapped deployment never reaches
+    # out and keeps verifying offline exactly as before.
+    license_refresh = (
+        asyncio.create_task(_as_system(license_refresh_loop)())
+        if refresh_enabled()
+        else None
+    )
     replica_heartbeat = asyncio.create_task(_as_system(replica_heartbeat_loop)(role="api"))
     stuck_detector = (
         asyncio.create_task(_as_system(stuck_run_detector_loop)()) if dispatch_inline else None
@@ -433,6 +446,7 @@ async def lifespan(app: FastAPI):
         github_sync,
         ghost_cleanup,
         audit_webhook,
+        license_refresh,
         replica_heartbeat,
         stuck_detector,
     ):
@@ -490,6 +504,10 @@ app = FastAPI(
     version=NODYRA_VERSION,
     lifespan=lifespan,
     dependencies=[Depends(resolve_org)],
+    # Non-finite floats (NaN/Inf) are not valid JSON; sanitize every REST
+    # response so legacy run outputs containing them degrade to null instead
+    # of crashing json.dumps and returning a bare 500.
+    default_response_class=NodyraJSONResponse,
 )
 
 # A5: tracing is initialised at import so FastAPI/SQLAlchemy instrumentation
@@ -765,6 +783,10 @@ _AUTH_EXEMPT_PREFIXES = (
 # scraping Prometheus should configure a bearer token in their scrape config.
 _AUTH_EXEMPT_PATHS = {
     "/",
+    # Signature-authenticated (Stripe) and token-authenticated (a customer
+    # instance renewing its own licence). Neither caller is a Nodyra user.
+    "/billing/webhook",
+    "/billing/license",
     "/mcp",  # MCP performs its own bearer auth and standards-compliant challenge.
     "/openapi.json",
     "/docs",
@@ -785,6 +807,9 @@ _CSRF_EXEMPT_PREFIXES = (
     "/internal",
     "/runner-pools/ws",
     "/credentials/oauth/callback",
+    # Stripe holds no Nodyra credential and cannot send a CSRF token; the
+    # endpoint authenticates by HMAC signature over the raw request body.
+    "/billing/webhook",
 )
 # Specific /auth endpoints that are safe without CSRF: they have no session
 # cookie yet (bootstrapping login/register) or are read-only probes. Matching
@@ -951,6 +976,13 @@ app.include_router(expressions.router)
 app.include_router(mcp_connections.router)
 app.include_router(github_sync_router.router, prefix="/api")
 app.include_router(node_registry.router)
+app.include_router(billing.router)
+if settings.license_issuer_enabled:
+    # Issuance, checkout and the Stripe webhook exist ONLY on the instance the
+    # vendor runs as its licence server. Not mounting them elsewhere means a
+    # customer deployment cannot expose them even if it is handed a signing key
+    # by mistake.
+    app.include_router(billing.issuer_router)
 
 
 @app.get("/")

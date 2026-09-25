@@ -18,6 +18,10 @@ env:
 jobs:
   certify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
     services:
       postgres:
         image: postgres:16
@@ -74,19 +78,31 @@ jobs:
           uv run alembic upgrade head
           uv run alembic check
 
+      # The certification suite must run in the same environment ci.yml uses.
+      # Without these, settings fall back to the default PostgreSQL DSN, whose
+      # database does not exist here, and the run queue and licence lookups
+      # fail against a database that was never created. ci.yml sets
+      # NODYRA_TEST_DATABASE_URL job-wide; this job creates nodyra_release.
       - name: Python certification suite
+        env:
+          NODYRA_TEST_DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra_release
+          DATABASE_URL: postgresql+asyncpg://nodyra:nodyra@localhost:5432/nodyra_release
+          REDIS_URL: redis://localhost:6379/0
         run: >-
           uv run pytest --timeout=300 --timeout-method=thread
           --junitxml=pytest-results-release.xml -q
 
       - name: Python dependency vulnerability gate
-        run: uvx pip-audit --skip-editable --format json --output pip-audit-release.json
+        run: >-
+          uvx pip-audit --skip-editable
+          --path "$(uv run python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          --format json --output pip-audit-release.json
 
       - name: Web certification suite
         working-directory: apps/web
         run: |
           set -o pipefail
-          npm audit --audit-level=high --json > npm-audit-release.json
+          npm audit --audit-level=moderate --json > npm-audit-release.json
           npm run typecheck
           npm test 2>&1 | tee web-test-summary.txt
           npm run build
@@ -96,8 +112,13 @@ jobs:
           uv run python scripts/benchmark_engine_planning.py
           --output engine-planning-benchmark.json
 
+      # Diagnostic, not a gate. A full Actions artifact-storage quota made
+      # this step fail the whole certify job, which skipped release even
+      # though certification itself had passed. Losing the evidence copy is
+      # a nuisance; blocking a verified release on it is not correct.
       - name: Upload certification evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: release-certification-evidence
@@ -112,16 +133,13 @@ jobs:
           if-no-files-found: error
           retention-days: 400
 
-  release:
-    needs: certify
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-      id-token: write
-
-    steps:
-      - uses: actions/checkout@v7
+      - name: Normalize container repository names
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "IMAGE_API=ghcr.io/$owner/nodyra-api" >> "$GITHUB_ENV"
+          echo "IMAGE_WEB=ghcr.io/$owner/nodyra-web" >> "$GITHUB_ENV"
+          echo "IMAGE_RUNNER=ghcr.io/$owner/nodyra-runner" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -190,6 +208,8 @@ jobs:
           image: ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
           format: spdx-json
           output-file: sbom-api.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
 
       - name: Generate Web SBOM
         uses: anchore/sbom-action@v0
@@ -197,6 +217,8 @@ jobs:
           image: ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
           format: spdx-json
           output-file: sbom-web.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
 
       - name: Generate Runner SBOM
         uses: anchore/sbom-action@v0
@@ -204,6 +226,8 @@ jobs:
           image: ${{ env.IMAGE_RUNNER }}@${{ steps.build-runner.outputs.digest }}
           format: spdx-json
           output-file: sbom-runner.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
 
       # anchore/scan-action v7.4.0, pinned to the immutable release commit.
       - name: Scan API SBOM for high and critical vulnerabilities
@@ -270,11 +294,15 @@ jobs:
               "$ref"
           done 2>&1 | tee cosign-verification.txt
 
-      - name: Download certification evidence
-        uses: actions/download-artifact@v8
-        with:
-          name: release-certification-evidence
-          path: certification-evidence
+      # Keep certification and publishing on the same runner. Evidence remains
+      # available even when the optional Actions artifact copy hits its quota.
+      - name: Collect certification evidence
+        run: |
+          mkdir -p certification-evidence
+          cp --parents pytest-results-release.xml pip-audit-release.json \
+            product-scorecard-evidence.json engine-planning-benchmark.json \
+            apps/web/npm-audit-release.json apps/web/web-test-summary.txt \
+            apps/web/dist/bundle-budget-report.json certification-evidence/
 
       - name: Build hash-addressed release evidence manifest
         run: |
@@ -305,12 +333,22 @@ jobs:
             --artifact cosign-verification.txt \
             --output release-evidence.json
 
+      - name: Package self-hosted source and checksums
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          git archive --format=zip --prefix="nodyra-$version/" -o "nodyra-$version.zip" HEAD
+          git archive --format=tar.gz --prefix="nodyra-$version/" -o "nodyra-$version.tar.gz" HEAD
+          sha256sum "nodyra-$version.zip" "nodyra-$version.tar.gz" > SHA256SUMS
+
       - name: Create GitHub Release with evidence
         uses: softprops/action-gh-release@v3
         with:
           fail_on_unmatched_files: true
           prerelease: ${{ contains(steps.meta.outputs.version, '-') }}
           files: |
+            nodyra-*.zip
+            nodyra-*.tar.gz
+            SHA256SUMS
             release-evidence.json
             .release/known-issues.md
             .release/rollback.md
@@ -321,6 +359,10 @@ jobs:
             cosign-verification.txt
           body: |
             ## Nodyra ${{ github.ref_name }}
+
+            Download a source archive below, verify it against SHA256SUMS,
+            extract it, and follow `docs/deployment/self-hosted.md` for a
+            trusted-team installation with persistent local artifacts.
 
             Release begins at the **internal** rollout stage. Promote the same
             immutable digests through pilot, canary, and broad only after the

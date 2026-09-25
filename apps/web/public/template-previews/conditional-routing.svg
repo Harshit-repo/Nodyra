@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 120" width="480" height="120" role="img" aria-label="Route records by value workflow shape">
+<rect width="480" height="120" fill="#F5F6F8"/>
+<rect x="55" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#9B7328" stroke-width="1.5"/>
+<rect x="55" y="40" width="4" height="40" rx="2" fill="#9B7328"/>
+<text x="93" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">manual trig</text>
+<line x1="131" y1="60" x2="153" y2="60" stroke="#C3C9D4" stroke-width="1.5"/>
+<rect x="153" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#7A4B8C" stroke-width="1.5"/>
+<rect x="153" y="40" width="4" height="40" rx="2" fill="#7A4B8C"/>
+<text x="191" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">if</text>
+<line x1="229" y1="60" x2="251" y2="60" stroke="#C3C9D4" stroke-width="1.5"/>
+<rect x="251" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#2E4A7D" stroke-width="1.5"/>
+<rect x="251" y="40" width="4" height="40" rx="2" fill="#2E4A7D"/>
+<text x="289" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">code</text>
+<line x1="327" y1="60" x2="349" y2="60" stroke="#C3C9D4" stroke-width="1.5"/>
+<rect x="349" y="40" width="76" height="40" rx="5" fill="#FFFFFF" stroke="#2E4A7D" stroke-width="1.5"/>
+<rect x="349" y="40" width="4" height="40" rx="2" fill="#2E4A7D"/>
+<text x="387" y="63" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" fill="#3D4552">code</text>
+</svg>

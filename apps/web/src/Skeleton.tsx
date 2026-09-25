@@ -63,7 +63,17 @@ export function SkeletonCardGrid({
   className?: string;
 }) {
   return (
-    <div className={`wf-grid${className ? ` ${className}` : ""}`} aria-label="Loading">
+    // role="status" is required for the label to be exposed at all: a bare div
+    // has the implicit role "generic", which prohibits aria-label, so screen
+    // readers dropped it and announced nothing while content loaded. status
+    // also makes this a polite live region, which is what a loading
+    // placeholder should be.
+    <div
+      className={`wf-grid${className ? ` ${className}` : ""}`}
+      role="status"
+      aria-live="polite"
+      aria-label="Loading"
+    >
       {Array.from({ length: count }).map((_, i) => (
         <Skeleton key={i} variant="card" />
       ))}
@@ -82,7 +92,7 @@ export function SkeletonRows({
   className?: string;
 }) {
   return (
-    <div aria-label="Loading">
+    <div role="status" aria-live="polite" aria-label="Loading">
       {Array.from({ length: count }).map((_, i) => (
         <Skeleton key={i} variant="row" className={className} />
       ))}

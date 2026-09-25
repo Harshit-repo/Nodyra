@@ -1,9 +1,0 @@
-<svg width="360" height="96" viewBox="0 0 360 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Terminal Node logo">
-  <rect x="10" y="10" width="76" height="76" rx="20" fill="#102033" stroke="#36506F" stroke-width="3"/>
-  <path d="M28 35L40 46L28 57M49 61H66" stroke="#4C9EFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M86 48H96" stroke="#35D4D0" stroke-width="6"/>
-  <rect x="92" y="41" width="11" height="14" rx="3" fill="#35D4D0"/>
-  <text x="120" y="62" fill="#102033" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text>
-  <text x="225" y="62" fill="#4C9EFF" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text>
-  <text x="247" y="62" fill="#35D4D0" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
-</svg>

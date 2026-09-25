@@ -711,7 +711,14 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
     setEnvContext({
       envId: current?.id ?? null,
       envName: current?.name ?? null,
-      envPackages: current?.packages ?? [],
+      // Bundled distributions ship with the node library and are importable in
+      // every environment, so a node requiring one is not actually missing
+      // anything. Without them the inspector told users to "Add to Global" a
+      // package that was already there.
+      envPackages: [
+        ...(current?.packages ?? []),
+        ...(current?.bundled_packages ?? []),
+      ],
       environmentsList: list,
     });
   }, [environmentId, environments, setEnvContext]);

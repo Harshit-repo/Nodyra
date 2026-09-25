@@ -14,9 +14,10 @@ process, which holds the master KEK and DB credentials. A sandbox escape in
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.security import require_permission
 from app.services import expr_preview
 
 router = APIRouter(tags=["expressions"])
@@ -37,7 +38,15 @@ class ExpressionPreviewResponse(BaseModel):
     parts: list[dict[str, Any]] = Field(default_factory=list)
 
 
-@router.post("/expression-preview", response_model=ExpressionPreviewResponse)
+@router.post(
+    "/expression-preview",
+    response_model=ExpressionPreviewResponse,
+    # Evaluates a submitted expression in a subprocess — real compute on
+    # attacker-chosen input. It is an authoring tool, so it belongs behind the
+    # same permission as editing a workflow rather than being open to any
+    # authenticated principal.
+    dependencies=[Depends(require_permission("workflow:write"))],
+)
 async def preview_expression(
     body: ExpressionPreviewRequest,
 ) -> ExpressionPreviewResponse:

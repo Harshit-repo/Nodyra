@@ -10,6 +10,7 @@ import {
   XCircle,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { api, errorMessage, userFriendlyError } from "../api";
 import { useConfirm } from "../ConfirmProvider";
@@ -207,7 +208,7 @@ export function SSOSettingsPage() {
         <h2>SSO not available</h2>
         <p className="muted">
           Single sign-on requires an Enterprise license.{" "}
-          <a href="/settings/license">Upgrade your plan</a> to enable SSO.
+          <Link to="/settings#license">Upgrade your plan</Link> to enable SSO.
         </p>
       </div>
     );
@@ -216,7 +217,7 @@ export function SSOSettingsPage() {
   if (loading) {
     return (
       <div className="screen-center">
-        <div className="nodyra-settings-skeleton" aria-label="Loading SSO settings">
+        <div role="status" className="nodyra-settings-skeleton" aria-label="Loading SSO settings">
           <span />
           <span />
           <span />

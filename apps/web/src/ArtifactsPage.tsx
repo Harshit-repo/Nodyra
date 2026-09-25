@@ -20,6 +20,7 @@ import {
   type ArtifactRef,
 } from "./editor/artifactValues";
 import { SkeletonRows } from "./Skeleton";
+import { useCan } from "./permissions";
 import type { ArtifactInfo, ArtifactLineage } from "./types";
 import { formatDateTime, formatNumber, t } from "./i18n";
 
@@ -281,6 +282,7 @@ function ArtifactLineagePanel({ artifact }: { artifact: ArtifactInfo }) {
 }
 
 export function ArtifactsPage() {
+  const canUpload = useCan("artifact:write");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [kind, setKind] = useState("all");
@@ -352,7 +354,14 @@ export function ArtifactsPage() {
             Artifacts
             <span className="home-count">{artifactsQuery.data ? total : "..."}</span>
           </h1>
+          {canUpload && (
+            <button className="btn" type="button" disabled={uploading} onClick={() => uploadRef.current?.click()}>
+              <FileArrowUp size={17} aria-hidden="true" />
+              {uploading ? "Uploading…" : "Upload artifact"}
+            </button>
+          )}
         </div>
+        <input ref={uploadRef} type="file" hidden onChange={(event) => void upload(event.target.files?.[0])} />
 
         <div className="artifact-browser-filters">
           <label className="artifact-browser-search">
@@ -395,7 +404,7 @@ export function ArtifactsPage() {
         )}
 
         {artifactsQuery.isLoading ? (
-          <div className="artifact-browser-table" aria-label="Loading artifacts">
+          <div role="status" className="artifact-browser-table" aria-label="Loading artifacts">
             <SkeletonRows count={8} />
           </div>
         ) : artifacts.length === 0 ? (
@@ -434,21 +443,6 @@ export function ArtifactsPage() {
                   <PlayCircle size={17} weight="fill" aria-hidden="true" />
                   Run data template
                 </Link>
-                <button
-                  className="btn"
-                  type="button"
-                  disabled={uploading}
-                  onClick={() => uploadRef.current?.click()}
-                >
-                  <FileArrowUp size={17} aria-hidden="true" />
-                  {uploading ? "Uploading…" : "Upload artifact"}
-                </button>
-                <input
-                  ref={uploadRef}
-                  type="file"
-                  hidden
-                  onChange={(event) => void upload(event.target.files?.[0])}
-                />
               </div>
               <dl className="artifact-empty-details">
                 <div>

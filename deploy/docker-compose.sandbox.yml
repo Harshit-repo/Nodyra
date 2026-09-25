@@ -9,7 +9,9 @@
 # Decision rationale: docs/adr/0002-socket-proxy-sandbox.md.
 services:
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:v0.4.0@sha256:44538370af9103858aa387860f355bed72e7f4e15380ef829b53ed4e154cedcd
+    build:
+      context: .
+      dockerfile: Dockerfile.socket-proxy
     environment:
       LOG_LEVEL: warning
       POST: "1"
@@ -54,6 +56,16 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+
+  api:
+    environment:
+      EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
+      SANDBOX_DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-tcp://docker-socket-proxy:2375}
+      SANDBOX_OWNER_ID: ${SANDBOX_API_OWNER_ID:-}
+    depends_on:
+      docker-socket-proxy:
+        condition: service_healthy
 
   worker:
     environment:

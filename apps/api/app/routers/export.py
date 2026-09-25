@@ -41,8 +41,18 @@ class WorkflowImportResponse(BaseModel):
 EMPTY_GRAPH: dict = {"nodes": [], "edges": []}
 
 
-@router.post("/workflows/import/preview")
-@router.post("/import/preview", include_in_schema=False)
+@router.post(
+    "/workflows/import/preview",
+    # Parses an arbitrary third-party export — unbounded parsing work on
+    # attacker-chosen input. Previewing an import is part of authoring, so it
+    # takes the same permission the import itself does.
+    dependencies=[Depends(require_permission("workflow:write"))],
+)
+@router.post(
+    "/import/preview",
+    include_in_schema=False,
+    dependencies=[Depends(require_permission("workflow:write"))],
+)
 async def preview_workflow_import(body: WorkflowImportPreviewRequest) -> dict:
     """Return exact/transformed/manual/unsupported findings before persistence."""
     try:

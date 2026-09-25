@@ -7,7 +7,7 @@ DB-enforced backstop. These tests prove Layer 2 on SQLite.
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import String, select
+from sqlalchemy import String, delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.pool import NullPool
@@ -132,3 +132,102 @@ async def test_scoping_applies_to_session_get(session, mt_enabled):
     assert await session.get(OrgWidget, "w2", populate_existing=True) is None
     found = await session.get(OrgWidget, "w1", populate_existing=True)
     assert found is not None and found.name == "a-widget"
+
+
+@pytest.mark.asyncio
+async def test_bulk_update_is_scoped_to_current_org(session, mt_enabled):
+    current_org_id.set("org-a")
+    result = await session.execute(update(OrgWidget).values(name="updated"))
+    await session.commit()
+
+    assert result.rowcount == 1
+    with run_as_system():
+        rows = (await session.scalars(select(OrgWidget).order_by(OrgWidget.id))).all()
+    assert [(row.id, row.name) for row in rows] == [
+        ("w1", "updated"),
+        ("w2", "b-widget"),
+        ("w3", "default-widget"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_is_scoped_to_current_org(session, mt_enabled):
+    current_org_id.set("org-a")
+    result = await session.execute(delete(OrgWidget))
+    await session.commit()
+
+    assert result.rowcount == 1
+    with run_as_system():
+        rows = (await session.scalars(select(OrgWidget).order_by(OrgWidget.id))).all()
+    assert [row.id for row in rows] == ["w2", "w3"]
+
+
+# ── Bulk UPDATE / DELETE scoping ───────────────────────────────────────────
+#
+# The hook originally scoped SELECTs only, so an ORM-enabled bulk write —
+# ``update(Model).where(...)`` / ``delete(Model).where(...)`` — reached every
+# org's rows. Real ones exist on request paths (folders.py detaching workflows,
+# workflows.py replacing checks), and each is safe today only because the
+# parent id was resolved through a scoped SELECT first. That is precisely the
+# assumption RLS exists to stop relying on, and on SQLite there is no RLS.
+
+
+async def test_bulk_update_touches_only_the_active_org(session, mt_enabled):
+    current_org_id.set("org-a")
+    await session.execute(update(OrgWidget).values(name="renamed"))
+    await session.commit()
+
+    session.expire_all()
+    with run_as_system():
+        rows = {w.id: w.name for w in (await session.scalars(select(OrgWidget))).all()}
+    assert rows["w1"] == "renamed", "the active org's row should have been updated"
+    assert rows["w2"] == "b-widget", "another org's row was modified by a bulk UPDATE"
+    assert rows["w3"] == "default-widget"
+
+
+async def test_bulk_delete_touches_only_the_active_org(session, mt_enabled):
+    current_org_id.set("org-b")
+    await session.execute(delete(OrgWidget))
+    await session.commit()
+
+    session.expire_all()
+    with run_as_system():
+        remaining = {w.id for w in (await session.scalars(select(OrgWidget))).all()}
+    assert "w2" not in remaining, "the active org's row should have been deleted"
+    assert {"w1", "w3"} <= remaining, "another org's rows were deleted by a bulk DELETE"
+
+
+async def test_a_targeted_bulk_write_cannot_reach_across_the_boundary(session, mt_enabled):
+    """The realistic shape: a caller names a specific id that belongs to
+    someone else, having skipped the scoped parent lookup."""
+    current_org_id.set("org-a")
+    await session.execute(
+        update(OrgWidget).where(OrgWidget.id == "w2").values(name="hijacked")
+    )
+    await session.commit()
+
+    session.expire_all()
+    with run_as_system():
+        victim = await session.get(OrgWidget, "w2")
+    assert victim.name == "b-widget"
+
+
+async def test_system_context_still_writes_across_orgs(session, mt_enabled):
+    """Retention sweeps and other background services legitimately operate on
+    every org, and declare it with run_as_system()."""
+    with run_as_system():
+        await session.execute(update(OrgWidget).values(name="swept"))
+        await session.commit()
+        session.expire_all()
+        names = {w.name for w in (await session.scalars(select(OrgWidget))).all()}
+    assert names == {"swept"}
+
+
+async def test_bulk_writes_are_unscoped_when_multi_tenancy_is_off(session, monkeypatch):
+    """Single-tenant behaviour must be bit-for-bit unchanged."""
+    monkeypatch.setattr(settings, "multi_tenancy_enabled", False)
+    await session.execute(update(OrgWidget).values(name="single-tenant"))
+    await session.commit()
+    session.expire_all()
+    names = {w.name for w in (await session.scalars(select(OrgWidget))).all()}
+    assert names == {"single-tenant"}

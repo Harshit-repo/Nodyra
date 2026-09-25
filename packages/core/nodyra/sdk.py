@@ -90,8 +90,7 @@ def _apply_param_groups(
 ) -> dict[str, dict[str, Any]]:
     """Apply ``param_groups`` shorthand while preserving explicit per-param group."""
     param_meta = {
-        key: dict(value) if isinstance(value, dict) else {}
-        for key, value in (params or {}).items()
+        key: dict(value) if isinstance(value, dict) else {} for key, value in (params or {}).items()
     }
     for group_name, names in (param_groups or {}).items():
         names_iter = [names] if isinstance(names, str) else names
@@ -203,20 +202,23 @@ def _type_label(annotation: Any) -> str:
 
 # Executable nodes that should NOT be offered as agent tools (control flow,
 # raw code). Everything else with role "executable" is tool-capable by default.
-_NON_TOOL_NODE_IDS = frozenset({
-    "if", "switch", "merge", "loop_over_items", "filter",
-    "stop_and_error", "code",
-})
+_NON_TOOL_NODE_IDS = frozenset(
+    {
+        "if",
+        "switch",
+        "merge",
+        "loop_over_items",
+        "filter",
+        "stop_and_error",
+        "code",
+    }
+)
 
 
 def _default_usable_as_tool(node_id: str, role: str, category: str) -> bool:
     # Triggers are role "executable" in this codebase (they key off
     # TRIGGER_TYPES, not role), so exclude them by category too.
-    return (
-        role == "executable"
-        and category != "Triggers"
-        and node_id not in _NON_TOOL_NODE_IDS
-    )
+    return role == "executable" and category != "Triggers" and node_id not in _NON_TOOL_NODE_IDS
 
 
 def _build_manifest(
@@ -247,13 +249,21 @@ def _build_manifest(
     signature = inspect.signature(func)
     input_names = set(inputs)
     params: list[ParamSpec] = []
+    seen: set[str] = set()
 
     for pname, param in signature.parameters.items():
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
         if pname in input_names:
             continue  # wired input port, not a config parameter
+        if pname == "ctx":
+            # ``ctx`` is the engine-injected RuntimeContext (node_exec passes it
+            # when the signature accepts it). It is never a user-editable config
+            # parameter — rendering it in the manifest forced authors to supply
+            # a meaningless value and hid the node's real parameters.
+            continue
 
+        seen.add(pname)
         meta = param_meta.get(pname, {})
         has_default = param.default is not inspect.Parameter.empty
         credential_meta = meta.get("credential")
@@ -268,6 +278,35 @@ def _build_manifest(
                 type="credential" if credential else _type_label(hints.get(pname, str)),
                 required=not has_default,
                 default=param.default if has_default else None,
+                description=meta.get("description", ""),
+                placeholder=meta.get("placeholder", ""),
+                choices=meta.get("choices"),
+                multiline=bool(meta.get("multiline", False)),
+                key_value=bool(meta.get("key_value", False)),
+                credential=credential,
+                **_param_meta_kwargs(meta),
+            )
+        )
+
+    # Parameters declared in the decorator but absent from the function
+    # signature (e.g. ``mcp_tool`` reads connection_id/tool_name/arguments
+    # from ``ctx.node_params``). They must still reach the inspector.
+    for pname, meta in param_meta.items():
+        if pname in seen or pname in input_names:
+            continue
+        seen.add(pname)
+        credential_meta = meta.get("credential")
+        credential = (
+            CredentialSpec.model_validate(credential_meta)
+            if isinstance(credential_meta, dict)
+            else None
+        )
+        params.append(
+            ParamSpec(
+                name=pname,
+                type=("credential" if credential else str(meta.get("type") or "string")),
+                required=bool(meta.get("required", False)),
+                default=meta.get("default"),
                 description=meta.get("description", ""),
                 placeholder=meta.get("placeholder", ""),
                 choices=meta.get("choices"),
@@ -297,15 +336,9 @@ def _build_manifest(
             else bool(usable_as_tool)
         ),
         tool_side_effecting=tool_side_effecting,
-        inputs=[
-            PortSpec(name=n, data_kind=in_kinds.get(n, "any"))
-            for n in inputs
-        ],
+        inputs=[PortSpec(name=n, data_kind=in_kinds.get(n, "any")) for n in inputs],
         params=params,
-        outputs=[
-            PortSpec(name=o, data_kind=out_kinds.get(o, "any"))
-            for o in outputs
-        ],
+        outputs=[PortSpec(name=o, data_kind=out_kinds.get(o, "any")) for o in outputs],
         param_output_kinds=dict(param_output_kinds or {}),
         requirements=list(requirements or []),
         system_requirements=[
@@ -337,10 +370,10 @@ def _type_label_from_ast(node: ast.AST | None) -> str:
         if outer in ("Optional", "Union"):
             options = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
             for option in options:
-                if not (
-                    isinstance(option, ast.Constant)
-                    and option.value is None
-                ) and _annotation_name(option) != "None":
+                if (
+                    not (isinstance(option, ast.Constant) and option.value is None)
+                    and _annotation_name(option) != "None"
+                ):
                     return _type_label_from_ast(option)
             return "any"
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
@@ -533,24 +566,14 @@ def _decorated_node_from_ast(
         replacement_id=replacement_id,
         usable_as_tool=usable_as_tool,
         tool_side_effecting=bool(kwargs.get("tool_side_effecting", True)),
-        inputs=[
-            PortSpec(name=n, data_kind=input_kinds.get(n, "any")) for n in inputs
-        ],
+        inputs=[PortSpec(name=n, data_kind=input_kinds.get(n, "any")) for n in inputs],
         params=params,
-        outputs=[
-            PortSpec(name=o, data_kind=output_kinds.get(o, "any")) for o in outputs
-        ],
+        outputs=[PortSpec(name=o, data_kind=output_kinds.get(o, "any")) for o in outputs],
         param_output_kinds=param_output_kinds,
     )
     raw_wires = kwargs.get("wires") or {}
-    wires = (
-        {str(k): str(v) for k, v in raw_wires.items()}
-        if isinstance(raw_wires, dict)
-        else {}
-    )
-    return DiscoveredNode(
-        manifest=manifest, declared_id=declared_id, wires=wires, decorated=True
-    )
+    wires = {str(k): str(v) for k, v in raw_wires.items()} if isinstance(raw_wires, dict) else {}
+    return DiscoveredNode(manifest=manifest, declared_id=declared_id, wires=wires, decorated=True)
 
 
 def _auto_node_from_ast(
@@ -594,9 +617,7 @@ def discover_module_nodes(
     function becomes a single-port node.
     """
     tree = ast.parse(source)
-    functions = [
-        s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
+    functions = [s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))]
     decorators = {s.name: _find_node_decorator(s) for s in functions}
     explicit_mode = any(d is not None for d in decorators.values())
 
@@ -607,9 +628,7 @@ def discover_module_nodes(
         dec = decorators[stmt.name]
         if dec is not None:
             discovered.append(
-                _decorated_node_from_ast(
-                    module_id, stmt, _decorator_kwargs(dec), category
-                )
+                _decorated_node_from_ast(module_id, stmt, _decorator_kwargs(dec), category)
             )
             continue
         # Undecorated function.
@@ -712,9 +731,7 @@ def register_module_functions(
         if inspect.isfunction(module_globals[k])
         and module_globals[k].__module__ == module_globals["__name__"]
     ]
-    explicit_mode = any(
-        getattr(fn, "__nodyra_node__", None) is not None for fn in user_functions
-    )
+    explicit_mode = any(getattr(fn, "__nodyra_node__", None) is not None for fn in user_functions)
 
     registered: list[str] = []
     skipped: list[tuple[str, str]] = []
@@ -731,9 +748,7 @@ def register_module_functions(
             # Explicit ``@node`` — honour the decorator's manifest, re-id'd
             # into the module namespace, and carry its declared wiring.
             namespaced_id = f"user:{module_id}:{decorator_def.declared_id}"
-            manifest = decorator_def.manifest.model_copy(
-                update={"id": namespaced_id}
-            )
+            manifest = decorator_def.manifest.model_copy(update={"id": namespaced_id})
             registry._nodes[namespaced_id] = NodeDef(  # noqa: SLF001
                 func=decorator_def.func,
                 manifest=manifest,
@@ -775,6 +790,8 @@ def register_module_functions(
             hints = {}
         config_specs: list[ParamSpec] = []
         for pname, param in params.items():
+            if pname == "ctx":
+                continue  # engine-reserved RuntimeContext, not a config param
             has_default = param.default is not inspect.Parameter.empty
             config_specs.append(
                 ParamSpec(
@@ -789,7 +806,7 @@ def register_module_functions(
             name=key,
             category=category,
             version="1.0.0",
-            description=(value.__doc__ or "").strip(),
+            description=inspect.cleandoc(value.__doc__ or ""),
             icon=None,
             inputs=[PortSpec(name="input")],
             params=config_specs,
@@ -875,7 +892,7 @@ def node(
             name=name,
             category=category,
             version=version,
-            description=description or (func.__doc__ or "").strip(),
+            description=description or inspect.cleandoc(func.__doc__ or ""),
             role=role,
             hidden=hidden,
             deprecated=deprecated,

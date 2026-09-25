@@ -1,8 +1,0 @@
-<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Bracket Wrap logo">
-  <path d="M36 12C15 12 12 28 22 39C29 46 29 54 22 61C12 72 15 88 36 88" stroke="#4C9EFF" stroke-width="9" stroke-linecap="round"/>
-  <path d="M64 12C85 12 88 28 78 39C71 46 71 54 78 61C88 72 85 88 64 88" stroke="#FFD34E" stroke-width="9" stroke-linecap="round"/>
-  <rect x="31" y="31" width="38" height="38" rx="9" fill="#142033" stroke="#35D4D0" stroke-width="3"/>
-  <path d="M42 50H58M50 42V58" stroke="#F3F7FA" stroke-width="4" stroke-linecap="round"/>
-  <circle cx="36" cy="12" r="5" fill="#35D4D0"/><rect x="59" y="83" width="10" height="10" rx="3" fill="#35D4D0"/>
-  <text x="120" y="65" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text><text x="225" y="65" fill="#4C9EFF" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text><text x="247" y="65" fill="#FFD34E" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
-</svg>

@@ -111,3 +111,82 @@ def test_in_flight_pool_survives_idle_sweep():
         assert "busy-env" not in iso._pools  # idle now → reaped
     finally:
         iso.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# The artifact store has to cross into the worker.
+#
+# run_in_executor carries no contextvars, so without this the worker's
+# artifact_store is unset and every dataset helper raises "datasets are not
+# available in this execution context" — including inside a Code node, which
+# the engine deliberately hands DatasetRefs on the understanding that it can
+# read them.
+
+
+def _read_store_run_id() -> str | None:
+    from nodyra.context import artifact_store
+
+    store = artifact_store.get()
+    return getattr(store, "run_id", None) if store is not None else None
+
+
+def test_the_store_is_installed_before_the_node_runs(tmp_path) -> None:
+    from nodyra.artifacts import LocalArtifactStore
+    from nodyra.process_isolation import _call_with_artifact_store
+
+    store = LocalArtifactStore(tmp_path, run_id="run-xyz")
+
+    seen = _call_with_artifact_store(store, _read_store_run_id, {})
+
+    assert seen == "run-xyz"
+
+
+def test_no_store_still_runs_the_node() -> None:
+    """Plenty of callers — unit tests, exported scripts — have no store."""
+    from nodyra.process_isolation import _call_with_artifact_store
+
+    assert _call_with_artifact_store(None, _read_store_run_id, {}) is None
+
+
+def test_a_reused_worker_does_not_inherit_the_previous_store(tmp_path) -> None:
+    """Workers outlive a run. A call bringing no store must clear the last
+    one, or a later run writes into an earlier run's artifact directory."""
+    from nodyra.artifacts import LocalArtifactStore
+    from nodyra.process_isolation import _call_with_artifact_store
+
+    first = LocalArtifactStore(tmp_path, run_id="run-first")
+    assert _call_with_artifact_store(first, _read_store_run_id, {}) == "run-first"
+
+    assert _call_with_artifact_store(None, _read_store_run_id, {}) is None
+
+
+def test_the_current_store_is_offered_when_it_can_travel(tmp_path) -> None:
+    from nodyra.artifacts import LocalArtifactStore
+    from nodyra.context import artifact_store
+    from nodyra.process_isolation import _picklable_artifact_store
+
+    token = artifact_store.set(LocalArtifactStore(tmp_path, run_id="run-abc"))
+    try:
+        assert getattr(_picklable_artifact_store(), "run_id", None) == "run-abc"
+    finally:
+        artifact_store.reset(token)
+
+
+class _Unpicklable:
+    run_id = "nope"
+
+    def __reduce__(self):
+        raise TypeError("this store cannot be pickled")
+
+
+def test_a_store_that_cannot_travel_is_dropped_not_raised() -> None:
+    """Losing dataset access in the worker is the old behaviour. Losing the
+    node itself to an unpicklable-argument crash would be worse."""
+    from nodyra.context import artifact_store
+    from nodyra.process_isolation import _picklable_artifact_store
+
+    token = artifact_store.set(_Unpicklable())
+    try:
+        assert _picklable_artifact_store() is None
+    finally:
+        artifact_store.reset(token)

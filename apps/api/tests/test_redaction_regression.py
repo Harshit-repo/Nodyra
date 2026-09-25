@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+from base64 import b64encode, urlsafe_b64encode
+from urllib.parse import quote, quote_plus
 
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -9,6 +11,27 @@ from sqlalchemy import select
 from app.models import Artifact, NodeRun, RunEvent
 from nodyra.artifacts import ARTIFACT_MARKER, ARTIFACT_VERSION
 from nodyra.models import RunResult, RunStatus
+
+
+def test_redaction_masks_encoded_secret_representations() -> None:
+    from app.services.redaction import REDACTED, redact_text
+
+    secret = "p@ss word/+with-symbols"
+    raw = secret.encode("utf-8")
+    variants = [
+        secret,
+        b64encode(raw).decode("ascii"),
+        b64encode(raw).decode("ascii").rstrip("="),
+        urlsafe_b64encode(raw).decode("ascii"),
+        urlsafe_b64encode(raw).decode("ascii").rstrip("="),
+        quote(secret, safe=""),
+        quote_plus(secret, safe=""),
+    ]
+
+    for variant in variants:
+        assert redact_text(f"before:{variant}:after", [secret]) == (
+            f"before:{REDACTED}:after"
+        )
 
 
 async def test_secret_redaction_covers_persisted_events_logs_and_artifacts(

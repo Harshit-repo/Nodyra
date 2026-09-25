@@ -1,0 +1,73 @@
+{
+  "id": "rss_digest",
+  "name": "RSS feed to daily digest",
+  "description": "Watch an RSS feed, keep the newest entries, and render them into a single Markdown digest you can email or archive.",
+  "tags": [
+    "rss",
+    "content",
+    "digest",
+    "starter"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "Outbound HTTPS to the feed URL"
+  ],
+  "expected_result": "One Markdown digest per run listing the latest entries.",
+  "permissions": [
+    "Network: the feed URL you configure"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
+  "screenshot_url": "/template-previews/rss-digest.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "feed",
+        "type": "rss_feed_trigger",
+        "params": {
+          "feed_url": "https://news.ycombinator.com/rss",
+          "max_items": 10
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "newest",
+        "type": "limit",
+        "params": {
+          "max_items": 5,
+          "keep": "first"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "render",
+        "type": "code",
+        "params": {
+          "code": "items = input if isinstance(input, list) else (input or {}).get('items', [])\nlines = [f\"- [{i.get('title','untitled')}]({i.get('link','')})\"\n         for i in items]\noutput = {'markdown': '# Digest\\n\\n' + '\\n'.join(lines),\n          'count': len(lines)}"
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "feed",
+        "target": "newest"
+      },
+      {
+        "source": "newest",
+        "target": "render"
+      }
+    ]
+  }
+}

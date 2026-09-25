@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.models import AuditEvent, MCPConnection
 from app.schemas import MCPToolCallAuditInfo, PageResponse
-from app.security import require_permission
+from app.security import optional_current_user, require_permission
+from app.services.audit import log_audit
 from app.services.mcp_client import (
     _load_conn_with_secret,
     discover_tools,
@@ -42,9 +43,7 @@ def _validated_allowed_tools(value: Any) -> list[str] | None:
     """
     if value is None:
         return None
-    if not isinstance(value, list) or not all(
-        isinstance(t, str) and t.strip() for t in value
-    ):
+    if not isinstance(value, list) or not all(isinstance(t, str) and t.strip() for t in value):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "allowed_tools must be null or a list of non-empty tool-name strings",
@@ -70,17 +69,21 @@ async def list_mcp_connections(
 async def create_mcp_connection(
     body: dict[str, Any],
     session: AsyncSession = Depends(get_session),
+    actor: Any | None = Depends(optional_current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
-    from nodyra_nodes.http_security import assert_public_http_url
+    from nodyra_nodes.http_security import UnsafeHttpTargetError, assert_public_http_url
 
     url = str(body.get("url", "")).rstrip("/")
-    assert_public_http_url(url, context="MCP connection")
+    try:
+        assert_public_http_url(url, context="MCP connection")
+    except UnsafeHttpTargetError as exc:
+        # A blocked target is a validation failure, not a server fault — the
+        # raw ValueError used to escape as a 500 with no detail.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
-    transport = str(
-        body.get("transport", "streamable-http") or "streamable-http"
-    )
+    transport = str(body.get("transport", "streamable-http") or "streamable-http")
     if transport == "sse":
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -109,6 +112,16 @@ async def create_mcp_connection(
         allowed_tools=_validated_allowed_tools(body.get("allowed_tools")),
     )
     session.add(conn)
+    await session.flush()
+    await log_audit(
+        session,
+        "create",
+        "mcp_connection",
+        conn.id,
+        f"url={conn.url} transport={conn.transport} auth={conn.auth_type}",
+        actor_id=getattr(actor, "id", None),
+        actor_email=getattr(actor, "email", None),
+    )
     await session.commit()
     await session.refresh(conn)
     return _row_to_dict(conn)
@@ -133,6 +146,7 @@ async def update_mcp_connection(
     connection_id: str,
     body: dict[str, Any],
     session: AsyncSession = Depends(get_session),
+    actor: Any | None = Depends(optional_current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
@@ -144,10 +158,13 @@ async def update_mcp_connection(
     if "name" in body:
         conn.name = str(body["name"])
     if "url" in body:
-        from nodyra_nodes.http_security import assert_public_http_url
+        from nodyra_nodes.http_security import UnsafeHttpTargetError, assert_public_http_url
 
         new_url = str(body["url"]).rstrip("/")
-        assert_public_http_url(new_url, context="MCP connection")
+        try:
+            assert_public_http_url(new_url, context="MCP connection")
+        except UnsafeHttpTargetError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
         conn.url = new_url
     if "transport" in body:
         t = str(body["transport"])
@@ -166,9 +183,7 @@ async def update_mcp_connection(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "Org KEK not available",
             )
-        conn.auth_secret = encrypt_auth_secret(
-            str(body["auth_secret"]), org_kek
-        )
+        conn.auth_secret = encrypt_auth_secret(str(body["auth_secret"]), org_kek)
     if "headers" in body:
         conn.headers = body["headers"] or {}
     if "enabled" in body:
@@ -176,6 +191,15 @@ async def update_mcp_connection(
     if "allowed_tools" in body:
         conn.allowed_tools = _validated_allowed_tools(body["allowed_tools"])
 
+    await log_audit(
+        session,
+        "update",
+        "mcp_connection",
+        conn.id,
+        "fields=" + ",".join(sorted(body)),
+        actor_id=getattr(actor, "id", None),
+        actor_email=getattr(actor, "email", None),
+    )
     await session.commit()
     await session.refresh(conn)
     return _row_to_dict(conn)
@@ -185,6 +209,7 @@ async def update_mcp_connection(
 async def delete_mcp_connection(
     connection_id: str,
     session: AsyncSession = Depends(get_session),
+    actor: Any | None = Depends(optional_current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> None:
     org_id = _org()
@@ -196,6 +221,15 @@ async def delete_mcp_connection(
     )
     if conn is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
+    await log_audit(
+        session,
+        "delete",
+        "mcp_connection",
+        conn.id,
+        f"name={conn.name} url={conn.url}",
+        actor_id=getattr(actor, "id", None),
+        actor_email=getattr(actor, "email", None),
+    )
     await session.delete(conn)
     await session.commit()
 
@@ -204,13 +238,12 @@ async def delete_mcp_connection(
 async def sync_mcp_connection(
     connection_id: str,
     session: AsyncSession = Depends(get_session),
+    actor: Any | None = Depends(optional_current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
     try:
-        conn, secret = await _load_conn_with_secret(
-            connection_id, org_id, session
-        )
+        conn, secret = await _load_conn_with_secret(connection_id, org_id, session)
     except ValueError:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
     tools = await discover_tools(conn, decrypted_secret=secret)
@@ -218,6 +251,15 @@ async def sync_mcp_connection(
         tools = tools[:500]
     conn.tool_cache = tools
     conn.last_synced_at = datetime.now(UTC)
+    await log_audit(
+        session,
+        "sync",
+        "mcp_connection",
+        conn.id,
+        f"tools_discovered={len(tools)}",
+        actor_id=getattr(actor, "id", None),
+        actor_email=getattr(actor, "email", None),
+    )
     await session.commit()
     return {"tools_discovered": len(tools), "tools": tools}
 
@@ -322,9 +364,7 @@ def _row_to_dict(conn: MCPConnection) -> dict:
         "enabled": conn.enabled,
         "allowed_tools": conn.allowed_tools,
         "tool_cache": conn.tool_cache,
-        "last_synced_at": (
-            conn.last_synced_at.isoformat() if conn.last_synced_at else None
-        ),
+        "last_synced_at": (conn.last_synced_at.isoformat() if conn.last_synced_at else None),
         "created_at": conn.created_at.isoformat() if conn.created_at else None,
         "updated_at": conn.updated_at.isoformat() if conn.updated_at else None,
     }

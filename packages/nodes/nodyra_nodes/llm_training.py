@@ -95,12 +95,12 @@ def _openai_client(api_key: str, base_url: str | None = None, organization: str 
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _example_cap(max_examples: int | None) -> int:
     cap = max(1, int(max_examples or MAX_FINE_TUNE_EXAMPLES))
     if cap > MAX_FINE_TUNE_EXAMPLES:
         raise ValueError(
-            f"llm_fine_tune_dataset: max_examples must be <= "
-            f"{MAX_FINE_TUNE_EXAMPLES}."
+            f"llm_fine_tune_dataset: max_examples must be <= {MAX_FINE_TUNE_EXAMPLES}."
         )
     return cap
 
@@ -113,10 +113,22 @@ def _to_records(input_value: Any, *, max_examples: int | None) -> list[dict[str,
     if isinstance(input_value, list):
         if len(input_value) > cap:
             raise ValueError(
-                f"llm_fine_tune_dataset received {len(input_value)} rows but "
-                f"max_examples is {cap}."
+                f"llm_fine_tune_dataset received {len(input_value)} rows but max_examples is {cap}."
             )
         return [r for r in input_value if isinstance(r, dict)]
+    if isinstance(input_value, dict):
+        # Trigger payloads and pinned data commonly wrap records under
+        # "rows"/"records"; accept those so a manual_trigger can seed the node.
+        for key in ("records", "rows"):
+            nested = input_value.get(key)
+            if isinstance(nested, list):
+                rows = [r for r in nested if isinstance(r, dict)]
+                if len(rows) > cap:
+                    raise ValueError(
+                        f"llm_fine_tune_dataset received {len(rows)} rows but "
+                        f"max_examples is {cap}."
+                    )
+                return rows
     raise ValueError(
         "input must be a DatasetRef or a list of records — add a Records To "
         "Dataset or CSV Parse node upstream to produce one."
@@ -149,6 +161,7 @@ def _extract_api_key(credentials: Any) -> tuple[str, str | None, str | None]:
 # Node: LLM Fine-Tune Dataset
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="LLM Fine-Tune Dataset",
     id="llm_fine_tune_dataset",
@@ -165,13 +178,12 @@ def _extract_api_key(credentials: Any) -> tuple[str, str | None, str | None]:
         "format": {
             "choices": FINE_TUNE_FORMATS,
             "description": (
-                "JSONL format to produce. Use openai_chat_jsonl for "
-                "ChatCompletion models."
+                "JSONL format to produce. Use openai_chat_jsonl for ChatCompletion models."
             ),
         },
         "messages_column": {
             "description": "Column holding pre-formatted messages list (list of {role, content}). "
-                           "Used when format=openai_chat_jsonl and data is already structured.",
+            "Used when format=openai_chat_jsonl and data is already structured.",
         },
         "system_column": {
             "description": "Column for the system message. Combined with user/assistant columns.",
@@ -383,6 +395,7 @@ def llm_fine_tune_dataset(
 # Node: OpenAI Upload Fine-Tune File
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="OpenAI Upload Fine-Tune File",
     id="openai_upload_fine_tune_file",
@@ -457,6 +470,7 @@ def openai_upload_fine_tune_file(
 # ---------------------------------------------------------------------------
 # Node: OpenAI Create Fine-Tune Job
 # ---------------------------------------------------------------------------
+
 
 @node(
     name="OpenAI Create Fine-Tune Job",
@@ -568,9 +582,9 @@ def openai_create_fine_tune_job(
         "fine_tuned_model": getattr(job, "fine_tuned_model", None),
         "training_file_id": training_file_id,
         "validation_file_id": validation_file_id or None,
-        "created_at": datetime.fromtimestamp(
-            job.created_at, tz=UTC
-        ).isoformat() if job.created_at else None,
+        "created_at": datetime.fromtimestamp(job.created_at, tz=UTC).isoformat()
+        if job.created_at
+        else None,
         "hyperparameters": dict(getattr(job, "hyperparameters", None) or {}),
         "suffix": suffix or None,
     }
@@ -579,6 +593,7 @@ def openai_create_fine_tune_job(
 # ---------------------------------------------------------------------------
 # Node: OpenAI Fine-Tune Status
 # ---------------------------------------------------------------------------
+
 
 @node(
     name="OpenAI Fine-Tune Status",
@@ -678,6 +693,7 @@ def openai_fine_tune_status(
 # Node: OpenAI Fine-Tune Checkpoints
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="OpenAI Fine-Tune Checkpoints",
     id="openai_fine_tune_checkpoints",
@@ -732,6 +748,7 @@ def openai_fine_tune_checkpoints(
 # ---------------------------------------------------------------------------
 # Node: OpenAI Cancel Fine-Tune Job
 # ---------------------------------------------------------------------------
+
 
 @node(
     name="OpenAI Cancel Fine-Tune Job",
@@ -788,6 +805,7 @@ def openai_cancel_fine_tune_job(
 # ---------------------------------------------------------------------------
 # Node: Register Fine-Tuned Model
 # ---------------------------------------------------------------------------
+
 
 @node(
     name="Register Fine-Tuned Model",
@@ -864,14 +882,11 @@ def register_fine_tuned_model(
         training_file_id = ""
     else:
         raise ValueError(
-            "input must be a FineTuneJobRef (from Fine-Tune Status) or a model "
-            "ID string."
+            "input must be a FineTuneJobRef (from Fine-Tune Status) or a model ID string."
         )
 
     if not model_id:
-        raise ValueError(
-            "fine_tuned_model is empty — the job may not have completed yet."
-        )
+        raise ValueError("fine_tuned_model is empty — the job may not have completed yet.")
 
     tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
 
@@ -917,6 +932,7 @@ def register_fine_tuned_model(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _resolve_job_id(input_value: Any) -> str:
     """Extract job ID from a FineTuneJobRef or raw string."""
     if _is_ft_job(input_value):
@@ -925,8 +941,7 @@ def _resolve_job_id(input_value: Any) -> str:
         job_id = input_value.strip()
     else:
         raise ValueError(
-            "input must be a FineTuneJobRef (from Create or Status node) or "
-            "a raw job ID string."
+            "input must be a FineTuneJobRef (from Create or Status node) or a raw job ID string."
         )
     if not job_id:
         raise ValueError("job_id is empty.")

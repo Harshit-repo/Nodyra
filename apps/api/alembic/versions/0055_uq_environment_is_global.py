@@ -3,6 +3,7 @@
 Revision ID: 0055_uq_environment_is_global
 Revises: 0054_artifact_runner_org_id
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -21,6 +22,7 @@ def upgrade() -> None:
         ["org_id", "is_global"],
         unique=True,
         postgresql_where=sa.text("is_global IS TRUE"),
+        sqlite_where=sa.text("is_global IS TRUE"),
     )
 
 

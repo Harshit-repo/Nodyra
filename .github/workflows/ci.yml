@@ -32,16 +32,36 @@ jobs:
         run: >-
           uv run python scripts/benchmark_engine_planning.py
           --output engine-planning-benchmark.json
+      # Planning is the cheap half. This measures the half users wait on:
+      # nodes executed per second, and whether node-level concurrency still
+      # overlaps (a serialised scheduler blows the concurrency budget 2.5x).
+      - name: Engine throughput performance budgets
+        run: >-
+          uv run python scripts/benchmark_engine_throughput.py
+          --output engine-throughput-benchmark.json
+      - name: Upload engine throughput trend artifact
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: engine-throughput-benchmark
+          path: engine-throughput-benchmark.json
+          retention-days: 30
       - name: Upload engine planning trend artifact
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: engine-planning-benchmark
           path: engine-planning-benchmark.json
           retention-days: 30
-      - name: AI builder eval (advisory)
-        continue-on-error: true
-        run: uv run python scripts/ai_builder_eval.py --n 10
+      # Blocking, not advisory. "Let an agent build your workflow" is the
+      # product's sharpest claim, and an advisory check on the sharpest claim
+      # is not a check. The default planner is deterministic (no LLM call), so
+      # a threshold of 1.0 is stable: any drop is a real regression, not model
+      # variance. Every case runs, not a sample.
+      - name: AI builder eval
+        run: uv run python scripts/ai_builder_eval.py --threshold 1.0
       - name: Queue coverage floor
         run: |
           uv run pytest --timeout=300 --timeout-method=thread \
@@ -248,7 +268,11 @@ jobs:
       # dependency must be addressed (upgrade or explicit ignore with justification).
       # --skip-editable excludes local workspace packages that have no PyPI record.
       - name: pip-audit — dependency CVEs (blocking)
-        run: uvx pip-audit --skip-editable
+        # uvx runs in its own isolated environment. Audit the application
+        # environment explicitly, rather than pip-audit's helper dependencies.
+        run: >-
+          uvx pip-audit --skip-editable
+          --path "$(uv run python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
       - name: bandit — security-critical modules (blocking)
         run: >-
           uvx bandit -ll
@@ -327,6 +351,15 @@ jobs:
           --set api.corsOrigins=https://nodyra.example.com
           --set-string secret.key=ci-secret-key-at-least-32-bytes-long
           --set-string secret.internalApiToken=ci-internal-token
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --all-packages
+      # helm lint only proves the templates render. These assert the rendered
+      # pods are actually hardened — non-root, read-only rootfs, no mounted
+      # service-account token, startup probes, PDBs above one replica.
+      - name: Chart security posture
+        run: uv run pytest -q apps/api/tests/test_helm_chart_posture.py
       - name: helm lint — disposable evaluation profile
         run: >-
           helm lint deploy/helm/nodyra
@@ -335,6 +368,53 @@ jobs:
           --set-string secret.key=ci-secret-key-at-least-32-bytes-long
           --set-string secret.internalApiToken=ci-internal-token
           --set evaluation.expiresAt=2030-01-01T00:00:00Z
+
+  # The documented first run, against the compose file the docs actually name.
+  #
+  # compose-smoke above starts the stack with -f deploy/docker-compose.sandbox.yml.
+  # That overlay mounts a Docker socket, so it has always tested a topology no
+  # getting-started reader runs, and it stops after /health/ready and
+  # GET /templates without executing anything. Eleven first-run bugs reached a
+  # release tag underneath it, six of them making the product unusable out of
+  # the box — including a base stack that could not run any workflow at all.
+  #
+  # This job runs what the guide tells a new user to run, and then behaves like
+  # that user: register, create from the starter template, run it, download the
+  # artifact, verify its checksum.
+  first-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8.3.2
+      - name: Write deploy/.env the way the guide says
+        run: |
+          cp deploy/.env.example deploy/.env
+          python - <<'PY'
+          import re, secrets
+          from pathlib import Path
+          path = Path("deploy/.env")
+          text = path.read_text()
+          for key, value in {
+              "INTERNAL_API_TOKEN": secrets.token_hex(32),
+              "NODYRA_SECRET_KEY": secrets.token_hex(32),
+              "MINIO_ROOT_PASSWORD": secrets.token_hex(16),
+          }.items():
+              text = re.sub(rf"^{key}=.*$", f"{key}={value}", text, count=1, flags=re.M)
+          path.write_text(text)
+          PY
+      - name: Start the base stack only
+        run: docker compose -f deploy/docker-compose.yml up -d --build
+      - name: Walk the first-run path
+        run: uv run python scripts/first_run_smoke.py --base-url http://localhost:8000
+      - name: Diagnose on failure
+        if: failure()
+        run: |
+          docker compose -f deploy/docker-compose.yml ps
+          docker compose -f deploy/docker-compose.yml logs --no-color --tail=200 api worker web
+      - name: Tear down
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down -v
 
   compose-smoke:
     runs-on: ubuntu-latest
@@ -421,6 +501,7 @@ jobs:
             --max-rto-seconds 3600
       - name: Upload redacted recovery evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: recovery-evidence
@@ -514,6 +595,24 @@ jobs:
           --max-p95-seconds 240
           --settle-seconds 240
           --report-json sandbox-chaos-evidence.json
+      # Chaos proves recovery; this proves the process does not drift. A
+      # descriptor leaked once per run is invisible in a 50-run burst and
+      # OOM-kills a pod days later with nothing in the metrics to explain it.
+      - name: Endurance — sustained load with resource-drift assertions
+        run: >-
+          uv run python scripts/endurance_test.py
+          --base-url http://localhost:8000
+          --duration-minutes 10
+          --concurrency 4
+          --sample-interval-seconds 15
+          --report-json endurance-evidence.json
+      - name: Upload endurance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: endurance-evidence
+          path: endurance-evidence.json
+          retention-days: 30
       - name: Upload sandbox chaos evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -558,7 +657,7 @@ jobs:
         with:
           node-version: "20"
       - run: npm ci
-      - run: npm audit --audit-level=high
+      - run: npm audit --audit-level=moderate
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

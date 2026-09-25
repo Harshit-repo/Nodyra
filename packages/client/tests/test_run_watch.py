@@ -19,6 +19,15 @@ def test_watch_yields_until_terminal(httpx_mock, monkeypatch) -> None:
     assert seen == ["queued", "running", "success"]
 
 
+def test_watch_stops_on_timed_out(httpx_mock, monkeypatch) -> None:
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+    for status in ("running", "timed_out"):
+        httpx_mock.add_response(url="http://api.test/runs/r1", json=_detail(status))
+    with NodyraClient(base_url="http://api.test", token="t") as client:
+        seen = [detail.status for detail in client.runs.watch("r1", interval=0)]
+    assert seen == ["running", "timed_out"]
+
+
 def test_watch_timeout_raises(httpx_mock, monkeypatch) -> None:
     clock = iter([0.0, 10.0, 20.0, 30.0, 40.0])
     monkeypatch.setattr("time.monotonic", lambda: next(clock))

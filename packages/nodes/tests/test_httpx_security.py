@@ -12,6 +12,13 @@ from nodyra_nodes.httpx_security import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch) -> None:
+    """These tests verify the BLOCKED posture; single-tenant API processes
+    default to allowing private egress (mirroring workers), so pin the env."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+
+
 def _fake_getaddrinfo(addrs: list[str]):
     def fake(host, port, *args, **kwargs):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (addr, port)) for addr in addrs]

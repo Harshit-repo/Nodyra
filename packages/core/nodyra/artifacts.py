@@ -80,10 +80,7 @@ class LocalArtifactStore:
         self._written = 0
 
     def _storage_key(self, artifact_id: str, node_id: str, name: str) -> str:
-        return (
-            f"{self.key_prefix}runs/{self.run_id}/"
-            f"{node_id}/{artifact_id}-{sanitize_name(name)}"
-        )
+        return f"{self.key_prefix}runs/{self.run_id}/{node_id}/{artifact_id}-{sanitize_name(name)}"
 
     def _path_for_key(self, storage_key: str) -> Path:
         path = (self.base_dir / storage_key).resolve()
@@ -94,6 +91,11 @@ class LocalArtifactStore:
         return path
 
     def path_for_ref(self, ref: dict[str, Any]) -> Path:
+        artifact_id = str(ref.get("artifact_id") or "")
+        if re.fullmatch(r"[0-9a-f]{32}", artifact_id):
+            staged = self.input_path(ref)
+            if staged.is_file():
+                return staged
         storage_key = ref.get("storage_key")
         if not isinstance(storage_key, str) or not storage_key:
             run_id = str(ref.get("run_id") or self.run_id)
@@ -102,10 +104,23 @@ class LocalArtifactStore:
             name = sanitize_name(str(ref.get("name") or "artifact"))
             if not artifact_id:
                 raise ValueError("artifact ref is missing artifact_id")
-            storage_key = (
-                f"{self.key_prefix}runs/{run_id}/{node_id}/{artifact_id}-{name}"
-            )
-        return self._path_for_key(storage_key)
+            storage_key = f"{self.key_prefix}runs/{run_id}/{node_id}/{artifact_id}-{name}"
+        path = self._path_for_key(storage_key)
+        if self.key_prefix:
+            try:
+                path.relative_to(self.base_dir / self.key_prefix)
+            except ValueError as exc:
+                raise ValueError(
+                    "Artifact ref does not belong to this organization's storage"
+                ) from exc
+        return path
+
+    def input_path(self, ref: dict[str, Any]) -> Path:
+        artifact_id = str(ref.get("artifact_id") or "")
+        self.upload_path(artifact_id)  # shared id validation
+        return self._path_for_key(
+            f"{self.key_prefix}runs/{self.run_id}/_inputs/{artifact_id}/{sanitize_name(ref.get('name'))}"
+        )
 
     def write_bytes(
         self,
@@ -120,8 +135,7 @@ class LocalArtifactStore:
         payload = bytes(data)
         if self.max_bytes and len(payload) > self.max_bytes:
             raise ValueError(
-                f"artifact {name!r} is {len(payload)} bytes; "
-                f"limit is {self.max_bytes} bytes"
+                f"artifact {name!r} is {len(payload)} bytes; limit is {self.max_bytes} bytes"
             )
         if self.max_count and self._written >= self.max_count:
             raise ValueError(f"artifact limit reached for run {self.run_id}")
@@ -159,6 +173,23 @@ class LocalArtifactStore:
         if not is_artifact_ref(ref):
             raise ValueError("expected a Nodyra artifact ref")
         return self.path_for_ref(ref).read_bytes()
+
+    def upload_path(self, artifact_id: str) -> Path:
+        """Directory for an upload authorized and staged by this run's host."""
+        if not isinstance(artifact_id, str) or not re.fullmatch(r"[0-9a-f]{32}", artifact_id):
+            raise ValueError("Upload id must be a 32-character artifact id")
+        return self._path_for_key(f"{self.key_prefix}runs/{self.run_id}/_uploads/{artifact_id}")
+
+    def read_upload(self, artifact_id: str) -> tuple[bytes, str]:
+        directory = self.upload_path(artifact_id)
+        if directory.is_dir():
+            for path in directory.iterdir():
+                if path.is_file() and not path.name.startswith("."):
+                    return path.read_bytes(), path.name
+        raise FileNotFoundError(
+            f"No uploaded artifact found for id {artifact_id!r}. "
+            "Select an existing uploaded file in the node settings."
+        )
 
     def open(self, ref: dict[str, Any], mode: str = "rb"):
         if not is_artifact_ref(ref):

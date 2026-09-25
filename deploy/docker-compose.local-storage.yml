@@ -1,0 +1,35 @@
+# Single-host, trusted-author installation (Docker Compose >= 2.24.4).
+# Apply after docker-compose.yml. The shared artifactdata volume stores durable
+# artifacts; back it up together with PostgreSQL and the deployment secrets.
+# For sandboxed execution, apply docker-compose.sandbox.yml AFTER this overlay.
+services:
+  minio:
+    profiles: [local-artifacts]
+  minio-init:
+    profiles: [local-artifacts]
+  postgres:
+    restart: unless-stopped
+  redis:
+    restart: unless-stopped
+  api:
+    restart: unless-stopped
+    environment:
+      ARTIFACT_STORAGE_BACKEND: local
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  worker:
+    restart: unless-stopped
+    environment:
+      ARTIFACT_STORAGE_BACKEND: local
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+  web:
+    restart: unless-stopped

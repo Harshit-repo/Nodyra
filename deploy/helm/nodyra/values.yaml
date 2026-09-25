@@ -1,6 +1,8 @@
+clusterDomain: cluster.local
+
 image:
   repository: nodyra
-  tag: "0.1.0"
+  tag: "1.0.1"
   # Digest takes precedence over tag for immutable staged promotion.
   digest: ""
   pullPolicy: IfNotPresent
@@ -51,6 +53,10 @@ runtime:
 web:
   replicas: 1
   port: 5173
+  # API artifact limit (50 MiB by default) plus multipart framing.
+  maxBodySize: "52m"
+  # uid/gid of the nginx worker user in the nginx:alpine base image.
+  runAsUser: 101
   # Blank repository defaults to "<image.repository>-web".
   imageRepository: ""
   imageDigest: ""
@@ -61,6 +67,75 @@ web:
     limits:
       cpu: 250m
       memory: 256Mi
+
+# Pod hardening. Defaults match the uid/gid baked into deploy/Dockerfile.python
+# (NODYRA_UID/NODYRA_GID = 10001) so the chart installs unchanged into a
+# namespace enforcing the `restricted` Pod Security Standard.
+securityContext:
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  # Runtime data is mounted separately so the image filesystem stays immutable.
+  readOnlyRootFilesystem: true
+
+# API and workers require shared ReadWriteMany storage. Choose an RWX-capable
+# StorageClass (for example NFS/EFS/Azure Files) or provide existing RWX claims.
+# Claims are retained on uninstall. Disable only for disposable evaluations.
+persistence:
+  enabled: true
+  storageClass: ""
+  envs:
+    existingClaim: ""
+    size: 10Gi
+  artifacts:
+    existingClaim: ""
+    size: 20Gi
+
+serviceAccount:
+  # A dedicated ServiceAccount with no API token mounted. Nodyra never calls
+  # the Kubernetes API from the API or worker pods; the default SA's
+  # auto-mounted token is credential surface with no purpose.
+  create: true
+  name: ""
+  annotations: {}
+
+# Voluntary-disruption budget. Without one, a node drain can evict every
+# replica at once and take the deployment down during routine maintenance.
+podDisruptionBudget:
+  enabled: true
+  # Applied only when replicas > 1; a single-replica Deployment with
+  # minAvailable: 1 would block node drains entirely.
+  minAvailable: 1
+
+autoscaling:
+  # Off by default: horizontal scaling is only correct once the deployment has
+  # a real load profile, and a bad target turns a traffic spike into a
+  # thundering herd of cold pods.
+  enabled: false
+  api:
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  worker:
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 75
+
+# Default-deny egress/ingress for the production baseline. Nodyra pods need
+# DNS, the database, the cache, and whatever the workflows themselves call —
+# so egress is deliberately open by default and narrowed by the operator.
+networkPolicy:
+  enabled: false
+  # CIDRs the worker may reach. Empty means unrestricted egress.
+  allowedEgressCIDRs: []
+
+# Startup probe budget. Boot does dependency wiring and pool warm-up before
+# the first readiness answer; without a startupProbe a slow start is killed by
+# livenessProbe instead of being waited out.
+startupProbe:
+  enabled: true
+  failureThreshold: 30
+  periodSeconds: 5
 
 # Disposable evaluation guardrails. Enable only in a dedicated namespace.
 # The lifecycle ConfigMap is a contract for the external namespace reaper;
@@ -96,6 +171,10 @@ secret:
 ingress:
   enabled: false
   className: ""
+  # Match web.maxBodySize in your ingress controller too. For ingress-nginx:
+  # annotations:
+  #   nginx.ingress.kubernetes.io/proxy-body-size: "52m"
+  annotations: {}
   host: nodyra.example.com
   # TLS should be enabled for any production deployment.  Session cookies
   # have Secure: true so cookie-based auth silently breaks on plain HTTP.

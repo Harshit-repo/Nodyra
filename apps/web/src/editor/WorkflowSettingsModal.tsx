@@ -190,7 +190,11 @@ export function WorkflowSettingsModal(props: WorkflowSettingsModalProps) {
         <section className="ws-section">
           <div className="ws-section-head">
             <h4>AI agent access</h4>
-            <p>Let AI agents discover and call this workflow over MCP.</p>
+            <p>
+              Let AI agents discover and call this workflow over MCP. On instances
+              that restrict which workflows agents may run, this is also what
+              permits an agent to run it.
+            </p>
           </div>
           <label className="field-toggle ws-toggle">
             <input

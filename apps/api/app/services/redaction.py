@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import logging
+import re
 import time
 from collections.abc import Iterable
 from typing import Any
+from urllib.parse import quote, quote_plus
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Credential
 from app.services.org_keys import decrypt_credential_for
+
+logger = logging.getLogger(__name__)
 
 REDACTED = "***REDACTED***"
 
@@ -51,24 +57,71 @@ def invalidate_secret_cache(org_id: str | None = None) -> None:
         _secret_cache.pop(org_id, None)
         _secret_cache.pop(_SECRET_CACHE_GLOBAL_KEY, None)
 
-SENSITIVE_KEY_PARTS = (
-    "api_key",
-    "apikey",
-    "authorization",
-    "auth",
-    "bearer",
-    "client_secret",
-    "connection_url",
-    "password",
-    "private_key",
-    "secret",
-    "token",
+# Matched as whole words, not substrings. Substring matching masked every key
+# that merely *contained* one of these - "author" contains "auth", so an
+# ordinary quote-fetching workflow returned {"author": "***REDACTED***"} to the
+# user and to any agent reading the run. Plurals are included so a key holding
+# a list of credentials ("tokens") is still caught; a count like
+# "total_tokens" survives because numbers are never masked (see below).
+SENSITIVE_KEY_WORDS = frozenset(
+    {
+        "auth",
+        "authorization",
+        "bearer",
+        "credential",
+        "credentials",
+        "password",
+        "passwords",
+        "passwd",
+        "secret",
+        "secrets",
+        "token",
+        "tokens",
+        "apikey",
+    }
 )
+
+# Matched as consecutive words, so "api_key", "apiKey" and "x-api-key" all hit.
+SENSITIVE_KEY_PHRASES = (
+    ("api", "key"),
+    ("client", "secret"),
+    ("private", "key"),
+    ("connection", "url"),
+    ("access", "key"),
+)
+
+# Kept for callers that import it. The tuple no longer drives matching.
+SENSITIVE_KEY_PARTS = tuple(sorted(SENSITIVE_KEY_WORDS))
+
+_WORD_SPLIT_RE = re.compile(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _key_words(key: object) -> list[str]:
+    """Split a key into lowercase words on separators and camelCase humps."""
+    return [word for word in _WORD_SPLIT_RE.split(str(key)) if word]
 
 
 def _is_sensitive_key(key: object) -> bool:
-    text = str(key).lower()
-    return any(part in text for part in SENSITIVE_KEY_PARTS)
+    words = [word.lower() for word in _key_words(key)]
+    if any(word in SENSITIVE_KEY_WORDS for word in words):
+        return True
+    return any(
+        words[i : i + len(phrase)] == list(phrase)
+        for phrase in SENSITIVE_KEY_PHRASES
+        for i in range(len(words) - len(phrase) + 1)
+    )
+
+
+def _can_hold_a_secret(value: Any) -> bool:
+    """A number is not a credential.
+
+    Key names are a heuristic and they collide with real field names. Refusing
+    to mask numeric values costs nothing - no API key, password or bearer token
+    is an int - and it keeps LLM usage counts intact, which matters because
+    ``model_serving`` emits ``total_tokens`` and ``model_monitoring`` reads it
+    to compute cost.
+    """
+    return not isinstance(value, bool | int | float)
 
 
 def _usable_secret(value: Any) -> str | None:
@@ -94,11 +147,36 @@ async def _decrypt_credential_values(
     result = await session.scalars(stmt)
     values: list[str] = []
     for credential in result.all():
-        data = await decrypt_credential_for(credential, session)
+        # One credential must not take the others down with it. The caller
+        # treats this whole list as best-effort and falls back to [] on any
+        # exception, so a single unreadable row — a rotated SECRET_KEY, a
+        # half-migrated KMS, a corrupt ciphertext — would otherwise disable
+        # redaction for *every* secret in the org at once.
+        try:
+            data = await decrypt_credential_for(credential, session)
+        except Exception:  # noqa: BLE001 - one bad row, not a blind run
+            logger.warning(
+                "redaction: credential %s could not be decrypted; its value "
+                "will not be redacted from run output",
+                getattr(credential, "id", "?"),
+            )
+            continue
+        found = False
         for value in data.values():
             secret = _usable_secret(value)
             if secret is not None:
                 values.append(secret)
+                found = True
+        if not found and getattr(credential, "encrypted_data", None):
+            # Decryption returned nothing for a row that holds ciphertext
+            # (decrypt_credential_for is non-strict here and answers {}), so
+            # this credential's secret is about to flow through logs and node
+            # output unmasked. Silence is the wrong response to that.
+            logger.warning(
+                "redaction: credential %s yielded no readable values; its "
+                "secret will not be redacted from run output",
+                getattr(credential, "id", "?"),
+            )
     return sorted(set(values), key=len, reverse=True)
 
 
@@ -153,8 +231,27 @@ async def load_secret_values_for_org(
 def redact_text(text: str, secret_values: Iterable[str] = ()) -> str:
     redacted = text
     for secret in secret_values:
-        if secret:
-            redacted = redacted.replace(secret, REDACTED)
+        usable = _usable_secret(secret)
+        if usable is None:
+            continue
+
+        raw = usable.encode("utf-8")
+        base64_value = base64.b64encode(raw).decode("ascii")
+        urlsafe_base64_value = base64.urlsafe_b64encode(raw).decode("ascii")
+        variants = {
+            usable,
+            base64_value,
+            base64_value.rstrip("="),
+            urlsafe_base64_value,
+            urlsafe_base64_value.rstrip("="),
+            quote(usable, safe=""),
+            quote_plus(usable, safe=""),
+        }
+        # Replace longer representations first so overlapping variants cannot
+        # leave a partially encoded secret behind.
+        for variant in sorted(variants, key=len, reverse=True):
+            if len(variant) >= 4:
+                redacted = redacted.replace(variant, REDACTED)
     return redacted
 
 
@@ -170,7 +267,7 @@ def redact_value(value: Any, secret_values: Iterable[str] = ()) -> Any:
         next_value: dict[str, Any] = {}
         for key, item in value.items():
             out_key = str(key)
-            if _is_sensitive_key(key):
+            if _is_sensitive_key(key) and _can_hold_a_secret(item):
                 next_value[out_key] = REDACTED if item not in (None, "") else item
             else:
                 next_value[out_key] = redact_value(item, secret_values)

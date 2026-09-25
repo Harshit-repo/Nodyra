@@ -76,30 +76,53 @@ def test_meta_from_empty_payload_uses_defaults():
 
 
 def _parent_graph(sub_id: str = "wf-child") -> WorkflowGraph:
-    return WorkflowGraph.model_validate({
-        "nodes": [
-            {"id": "t", "type": "manual_trigger", "params": {"data": 7},
-             "position": {"x": 0, "y": 0}},
-            {"id": "sub", "type": "execute_workflow",
-             "params": {"workflow_id": sub_id}, "position": {"x": 200, "y": 0}},
-        ],
-        "edges": [
-            {"id": "e", "source": "t", "source_output": "main",
-             "target": "sub", "target_input": "input"},
-        ],
-    })
+    return WorkflowGraph.model_validate(
+        {
+            "nodes": [
+                {
+                    "id": "t",
+                    "type": "manual_trigger",
+                    "params": {"data": 7},
+                    "position": {"x": 0, "y": 0},
+                },
+                {
+                    "id": "sub",
+                    "type": "execute_workflow",
+                    "params": {"workflow_id": sub_id},
+                    "position": {"x": 200, "y": 0},
+                },
+            ],
+            "edges": [
+                {
+                    "id": "e",
+                    "source": "t",
+                    "source_output": "main",
+                    "target": "sub",
+                    "target_input": "input",
+                },
+            ],
+        }
+    )
 
 
 CHILD_GRAPH = {
     "nodes": [
-        {"id": "ct", "type": "manual_trigger", "params": {},
-         "position": {"x": 0, "y": 0}},
-        {"id": "cc", "type": "code", "params": {"code": "output = input['v'] * 2"},
-         "position": {"x": 200, "y": 0}},
+        {"id": "ct", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+        {
+            "id": "cc",
+            "type": "code",
+            "params": {"code": "output = input['v'] * 2"},
+            "position": {"x": 200, "y": 0},
+        },
     ],
     "edges": [
-        {"id": "ce", "source": "ct", "source_output": "main",
-         "target": "cc", "target_input": "input"},
+        {
+            "id": "ce",
+            "source": "ct",
+            "source_output": "main",
+            "target": "cc",
+            "target_input": "input",
+        },
     ],
 }
 
@@ -113,12 +136,15 @@ async def test_engine_runs_subworkflow_through_stub_resolver():
         return {"doubled": True}
 
     meta = SubworkflowMeta(
-        use_published=False, parent_run_id="run-1",
+        use_published=False,
+        parent_run_id="run-1",
         call_chain=frozenset({"wf-root"}),
     )
     result = await execute(
-        _parent_graph(), registry,
-        subworkflow_runner=resolver, subworkflow_meta=meta,
+        _parent_graph(),
+        registry,
+        subworkflow_runner=resolver,
+        subworkflow_meta=meta,
     )
     assert str(result.nodes["sub"].status) == "success"
     assert result.nodes["sub"].outputs["main"] == {"doubled": True}
@@ -137,8 +163,10 @@ async def test_engine_detects_cycle_from_meta_chain():
 
     meta = SubworkflowMeta(call_chain=frozenset({"wf-child"}))
     result = await execute(
-        _parent_graph(), registry,
-        subworkflow_runner=resolver, subworkflow_meta=meta,
+        _parent_graph(),
+        registry,
+        subworkflow_runner=resolver,
+        subworkflow_meta=meta,
     )
     assert str(result.nodes["sub"].status) == "error"
     assert "cycle" in (result.nodes["sub"].error or "")
@@ -150,8 +178,10 @@ async def test_engine_enforces_depth_limit():
 
     meta = SubworkflowMeta(depth=3, max_depth=3)
     result = await execute(
-        _parent_graph(), registry,
-        subworkflow_runner=resolver, subworkflow_meta=meta,
+        _parent_graph(),
+        registry,
+        subworkflow_runner=resolver,
+        subworkflow_meta=meta,
     )
     assert str(result.nodes["sub"].status) == "error"
     assert "depth limit" in (result.nodes["sub"].error or "")
@@ -167,12 +197,29 @@ async def test_engine_executes_inline_directive():
         )
 
     result = await execute(
-        _parent_graph(), registry,
+        _parent_graph(),
+        registry,
         subworkflow_runner=resolver,
         subworkflow_meta=SubworkflowMeta(call_chain=frozenset({"wf-root"})),
     )
     assert str(result.nodes["sub"].status) == "success"
     assert result.nodes["sub"].outputs["main"] == 14  # 7 * 2
+
+
+async def test_inline_child_failure_is_not_reported_as_parent_success():
+    from copy import deepcopy
+
+    child = deepcopy(CHILD_GRAPH)
+    child["nodes"][1]["params"]["code"] = "raise ValueError('invoice rejected')"
+
+    async def resolver(call):
+        return InlineSubworkflow(
+            graph=child, cache={"ct": {"main": {"v": 7}}}, targets=None, sources=("ct",)
+        )
+
+    result = await execute(_parent_graph(), registry, subworkflow_runner=resolver)
+    assert str(result.status) == "error"
+    assert "invoice rejected" in result.nodes["sub"].error
 
 
 async def test_inline_child_nested_call_carries_extended_chain():
@@ -181,15 +228,22 @@ async def test_inline_child_nested_call_carries_extended_chain():
 
     nested_child = {
         "nodes": [
-            {"id": "ct", "type": "manual_trigger", "params": {},
-             "position": {"x": 0, "y": 0}},
-            {"id": "csub", "type": "execute_workflow",
-             "params": {"workflow_id": "wf-grandchild"},
-             "position": {"x": 200, "y": 0}},
+            {"id": "ct", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "csub",
+                "type": "execute_workflow",
+                "params": {"workflow_id": "wf-grandchild"},
+                "position": {"x": 200, "y": 0},
+            },
         ],
         "edges": [
-            {"id": "ce", "source": "ct", "source_output": "main",
-             "target": "csub", "target_input": "input"},
+            {
+                "id": "ce",
+                "source": "ct",
+                "source_output": "main",
+                "target": "csub",
+                "target_input": "input",
+            },
         ],
     }
 
@@ -197,13 +251,16 @@ async def test_inline_child_nested_call_carries_extended_chain():
         calls.append(call)
         if call.workflow_id == "wf-child":
             return InlineSubworkflow(
-                graph=nested_child, cache={"ct": {"main": {}}},
-                targets=None, sources=("ct",),
+                graph=nested_child,
+                cache={"ct": {"main": {}}},
+                targets=None,
+                sources=("ct",),
             )
         return "leaf"
 
     result = await execute(
-        _parent_graph(), registry,
+        _parent_graph(),
+        registry,
         subworkflow_runner=resolver,
         subworkflow_meta=SubworkflowMeta(call_chain=frozenset({"wf-root"})),
     )

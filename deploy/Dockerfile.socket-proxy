@@ -1,0 +1,3 @@
+# Keep the reviewed proxy API policy while applying its distribution's fixes.
+FROM tecnativa/docker-socket-proxy:v0.4.0@sha256:44538370af9103858aa387860f355bed72e7f4e15380ef829b53ed4e154cedcd
+RUN apk upgrade --no-cache

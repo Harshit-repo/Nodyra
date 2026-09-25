@@ -26,12 +26,40 @@ class _FakeProcess:
     closed: bool = False
 
     # The pool checks ``proc.process.returncode``; expose a tiny proxy.
-    process: object = field(
-        default_factory=lambda: type("P", (), {"returncode": None})()
-    )
+    process: object = field(default_factory=lambda: type("P", (), {"returncode": None})())
 
     async def close(self) -> None:
         self.closed = True
+
+
+async def test_dispatch_deadline_returns_timed_out_and_releases_process(client, monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from app.services import runtime_pool
+
+    async def slow_run(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    proc = _FakeProcess()
+    proc.run = slow_run
+    env = Mock(rss_estimate=0)
+    env.acquire = AsyncMock(return_value=proc)
+    pool = RuntimePool()
+    monkeypatch.setattr(pool, "_env_pool", AsyncMock(return_value=env))
+    monkeypatch.setattr(runtime_pool, "_rss_soft_budget_bytes", AsyncMock(return_value=0))
+    monkeypatch.setattr(runtime_pool, "_resolve_run_org", AsyncMock(return_value="default"))
+    monkeypatch.setattr(runtime_pool, "_org_run_limits_for", AsyncMock(return_value={}))
+    events = []
+
+    async def on_event(event):
+        events.append(event)
+
+    status = await pool.dispatch("timeout-run", None, {}, None, None, on_event, run_timeout=0.01)
+    assert status == "timed_out"
+    assert proc.closed
+    env.release.assert_called_once_with(proc)
+    assert events[0]["type"] == "run_error"
+    assert "timed out" in events[0]["error"]
 
 
 class _ProtocolStdin:
@@ -91,14 +119,10 @@ async def test_runtime_process_consumes_heartbeat_without_forwarding(monkeypatch
     runtime = _RuntimeProcess(process, env_id=None)
     events: list[dict] = []
 
-    task = asyncio.create_task(
-        runtime.run("run-1", {}, None, None, events.append)
-    )
+    task = asyncio.create_task(runtime.run("run-1", {}, None, None, events.append))
     request_id = await _protocol_request_id(process)
     process.stdout.feed({"type": "heartbeat", "request_id": request_id})
-    process.stdout.feed(
-        {"type": "result", "request_id": request_id, "status": "success"}
-    )
+    process.stdout.feed({"type": "result", "request_id": request_id, "status": "success"})
 
     assert await task == "success"
     assert events == []
@@ -121,14 +145,18 @@ async def test_runtime_process_missing_heartbeat_is_closed(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_runtime_process_heartbeats_do_not_mask_no_progress(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 0.2)
+    # The point of this test is that a heartbeat arriving *after* the
+    # no-progress deadline does not reset it. Only the ordering of the two
+    # deadlines matters, so give the heartbeat timeout a wide margin: at 0.2s
+    # it sat 140ms from the 0.06s sleep below, and under full-suite load the
+    # sleep overshoots, the heartbeat timeout fires first, and the test fails
+    # claiming "heartbeat lost" instead of "no protocol progress".
+    monkeypatch.setattr(settings, "runtime_heartbeat_timeout_seconds", 5.0)
     monkeypatch.setattr(settings, "runtime_no_progress_timeout_seconds", 0.05)
     process = _ProtocolProcess()
     runtime = _RuntimeProcess(process, env_id=None)
 
-    task = asyncio.create_task(
-        runtime.run("run-1", {}, None, None, lambda _event: None)
-    )
+    task = asyncio.create_task(runtime.run("run-1", {}, None, None, lambda _event: None))
     request_id = await _protocol_request_id(process)
     await asyncio.sleep(0.06)
     process.stdout.feed({"type": "heartbeat", "request_id": request_id})
@@ -535,3 +563,108 @@ async def test_spawn_does_not_leak_host_python_jit_when_flag_absent(monkeypatch)
     await rp_module._RuntimeProcess.spawn("some-env")
 
     assert "PYTHON_JIT" not in captured
+
+
+@pytest.mark.asyncio
+async def test_env_pool_drain_closes_idle_workers_and_invalidates_inflight() -> None:
+    """Rebuilding an environment must not be blocked by warm workers — and
+    workers released after the drain must not serve the new environment."""
+    from app.services.runtime_pool import _EnvPool
+
+    pool = _EnvPool(env_id="e1", min_size=1, max_size=2, rss_estimate=0)
+
+    idle = _FakeProcess()
+    idle.idle_since = time.time() - 30
+    idle.generation = 0
+    inflight = _FakeProcess()
+    inflight.generation = 0
+
+    pool._all.add(idle)
+    pool._all.add(inflight)
+    pool._idle.append(idle)
+
+    await pool.drain()
+
+    assert idle.closed is True
+    assert inflight.closed is False  # in-flight runs are never killed
+    assert pool._idle == []
+    assert inflight in pool._all
+
+    # The in-flight worker finishing after the drain must be closed, not warmed.
+    pool.release(inflight)
+    assert inflight not in pool._all
+    assert inflight not in pool._idle
+    # release() fires close as a background task; give it a tick.
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_env_pool_release_keeps_current_generation_worker_warm() -> None:
+    from app.services.runtime_pool import _EnvPool
+
+    pool = _EnvPool(env_id="e1", min_size=1, max_size=2, rss_estimate=0)
+    proc = _FakeProcess()
+    proc.generation = 0
+    pool._all.add(proc)
+    pool.release(proc)
+    assert pool._idle == [proc]
+    assert proc.closed is False
+
+
+@pytest.mark.asyncio
+async def test_env_pool_drain_force_closes_inflight_and_pauses(monkeypatch) -> None:
+    """A rebuild must not wait on wedged/long in-flight runs: force-drain
+    terminates them, and acquire() parks runs until the pool is unpaused."""
+    import app.services.runtime_pool as rp_module
+    from app.services.runtime_pool import _EnvPool, _PoolPaused
+
+    pool = _EnvPool(env_id="e1", min_size=1, max_size=2, rss_estimate=0)
+    inflight = _FakeProcess()
+    inflight.generation = 0
+    pool._all.add(inflight)
+
+    await pool.drain(force=True)
+
+    assert inflight.closed is True
+    assert pool._all == set()
+    with pytest.raises(_PoolPaused):
+        await pool.acquire()
+
+    await pool.unpause()
+    fresh = _FakeProcess()
+    monkeypatch.setattr(
+        rp_module._RuntimeProcess, "spawn", _AsyncSpawn(fresh).spawn
+    )
+    proc = await pool.acquire()
+    assert proc is fresh
+    pool.release(proc)
+
+
+class _AsyncSpawn:
+    def __init__(self, proc: _FakeProcess) -> None:
+        self._proc = proc
+
+    async def spawn(self, env_id: str) -> _FakeProcess:
+        return self._proc
+
+
+@pytest.mark.asyncio
+async def test_runtime_pool_drain_env_targets_only_that_env() -> None:
+    pool = RuntimePool()
+    env_a = _EnvPool(env_id="env-a", min_size=1, max_size=2, rss_estimate=0)
+    env_b = _EnvPool(env_id="env-b", min_size=1, max_size=2, rss_estimate=0)
+    worker_a = _FakeProcess()
+    worker_a.generation = 0
+    worker_b = _FakeProcess()
+    worker_b.generation = 0
+    env_a._idle.append(worker_a)
+    env_a._all.add(worker_a)
+    env_b._idle.append(worker_b)
+    env_b._all.add(worker_b)
+    pool._envs["env-a"] = env_a
+    pool._envs["env-b"] = env_b
+
+    await pool.drain_env("env-a")
+
+    assert worker_a.closed is True
+    assert worker_b.closed is False

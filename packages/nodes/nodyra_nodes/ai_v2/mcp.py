@@ -16,7 +16,18 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+
+try:  # mcp >= 2.0 renamed this; 1.x shipped both spellings for a while.
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
+except ImportError:  # pragma: no cover - exercised via the 1.x-only test double
+    # mcp is declared as >=1.28.1 with no upper bound, so a freshly
+    # resolved workflow environment gets whatever is current on PyPI while the
+    # workspace lockfile holds 1.28.1. Binding to whichever spelling exists
+    # keeps both worlds working; nodyra_nodes/__init__ imports this module, so
+    # failing here stops the runtime from starting at all.
+    from mcp.client.streamable_http import streamablehttp_client
 
 from nodyra.ai_runtime import ToolAdapter, ToolParameterSchema, ToolSchema
 from nodyra.sdk import node

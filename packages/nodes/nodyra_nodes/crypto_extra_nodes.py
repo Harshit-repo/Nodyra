@@ -212,7 +212,11 @@ def base64_encode(
     text: str = "",
     urlsafe: bool = False,
 ) -> dict[str, Any]:
-    """Encode text to base64."""
+    """Encode UTF-8 text as a base64 string.
+
+    Use when an API expects a base64-wrapped value, such as a Basic auth
+    header or an inline file attachment.
+    """
     payload = (text or input or "").encode("utf-8")
     if urlsafe:
         encoded = base64.urlsafe_b64encode(payload).decode("ascii")
@@ -251,7 +255,11 @@ def base64_decode(
     urlsafe: bool = False,
     encoding: str = "utf-8",
 ) -> dict[str, Any]:
-    """Decode a base64 string."""
+    """Decode a base64-encoded string back to UTF-8 text.
+
+    Use for payloads that arrive base64-wrapped, such as webhook bodies or
+    embedded file contents. Raises when the input is not valid base64.
+    """
     payload = _pad_b64(data or input or "")
     try:
         if urlsafe:

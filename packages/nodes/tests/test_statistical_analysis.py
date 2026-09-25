@@ -854,3 +854,50 @@ def test_statistical_analysis_nodes_have_requirements() -> None:
         m = manifests.get(node_id)
         assert m is not None
         assert m.requirements, f"{node_id} has no requirements declared"
+
+
+def _weekly_series() -> list[dict]:
+    """13 weeks of daily volume with a pronounced weekend dip."""
+    import random
+
+    rng = random.Random(7)
+    weekly = [1.00, 1.06, 1.05, 1.03, 1.12, 0.72, 0.61]
+    return [
+        {"orders": round((200 + 0.9 * i) * weekly[i % 7] + rng.uniform(-6, 6), 1)}
+        for i in range(91)
+    ]
+
+
+def test_seasonality_detect_reports_the_fundamental_not_a_harmonic(store_ctx) -> None:
+    """Weekly data must report 7, even when 14 or 21 scores marginally higher.
+
+    Autocorrelation peaks at every multiple of the true period, and noise
+    routinely lets one of them win: this series scored 21 at 0.5532 against
+    7 at 0.5454. Reporting 21 tells the reader to build a three-week baseline
+    for a plainly weekly cycle.
+    """
+    from nodyra_nodes.statistical_analysis import seasonality_detect
+
+    result = seasonality_detect(
+        input=_weekly_series(), value_column="orders", min_period=2, max_period=30
+    )
+
+    assert result["main"]["period"] == 7
+
+
+def test_seasonality_detect_keeps_a_genuinely_longer_period(store_ctx) -> None:
+    """A period is only demoted to a divisor that scores about as well."""
+    import math
+
+    rows = [{"v": math.sin(2 * math.pi * i / 12)} for i in range(96)]
+
+    from nodyra_nodes.statistical_analysis import seasonality_detect
+
+    result = seasonality_detect(
+        input=rows, value_column="v", min_period=2, max_period=40
+    )
+
+    # 12 is the true period. Lag 6 is perfectly anti-correlated (-1.0), which
+    # is not a six-day season, and must not be reported as one.
+    assert result["main"]["period"] == 12
+    assert result["main"]["score"] > 0

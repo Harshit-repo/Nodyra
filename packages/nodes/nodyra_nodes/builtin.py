@@ -965,7 +965,7 @@ def loop_start(
     id="loop_end",
     category="Logic",
     icon="repeat",
-    outputs=["results", "errors"],
+    outputs=["main", "results", "errors"],
     params={
         "loop_start_id": {
             "widget": "hidden",
@@ -1506,6 +1506,10 @@ def _http_backoff_seconds(attempt: int) -> float:
                 "error) with exponential backoff. 0 = a single attempt."
             ),
         },
+        "include_response_metadata": {
+            "group": "Options",
+            "description": "Return status_code, headers and body instead of only the response body.",
+        },
     },
 )
 def http_request(
@@ -1517,11 +1521,13 @@ def http_request(
     body: dict | None = None,
     timeout_seconds: float = 30,
     max_retries: int = 0,
+    include_response_metadata: bool = False,
 ) -> Any:
     """Call an HTTP API and return the JSON body (or text on non-JSON).
 
     Optionally retries transient failures (429/5xx, connection/timeout errors)
     with exponential backoff; ``max_retries=0`` (default) makes a single attempt.
+    Enable ``include_response_metadata`` to return status_code, headers and body.
     """
     import time
 
@@ -1567,6 +1573,12 @@ def http_request(
         if reason:
             label = f"{label} {reason}"
         raise RuntimeError(f"{label} from {url}: {detail}")
+    if include_response_metadata:
+        return {
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+            "body": payload,
+        }
     return payload
 
 
@@ -1912,7 +1924,11 @@ def hash_node(input: Any = None, algorithm: str = "sha256") -> str:
 
 @node(name="UUID", id="uuid", category="Transform", icon="tag")
 def uuid_v4(input: Any = None) -> str:  # noqa: ARG001 - input ignored
-    """Generate a new UUID4."""
+    """Generate a random UUID4 identifier.
+
+    Returns a fresh, collision-resistant id for correlating records, naming
+    files, or de-duplicating retried work. A new value on every call.
+    """
     import uuid
 
     return str(uuid.uuid4())
@@ -2022,6 +2038,14 @@ async def map_items(
         raise RuntimeError("map_items: no host caller is configured for this run")
 
     items: list = input if isinstance(input, list) else ([] if input is None else [input])
+    if isinstance(input, dict) and len(input) == 1:
+        # Trigger payloads commonly wrap the row array under a single
+        # "items"/"rows"/"records" key (the same convention the loop engine
+        # and ai-v2 nodes unwrap). Only a single-key wrapper is unwrapped.
+        only_key = next(iter(input))
+        wrapped = input[only_key]
+        if only_key in ("items", "rows", "records") and isinstance(wrapped, list):
+            items = wrapped
     if len(items) > MAX_MAP_ITEMS:
         raise ValueError(
             f"map_items received {len(items)} items but the hard fan-out cap is {MAX_MAP_ITEMS}."
@@ -2119,6 +2143,11 @@ async def map_group_node(
         raise RuntimeError("map_group: no host caller is configured for this run")
 
     items: list = input if isinstance(input, list) else ([] if input is None else [input])
+    if isinstance(input, dict) and len(input) == 1:
+        only_key = next(iter(input))
+        wrapped = input[only_key]
+        if only_key in ("items", "rows", "records") and isinstance(wrapped, list):
+            items = wrapped
     cap = max(1, int(max_items or 10000))
     if cap > MAX_MAP_ITEMS:
         raise ValueError(f"map_group: max_items must be <= {MAX_MAP_ITEMS}.")

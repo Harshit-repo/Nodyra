@@ -297,7 +297,7 @@ export function RolesPage() {
         {error && <p className="error-text">{error}</p>}
 
         {loading && (
-          <div className="env-grid" aria-label="Loading custom roles">
+          <div role="status" className="env-grid" aria-label="Loading custom roles">
             {Array.from({ length: 2 }).map((_, index) => (
               <article className="env-card skeleton-card" key={index}>
                 <span className="skeleton-line short" />

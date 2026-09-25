@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
 import requests
 
 import nodyra_nodes  # noqa: F401 - registers nodes
@@ -591,3 +592,13 @@ def test_ai_chat_model_param_uses_dynamic_loader() -> None:
     assert model.load_options == "llm_models"
     assert "credentials" in model.depends_on
     assert model.choices  # curated fallback preserved
+
+
+
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch):
+    """These tests verify the BLOCKED posture of nodyra_nodes.http_security;
+    single-tenant API processes default to allowing private egress (mirroring
+    workers), so pin the env explicitly."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+

@@ -2,7 +2,9 @@ name: nodyra
 
 services:
   postgres:
-    image: postgres:16.14-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
     environment:
       POSTGRES_USER: nodyra
       # Override in deploy/.env for any host that is not a private dev box.
@@ -11,7 +13,7 @@ services:
     ports:
       # Loopback-only: host tools (psql) can connect, the network cannot.
       # Services on the compose network reach postgres:5432 directly.
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -24,7 +26,7 @@ services:
     image: redis:7.4.9-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     ports:
       # Loopback-only: an unauthenticated Redis must never face the network.
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -37,7 +39,7 @@ services:
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
-      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.104.0@sha256:e07e325e303e86f4a87a617491e921b579a92da6d404007394757ac910bf9587
@@ -46,24 +48,30 @@ services:
     volumes:
       - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
     ports:
-      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:${OTEL_HTTP_PORT:-4318}:4318"
     depends_on:
       - jaeger
 
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    build:
+      context: .
+      dockerfile: Dockerfile.minio
+      target: server
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nodyra}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - miniodata:/data
 
   minio-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    build:
+      context: .
+      dockerfile: Dockerfile.minio
+      target: client
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nodyra}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}
@@ -79,6 +87,8 @@ services:
       - minio
 
   api:
+    security_opt:
+      - no-new-privileges:true
     build:
       context: ..
       dockerfile: deploy/Dockerfile.python
@@ -87,7 +97,7 @@ services:
       - -c
       - >-
         cd apps/api && alembic upgrade head && cd /app
-        && uvicorn app.main:app --host 0.0.0.0 --port 8000
+        && uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-proxy-headers
     environment:
       # Production posture so runtime_warnings() actually surface via
       # /ops/runtime-mode (default SECRET_KEY, local artifacts, etc.).
@@ -103,7 +113,9 @@ services:
       # run no agent/kubernetes pools.
       DISPATCH_ROLE: control
       SCHEDULER_ROLE: leader
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-0}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       ENABLE_INPROCESS_SCHEDULER: "true"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       USE_SUBPROCESS_RUNNER: "true"
@@ -114,6 +126,7 @@ services:
       OTEL_EXPORTER_PROTOCOL: ${OTEL_EXPORTER_PROTOCOL:-http}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
       EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
+      NODYRA_ALLOW_PRIVATE_EGRESS: ${NODYRA_ALLOW_PRIVATE_EGRESS:-0}
       SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
       ENVS_DIR: /app/envs
       ARTIFACTS_DIR: /app/artifacts
@@ -121,6 +134,9 @@ services:
       ARTIFACT_S3_BUCKET: ${ARTIFACT_S3_BUCKET:-nodyra-artifacts}
       ARTIFACT_S3_REGION: ${ARTIFACT_S3_REGION:-us-east-1}
       ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
+      # Presigned URLs are followed by the browser, which cannot resolve
+      # the internal "minio" hostname. Point it at the published port.
+      ARTIFACT_S3_PUBLIC_ENDPOINT: ${ARTIFACT_S3_PUBLIC_ENDPOINT:-http://localhost:${MINIO_PORT:-9000}}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-nodyra}}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}}
       AWS_EC2_METADATA_DISABLED: "true"
@@ -146,9 +162,8 @@ services:
       GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
     ports:
-      # The demo intentionally disables auth, so public ports must stay local.
-      # Production ingress should terminate TLS and proxy to this service.
-      - "${NODYRA_BIND_HOST:-127.0.0.1}:8000:8000"
+      # Keep internal HTTP local; the public ingress terminates TLS.
+      - "${NODYRA_BIND_HOST:-127.0.0.1}:${NODYRA_API_PORT:-8000}:8000"
     volumes:
       - envdata:/app/envs
       - artifactdata:/app/artifacts
@@ -164,6 +179,8 @@ services:
         condition: service_completed_successfully
 
   worker:
+    security_opt:
+      - no-new-privileges:true
     build:
       context: ..
       dockerfile: deploy/Dockerfile.python
@@ -188,6 +205,9 @@ services:
       ARTIFACT_S3_BUCKET: ${ARTIFACT_S3_BUCKET:-nodyra-artifacts}
       ARTIFACT_S3_REGION: ${ARTIFACT_S3_REGION:-us-east-1}
       ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
+      # Presigned URLs are followed by the browser, which cannot resolve
+      # the internal "minio" hostname. Point it at the published port.
+      ARTIFACT_S3_PUBLIC_ENDPOINT: ${ARTIFACT_S3_PUBLIC_ENDPOINT:-http://localhost:${MINIO_PORT:-9000}}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-nodyra}}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}}
       AWS_EC2_METADATA_DISABLED: "true"
@@ -201,6 +221,7 @@ services:
       # start without it. SANDBOX_RUNTIME=auto picks the strongest available
       # runtime (kata > runsc/gVisor > runc).
       EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
+      NODYRA_ALLOW_PRIVATE_EGRESS: ${NODYRA_ALLOW_PRIVATE_EGRESS:-0}
       SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
     healthcheck:
       test: ["CMD-SHELL", "python -c \"from pathlib import Path; import sys; sys.exit(0 if b'app.worker_main' in Path('/proc/1/cmdline').read_bytes() else 1)\""]
@@ -224,15 +245,19 @@ services:
         condition: service_completed_successfully
 
   web:
+    security_opt:
+      - no-new-privileges:true
     build:
       context: ../apps/web
       dockerfile: Dockerfile
     environment:
-      VITE_API_PROXY: http://api:8000
+      NODYRA_API_UPSTREAM: api:8000
+      NODYRA_MAX_BODY_SIZE: ${NODYRA_MAX_BODY_SIZE:-52m}
     ports:
-      - "${NODYRA_BIND_HOST:-127.0.0.1}:5173:5173"
+      - "${NODYRA_BIND_HOST:-127.0.0.1}:${NODYRA_WEB_PORT:-5173}:5173"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:

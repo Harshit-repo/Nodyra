@@ -277,6 +277,62 @@ async def test_switch_routes_via_dynamic_rules() -> None:
     assert result.nodes["caught"].outputs["main"] == {"kind": "vip"}
 
 
+async def test_switch_routes_without_outputs_override() -> None:
+    # SW-1: rules keys are ports even when outputs_override is absent —
+    # the branch value must not be swallowed under the static `fallback` port.
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(
+                id="t",
+                type="manual_trigger",
+                params={"data": {"kind": "vip"}},
+            ),
+            GraphNode(
+                id="s",
+                type="switch",
+                params={"field": "kind", "rules": {"vip": "vip", "free": "free"}},
+            ),
+            GraphNode(id="caught", type="no_op"),
+            GraphNode(id="fallback_never", type="no_op"),
+        ],
+        edges=[
+            Edge(source="t", target="s"),
+            Edge(source="s", source_output="vip", target="caught"),
+            Edge(source="s", source_output="fallback", target="fallback_never"),
+        ],
+    )
+    result = await execute(graph, registry)
+    assert result.nodes["s"].outputs == {"vip": {"kind": "vip"}}
+    assert result.nodes["caught"].outputs["main"] == {"kind": "vip"}
+    assert str(result.nodes["fallback_never"].status) == "skipped"
+
+
+async def test_switch_fallback_when_no_rule_matches() -> None:
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(
+                id="t",
+                type="manual_trigger",
+                params={"data": {"kind": "other"}},
+            ),
+            GraphNode(
+                id="s",
+                type="switch",
+                params={"field": "kind", "rules": {"vip": "vip"}},
+            ),
+            GraphNode(id="caught", type="no_op"),
+        ],
+        edges=[
+            Edge(source="t", target="s"),
+            Edge(source="s", source_output="fallback", target="caught"),
+        ],
+    )
+    result = await execute(graph, registry)
+    assert result.nodes["s"].outputs == {"fallback": {"kind": "other"}}
+    assert result.nodes["caught"].outputs["main"] == {"kind": "other"}
+
+
+
 async def test_loop_over_items_routes_each_item_and_done_summary() -> None:
     graph = WorkflowGraph(
         nodes=[
@@ -433,9 +489,21 @@ class FakeResponse:
         self.reason = "OK" if status_code < 400 else "Not Found"
         self.text = json.dumps(payload)
         self.content = self.text.encode("utf-8")
+        self.headers = {"Content-Type": "application/json"}
 
     def json(self) -> object:
         return self._payload
+
+
+def test_http_request_response_metadata_is_opt_in(monkeypatch) -> None:
+    monkeypatch.setattr(requests, "request", lambda *a, **kw: FakeResponse([{"id": 1}], 201))
+    request = registry.get("http_request").func
+    assert request(url="https://api.example.test") == [{"id": 1}]
+    assert request(url="https://api.example.test", include_response_metadata=True) == {
+        "status_code": 201,
+        "headers": {"Content-Type": "application/json"},
+        "body": [{"id": 1}],
+    }
 
 
 def test_http_request_raises_on_error_status(monkeypatch) -> None:
@@ -509,6 +577,9 @@ def test_http_request_blocks_private_targets(monkeypatch) -> None:
     def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
         raise AssertionError("private target should be blocked before requests")
 
+    # Hosted/posture-blocked deployments set this explicitly; single-tenant
+    # API processes default to allowing private egress (mirroring workers).
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
     monkeypatch.setattr(requests, "request", fake_request)
     try:
         registry.get("http_request").func(url="http://127.0.0.1:8000/internal")
@@ -538,6 +609,7 @@ def test_graphql_request_blocks_private_targets(monkeypatch) -> None:
     def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
         raise AssertionError("private target should be blocked before requests")
 
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
     monkeypatch.setattr(requests, "request", fake_request)
     try:
         registry.get("graphql_request").func(

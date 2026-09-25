@@ -26,6 +26,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useBlocker } from "react-router-dom";
 
 import { api, errorMessage, type SandboxStatus } from "./api";
+import { PlanComparison } from "./PlanComparison";
 import { useConfirm } from "./ConfirmProvider";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { useWorkspaceAccessContext } from "./WorkspaceAccess";
@@ -552,7 +553,7 @@ function WorkspaceSettingsPanel() {
             <button className="btn btn-sm" type="button" onClick={load}>Retry</button>
           </div>
         ) : (
-          <div className="nodyra-settings-skeleton" aria-label="Loading instance settings">
+          <div role="status" className="nodyra-settings-skeleton" aria-label="Loading instance settings">
             <span /><span /><span />
           </div>
         )}
@@ -746,7 +747,7 @@ function LicensePanel() {
             <button className="btn btn-sm" type="button" onClick={load}>Retry</button>
           </div>
         ) : (
-          <div className="nodyra-settings-skeleton" aria-label="Loading plan and license">
+          <div role="status" className="nodyra-settings-skeleton" aria-label="Loading plan and license">
             <span /><span /><span />
           </div>
         )
@@ -805,6 +806,7 @@ function LicensePanel() {
               )}
             </div>
           </div>
+          <PlanComparison />
         </>
       )}
     </SettingsCard>
@@ -1140,7 +1142,7 @@ function McpAccessPanel() {
         )}
 
         {loading && !scopes.length ? (
-          <div className="nodyra-settings-skeleton" aria-label="Loading MCP access settings">
+          <div role="status" className="nodyra-settings-skeleton" aria-label="Loading MCP access settings">
             <span /><span /><span />
           </div>
         ) : (
@@ -1398,7 +1400,7 @@ function SandboxStatusPanel() {
       icon={LockKey}
     >
       {!status ? (
-        <div className="nodyra-settings-skeleton" aria-label="Loading sandbox status">
+        <div role="status" className="nodyra-settings-skeleton" aria-label="Loading sandbox status">
           <span /><span />
         </div>
       ) : (

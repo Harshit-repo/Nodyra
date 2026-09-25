@@ -159,7 +159,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install nodyra-client
+      - run: python -m pip install ./packages/client
       - name: Run synced workflow
         env:
           NODYRA_BASE_URL: ${{ secrets.NODYRA_BASE_URL }}

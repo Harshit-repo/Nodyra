@@ -16,17 +16,33 @@ spec:
         app: {{ .Release.Name }}-migrate
     spec:
       restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "nodyra.podSecurityContext" . | nindent 8 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: migrate
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "nodyra.apiImage" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- include "nodyra.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           command:
             - sh
             - -c
             - cd apps/api && alembic upgrade head
           env:
-            - name: DATABASE_URL
+            # Crypto data migrations must use the same master key as the API.
+            - name: SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "nodyra.secretName" . }}
-                  key: postgres-url
+                  name: {{ .Values.secret.existingSecret | default (printf "%s-migration-key" .Release.Name) }}
+                  key: secret-key
+            - name: DATABASE_URL
+              # pre-install runs before ordinary chart Secrets exist. Match
+              # the API's configured database without depending on that Secret.
+              value: {{ required "postgres.url is required" .Values.postgres.url | quote }}

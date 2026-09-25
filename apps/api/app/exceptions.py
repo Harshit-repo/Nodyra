@@ -42,6 +42,27 @@ class SingleFlightConflict(ServiceError):
     http_status = _http_status.HTTP_409_CONFLICT
 
 
+class ArtifactRefInvalid(ServiceError):
+    """A caller-supplied artifact reference failed validation.
+
+    The refs in a run's ``cache``/pinned data come from the request body, so a
+    stale or tampered one is a client error. Raised as a bare ValueError it
+    escaped as "500 Internal server error" with no detail — telling the caller
+    nothing and reporting their bad input as our bug.
+    """
+    http_status = _http_status.HTTP_400_BAD_REQUEST
+
+
+class DuplicateRun(ServiceError):
+    """A run with this deduplication key already exists.
+
+    Raised when concurrent deliveries of the same event race past the
+    "have I seen this key?" read and the unique index arbitrates. Callers
+    treat it as a successful de-duplication, not an error.
+    """
+    http_status = _http_status.HTTP_409_CONFLICT
+
+
 class QuotaExceeded(ServiceError):
     """An org-level quota (executions/day, storage, …) has been reached."""
     http_status = _http_status.HTTP_429_TOO_MANY_REQUESTS

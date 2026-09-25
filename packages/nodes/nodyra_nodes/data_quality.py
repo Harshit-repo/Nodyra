@@ -53,7 +53,8 @@ def _json_loads(value: str, default: Any) -> Any:
     id="data_profile_report",
     category=DATA_QUALITY_CATEGORY,
     icon="file-search",
-    requirements=["pandas>=2.0", "ydata-profiling>=4.0"],
+    # ydata-profiling 4.x still imports pkg_resources, removed in setuptools 82.
+    requirements=["pandas>=2.0", "ydata-profiling>=4.0,<5", "setuptools>=78.1.1,<81"],
     input_kinds={"input": "dataset"},
     params={
         "title": {"description": "Report title."},
@@ -72,7 +73,8 @@ def data_profile_report(
     except ImportError as exc:
         raise RuntimeError(
             "Data Profile Report requires pandas and ydata-profiling. Add "
-            "pandas>=2.0 and ydata-profiling>=4.0 to the workflow environment."
+            "pandas>=2.0, ydata-profiling>=4.0,<5, and setuptools>=78.1.1,<81 "
+            "to the workflow environment and rebuild it."
         ) from exc
 
     rows = _to_records(input)
@@ -102,7 +104,7 @@ def data_profile_report(
     category=DATA_QUALITY_CATEGORY,
     icon="file-json",
     requirements=["jsonschema>=4.21"],
-    outputs=["main", "invalid"],
+    outputs=["main", "valid", "invalid"],
     params={
         "schema_json": {
             "description": "JSON Schema object used to validate each record.",
@@ -163,13 +165,16 @@ def schema_validate(
         "n_invalid": len(invalid_rows),
         "valid_rate": len(valid_rows) / max(len(rows), 1),
     }
+    valid_dataset = (
+        records_to_dataset(valid_rows, name="valid-rows.parquet") if include_valid_rows else None
+    )
     return {
-        "main": {
-            **summary,
-            "valid_rows": records_to_dataset(valid_rows, name="valid-rows.parquet")
-            if include_valid_rows
-            else None,
-        },
+        # "main" stays the summary so existing graphs keep working, but the
+        # rows also get their own output: wiring "valid" into the next data
+        # node is the whole point of a validation gate, and reaching into
+        # main.valid_rows used to need a code node to do it.
+        "main": {**summary, "valid_rows": valid_dataset},
+        "valid": valid_dataset,
         "invalid": records_to_dataset(invalid_rows, name="invalid-rows.parquet")
         if invalid_rows
         else None,
@@ -217,6 +222,11 @@ def expectation_suite_run(
         if not isinstance(exp, dict):
             continue
         exp_type = str(exp.get("type") or "").strip()
+        if not exp_type:
+            raise ValueError(
+                f"Expectation {exp_idx} is missing 'type'; supported types: "
+                "not_null, unique, in_set, min, max, regex."
+            )
         column = str(exp.get("column") or "").strip()
         if not column:
             raise ValueError(f"Expectation {exp_idx} is missing column.")
@@ -227,14 +237,10 @@ def expectation_suite_run(
             failed_indexes = [i for i, value in enumerate(values) if value in (None, "")]
         elif exp_type == "unique":
             counts = Counter(str(value) for value in values)
-            failed_indexes = [
-                i for i, value in enumerate(values) if counts[str(value)] > 1
-            ]
+            failed_indexes = [i for i, value in enumerate(values) if counts[str(value)] > 1]
         elif exp_type == "in_set":
             allowed = set(str(v) for v in exp.get("values", []))
-            failed_indexes = [
-                i for i, value in enumerate(values) if str(value) not in allowed
-            ]
+            failed_indexes = [i for i, value in enumerate(values) if str(value) not in allowed]
         elif exp_type == "min":
             minimum = float(exp.get("value"))
             failed_indexes = [
@@ -251,7 +257,10 @@ def expectation_suite_run(
                 i for i, value in enumerate(values) if not pattern.search(str(value or ""))
             ]
         else:
-            raise ValueError(f"Unknown expectation type: {exp_type}")
+            raise ValueError(
+                f"Expectation {exp_idx} has unsupported type {exp_type!r}; "
+                "supported types: not_null, unique, in_set, min, max, regex."
+            )
 
         passed = not failed_indexes
         result = {
@@ -371,9 +380,7 @@ def record_linkage(
             "matches": len(matches),
             "threshold": float(threshold),
         },
-        "matches": records_to_dataset(matches, name="record-linkage.parquet")
-        if matches
-        else None,
+        "matches": records_to_dataset(matches, name="record-linkage.parquet") if matches else None,
     }
 
 
@@ -419,12 +426,7 @@ def data_reconcile(
     compare = [col.strip() for col in compare_columns.split(",") if col.strip()]
     if not compare:
         compare = sorted(
-            {
-                key
-                for row in [*left_rows, *right_rows]
-                for key in row
-                if key not in keys
-            }
+            {key for row in [*left_rows, *right_rows] for key in row if key not in keys}
         )
 
     left_only = [row for key, row in left_by_key.items() if key not in right_by_key]
@@ -451,15 +453,11 @@ def data_reconcile(
     }
     return {
         "main": summary,
-        "left_only": records_to_dataset(left_only, name="left-only.parquet")
-        if left_only
-        else None,
+        "left_only": records_to_dataset(left_only, name="left-only.parquet") if left_only else None,
         "right_only": records_to_dataset(right_only, name="right-only.parquet")
         if right_only
         else None,
-        "changed": records_to_dataset(changed, name="changed.parquet")
-        if changed
-        else None,
+        "changed": records_to_dataset(changed, name="changed.parquet") if changed else None,
     }
 
 
@@ -468,7 +466,7 @@ def data_reconcile(
     id="outlier_detect_statistical",
     category=DATA_QUALITY_CATEGORY,
     icon="scan-search",
-    outputs=["main", "outliers"],
+    outputs=["main", "outliers", "kept"],
     params={
         "column": {"description": "Numeric column to inspect."},
         "method": {"choices": ["zscore", "iqr", "modified_zscore"]},
@@ -488,6 +486,13 @@ def outlier_detect_statistical(
     if not column:
         raise ValueError("column is required.")
 
+    if not any(column in row for row in rows):
+        available = sorted({key for row in rows for key in row})
+        raise ValueError(
+            f"column {column!r} not found. Available columns: "
+            f"{', '.join(available) if available else '(none)'}."
+        )
+
     values: list[tuple[int, float]] = []
     for idx, row in enumerate(rows):
         try:
@@ -495,7 +500,10 @@ def outlier_detect_statistical(
         except (TypeError, ValueError):
             continue
     if len(values) < 3:
-        raise ValueError("At least three numeric values are required.")
+        raise ValueError(
+            f"column {column!r} holds {len(values)} numeric value(s) across "
+            f"{len(rows)} row(s); at least three are required."
+        )
 
     nums = [v for _, v in values]
     outlier_indexes: set[int] = set()
@@ -526,18 +534,22 @@ def outlier_detect_statistical(
         {"_row_index": idx, "_outlier_column": column, **rows[idx]}
         for idx in sorted(outlier_indexes)
     ]
+    # Everything that is not an outlier, so "flag the anomalies, then carry on
+    # with the clean rows" can be wired directly. Without this output the rows
+    # that passed are simply unavailable and have to be rebuilt upstream.
+    kept = [row for idx, row in enumerate(rows) if idx not in outlier_indexes]
     summary = {
         "n_rows": len(rows),
         "n_numeric": len(values),
         "n_outliers": len(outliers),
+        "n_kept": len(kept),
         "method": method,
         "column": column,
     }
     return {
         "main": summary,
-        "outliers": records_to_dataset(outliers, name="outliers.parquet")
-        if outliers
-        else None,
+        "outliers": records_to_dataset(outliers, name="outliers.parquet") if outliers else None,
+        "kept": records_to_dataset(kept, name="kept.parquet") if kept else None,
     }
 
 
@@ -577,9 +589,7 @@ def string_normalize(
             text = text.strip()
         if strip_accents:
             text = "".join(
-                ch
-                for ch in unicodedata.normalize("NFKD", text)
-                if not unicodedata.combining(ch)
+                ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
             )
         if collapse_whitespace:
             text = re.sub(r"\s+", " ", text)
@@ -705,7 +715,7 @@ def currency_normalize(
 
     symbols = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "₹": "INR"}
 
-    def _parse(value: Any) -> tuple[str | None, str]:
+    def _parse(value: Any) -> tuple[float | None, str]:
         text = str(value or "").strip()
         currency = default_currency.upper()
         for symbol, code in symbols.items():
@@ -745,7 +755,12 @@ def currency_normalize(
             amount = Decimal(cleaned)
             if negative:
                 amount = -amount
-            return str(amount), currency
+            # Emit a real number, not text: every downstream consumer of this
+            # column (schema_validate "type": "number", outlier detection,
+            # aggregate, charts) needs it numeric, and a Decimal would survive
+            # Parquet but break JSON previews. The exact original text is still
+            # available in the untouched source column.
+            return float(amount), currency
         except (InvalidOperation, ValueError):
             return None, currency
 

@@ -136,7 +136,7 @@ export function OrganizationSwitcher() {
   }
 
   if (workspace.loading) {
-    return <div className="nodyra-shell-workspace-skeleton" aria-label="Loading workspace" />;
+    return <div role="status" className="nodyra-shell-workspace-skeleton" aria-label="Loading workspace" />;
   }
 
   if (workspace.isSuccess && !multiTenancyEnabled) {

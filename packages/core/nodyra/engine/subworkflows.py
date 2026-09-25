@@ -145,9 +145,7 @@ def extract_leaf_value(
     ``runner._extract_sub_leaf`` and ``nodyra_runtime.server._resolve_inline``.)
     """
     leaves = [
-        nid
-        for nid, status in node_status.items()
-        if status == "success" and nid not in sources
+        nid for nid, status in node_status.items() if status == "success" and nid not in sources
     ]
     if len(leaves) == 1:
         return (node_outputs.get(leaves[0]) or {}).get("main")
@@ -196,20 +194,20 @@ def make_workflow_caller(
         )
         node_status = {nid: str(r.status) for nid, r in result.nodes.items()}
         node_outputs = {nid: dict(r.outputs) for nid, r in result.nodes.items()}
+        if str(result.status) != "success":
+            failure = next((r.error for r in result.nodes.values() if r.error), str(result.status))
+            raise RuntimeError(f"Sub-workflow {call.workflow_id} failed: {failure}")
         return extract_leaf_value(set(directive.sources), node_status, node_outputs)
 
     async def _call(workflow_id: str, input_value: Any) -> Any:
         depth = meta.depth + 1
         if meta.max_depth and depth > meta.max_depth:
             raise RuntimeError(
-                f"sub-workflow depth limit ({meta.max_depth}) exceeded "
-                f"at '{workflow_id}'"
+                f"sub-workflow depth limit ({meta.max_depth}) exceeded at '{workflow_id}'"
             )
         chain = call_chain.get()
         if workflow_id in chain:
-            raise RuntimeError(
-                f"sub-workflow cycle detected — '{workflow_id}' is already running"
-            )
+            raise RuntimeError(f"sub-workflow cycle detected — '{workflow_id}' is already running")
         call = SubworkflowCall(
             workflow_id=workflow_id,
             parameters=input_value,

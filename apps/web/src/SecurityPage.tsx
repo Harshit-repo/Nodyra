@@ -233,7 +233,7 @@ export function SecurityPage() {
         </div>
 
         {!users && !error && (
-          <div className="security-users" aria-label="Loading users">
+          <div role="status" className="security-users" aria-label="Loading users">
             {Array.from({ length: 4 }).map((_, index) => (
               <div className="security-user-row skeleton-row" key={index}>
                 <div>

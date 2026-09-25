@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Documentation — Nodyra</title>
+<meta name="description" content="Nodyra documentation: getting started, MCP quickstart, writing nodes, architecture, deployment, GitOps sync, licensing, and security.">
+<meta name="theme-color" content="#090b10">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Nodyra">
+<meta property="og:title" content="Nodyra Documentation">
+<meta property="og:description" content="Guides, reference, and runbooks for the Python-native workflow automation platform.">
+<meta property="og:url" content="https://nodyra.io/docs.html">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20512%20512%27%3E%20%20%3Cpath%20d%3D%27M%206.5%2091.5L%206.7%2088.1L%207.4%2083.8L%208.4%2079.1L%209.9%2074.2L%2011.8%2069.1L%2014.1%2064L%2016.7%2058.9L%2019.7%2053.9L%2023.1%2048.9L%2026.8%2044.1L%2030.7%2039.4L%2035%2035L%2039.4%2030.7L%2044.1%2026.8L%2048.9%2023.1L%2053.9%2019.7L%2058.9%2016.7L%2064%2014.1L%2069.1%2011.8L%2074.2%209.9L%2079.1%208.4L%2083.8%207.4L%2088.1%206.7L%2091.5%206.5%20%20L%20505.5%206.5%20L%20505.5%206.5%20%20L%20505.3%2088.1%20L%20504.6%2083.8%20L%20503.6%2079.1%20L%20502.1%2074.2%20L%20500.2%2069.1%20L%20497.9%2064%20L%20495.3%2058.9%20L%20492.3%2053.9%20L%20488.9%2048.9%20L%20485.2%2044.1%20L%20481.3%2039.4%20L%20477%2035%20L%20472.6%2030.7%20L%20467.9%2026.8%20L%20463.1%2023.1%20L%20458.1%2019.7%20L%20453.1%2016.7%20L%20448%2014.1%20L%20442.9%2011.8%20L%20437.8%209.9%20L%20432.9%208.4%20L%20428.2%207.4%20L%20423.9%206.7%20L%20420.5%206.5%20L%20505.5%20505.5%20L%20505.5%20505.5%20%20L%20505.3%20423.9%20L%20504.6%20428.2%20L%20503.6%20432.9%20L%20502.1%20437.8%20L%20500.2%20442.9%20L%20497.9%20448%20L%20495.3%20453.1%20L%20492.3%20458.1%20L%20488.9%20463.1%20L%20485.2%20467.9%20L%20481.3%20472.6%20L%20477%20477%20L%20472.6%20481.3%20L%20467.9%20485.2%20L%20463.1%20488.9%20L%20458.1%20492.3%20L%20453.1%20495.3%20L%20448%20497.9%20L%20442.9%20500.2%20L%20437.8%20502.1%20L%20432.9%20503.6%20L%20428.2%20504.6%20L%20423.9%20505.3%20L%20420.5%20505.5%20L%206.5%20505.5%20L%206.5%20505.5%20%20L%206.7%20423.9%20L%207.4%20428.2%20L%208.4%20432.9%20L%209.9%20437.8%20L%2011.8%20442.9%20L%2014.1%20448%20L%2016.7%20453.1%20L%2019.7%20458.1%20L%2023.1%20463.1%20L%2026.8%20467.9%20L%2030.7%20472.6%20L%2035%20477%20L%2039.4%20481.3%20L%2044.1%20485.2%20L%2048.9%20488.9%20L%2053.9%20492.3%20L%2058.9%20495.3%20L%2064%20497.9%20L%2069.1%20500.2%20L%2074.2%20502.1%20L%2079.1%20503.6%20L%2083.8%20504.6%20L%2088.1%20505.3%20L%2091.5%20505.5%20L%206.5%206.5%20L%206.5%206.5%20%20L%206.7%2088.1%20L%207.4%2083.8%20L%208.4%2079.1%20L%209.9%2074.2%20L%2011.8%2069.1%20L%2014.1%2064%20L%2016.7%2058.9%20L%2019.7%2053.9%20L%2023.1%2048.9%20L%2026.8%2044.1%20L%2030.7%2039.4%20L%2035%2035%20L%2039.4%2030.7%20L%2044.1%2026.8%20L%2048.9%2023.1%20L%2053.9%2019.7%20L%2058.9%2016.7%20L%2064%2014.1%20L%2069.1%2011.8%20L%2074.2%209.9%20L%2079.1%208.4%20L%2083.8%207.4%20L%2088.1%206.7%20L%2091.5%206.5%20Z%27%20fill%3D%27%231456D0%27%2F%3E%20%20%3Cpath%20d%3D%27M%206.5%2091.5L%206.7%2088.1L%207.4%2083.8L%208.4%2079.1L%209.9%2074.2L%2011.8%2069.1L%2014.1%2064L%2016.7%2058.9L%2019.7%2053.9L%2023.1%2048.9L%2026.8%2044.1L%2030.7%2039.4L%2035%2035L%2039.4%2030.7L%2044.1%2026.8L%2048.9%2023.1L%2053.9%2019.7L%2058.9%2016.7L%2064%2014.1L%2069.1%2011.8L%2074.2%209.9L%2079.1%208.4L%2083.8%207.4L%2088.1%206.7L%2091.5%206.5%20%20L%20505.5%206.5%20L%20505.5%206.5%20%20L%20505.3%2088.1%20L%20504.6%2083.8%20L%20503.6%2079.1%20L%20502.1%2074.2%20L%20500.2%2069.1%20L%20497.9%2064%20L%20495.3%2058.9%20L%20492.3%2053.9%20L%20488.9%2048.9%20L%20485.2%2044.1%20L%20481.3%2039.4%20L%20477%2035%20L%20472.6%2030.7%20L%20467.9%2026.8%20L%20463.1%2023.1%20L%20458.1%2019.7%20L%20453.1%2016.7%20L%20448%2014.1%20L%20442.9%2011.8%20L%20437.8%209.9%20L%20432.9%208.4%20L%20428.2%207.4%20L%20423.9%206.7%20L%20420.5%206.5%20L%20505.5%20505.5%20L%20505.5%20505.5%20%20L%20505.3%20423.9%20L%20504.6%20428.2%20L%20503.6%20432.9%20L%20502.1%20437.8%20L%20500.2%20442.9%20L%20497.9%20448%20L%20495.3%20453.1%20L%20492.3%20458.1%20L%20488.9%20463.1%20L%20485.2%20467.9%20L%20481.3%20472.6%20L%20477%20477%20L%20472.6%20481.3%20L%20467.9%20485.2%20L%20463.1%20488.9%20L%20458.1%20492.3%20L%20453.1%20495.3%20L%20448%20497.9%20L%20442.9%20500.2%20L%20437.8%20502.1%20L%20432.9%20503.6%20L%20428.2%20504.6%20L%20423.9%20505.3%20L%20420.5%20505.5%20L%206.5%20505.5%20L%206.5%20505.5%20%20L%206.7%20423.9%20L%207.4%20428.2%20L%208.4%20432.9%20L%209.9%20437.8%20L%2011.8%20442.9%20L%2014.1%20448%20L%2016.7%20453.1%20L%2019.7%20458.1%20L%2023.1%20463.1%20L%2026.8%20467.9%20L%2030.7%20472.6%20L%2035%20477%20L%2039.4%20481.3%20L%2044.1%20485.2%20L%2048.9%20488.9%20L%2053.9%20492.3%20L%2058.9%20495.3%20L%2064%20497.9%20L%2069.1%20500.2%20L%2074.2%20502.1%20L%2079.1%20503.6%20L%2083.8%20504.6%20L%2088.1%20505.3%20L%2091.5%20505.5%20L%206.5%206.5%20L%206.5%206.5%20%20L%206.7%2088.1%20L%207.4%2083.8%20L%208.4%2079.1%20L%209.9%2074.2%20L%2011.8%2069.1%20L%2014.1%2064%20L%2016.7%2058.9%20L%2019.7%2053.9%20L%2023.1%2048.9%20L%2026.8%2044.1%20L%2030.7%2039.4%20L%2035%2035%20L%2039.4%2030.7%20L%2044.1%2026.8%20L%2048.9%2023.1%20L%2053.9%2019.7%20L%2058.9%2016.7%20L%2064%2014.1%20L%2069.1%2011.8%20L%2074.2%209.9%20L%2079.1%208.4%20L%2083.8%207.4%20L%2088.1%206.7%20L%2091.5%206.5%20Z%27%20fill%3D%27none%27%20stroke%3D%27%237fb6ff%27%20stroke-opacity%3D%270.2%27%20stroke-width%3D%272%27%2F%3E%20%20%3Cpath%20d%3D%27M%20144%20125%20L%20159.5%20125%20L%20175%20125%20L%20175.5%20126%20L%20176%20127%20L%20181.5%20128%20L%20187%20129%20L%20195.5%20134%20L%20204%20139%20L%20287.5%20224%20L%20371%20309%20L%20382%20316%20L%20393%20323%20L%20400.5%20325%20L%20408%20327%20L%20416%20327.5%20L%20424%20328%20L%20433.5%20326.5%20L%20443%20325%20L%20452%20321%20L%20461%20317%20L%20466.5%20313%20L%20472%20309%20L%20480.5%20299.5%20L%20489%20290%20L%20494.5%20280.5%20L%20500%20271%20L%20502.5%20263%20L%20505%20255%20L%20505%20315.5%20L%20505%20376%20L%20501%20379%20L%20497%20382%20L%20497%20383%20L%20497%20384%20L%20495.5%20384%20L%20494%20384%20L%20486.5%20390%20L%20479%20396%20L%20471%20400%20L%20463%20404%20L%20460.5%20404%20L%20458%20404%20L%20457.5%20405%20L%20457%20406%20L%20451.5%20407%20L%20446%20408%20L%20445.5%20409%20L%20445%20410%20L%20441%20410%20L%20437%20410%20L%20436%20411%20L%20435%20412%20L%20420.5%20413%20L%20406%20414%20L%20405%20413%20L%20404%20412%20L%20397%20412%20L%20390%20412%20L%20389.5%20411%20L%20389%20410%20L%20385.5%20410%20L%20382%20410%20L%20381.5%20409%20L%20381%20408%20L%20375.5%20407%20L%20370%20406%20L%20360%20401%20L%20350%20396%20L%20348.5%20394%20L%20347%20392%20L%20345.5%20392%20L%20344%20392%20L%20344%20391%20L%20344%20390%20L%20339%20387%20L%20334%20384%20L%20334%20383%20L%20334%20382%20L%20333%20382%20L%20332%20382%20L%20332%20381%20L%20332%20380%20L%20331%20380%20L%20330%20380%20L%20330%20379%20L%20330%20378%20L%20329%20378%20L%20328%20378%20L%20328%20377%20L%20328%20376%20L%20327%20376%20L%20326%20376%20L%20326%20375%20L%20326%20374%20L%20312.5%20360.5%20L%20299%20347%20L%20298%20347%20L%20297%20347%20L%20297%20346%20L%20297%20345%20L%20296%20345%20L%20295%20345%20L%20295%20344%20L%20295%20343%20L%20294%20343%20L%20293%20343%20L%20293%20342%20L%20293%20341%20L%20292%20341%20L%20291%20341%20L%20291%20340%20L%20291%20339%20L%20290%20339%20L%20289%20339%20L%20289%20338%20L%20289%20337%20L%20288%20337%20L%20287%20337%20L%20287%20336%20L%20287%20335%20L%20286%20335%20L%20285%20335%20L%20285%20334%20L%20285%20333%20L%20284%20333%20L%20283%20333%20L%20283%20332%20L%20283%20331%20L%20282%20331%20L%20281%20331%20L%20281%20330%20L%20281%20329%20L%20280%20329%20L%20279%20329%20L%20279%20328%20L%20279%20327%20L%20278%20327%20L%20277%20327%20L%20277%20326%20L%20277%20325%20L%20276%20325%20L%20275%20325%20L%20275%20324%20L%20275%20323%20L%20274%20323%20L%20273%20323%20L%20273%20322%20L%20273%20321%20L%20272%20321%20L%20271%20321%20L%20271%20320%20L%20271%20319%20L%20270%20319%20L%20269%20319%20L%20269%20318%20L%20269%20317%20L%20268%20317%20L%20267%20317%20L%20267%20316%20L%20267%20315%20L%20266%20315%20L%20265%20315%20L%20265%20314%20L%20265%20313%20L%20264%20313%20L%20263%20313%20L%20263%20312%20L%20263%20311%20L%20262%20311%20L%20261%20311%20L%20261%20310%20L%20261%20309%20L%20260%20309%20L%20259%20309%20L%20259%20308%20L%20259%20307%20L%20258%20307%20L%20257%20307%20L%20257%20306%20L%20257%20305%20L%20256%20305%20L%20255%20305%20L%20255%20304%20L%20255%20303%20L%20253%20302%20L%20251%20301%20L%20251%20300%20L%20251%20299%20L%20250%20299%20L%20249%20299%20L%20249%20298%20L%20249%20297%20L%20248%20297%20L%20247%20297%20L%20247%20296%20L%20247%20295%20L%20227.5%20275.5%20L%20208%20256%20L%20206.5%20255%20L%20205%20254%20L%20200%20254%20L%20195%20254%20L%20193.5%20255.5%20L%20192%20257%20L%20192%20355.5%20L%20192%20454%20L%20194%20462.5%20L%20196%20471%20L%20201%20479.5%20L%20206%20488%20L%20211%20493%20L%20216%20498%20L%20222%20501.5%20L%20228%20505%20L%20176%20505%20L%20124%20505%20L%20118.5%20500%20L%20113%20495%20L%20113%20494%20L%20113%20493%20L%20112%20493%20L%20111%20493%20L%20111%20492%20L%20111%20491%20L%20110%20491%20L%20109%20491%20L%20109%20489.5%20L%20109%20488%20L%20107%20486.5%20L%20105%20485%20L%20104%20482%20L%20103%20479%20L%20102%20479%20L%20101%20479%20L%2095%20461%20L%2089%20443%20L%2088.5%20319%20L%2088%20195%20L%2089.5%20184.5%20L%2091%20174%20L%2092%20173.5%20L%2093%20173%20L%2093%20171%20L%2093%20169%20L%2096%20163%20L%2099%20157%20L%20101%20155.5%20L%20103%20154%20L%20103%20152.5%20L%20103%20151%20L%20112%20143%20L%20121%20135%20L%20132.5%20130.5%20L%20144%20126%20Z%27%20fill%3D%27%23ffffff%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%271.4%27%20stroke-linejoin%3D%27round%27%20stroke-linecap%3D%27round%27%2F%3E%3C%2Fsvg%3E">
+<link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAViSURBVFhHtZdtbFNVGMfP1pd17W27rb13420xE0qgjiABhAwN5PJax0bL2o29sCVoGAsfIPDFD5oMY3wBjJGEKFESiboERVAHihFBUaJjXYtsDBiwl8AEpoIwGGs3//rcrmO9ve1KnP/knzS35/T59Z7nOec5jDGWwRgTRzrFYhMNOYtFQ/YYWnhSNAjTRPO0StGQUygashdKZvr0nBVqnRmMMWiMk5D29JvIKm6AsOYs+OIzY2Kh7CKsjs+g0VvA2dwQVv8AYW0XBE8jmNmWL2qM46G15kJwn0ZW1VXwJS2wFv86di5pBe9ugEqXJv1RNTcOlvzDEMrawAw5+aJ5xnpYC48hq+IyeI8PVo9/jH0GQul5pPAzJQAJwpAFwXkCjNZhQmUbMssu/E/BQxYqOqB/3DkMQOamuAhggZhVcAh8ydmoSWNpoaITpllbIwDUKUYwlUolplimP1x3hckW95AVvkvUfNllpC/cHQEwZCaqtEZYXT/CShDhCR4/Mtx+qB1eaPO90Bc2QfOsVzLByAOM6jXnYcmvR1KyKhogiTFkLN8PvvRiKHixHyaXD4bCJlTuaEf9L7dx6lwvDp66hbLXryAl34u01T4JMipQLBc3g3efhtqQGQ1AH9LytoMvb5cGpxf5YHT68MnJP6Gk977ukd6E2fUoEKH9ICVztjIAl1sNoaJLGpy8ohEvf9wtjxuhvUd/h8rR+EgQlIiGKW5lgNTsJRDKryC9KDS480a/PGaU9hzpkWBpOeTBlMxTJcx+QRlAm24DX9IMzumHfX0L+vr/lsdT1O76m0hKEEKqhEV7lAFUWg5W5/fgXM2YWdOC/mBiAKRdn99A0vIEIKgSVn6FZJUmGoCcsbQOxqILmLGhBQ8CiQOQ3joYgqAEjgocdvFZ8B4v1NwEZQDz/Fdh9FxBbjUtwaA8xqja8el1sLgQVAlt0I2bpwzA2Z+DqaQjLgDtCe8e6ZE/HtZr+38DWxYbQqqEqaWheBwXCaCbuAgmzyU8sb4F92MA1H7UDTbvZ+z+8qb8q2G9UheCyBiqqJGmSjA/9ZIUr6qqMhJAY86ByeWHvboV9x8oA+w8cB1syWmp/N45HBui9sNusKXRb0IovwzV3F3IEqzo6uyMBEjWpIJzfAv7hjbciwNAyUYbEO2Gdcf/kA8ZFkEQKNmwqgmpBU1gy/wY7/oGjd4maUwEAFm/8APYazpGBaDdj84LOhfqTsSGOOr9C4W1lzCz5hzmb2rFlj1d6OwJ/XZ/f380gG5WLewbr6K3Lz6AtJ50aDmHIOK8CVJwILqsFQHUkytg33gNdxMAGAlBR3a8nFBSIBCIBkgS8jC9piNhAAnC45dygp4/KkQUAEudhGnPN+Nun3xoSEoAIyF0K73SITWaBoJ92Lx5kwIA02Bq+XHceSCfElIsgDAEnQeU9VU72+Ftu4dB2dLf7h1AfcNdLN78UzimHIBhsnMf7gQiJ4YVDyBs6h1VDq9UJZT5FW+0o/rtTri2XYJtXTO0K/3QFfigMT0GZrDYRBV1pyMAchZvw73opJW0IwGAsKmnpF6S+kp6K5So1GkRILV/xqluMLqrSf35CADT9DJ03ZaHDmk7HTjLEgOIbR+spReRWfAF3YwKRWH1Saj1wkMI/RzsPaachYdO3fqPAD6p97Q4DsKcuy50M6KLIt3V1MaJIYBkHgu2nIfSKgQGgLwtbUh2+KUOis74hL2mFcLaa7Cu+g5qUza05mww/YS8FXRLpXOadx4HZyuChhOQ/MwBbH2/G/f7AggGBxAIBiUPDg6gpaMXczY2w7SqAby7MTF7mmB1noB57otQ6dKlP6r+97L6D9uYrvPzgOymAAAAAElFTkSuQmCC">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script>document.documentElement.classList.add('js');</script>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#090b10;--surface:#10141c;--surface-2:#161b25;--surface-3:#1f2632;
+  --canvas:#0b0e14;--line:#242c3a;--line-2:#1a2029;
+  --ink:#e9eef6;--ink-2:#98a4ba;--ink-3:#8a93a6;
+  --accent:#4c9eff;--accent-2:#79b6ff;--accent-deep:#1f4f8f;
+  --accent-glow:rgba(76,158,255,0.18);
+  --amber:#ffd479;--ok:#57c98a;
+  --radius:11px;--radius-sm:7px;
+  --font-display:"Bricolage Grotesque",system-ui,sans-serif;
+  --font-sans:"Hanken Grotesk",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent;-webkit-tap-highlight-color:transparent}
+html{scroll-behavior:smooth}
+body{font-family:var(--font-sans);font-size:15px;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.6;overflow-x:hidden}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+::selection{background:var(--accent);color:#06101e}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit}
+.skip-link{position:absolute;left:12px;top:-60px;z-index:100;background:var(--accent);color:#fff;font-weight:700;font-size:13px;padding:10px 16px;border-radius:8px;transition:top 140ms ease}
+.skip-link:focus{top:12px;outline:2px solid #fff;outline-offset:2px}
+
+/* top bar */
+.dt-bar{position:sticky;top:0;z-index:60;height:58px;background:rgba(9,11,16,0.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line-2);display:flex;align-items:center;gap:14px;padding:0 18px}
+.dt-brand{display:flex;align-items:center;gap:9px;flex-shrink:0}
+.brand-mark{width:26px;height:26px;border-radius:6px;box-shadow:0 4px 14px -6px rgba(20,86,208,0.65);display:block}
+.dt-brand-name{font-family:var(--font-display);font-size:18px;font-weight:800;letter-spacing:-0.04em;color:var(--ink)}
+.dt-badge{font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);background:var(--accent-glow);border:1px solid rgba(76,158,255,0.28);border-radius:5px;padding:2px 8px;flex-shrink:0}
+.dt-search{position:relative;margin-left:auto;margin-right:6px;width:min(340px,38vw);flex-shrink:1}
+.dt-search input{width:100%;font-family:var(--font-sans);font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:8px 12px 8px 34px;outline:none;transition:border-color 120ms ease,box-shadow 120ms ease}
+.dt-search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.dt-search input::placeholder{color:var(--ink-3)}
+.dt-search .ds-ic{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--ink-3);pointer-events:none;display:flex}
+.dt-search .kbd-hint{position:absolute;right:9px;top:50%;transform:translateY(-50%);font-family:var(--font-mono);font-size:10px;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line-2);border-radius:4px;padding:1px 6px;pointer-events:none}
+.dt-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.dt-btn{font-size:12.5px;font-weight:600;color:var(--ink-2);border:1px solid var(--line);background:var(--surface-2);border-radius:8px;padding:6px 12px;display:inline-flex;align-items:center;gap:6px;transition:background 120ms,border-color 120ms,color 120ms;white-space:nowrap}
+.dt-btn:hover{background:var(--surface-3);color:var(--ink);border-color:var(--accent-deep)}
+.dt-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.dt-btn-primary{background:linear-gradient(180deg,var(--accent-2),var(--accent));color:#fff;border-color:var(--accent-deep)}
+.dt-btn-primary:hover{background:linear-gradient(180deg,#93c4ff,var(--accent-2));color:#fff}
+.dt-burger{display:none;width:36px;height:36px;border:1px solid var(--line);background:var(--surface-2);border-radius:8px;cursor:pointer;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:0;flex-shrink:0}
+.dt-burger span{display:block;width:15px;height:2px;border-radius:2px;background:var(--ink-2)}
+@media(max-width:900px){.dt-burger{display:flex}.dt-search{width:min(320px,46vw)}.kbd-hint{display:none}}
+@media(max-width:560px){.dt-badge{display:none}.dt-actions .gh{display:none}.dt-search{width:auto;flex:1}}
+@media(max-width:360px){.dt-actions .dt-btn{display:none}.dt-bar{padding:0 12px}}
+
+/* results dropdown */
+.dresults{position:absolute;top:calc(100% + 8px);left:0;right:0;background:var(--surface);border:1px solid var(--line);border-radius:11px;box-shadow:0 24px 60px -20px rgba(0,0,0,0.85);overflow:hidden;display:none;z-index:70}
+.dresults.open{display:block}
+.dr-item{display:flex;flex-direction:column;gap:1px;padding:9px 14px;cursor:pointer;border-bottom:1px solid var(--line-2)}
+.dr-item:last-child{border-bottom:none}
+.dr-item:hover,.dr-item.sel{background:var(--surface-2)}
+.dr-title{font-size:13px;font-weight:600;color:var(--ink)}
+.dr-title mark{background:transparent;color:var(--accent-2);font-weight:700}
+.dr-sub{font-size:11px;color:var(--ink-3);font-family:var(--font-mono)}
+.dr-group{font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink-3);padding:8px 14px 3px}
+.dr-empty{padding:14px;font-size:13px;color:var(--ink-3)}
+
+/* layout */
+.dl{display:grid;grid-template-columns:264px minmax(0,1fr);max-width:1440px;margin:0 auto}
+@media(min-width:1280px){.dl{grid-template-columns:264px minmax(0,1fr) 210px}}
+
+/* sidebar */
+.dside{position:sticky;top:58px;height:calc(100vh - 58px);height:calc(100dvh - 58px);overflow-y:auto;border-right:1px solid var(--line-2);padding:22px 12px 60px;background:rgba(9,11,16,0.5)}
+.ds-group{margin-bottom:22px}
+.ds-group-label{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);padding:0 10px 7px;display:flex;align-items:center;gap:8px}
+.ds-group-label::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--accent);opacity:0.55}
+.ds-link{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:500;color:var(--ink-2);padding:6px 10px;border-radius:7px;transition:background 110ms,color 110ms}
+.ds-link:hover{background:var(--surface-2);color:var(--ink)}
+.ds-link:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.ds-link.active{background:var(--accent-glow);color:var(--accent-2);font-weight:600}
+.ds-link .ds-dot{width:6px;height:6px;border-radius:50%;background:var(--ink-3);opacity:0.55;flex-shrink:0}
+.ds-link.active .ds-dot{background:var(--accent);opacity:1;box-shadow:0 0 8px rgba(76,158,255,0.7)}
+.ds-foot{margin-top:26px;padding:12px;border:1px solid var(--line-2);border-radius:10px;background:var(--surface);font-size:11.5px;color:var(--ink-3);line-height:1.6}
+.ds-foot a{color:var(--accent);font-weight:600}
+.ds-foot a:hover{text-decoration:underline}
+
+/* content */
+.dcontent{padding:44px 52px 90px;min-width:0;max-width:860px}
+@media(max-width:900px){.dcontent{padding:32px 26px 80px}}
+.dcrumb{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);display:flex;align-items:center;gap:7px;margin-bottom:16px;flex-wrap:wrap}
+.dcrumb a:hover{color:var(--accent)}
+.dcrumb .sep{opacity:0.5}
+.dcrumb .here{color:var(--ink-2)}
+.dpage-title{font-family:var(--font-display);font-size:clamp(30px,4vw,42px);font-weight:800;letter-spacing:-0.03em;line-height:1.05;margin-bottom:10px;text-wrap:balance}
+.dpage-desc{font-size:16px;color:var(--ink-2);max-width:60ch;line-height:1.65;margin-bottom:30px}
+.dsec{margin-top:44px;scroll-margin-top:76px}
+.dsec h2{font-family:var(--font-display);font-size:23px;font-weight:700;letter-spacing:-0.02em;margin-bottom:14px;display:flex;align-items:center;gap:10px;scroll-margin-top:76px}
+.dsec h2 .hanchor{color:var(--ink-3);font-size:19px;opacity:0;transition:opacity 120ms;font-family:var(--font-mono);font-weight:400}
+.dsec h2:hover .hanchor{opacity:1}
+.dsec h3{font-family:var(--font-display);font-size:16.5px;font-weight:700;margin:26px 0 8px}
+.dsec p{font-size:15px;color:var(--ink-2);line-height:1.7;margin-bottom:14px;overflow-wrap:break-word}
+.dsec p strong,.dsec li strong{color:var(--ink)}
+.dsec ul,.dsec ol{margin:0 0 16px 22px;display:flex;flex-direction:column;gap:6px}
+.dsec li{font-size:15px;color:var(--ink-2);line-height:1.65;overflow-wrap:break-word}
+.dsec li::marker{color:var(--accent)}
+.dsec code{font-family:var(--font-mono);font-size:12.5px;color:var(--accent-2);background:rgba(76,158,255,0.09);border:1px solid rgba(76,158,255,0.16);border-radius:5px;padding:1px 6px}
+.dsec a{color:var(--accent);font-weight:500}
+.dsec a:hover{text-decoration:underline}
+.dsec .dlink-mono{font-family:var(--font-mono);font-size:12.5px}
+.dsec table{width:100%;max-width:100%;display:block;overflow-x:auto;overflow-y:hidden;border-collapse:collapse;margin:16px 0 22px;font-size:13.5px;background:var(--surface);border:1px solid var(--line-2);border-radius:10px}
+.dsec th{text-align:left;font-family:var(--font-mono);font-size:10.5px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:var(--ink-3);background:var(--surface-2);padding:10px 14px;border-bottom:1px solid var(--line)}
+.dsec td{padding:10px 14px;border-bottom:1px solid var(--line-2);color:var(--ink-2);vertical-align:top}
+.dsec tr:last-child td{border-bottom:none}
+.dsec td code{font-size:11.5px}
+
+/* callouts */
+.dcall{display:flex;gap:12px;padding:14px 16px;border-radius:10px;border:1px solid;margin:18px 0;font-size:14px;line-height:1.65}
+.dcall .dc-ic{flex-shrink:0;width:20px;height:20px;display:grid;place-items:center;margin-top:1px;border:1px solid currentColor;border-radius:50%;font-family:var(--font-mono);font-weight:700;font-size:11px}
+.dcall p{margin:0;color:var(--ink-2)}
+.dcall strong{color:var(--ink)}
+.dcall-info{background:rgba(76,158,255,0.06);border-color:rgba(76,158,255,0.3)}
+.dcall-info .dc-ic{color:var(--accent)}
+.dcall-warn{background:rgba(255,212,121,0.05);border-color:rgba(255,212,121,0.3)}
+.dcall-warn .dc-ic{color:var(--amber)}
+.dcall-danger{background:rgba(240,116,122,0.06);border-color:rgba(240,116,122,0.3)}
+.dcall-danger .dc-ic{color:#f39a9e}
+
+/* code blocks */
+.dcode{margin:16px 0 22px;border-radius:11px;overflow:hidden;background:#060810;border:1px solid var(--line-2)}
+.dcode-head{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--surface-2);border-bottom:1px solid var(--line-2)}
+.dcode-lang{font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink-3)}
+.dcode-copy{margin-left:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);background:transparent;border:1px solid var(--line);border-radius:6px;padding:3px 9px;cursor:pointer;transition:color 120ms,border-color 120ms}
+.dcode-copy:hover{color:var(--ink);border-color:var(--accent-deep)}
+.dcode-copy.copied{color:var(--ok);border-color:rgba(87,201,138,0.4)}
+.dcode pre{padding:14px 18px;overflow:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.7;color:var(--ink-2);white-space:pre}
+.dcode pre .c-cm{color:var(--ink-3)}
+.dcode pre .c-kw{color:#4c9eff}
+.dcode pre .c-str{color:#8fd06f}
+.dcode pre .c-fn{color:#79b6ff}
+.dcode pre .c-dec{color:#ffd479}
+.dcode pre .c-num{color:#c4a6ff}
+
+/* right rail */
+.dtoc{position:sticky;top:58px;height:calc(100vh - 58px);height:calc(100dvh - 58px);overflow-y:auto;padding:34px 20px 60px;display:none}
+@media(min-width:1280px){.dtoc{display:block}}
+.dtoc-label{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px}
+.dtoc a{display:block;font-size:12.5px;color:var(--ink-3);padding:4px 0 4px 12px;border-left:1px solid var(--line-2);transition:color 110ms,border-color 110ms}
+.dtoc a:hover{color:var(--ink-2)}
+.dtoc a.active{color:var(--accent-2);border-left-color:var(--accent)}
+.dtoc .dtoc-edit{margin-top:22px;padding-top:16px;border-top:1px solid var(--line-2);display:flex;flex-direction:column;gap:10px}
+
+/* pager */
+.dpager{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:64px;padding-top:28px;border-top:1px solid var(--line-2)}
+@media(max-width:560px){.dpager{grid-template-columns:1fr}.dpager a.dp-next{text-align:left;align-items:flex-start}}
+.dpager a{display:flex;flex-direction:column;gap:3px;background:var(--surface);border:1px solid var(--line-2);border-radius:11px;padding:14px 18px;transition:border-color 120ms,background 120ms}
+.dpager a:hover{border-color:var(--accent-deep);background:var(--surface-2)}
+.dpager .dp-dir{font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink-3)}
+.dpager .dp-title{font-size:14px;font-weight:600;color:var(--ink)}
+.dpager a.dp-next{text-align:right;align-items:flex-end}
+.dpager a.dp-next .dp-title{color:var(--accent-2)}
+
+/* mobile sidebar */
+.ds-overlay{position:fixed;inset:0;background:rgba(4,6,10,0.6);z-index:80;display:none;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+body.nav-open .ds-overlay{display:block}
+@media(max-width:900px){
+  .dside{position:fixed;top:58px;left:0;bottom:0;width:280px;z-index:90;background:var(--bg);transform:translateX(-105%);transition:transform 200ms ease;border-right:1px solid var(--line);box-shadow:24px 0 60px -20px rgba(0,0,0,0.8)}
+  body.nav-open .dside{transform:none}
+  .dl{grid-template-columns:minmax(0,1fr)}
+}
+@media(min-width:901px){.ds-overlay{display:none!important}}
+
+/* welcome page cards */
+.dhome-cards{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:26px 0 10px}
+@media(max-width:640px){.dhome-cards{grid-template-columns:1fr}}
+.dhome-card{background:var(--surface);border:1px solid var(--line-2);border-radius:11px;padding:18px;transition:border-color 120ms,background 120ms}
+.dhome-card:hover{border-color:var(--accent-deep);background:var(--surface-2)}
+.dhome-card h4{font-size:14.5px;font-weight:700;margin-bottom:5px;display:flex;align-items:center;gap:8px}
+.dhome-card h4 .dh-ic{color:var(--accent)}
+.dhome-card p{font-size:13px;color:var(--ink-2);line-height:1.55;margin:0}
+
+@media(prefers-reduced-motion:reduce){*{animation-duration:0.01ms!important;transition-duration:0.01ms!important}html{scroll-behavior:auto}}
+
+/* print — content only */
+@media print{
+  .dt-bar,.dside,.dtoc,.ds-overlay,.dpager,.dcrumb,.dcode-copy{display:none!important}
+  body{background:#fff;color:#111}
+  .dl{display:block;max-width:none}
+  .dcontent{max-width:none;padding:0}
+  .dpage-title,.dsec h2,.dsec h3{color:#111}
+  .dsec p,.dsec li,.dsec td{color:#222}
+  .dsec code{color:#0b4fa0;background:#f0f4fa;border-color:#d5e2f5}
+  .dcode{background:#f7f9fc;border-color:#dde5ef}
+  .dcode pre{color:#222;white-space:pre-wrap}
+  .dcode pre .c-kw{color:#0b4fa0}.dcode pre .c-str{color:#1a7a44}.dcode pre .c-fn{color:#0b5bb5}.dcode pre .c-dec{color:#9a6700}.dcode pre .c-cm{color:#666}
+  .dcall{border-color:#dde5ef}
+  .dcall p{color:#222}
+  .dsec a{color:#0b4fa0}
+  .dsec table{border-color:#dde5ef;display:table}
+  .dsec th{background:#f0f4fa}
+  .dsec tr,.dsec td,.dsec th{break-inside:avoid}
+  .dsec{break-inside:avoid-page}
+  .hanchor{display:none}
+}
+</style>
+</head>
+<body>
+<a href="#doc-content" class="skip-link">Skip to content</a>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="nodyra-mark" viewBox="0 0 512 512">
+    <path d="M 6.5 91.5L 6.7 88.1L 7.4 83.8L 8.4 79.1L 9.9 74.2L 11.8 69.1L 14.1 64L 16.7 58.9L 19.7 53.9L 23.1 48.9L 26.8 44.1L 30.7 39.4L 35 35L 39.4 30.7L 44.1 26.8L 48.9 23.1L 53.9 19.7L 58.9 16.7L 64 14.1L 69.1 11.8L 74.2 9.9L 79.1 8.4L 83.8 7.4L 88.1 6.7L 91.5 6.5  L 505.5 6.5 L 505.5 6.5  L 505.3 88.1 L 504.6 83.8 L 503.6 79.1 L 502.1 74.2 L 500.2 69.1 L 497.9 64 L 495.3 58.9 L 492.3 53.9 L 488.9 48.9 L 485.2 44.1 L 481.3 39.4 L 477 35 L 472.6 30.7 L 467.9 26.8 L 463.1 23.1 L 458.1 19.7 L 453.1 16.7 L 448 14.1 L 442.9 11.8 L 437.8 9.9 L 432.9 8.4 L 428.2 7.4 L 423.9 6.7 L 420.5 6.5 L 505.5 505.5 L 505.5 505.5  L 505.3 423.9 L 504.6 428.2 L 503.6 432.9 L 502.1 437.8 L 500.2 442.9 L 497.9 448 L 495.3 453.1 L 492.3 458.1 L 488.9 463.1 L 485.2 467.9 L 481.3 472.6 L 477 477 L 472.6 481.3 L 467.9 485.2 L 463.1 488.9 L 458.1 492.3 L 453.1 495.3 L 448 497.9 L 442.9 500.2 L 437.8 502.1 L 432.9 503.6 L 428.2 504.6 L 423.9 505.3 L 420.5 505.5 L 6.5 505.5 L 6.5 505.5  L 6.7 423.9 L 7.4 428.2 L 8.4 432.9 L 9.9 437.8 L 11.8 442.9 L 14.1 448 L 16.7 453.1 L 19.7 458.1 L 23.1 463.1 L 26.8 467.9 L 30.7 472.6 L 35 477 L 39.4 481.3 L 44.1 485.2 L 48.9 488.9 L 53.9 492.3 L 58.9 495.3 L 64 497.9 L 69.1 500.2 L 74.2 502.1 L 79.1 503.6 L 83.8 504.6 L 88.1 505.3 L 91.5 505.5 L 6.5 6.5 L 6.5 6.5  L 6.7 88.1 L 7.4 83.8 L 8.4 79.1 L 9.9 74.2 L 11.8 69.1 L 14.1 64 L 16.7 58.9 L 19.7 53.9 L 23.1 48.9 L 26.8 44.1 L 30.7 39.4 L 35 35 L 39.4 30.7 L 44.1 26.8 L 48.9 23.1 L 53.9 19.7 L 58.9 16.7 L 64 14.1 L 69.1 11.8 L 74.2 9.9 L 79.1 8.4 L 83.8 7.4 L 88.1 6.7 L 91.5 6.5 Z" fill="#1456D0"/>
+    <path d="M 6.5 91.5L 6.7 88.1L 7.4 83.8L 8.4 79.1L 9.9 74.2L 11.8 69.1L 14.1 64L 16.7 58.9L 19.7 53.9L 23.1 48.9L 26.8 44.1L 30.7 39.4L 35 35L 39.4 30.7L 44.1 26.8L 48.9 23.1L 53.9 19.7L 58.9 16.7L 64 14.1L 69.1 11.8L 74.2 9.9L 79.1 8.4L 83.8 7.4L 88.1 6.7L 91.5 6.5  L 505.5 6.5 L 505.5 6.5  L 505.3 88.1 L 504.6 83.8 L 503.6 79.1 L 502.1 74.2 L 500.2 69.1 L 497.9 64 L 495.3 58.9 L 492.3 53.9 L 488.9 48.9 L 485.2 44.1 L 481.3 39.4 L 477 35 L 472.6 30.7 L 467.9 26.8 L 463.1 23.1 L 458.1 19.7 L 453.1 16.7 L 448 14.1 L 442.9 11.8 L 437.8 9.9 L 432.9 8.4 L 428.2 7.4 L 423.9 6.7 L 420.5 6.5 L 505.5 505.5 L 505.5 505.5  L 505.3 423.9 L 504.6 428.2 L 503.6 432.9 L 502.1 437.8 L 500.2 442.9 L 497.9 448 L 495.3 453.1 L 492.3 458.1 L 488.9 463.1 L 485.2 467.9 L 481.3 472.6 L 477 477 L 472.6 481.3 L 467.9 485.2 L 463.1 488.9 L 458.1 492.3 L 453.1 495.3 L 448 497.9 L 442.9 500.2 L 437.8 502.1 L 432.9 503.6 L 428.2 504.6 L 423.9 505.3 L 420.5 505.5 L 6.5 505.5 L 6.5 505.5  L 6.7 423.9 L 7.4 428.2 L 8.4 432.9 L 9.9 437.8 L 11.8 442.9 L 14.1 448 L 16.7 453.1 L 19.7 458.1 L 23.1 463.1 L 26.8 467.9 L 30.7 472.6 L 35 477 L 39.4 481.3 L 44.1 485.2 L 48.9 488.9 L 53.9 492.3 L 58.9 495.3 L 64 497.9 L 69.1 500.2 L 74.2 502.1 L 79.1 503.6 L 83.8 504.6 L 88.1 505.3 L 91.5 505.5 L 6.5 6.5 L 6.5 6.5  L 6.7 88.1 L 7.4 83.8 L 8.4 79.1 L 9.9 74.2 L 11.8 69.1 L 14.1 64 L 16.7 58.9 L 19.7 53.9 L 23.1 48.9 L 26.8 44.1 L 30.7 39.4 L 35 35 L 39.4 30.7 L 44.1 26.8 L 48.9 23.1 L 53.9 19.7 L 58.9 16.7 L 64 14.1 L 69.1 11.8 L 74.2 9.9 L 79.1 8.4 L 83.8 7.4 L 88.1 6.7 L 91.5 6.5 Z" fill="none" stroke="#7fb6ff" stroke-opacity="0.22" stroke-width="2"/>
+    <path d="M 144 125 L 159.5 125 L 175 125 L 175.5 126 L 176 127 L 181.5 128 L 187 129 L 195.5 134 L 204 139 L 287.5 224 L 371 309 L 382 316 L 393 323 L 400.5 325 L 408 327 L 416 327.5 L 424 328 L 433.5 326.5 L 443 325 L 452 321 L 461 317 L 466.5 313 L 472 309 L 480.5 299.5 L 489 290 L 494.5 280.5 L 500 271 L 502.5 263 L 505 255 L 505 315.5 L 505 376 L 501 379 L 497 382 L 497 383 L 497 384 L 495.5 384 L 494 384 L 486.5 390 L 479 396 L 471 400 L 463 404 L 460.5 404 L 458 404 L 457.5 405 L 457 406 L 451.5 407 L 446 408 L 445.5 409 L 445 410 L 441 410 L 437 410 L 436 411 L 435 412 L 420.5 413 L 406 414 L 405 413 L 404 412 L 397 412 L 390 412 L 389.5 411 L 389 410 L 385.5 410 L 382 410 L 381.5 409 L 381 408 L 375.5 407 L 370 406 L 360 401 L 350 396 L 348.5 394 L 347 392 L 345.5 392 L 344 392 L 344 391 L 344 390 L 339 387 L 334 384 L 334 383 L 334 382 L 333 382 L 332 382 L 332 381 L 332 380 L 331 380 L 330 380 L 330 379 L 330 378 L 329 378 L 328 378 L 328 377 L 328 376 L 327 376 L 326 376 L 326 375 L 326 374 L 312.5 360.5 L 299 347 L 298 347 L 297 347 L 297 346 L 297 345 L 296 345 L 295 345 L 295 344 L 295 343 L 294 343 L 293 343 L 293 342 L 293 341 L 292 341 L 291 341 L 291 340 L 291 339 L 290 339 L 289 339 L 289 338 L 289 337 L 288 337 L 287 337 L 287 336 L 287 335 L 286 335 L 285 335 L 285 334 L 285 333 L 284 333 L 283 333 L 283 332 L 283 331 L 282 331 L 281 331 L 281 330 L 281 329 L 280 329 L 279 329 L 279 328 L 279 327 L 278 327 L 277 327 L 277 326 L 277 325 L 276 325 L 275 325 L 275 324 L 275 323 L 274 323 L 273 323 L 273 322 L 273 321 L 272 321 L 271 321 L 271 320 L 271 319 L 270 319 L 269 319 L 269 318 L 269 317 L 268 317 L 267 317 L 267 316 L 267 315 L 266 315 L 265 315 L 265 314 L 265 313 L 264 313 L 263 313 L 263 312 L 263 311 L 262 311 L 261 311 L 261 310 L 261 309 L 260 309 L 259 309 L 259 308 L 259 307 L 258 307 L 257 307 L 257 306 L 257 305 L 256 305 L 255 305 L 255 304 L 255 303 L 253 302 L 251 301 L 251 300 L 251 299 L 250 299 L 249 299 L 249 298 L 249 297 L 248 297 L 247 297 L 247 296 L 247 295 L 227.5 275.5 L 208 256 L 206.5 255 L 205 254 L 200 254 L 195 254 L 193.5 255.5 L 192 257 L 192 355.5 L 192 454 L 194 462.5 L 196 471 L 201 479.5 L 206 488 L 211 493 L 216 498 L 222 501.5 L 228 505 L 176 505 L 124 505 L 118.5 500 L 113 495 L 113 494 L 113 493 L 112 493 L 111 493 L 111 492 L 111 491 L 110 491 L 109 491 L 109 489.5 L 109 488 L 107 486.5 L 105 485 L 104 482 L 103 479 L 102 479 L 101 479 L 95 461 L 89 443 L 88.5 319 L 88 195 L 89.5 184.5 L 91 174 L 92 173.5 L 93 173 L 93 171 L 93 169 L 96 163 L 99 157 L 101 155.5 L 103 154 L 103 152.5 L 103 151 L 112 143 L 121 135 L 132.5 130.5 L 144 126 Z" fill="#ffffff" stroke="#ffffff" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+  </symbol>
+</svg>
+
+<header class="dt-bar">
+  <button class="dt-burger" id="dt-burger" aria-label="Toggle documentation navigation" aria-expanded="false">
+    <span></span><span></span><span></span>
+  </button>
+  <a class="dt-brand" href="nodyra.html" aria-label="Nodyra home">
+    <svg class="brand-mark" aria-hidden="true"><use href="#nodyra-mark"/></svg>
+    <span class="dt-brand-name">Nodyra</span>
+    <span class="dt-badge">Docs</span>
+  </a>
+  <div class="dt-search" id="dt-search">
+    <span class="ds-ic" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><line x1="21" y1="21" x2="16.5" y2="16.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+    <input type="search" id="dt-search-input" placeholder="Search the docs…" autocomplete="off" spellcheck="false" aria-label="Search documentation">
+    <span class="kbd-hint" aria-hidden="true">⌘K</span>
+    <div class="dresults" id="dt-results" role="listbox"></div>
+  </div>
+  <div class="dt-actions">
+    <a class="dt-btn gh" href="https://github.com/Harshit-repo/noodle/tree/main/docs" rel="noopener">Docs repo</a>
+    <a class="dt-btn" href="nodyra.html">← nodyra.io</a>
+  </div>
+</header>
+
+<div class="ds-overlay" id="ds-overlay"></div>
+
+<div class="dl">
+  <aside class="dside" id="dside" aria-label="Documentation navigation">
+    <nav id="ds-nav"></nav>
+    <div class="ds-foot">
+      All docs are open markdown in the
+      <a href="https://github.com/Harshit-repo/noodle/tree/main/docs" rel="noopener">repository</a>.
+      Found a gap?
+      <a href="https://github.com/Harshit-repo/noodle/issues" rel="noopener">Open an issue</a>.
+    </div>
+  </aside>
+
+  <main class="dcontent" id="doc-content" tabindex="-1">
+    <div id="doc-body"></div>
+  </main>
+
+  <aside class="dtoc" id="dtoc" aria-label="On this page">
+    <div class="dtoc-label">On this page</div>
+    <div id="dtoc-links"></div>
+  </aside>
+</div>
+
+<script>
+function dcode(lang, inner) {
+  return '<div class="dcode"><div class="dcode-head"><span class="dcode-lang">' + lang + '</span><button class="dcode-copy" type="button">Copy</button></div><pre>' + inner + '</pre></div>';
+}
+function dcall(kind, inner) {
+  var t = kind === 'info' ? 'i' : '!';
+  return '<div class="dcall dcall-' + kind + '"><span class="dc-ic" aria-hidden="true">' + t + '</span><div>' + inner + '</div></div>';
+}
+const PAGES = [
+{
+  id: 'welcome', g: 'Start here', title: 'Welcome to Nodyra', gh: 'README.md',
+  desc: 'Nodyra is a self-hostable, Python-native workflow automation platform. Every node is real Python — compose on a canvas, inspect everything, and ship versioned workflows that run on your infrastructure.',
+  s: [
+    { id: 'what', h: 'What you get', html: `
+      <ul>
+        <li><strong>A canvas that is real code.</strong> Each node is a plain Python function. Click any node to inspect its source, inputs, outputs, logs, and timing — no magic layer.</li>
+        <li><strong>AI-built workflows you can read.</strong> Connect any MCP-capable agent (Claude Code, Cursor, Claude Desktop) and watch it build, run, and publish workflows you can edit afterwards.</li>
+        <li><strong>Your compute, your data.</strong> Self-host with Docker Compose or Helm. Credentials stay in an encrypted vault; runs execute in per-environment Python subprocesses or hardened sandboxes.</li>
+        <li><strong>Production by default.</strong> Versioned publishing, cron/webhook deployments, durable queue with dead-letter replay, RBAC, audit log, and fair-code licensing.</li>
+      </ul>` },
+    { id: 'quick', h: 'Quick start', html: `
+      <p>Five minutes to first run, once container images are available:</p>
+      ${dcode('bash', `cp deploy/.env.example deploy/.env
+openssl rand -hex 32
+docker compose -f deploy/docker-compose.yml up --build -d
+curl http://localhost:8000/health/ready`)}
+      <p>Open <a href="http://localhost:5173" rel="noopener" class="dlink-mono">http://localhost:5173</a>. The first registered account becomes the owner; registration then closes unless you re-enable it. The full walkthrough is in <a href="#/getting-started">Getting started</a>.</p>` },
+    { id: 'popular', h: 'Popular pages', html: `
+      <div class="dhome-cards">
+        <a class="dhome-card" href="#/getting-started"><h4><span class="dh-ic">→</span>Getting started</h4><p>Stack, owner account, verified template, first custom workflow, going to production.</p></a>
+        <a class="dhome-card" href="#/mcp-quickstart"><h4><span class="dh-ic">→</span>MCP quickstart</h4><p>Connect an AI agent in one line and let it build workflows for you.</p></a>
+        <a class="dhome-card" href="#/nodes"><h4><span class="dh-ic">→</span>Writing nodes</h4><p>The @node decorator, ports, parameters, artifacts, datasets, and tests.</p></a>
+        <a class="dhome-card" href="#/architecture"><h4><span class="dh-ic">→</span>Architecture</h4><p>Control plane, durable queue, workers, environments, and the execution model.</p></a>
+        <a class="dhome-card" href="#/deployment"><h4><span class="dh-ic">→</span>Deployment</h4><p>Docker Compose, Helm on Kubernetes, and the production checklist.</p></a>
+        <a class="dhome-card" href="#/security"><h4><span class="dh-ic">→</span>Security model</h4><p>Trust boundaries, sandboxing postures, and what Nodyra already protects.</p></a>
+      </div>` }
+  ]
+},
+{
+  id: 'getting-started', g: 'Guides', title: 'Getting started', gh: 'docs/getting-started.md',
+  desc: 'From zero to a running workflow in about five minutes. This guide targets first value once container images are available; a first local build can take longer depending on network and CPU.',
+  s: [
+    { id: 'requirements', h: '1. Requirements', html: `
+      <ul>
+        <li><strong>Docker route (recommended):</strong> Docker Engine or Docker Desktop with Compose.</li>
+        <li><strong>Local dev route:</strong> Python 3.12, <a href="https://docs.astral.sh/uv/" rel="noopener">uv</a>, Node.js 20+, and Docker for Postgres/Redis/MinIO.</li>
+      </ul>` },
+    { id: 'docker', h: '2. Start with Docker Compose', html: `
+      <p>Copy the example environment file:</p>
+      ${dcode('bash', `cp deploy/.env.example deploy/.env`)}
+      <p>Replace all three <code>CHANGE-ME</code> values. Run <code>openssl rand -hex 32</code> three times and paste one generated value into each setting. Shell expressions such as <code>$(openssl ...)</code> are not expanded inside an environment file.</p>
+      ${dcall('warn', `<strong>Do not hand-write <code>deploy/.env</code> from scratch</strong> — Compose also hard-requires <code>MINIO_ROOT_PASSWORD</code> and fails before starting anything if it is missing. Copying the example is the supported path.`)}
+      ${dcode('bash', `docker compose -f deploy/docker-compose.yml up --build -d
+curl http://localhost:8000/health/live
+curl http://localhost:8000/health/ready`)}
+      <p>The stack includes PostgreSQL, Redis, MinIO, the FastAPI control plane, a dispatch worker, and the web app on <a href="http://localhost:5173" rel="noopener" class="dlink-mono">http://localhost:5173</a>.</p>
+      ${dcall('info', `Startup is <strong>fail-closed</strong>: if you keep a default <code>SECRET_KEY</code> with auth enabled, or omit <code>INTERNAL_API_TOKEN</code> in a split topology, the server refuses to boot rather than run insecurely.`)}` },
+    { id: 'owner', h: '3. Create the owner account', html: `
+      <p>The first registered account becomes the <code>owner</code>. Registration closes automatically after the first user unless you explicitly enable it with <code>AUTH_ALLOW_REGISTRATION=true</code>.</p>` },
+    { id: 'template', h: '4. Run a verified starter template', html: `
+      <ol>
+        <li>Open <strong>Workflows</strong> and choose <strong>Create from template</strong>.</li>
+        <li>Select <strong>Dataset filter and CSV export</strong> — it needs no external credential.</li>
+        <li>Create the workflow, press <strong>Run</strong>, and open the execution when it finishes.</li>
+        <li>Inspect node input/output, then open <strong>Artifacts</strong> to see the CSV and its run/workflow lineage.</li>
+      </ol>` },
+    { id: 'scratch', h: '5. Build a workflow from scratch', html: `
+      <ol>
+        <li>Click <strong>New workflow</strong> and drag a <strong>Manual Trigger</strong> onto the canvas.</li>
+        <li>Add an <strong>HTTP Request</strong> node, point it at an API you like, and wire it to the trigger.</li>
+        <li>Add a <strong>Code</strong> node and transform the response with plain Python — the input arrives as the first function argument.</li>
+        <li>Press <strong>Run</strong>. Click any node to inspect its exact input, output, logs, and timing.</li>
+      </ol>
+      <p>Every node is a plain Python function. To write your own:</p>
+      ${dcode('python', `<span class="c-kw">from</span> nodyra.sdk <span class="c-kw">import</span> node
+
+<span class="c-dec">@node</span>(name=<span class="c-str">"Normalize Customer"</span>, id=<span class="c-str">"normalize_customer"</span>, category=<span class="c-str">"Data"</span>)
+<span class="c-kw">def</span> <span class="c-fn">normalize_customer</span>(input: dict, lowercase_email: bool = True) -&gt; dict:
+    customer = dict(input)
+    <span class="c-kw">if</span> lowercase_email <span class="c-kw">and</span> customer.get(<span class="c-str">"email"</span>):
+        customer[<span class="c-str">"email"</span>] = customer[<span class="c-str">"email"</span>].lower()
+    <span class="c-kw">return</span> customer`)}
+      <p>Upload the module and it appears in the palette. See <a href="#/nodes">Writing nodes</a>.</p>` },
+    { id: 'demo', h: '6. Seed the demo workspace', html: `
+      ${dcode('bash', `make demo`)}
+      <p>Creates a populated local instance with demo workflows, a fake credential, a runnable webhook, and one green MCP-created run. The demo disables authentication, so every published port is bound to <code>127.0.0.1</code>. Use the authenticated deployment path for access from another machine.</p>
+      ${dcode('bash', `curl -X POST http://localhost:8000/webhook/demo/intake \\
+  -H "Content-Type: application/json" \\
+  -d '{"customer":"Ada","event":"trial_started"}'`)}
+      <p>Stop the demo without deleting its data: <code>make demo-down</code>.</p>` },
+    { id: 'agent', h: '7. Let an AI agent build it', html: `
+      <p>Nodyra ships a first-class MCP server with 61 tools. Connect Claude Code:</p>
+      ${dcode('bash', `claude mcp add --transport http nodyra https://your-instance/mcp \\
+  --header "Authorization: Bearer &lt;api-token&gt;"`)}
+      <p>Then describe the workflow you want; it appears on the canvas — editable, testable, deployable. Full guide: <a href="#/mcp-quickstart">MCP quickstart</a>.</p>` },
+    { id: 'production', h: '8. Go to production', html: `
+      <ul>
+        <li><strong>Publish</strong> your workflow to create an immutable version, then create a <strong>deployment</strong> pinned to that version. Drafts never affect production.</li>
+        <li>Add <strong>schedule</strong> or <strong>webhook</strong> triggers to the deployment.</li>
+        <li>Pick an execution posture: trusted single-tenant (default), sandboxed (<code>EXECUTION_SANDBOX=auto|required</code> — recommended when workflows run AI-generated code), or multi-tenant.</li>
+        <li>Read the <a href="#/deployment">deployment guide</a> for Helm, scaling workers, and the production checklist — and set up backups before you rely on it.</li>
+      </ul>` }
+  ]
+},
+{
+  id: 'mcp-quickstart', g: 'Guides', title: 'MCP quickstart', gh: 'docs/mcp-quickstart.md',
+  desc: 'Point an MCP-capable agent at your instance and it can build, test, and deploy workflows you watch live on the canvas. 61 tools cover graph editing, validation, publishing, runs, schedules, environments, and approvals.',
+  s: [
+    { id: 'token', h: '1. Create an API token', html: `
+      <p><strong>Settings → API tokens → New token.</strong> Scopes: <code>workflow:read</code>, <code>workflow:write</code>, <code>workflow:run</code> — add <code>workflow:publish</code> and <code>deployment:write</code> if the agent should publish or manage deployments. Copy the <code>ndpat_...</code> value.</p>` },
+    { id: 'connect', h: '2. Connect your agent', html: `
+      <p><strong>Claude Code:</strong></p>
+      ${dcode('bash', `claude mcp add --transport http nodyra http://localhost:8000/mcp \\
+  --header "Authorization: Bearer ndpat_YOUR_TOKEN"`)}
+      <p>Use the same <code>/mcp</code> path on the bundled web origin, for example <code>https://nodyra.example.com/mcp</code>; the shipped Vite, nginx, and Helm ingress configurations proxy that path to the API.</p>
+      <p><strong>Claude Desktop / Cursor / any streamable-HTTP client:</strong> add to the MCP config:</p>
+      ${dcode('json', `{
+  "mcpServers": {
+    "nodyra": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp",
+      "headers": { "Authorization": "Bearer ndpat_YOUR_TOKEN" }
+    }
+  }
+}`)}` },
+    { id: 'try', h: '3. Try it', html: `
+      <p>Ask the agent: <em>“List my Nodyra workflows”</em>, then <em>“Create a workflow that fetches https://api.github.com/repos/astral-sh/uv, extracts the star count with a Code node, and runs it”</em>.</p>
+      <p>Useful tool names: <code>list_workflows</code>, <code>create_workflow</code>, <code>add_node</code>, <code>add_edge</code>, <code>validate_workflow_graph</code>, <code>run_workflow</code>, <code>get_run</code>.</p>` },
+    { id: 'safety', h: '4. Safety model', html: `
+      <ul>
+        <li>Tokens are org-scoped; tools honour the token's scopes.</li>
+        <li>All tool calls hit the audit log like any API call.</li>
+        <li><code>/mcp</code> is rate-limited at 120 requests per minute per principal.</li>
+        <li>Destructive tools (<code>delete_workflow</code>, rollbacks) require an explicit <code>approve: true</code> argument.</li>
+        <li>Graph edits accept <code>expected_graph_revision</code> for optimistic concurrency, so agents editing alongside humans get a conflict error instead of clobbering.</li>
+        <li>If <code>auth_required=false</code>, read-only MCP tools are anonymous by design. Put <code>/mcp</code> behind an authenticating proxy before exposing it publicly.</li>
+      </ul>` },
+    { id: 'expose', h: 'Expose a workflow as an MCP tool', html: `
+      <p>Any published workflow can itself become an MCP tool for agents: <code>enable_mcp_tool</code> with a JSON-schema for its parameters. External MCP servers can likewise become nodes inside workflows: <strong>Settings → MCP Connections</strong>.</p>` }
+  ]
+},
+{
+  id: 'recipes', g: 'Guides', title: 'Recipes', gh: 'docs/recipes.md',
+  desc: 'Copy-paste patterns for the work that comes up every week. Start from the template gallery when a matching verified template exists.',
+  s: [
+    { id: 'poll', h: 'Poll an API and normalize records', html: `
+      <p>Create <strong>Schedule Trigger → HTTP Request → Code</strong>. Configure the request for a public HTTPS endpoint, then use:</p>
+      ${dcode('python', `rows = input if isinstance(input, list) else input.get("items", [])
+output = [
+    {"id": row.get("id"), "name": str(row.get("name", "")).strip()}
+    for row in rows
+    if row.get("id") is not None
+]`)}
+      <p>Pin a representative HTTP response while authoring, add a timeout/retry policy, and publish only after the output schema is stable.</p>` },
+    { id: 'dataset', h: 'Filter a large dataset without loading it into memory', html: `
+      <p>Create <strong>Manual Trigger → Records To Dataset → Dataset Filter → CSV Write</strong>. Use the filter expression <code>region = 'west' AND amount &gt;= 100</code>.</p>
+      <p>Dataset nodes pass artifact-backed <code>DatasetRef</code> handles, so the workflow does not serialize a large DataFrame through every edge.</p>` },
+    { id: 'webhook-alert', h: 'Turn a webhook into an operational alert', html: `
+      <p>Create <strong>Webhook Trigger → Code → Slack</strong>. Keep inbound authentication enabled, map only approved fields, and store the Slack token as a scoped credential. Deploy a failure workflow for provider errors and alert on sustained failure ratio rather than a single retry.</p>` },
+    { id: 'ci', h: 'Invoke from CI', html: `
+      ${dcode('bash', `python -m pip install ./packages/client
+nodyra --base-url "$NODYRA_BASE_URL" --token "$NODYRA_TOKEN" workflow run daily-report --wait`)}
+      <p>The CLI and typed Python client drive the same API as the editor — list, create, run, publish, and export workflows from any pipeline. See <a href="https://github.com/Harshit-repo/noodle/tree/main/packages/client" rel="noopener">packages/client</a>.</p>` },
+    { id: 'agent-recipe', h: 'Let the agent draft it, then tighten it', html: `
+      <p>A fast path for new automations: ask an MCP-connected agent to build the first version of the graph, then review node-by-node in the editor — fix expressions, pin versions, add retries — and publish. The graph stays a normal, editable Nodyra workflow the whole time.</p>` }
+  ]
+},
+{
+  id: 'nodes', g: 'Develop', title: 'Writing nodes', gh: 'docs/nodes.md',
+  desc: 'There are two ways to ship a node: built-in nodes (a decorated function in packages/nodes) or code modules (a .py file uploaded through the editor). Both produce the same manifest the editor consumes.',
+  s: [
+    { id: 'example', h: 'Built-in node example', html: `
+      ${dcode('python', `<span class="c-kw">from</span> typing <span class="c-kw">import</span> Any
+
+<span class="c-kw">from</span> nodyra.sdk <span class="c-kw">import</span> node
+
+<span class="c-dec">@node</span>(
+    name=<span class="c-str">"HTTP Request"</span>,
+    id=<span class="c-str">"http_request"</span>,
+    category=<span class="c-str">"Transform"</span>,
+    icon=<span class="c-str">"globe"</span>,
+    params={
+        <span class="c-str">"url"</span>: {<span class="c-str">"placeholder"</span>: <span class="c-str">"https://api.example.com/data"</span>},
+        <span class="c-str">"method"</span>: {<span class="c-str">"choices"</span>: [<span class="c-str">"GET"</span>, <span class="c-str">"POST"</span>, <span class="c-str">"PUT"</span>, <span class="c-str">"PATCH"</span>, <span class="c-str">"DELETE"</span>]},
+    },
+)
+<span class="c-kw">def</span> <span class="c-fn">http_request</span>(input: Any = None, url: str = "", method: str = "GET") -&gt; Any:
+    <span class="c-str">"""Call an HTTP API and return the JSON body."""</span>
+    <span class="c-kw">import</span> requests
+    response = requests.request(method, url, timeout=30)
+    <span class="c-kw">try</span>:
+        <span class="c-kw">return</span> response.json()
+    <span class="c-kw">except</span> ValueError:
+        <span class="c-kw">return</span> response.text`)}` },
+    { id: 'sdk', h: 'How the SDK reads your function', html: `
+      <ul>
+        <li>Parameters whose names appear in <code>@node(inputs=[...])</code> (default <code>["input"]</code>) are <strong>input ports</strong> — they receive data from upstream nodes via edges. Triggers pass <code>inputs=[]</code>.</li>
+        <li>All other function parameters are <strong>config parameters</strong> — edited in the inspector, never wired. Type annotations drive the form field; the <code>params=</code> decorator argument attaches UI metadata.</li>
+        <li>The return value becomes the node output. To declare multiple named outputs for branching, pass <code>@node(outputs=["true", "false"])</code> and return a dict; omitting a key marks that branch as untaken.</li>
+      </ul>` },
+    { id: 'categories', h: 'Categories and icons', html: `
+      <p>Set <code>category</code> to one of <code>Triggers</code>, <code>API</code>, <code>Logic</code>, <code>AI</code>, <code>Data</code>, <code>Transform</code>, <code>Integrations</code>, <code>Utility</code>. The editor colours nodes by category. <code>icon</code> is a name from the built-in icon set (<code>play</code>, <code>clock</code>, <code>webhook</code>, <code>branch</code>, <code>code</code>, <code>globe</code>, <code>database</code>, <code>storage</code>, <code>ai</code>, and more).</p>
+      <p>Every visible built-in node must declare a specific category and a concise description; a test in the manifest suite enforces this so the palette, AI builder, and generated tool descriptions stay useful as the catalog grows.</p>
+      <p><code>async def</code> nodes are awaited by the engine — use them for IO-bound work.</p>` },
+    { id: 'controls', h: 'Per-node controls', html: `
+      <p>The Settings tab in the inspector exposes:</p>
+      <table>
+        <tr><th>Setting</th><th>Behaviour</th></tr>
+        <tr><td><code>disabled</code></td><td>Skip the node and downstream consumers.</td></tr>
+        <tr><td><code>on_error</code></td><td><code>stop</code> (default), <code>continue</code>, or <code>continue_branch</code>.</td></tr>
+        <tr><td><code>retry_on_fail</code> + <code>retries</code></td><td>Retries with exponential backoff and small jitter.</td></tr>
+        <tr><td><code>timeout_seconds</code></td><td>Wraps the call in <code>asyncio.wait_for</code>; sync nodes hop to a worker thread only when a timeout is set.</td></tr>
+        <tr><td><code>always_output_data</code></td><td>Emit empty output instead of skipping consumers when the node has no result.</td></tr>
+      </table>` },
+    { id: 'modules', h: 'Code modules (upload-to-nodes)', html: `
+      <p>Open the <strong>Code Library</strong> page and upload a <code>.py</code> file. Discovery is <strong>AST-only</strong> — uploaded code is never executed in the API process. Each top-level <code>def</code> becomes a node:</p>
+      ${dcode('python', `<span class="c-kw">def</span> <span class="c-fn">add</span>(x: int = 0, y: int = 0) -&gt; int:
+    <span class="c-str">"""Return x + y."""</span>
+    <span class="c-kw">return</span> x + y`)}
+      <p>Every function parameter is rendered in the inspector. To wire upstream data into a parameter, write an expression: <code>{{ $json.x }}</code> reads <code>x</code> off the wired upstream, and <code>{{ $node["other_id"].main.field }}</code> reads from a non-wired node. The ƒx toggle flips between fixed and expression mode.</p>
+      <p>After uploading a procedural file, click <strong>Build starter graph</strong> — the backend walks assignments, infers edges from variable flow, and pre-populates literal arguments as default params for you to review.</p>
+      <p>Scopes: <strong>Global</strong> (every workflow), <strong>Environment</strong> (workflows on that env), <strong>Workflow</strong> (stored alongside the workflow).</p>` },
+    { id: 'artifacts', h: 'Artifacts', html: `
+      <p>For outputs too large for a node result — DataFrames, CSV/PDF exports, screenshots, scraped HTML, model outputs — write to artifact storage instead:</p>
+      ${dcode('python', `<span class="c-kw">import</span> pandas <span class="c-kw">as</span> pd
+
+df = pd.read_csv(input[<span class="c-str">"source"</span>])
+output = artifacts.<span class="c-fn">write_dataframe</span>(df, name=<span class="c-str">"processed.csv"</span>)`)}
+      <p>Helpers: <code>write_bytes</code>, <code>write_text</code>, <code>write_json</code>, <code>write_dataframe</code>, and matching <code>read_*</code> / <code>open</code>. Writers return a small JSON-friendly ref that flows through edges like any other value; the UI renders it as an artifact card with size/type metadata and a download link. Retention prune drops files for expired runs automatically.</p>` },
+    { id: 'datasets', h: 'DatasetRef tables', html: `
+      <p>DatasetRef is the preferred shape for tabular data too large to copy through every node as inline JSON — a small reference to a Parquet-backed table plus schema, row-count, and preview metadata.</p>
+      ${dcode('text', `records / CSV / DataFrame
+  -> Records To Dataset or CSV Parse
+  -> Dataset Filter / Dataset Select Columns / DuckDB SQL / Dataset Limit
+  -> Dataset Preview or CSV Write
+  -> optional Dataset To Records for inline-only consumers`)}
+      <p>Declare DatasetRef ports with <code>input_kinds</code> / <code>output_kinds</code>; the editor uses those port kinds to block confusing wires and offer quick fixes such as <strong>Records To Dataset</strong>.</p>` },
+    { id: 'typed', h: 'Typed values across the wire', html: `
+      <p>The engine serializes non-JSON Python types into typed envelopes only when values leave the Python process (WebSocket events, persisted outputs, pinned data, retry caches). In-process hand-off uses real Python objects. Handled types include DataFrame, datetime/date/time, Decimal, tuple, set/frozenset, and bytes.</p>` },
+    { id: 'testing', h: 'Testing', html: `
+      <p>The engine is async and importable. A complete graph round-trip:</p>
+      ${dcode('python', `<span class="c-kw">from</span> nodyra.engine <span class="c-kw">import</span> execute
+<span class="c-kw">from</span> nodyra.models <span class="c-kw">import</span> Edge, GraphNode, WorkflowGraph
+<span class="c-kw">from</span> nodyra.sdk <span class="c-kw">import</span> registry
+<span class="c-kw">import</span> nodyra_nodes
+
+graph = WorkflowGraph(
+    nodes=[
+        GraphNode(id=<span class="c-str">"t"</span>, type=<span class="c-str">"manual_trigger"</span>, params={ <span class="c-str">"data"</span>: { <span class="c-str">"n"</span>: 3 } }),
+        GraphNode(id=<span class="c-str">"c"</span>, type=<span class="c-str">"code"</span>, params={ <span class="c-str">"code"</span>: <span class="c-str">"output = input['n'] * 2"</span> }),
+    ],
+    edges=[Edge(source=<span class="c-str">"t"</span>, target=<span class="c-str">"c"</span>)],
+)
+result = <span class="c-kw">await</span> execute(graph, registry)
+<span class="c-kw">assert</span> result.nodes[<span class="c-str">"c"</span>].outputs[<span class="c-str">"main"</span>] == 6`)}` },
+    { id: 'integrations', h: 'Official integration nodes', html: `
+      <p>The built-in library includes first-pass official nodes for Slack, Discord, SMTP/Gmail SMTP, Google Sheets, Notion, GitHub, Postgres, MySQL, S3/OpenStack-compatible stores, OpenAI, Anthropic, Stripe, and Airtable — plus the spec-driven v2 provider suite (40+ apps) covered on the <a href="nodyra.html#integrations">integrations page</a>.</p>
+      <p><code>Postgres Query</code>, <code>MySQL Query</code>, and <code>S3</code> nodes need Python drivers in the selected environment: <code>psycopg[binary]</code>, <code>PyMySQL</code>, and <code>boto3</code> respectively.</p>` },
+    { id: 'ai', h: 'AI nodes', html: `
+      <p>The canonical AI surface lives in the <code>AI</code> category: <code>AI Prompt Template</code> (Jinja), <code>AI Chat Model</code> (reusable provider/model config), <code>AI Chat</code> (normalized <code>{text, usage, model, finish_reason}</code>), <code>AI Structured Output</code> (JSON Schema validated), the RAG path (<code>AI Text Chunker</code>, <code>AI Batch Embeddings</code>, <code>AI Vector Retriever</code>, <code>AI RAG Answer</code>), <code>AI Map Dataset</code>, <code>AI Simple Memory</code>, and a bounded tool-using <code>AI Agent</code> with separate model/memory/tools ports, visible step logs, and explicit side-effect approval.</p>` }
+  ]
+},
+{
+  id: 'architecture', g: 'Understand', title: 'Architecture', gh: 'docs/architecture.md',
+  desc: 'A self-hostable, Python-native platform where every node is pure Python. This page maps the components and the execution model.',
+  s: [
+    { id: 'components', h: 'Components', html: `
+      <ul>
+        <li><strong>apps/web</strong> — React + React Flow editor (Vite): drag-and-drop canvas, node palette from manifests, inspector with ƒx expression toggle, Environments / Credentials / Activity / Code Library pages, live test-mode over WebSocket.</li>
+        <li><strong>apps/api</strong> — FastAPI server: schema, node registry, workflow CRUD with versioning, environments, runs, webhook ingress, credential vault, audit log, auth, Prometheus metrics, artifacts, deployments, retention prune.</li>
+        <li><strong>Dispatch worker</strong> — optional standalone execution role (<code>DISPATCH_ROLE=worker</code>): durable-queue dispatch loop plus warm runtime pool. API replicas set <code>DISPATCH_ROLE=disabled</code> and only enqueue. Requires Postgres (SKIP LOCKED leasing) + Redis.</li>
+        <li><strong>packages/core</strong> — the engine, node SDK, shared models, typed-value serialization, artifacts helpers. The same engine runs inside the API, inside env subprocesses, and inside exported scripts.</li>
+        <li><strong>packages/nodes</strong> — the built-in node library.</li>
+        <li><strong>packages/runtime</strong> — in-environment runner: a warm process per env executes graphs inside that env's interpreter.</li>
+        <li><strong>packages/exporter</strong> — workflow → <code>.py</code> script and Docker bundle codegen.</li>
+      </ul>` },
+    { id: 'execution', h: 'Execution model', html: `
+      <p>A node has named <strong>input ports</strong> (triggers have none), named <strong>output ports</strong> (most have one named <code>main</code>; branching nodes like <code>if</code> have <code>true</code>/<code>false</code>), and <strong>config parameters</strong> edited in the inspector. Edges connect an upstream output to a downstream input — they never wire individual parameters.</p>
+      <p>The engine schedules the graph by <strong>dependency counting</strong>: a node starts the moment all of its in-set predecessors complete, with no level barrier holding a fast branch hostage to a slow sibling. It supports:</p>
+      <ul>
+        <li>Branching — consumers of an untaken branch are skipped.</li>
+        <li>Partial execution — <code>cache</code> supplies precomputed outputs.</li>
+        <li>Targeted runs — <code>targets</code> restricts execution to a subset + ancestors.</li>
+        <li>Per-node retry, timeout, and log capture (context-local buffers that never cross-capture between concurrent runs).</li>
+        <li>Typed output serialization and artifact writes.</li>
+        <li>Live events — per-node start/finish with timing.</li>
+        <li>Sub-workflows — cycle detection, depth limiting, and inline-child execution when parent and child share an environment.</li>
+      </ul>
+      ${dcall('info', `<strong>Ordering contract.</strong> Execution order is a function of edges and node insertion order only. Canvas position is never read by the engine — moving nodes around can't change semantics. Among equal-indegree nodes, the branch added first runs first.`)}` },
+    { id: 'triggers', h: 'Triggers', html: `
+      <ul>
+        <li><strong>Manual</strong> — the editor's Run button calls the run dispatch endpoint.</li>
+        <li><strong>Webhook</strong> — <code>/webhook/{path}</code> looks up active workflows matching the path, seeds the request as the trigger output, and dispatches. <code>/webhook-test/{path}</code> captures for the editor test panel without executing.</li>
+        <li><strong>Schedule</strong> — DB-backed loop checks schedule triggers and active Deployments on a tick and fires due workflows via croniter (real cron). <code>last_fired</code> lives in the DB so restarts don't replay or skip.</li>
+        <li><strong>Deployments</strong> — workflow + schedule + default parameters + active flag. Active deployments are the canonical schedule source; in-graph schedule triggers are ignored to avoid double-fire.</li>
+      </ul>` },
+    { id: 'params', h: 'Parameters, expressions, re-run and retry', html: `
+      <ul>
+        <li><code>POST /workflows/{id}/run</code> accepts <code>parameters</code>; they seed the trigger node's cache. If no trigger exists, all root nodes are seeded.</li>
+        <li>Inspector string fields support <code>{{ $json.field }}</code> and <code>{{ $node["id"].main.field }}</code> expressions.</li>
+        <li><code>POST /runs/{run_id}/rerun</code> re-dispatches with the same workflow/version/params.</li>
+        <li><code>POST /runs/{run_id}/retry</code> rebuilds the cache from successful upstream outputs and sets targets to the failed node + descendants.</li>
+      </ul>` },
+    { id: 'storage', h: 'Storage and retention', html: `
+      <p>PostgreSQL is the production database; the migrations apply to SQLite too (local dev). Schema migrations cover workflows, versions, environments, runs, node runs, users, credentials, audit events, pinned data, schedule state, deployments, code modules, and artifacts.</p>
+      <p>Runs persist forever by default. To keep storage bounded: <code>run_retention_days</code>, <code>run_retention_max_per_workflow</code>, <code>max_output_bytes</code>, <code>max_artifact_bytes</code>, and <code>max_artifacts_per_run</code>. The retention loop is gated on <code>enable_inprocess_scheduler</code> so a multi-API deployment can choose one owner.</p>` },
+    { id: 'security', h: 'Security', html: `
+      <ul>
+        <li>Credentials encrypted at rest (Fernet, key derived from <code>secret_key</code>); the API never returns plaintext.</li>
+        <li>Passwords use PBKDF2-HMAC-SHA256; session tokens are HMAC-signed.</li>
+        <li>Code-module discovery is AST-only — uploaded Python is never executed in the API process.</li>
+        <li>Artifact storage keys are server-generated and path-traversal checked.</li>
+        <li>Local-process execution is intentional — workflows run in the operator's trust boundary, the standard self-hosted model. Multi-tenant SaaS requires container or gVisor isolation on top.</li>
+      </ul>
+      <p>Read the full posture guidance in <a href="#/security">Security model</a>.</p>` }
+  ]
+},
+{
+  id: 'status-matrix', g: 'Understand', title: 'Status matrix', gh: 'docs/status-matrix.md',
+  desc: 'The live map of what is shipped, beta, experimental, or planned — updated as tasks land, not as marketing promises.',
+  s: [
+    { id: 'read', h: 'How to read it', html: `
+      ${dcall('info', `<strong>Shipped</strong> — implemented, tested, on the default code path. <strong>Beta</strong> — implemented and tested but not yet the default, or behind a flag. <strong>Experimental</strong> — partial. <strong>Scaffolded</strong> — types exist, no live path. <strong>Planned</strong> — designed, no code yet.`)}` },
+    { id: 'runtime', h: 'Runtime and queue', html: `
+      <table>
+        <tr><th>Area</th><th>Status</th></tr>
+        <tr><td><code>RUNTIME_MODE</code>, queue/scheduler/webhook/artifact roles + production warnings</td><td>Shipped</td></tr>
+        <tr><td>Durable run queue — enqueue / lease / heartbeat / fail / cancel, DB backend</td><td>Shipped</td></tr>
+        <tr><td>Dead-letter + replay (<code>/ops/dead-letter</code>)</td><td>Shipped</td></tr>
+        <tr><td>Runner leases, heartbeats, offline detection + requeue</td><td>Shipped</td></tr>
+        <tr><td>Scheduler leader election (DB advisory lock)</td><td>Shipped</td></tr>
+        <tr><td>Pluggable artifact backends (local / S3-compatible)</td><td>Shipped</td></tr>
+        <tr><td>Ops dashboard UI (queue depth, capacity, heartbeats)</td><td>Planned</td></tr>
+      </table>` },
+    { id: 'exec-auth', h: 'Execution and authoring', html: `
+      <table>
+        <tr><th>Area</th><th>Status</th></tr>
+        <tr><td>Topological branch ordering (canvas-layout independent)</td><td>Shipped</td></tr>
+        <tr><td>Replay-from-failed-node (<code>/runs/{id}/retry</code> reuses upstream outputs)</td><td>Beta</td></tr>
+        <tr><td>Credential test contract (per-type <code>POST /credentials/{id}/test</code>)</td><td>Shipped</td></tr>
+        <tr><td>Unsafe-node policy (warn / require approval / block)</td><td>Shipped</td></tr>
+        <tr><td>Chat trigger, in-editor chat panel, hosted chat pages with secret links</td><td>Shipped</td></tr>
+        <tr><td>API Endpoint node (per-route output handles)</td><td>Shipped</td></tr>
+        <tr><td>Node picker quality pass (chips + recents; keyboard palette)</td><td>Beta</td></tr>
+        <tr><td>Debug-in-editor (open run snapshot on canvas)</td><td>Planned</td></tr>
+      </table>` },
+    { id: 'integrations', h: 'Integrations and AI', html: `
+      <table>
+        <tr><th>Area</th><th>Status</th></tr>
+        <tr><td>v2 provider contract (<code>OperationSpec</code>, shared transport/credentials/icons)</td><td>Shipped</td></tr>
+        <tr><td>Slack, Stripe v2 — operations + signed event triggers</td><td>Beta</td></tr>
+        <tr><td>Notion, Google Sheets, GitHub v2 — operations + polling/webhook triggers</td><td>Beta</td></tr>
+        <tr><td>Airtable, Outlook v2 operations; more providers on the <a href="nodyra.html#integrations">integrations page</a></td><td>Beta</td></tr>
+        <tr><td>AI chat suppliers (OpenAI-compatible, Azure, Anthropic) + embeddings + Qdrant</td><td>Beta</td></tr>
+        <tr><td>Google Drive / Sheets watch-channel trigger renewal</td><td>Planned</td></tr>
+      </table>` },
+    { id: 'governance', h: 'Governance', html: `
+      <ul>
+        <li>CI against Postgres + real subprocess runs</li>
+        <li>Graceful drain on SIGTERM; migrate-then-start enforced in Compose and Helm</li>
+        <li>License + supply-chain scans in CI</li>
+        <li><code>SECURITY.md</code>, <code>CONTRIBUTING.md</code>, CLA, PR template, dual license files</li>
+      </ul>` }
+  ]
+},
+{
+  id: 'deployment', g: 'Self-host', title: 'Deployment', gh: 'docs/deployment.md',
+  desc: 'From local development to a production topology on Docker Compose or Kubernetes.',
+  s: [
+    { id: 'trust', h: 'Trust boundary — read before exposing Nodyra', html: `
+      ${dcall('danger', `With the default <code>EXECUTION_SANDBOX=off</code>, workflow Code nodes and uploaded code modules run <strong>arbitrary Python in the worker process on the Nodyra host</strong>. Deploy for <strong>single-tenant, trusted authors</strong> only: put it behind authentication and restrict edit/deploy access to people you trust to run code on the host. To serve untrusted authors, enable sandboxed execution (per-run hardened containers, gVisor where available); multi-tenancy refuses to start without it.`)}` },
+    { id: 'dev', h: 'Local development', html: `
+      ${dcode('bash', `uv sync --all-packages
+
+# api
+DATABASE_URL=sqlite+aiosqlite:///./dev.db \\
+  uv run alembic -c apps/api/alembic.ini upgrade head
+DATABASE_URL=sqlite+aiosqlite:///./dev.db \\
+  uv run uvicorn app.main:app --app-dir apps/api --reload --port 8000
+
+# web
+cd apps/web && npm install && npm run dev`)}
+      <p>For a full Postgres-backed dev stack, run <code>docker compose -f deploy/docker-compose.yml up postgres redis</code> and swap <code>DATABASE_URL</code> for the Compose Postgres URL.</p>` },
+    { id: 'compose', h: 'Docker Compose', html: `
+      <p><code>deploy/docker-compose.yml</code> brings up the full stack: Postgres, Redis, the API as a control plane (migrations on startup, <code>DISPATCH_ROLE=control</code>, leader-elected scheduler), a dispatch worker (<code>DISPATCH_ROLE=worker</code>), and the production web build served by nginx.</p>
+      ${dcall('warn', `The bundled MinIO is for disposable local development and acceptance. For a public deployment, use the sandbox and external-S3 overlays with an independently provisioned private bucket, HTTPS ingress, and off-host recovery.`)}` },
+    { id: 'k8s', h: 'Kubernetes (Helm)', html: `
+      <ul>
+        <li>Helm chart with separate API, worker, scheduler, and web deployments.</li>
+        <li>Pre-install / pre-upgrade migration Job, gated by the deployment encryption key.</li>
+        <li>HorizontalPodAutoscaler, PodDisruptionBudget, and NetworkPolicy templates included.</li>
+        <li>Set <code>clusterDomain</code> if your cluster differs from <code>cluster.local</code>.</li>
+      </ul>` },
+    { id: 'checklist', h: 'Production checklist', html: `
+      <ul>
+        <li>Strong <code>SECRET_KEY</code>, non-empty <code>INTERNAL_API_TOKEN</code>, <code>AUTH_REQUIRED=true</code>.</li>
+        <li>External S3 for artifacts; off-host Postgres backups before you rely on it.</li>
+        <li>Enable <code>EXECUTION_SANDBOX=auto|required</code> when running AI-generated or untrusted code.</li>
+        <li>Set the unsafe-node policy and retention limits.</li>
+        <li>HTTPS ingress; keep <code>/mcp</code> behind authentication.</li>
+        <li>Wire the Prometheus metrics endpoint into your monitoring.</li>
+      </ul>` }
+  ]
+},
+{
+  id: 'gitops', g: 'Self-host', title: 'GitOps sync', gh: 'docs/gitops.md',
+  desc: 'Sync workflow definitions to a GitHub repository as Python workflow modules. Org-scoped: each org connects one repository, one base directory, and one main branch.',
+  s: [
+    { id: 'what', h: 'What syncs', html: `
+      <ul>
+        <li>Workflow graphs export as <code>.py</code> modules — the same format accepted by <code>nodyra workflow import</code>.</li>
+        <li>Each workflow reports one of four statuses: <code>synced</code>, <code>pending</code>, <code>conflict</code>, or <code>error</code>.</li>
+        <li>Draft changes enqueue a draft push; publishing enqueues a publish push with a publish commit message.</li>
+      </ul>
+      ${dcall('info', `Git sync does <strong>not</strong> export credentials, secret values, deployments, environments, runner pools, run history, artifacts, users, roles, or workspace settings. Treat the repository as the source for workflow definition modules only.`)}` },
+    { id: 'setup', h: 'Setup', html: `
+      <p>Create a GitHub token credential in Nodyra first (type <code>github</code>, secret field <code>token</code>, repository contents read/write). Then configure the org-level sync target:</p>
+      ${dcode('bash', `curl -X PUT "$NODYRA_BASE_URL/api/github-sync/config" \\
+  -H "Authorization: Bearer $NODYRA_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "repo": "owner/repo",
+    "base_path": "workflows/",
+    "main_branch": "main",
+    "credential_id": "cred_123"
+  }'`)}
+      <p>The Settings UI saves repository, base path, and branch; validates access; creates the repository; shows the webhook URL; reveals the webhook secret; and disconnects sync.</p>` },
+    { id: 'webhook', h: 'Connect the GitHub webhook', html: `
+      ${dcode('bash', `curl "$NODYRA_BASE_URL/api/github-sync/config/webhook-secret" \\
+  -H "Authorization: Bearer $NODYRA_TOKEN"`)}
+      <p>In GitHub, add a repository webhook pointing at the <code>webhook_url</code> returned by <code>GET /api/github-sync/config</code>, using the returned secret. Pull requests and branch updates now flow back into Nodyra.</p>` }
+  ]
+},
+{
+  id: 'licensing', g: 'Project', title: 'Licensing', gh: 'docs/licensing.md',
+  desc: 'Nodyra is fair-code: the source is public, self-hosting is free for your own use, and commercial resale or hosting requires a license. Plain-English summary of the binding LICENSE, LICENSE.enterprise, and TRADEMARK.md files.',
+  s: [
+    { id: 'at-glance', h: 'The three licenses at a glance', html: `
+      <table>
+        <tr><th>What</th><th>License</th><th>Cost</th></tr>
+        <tr><td>Core platform (editor, engine, nodes, API, CLI, MCP)</td><td>Nodyra Sustainable Use License</td><td>Free</td></tr>
+        <tr><td>Enterprise features (multi-tenancy, SSO/SAML/OIDC, SCIM, audit export, external KMS, license enforcement)</td><td>Nodyra Enterprise License</td><td>Paid license key</td></tr>
+        <tr><td>The Nodyra name and logo</td><td>Trademark policy</td><td>Not licensed with the code</td></tr>
+      </table>` },
+    { id: 'can', h: 'What you CAN do, free of charge', html: `
+      <ul>
+        <li>Self-host for your team, company, or personal projects — unlimited internal business use.</li>
+        <li>Modify the source and run your modified version internally.</li>
+        <li>Build and sell consulting, integration, and support services — as long as each client hosts its own instance and you charge for services, not the software.</li>
+        <li>Build and share nodes, integrations, and workflows, including commercially licensed ones.</li>
+        <li>Write tutorials, courses, and videos — including paid ones.</li>
+        <li>Redistribute unmodified copies free of charge with the license intact.</li>
+      </ul>
+      <p>The Community posture includes up to five seats, ten active deployments, three environments, one sandboxed runner, and unlimited local drafts. Limits reject new activity without deleting existing workflows, runs, or artifacts.</p>` },
+    { id: 'cannot', h: 'What you CANNOT do without a commercial agreement', html: `
+      <ul>
+        <li>Offer Nodyra (or a derivative) to third parties as a hosted or managed service — SaaS, white-label hosting, or exposing its functionality through your own app or API.</li>
+        <li>Sell the software, charge for access to it, or bundle it into a paid product.</li>
+        <li>Use, enable, or unlock Enterprise-gated features without a valid license key, or tamper with the license checks.</li>
+        <li>Use the Nodyra name or logo for your own product, fork, company, or domain.</li>
+      </ul>` },
+    { id: 'faq', h: 'FAQ', html: `
+      <ul>
+        <li><strong>Is Nodyra open source?</strong> Not by the OSI definition — fair-code: source available, free to self-host for permitted uses, commercially protected.</li>
+        <li><strong>Do Enterprise features stop working when a license expires?</strong> Licensing soft-fails: expiry downgrades limits to Community and disables gated features for new activity, but never deletes data or stops existing workflows destructively.</li>
+        <li><strong>Does the license phone home?</strong> No. License keys are verified offline with an embedded public key — air-gapped deployments are fully supported.</li>
+        <li><strong>Who owns contributions?</strong> You keep ownership; the CLA grants the project distribution and relicensing rights.</li>
+      </ul>` }
+  ]
+},
+{
+  id: 'security', g: 'Project', title: 'Security model', gh: 'SECURITY.md',
+  desc: 'Trust boundaries, execution postures, and what Nodyra already protects. Read this before exposing an instance.',
+  s: [
+    { id: 'postures', h: 'Trust model: three execution postures', html: `
+      <ul>
+        <li><strong>Trusted single-tenant (default)</strong> — workflow authors are trusted; Code nodes run in warm worker subprocesses on the host at native speed.</li>
+        <li><strong>Sandboxed</strong> (<code>EXECUTION_SANDBOX=auto|required</code>) — each run executes in a disposable hardened container.</li>
+        <li><strong>Multi-tenant</strong> (<code>MULTI_TENANCY_ENABLED=true</code>) — requires sandboxed execution and combines row-level security, org-scoped keys, quotas/fairness, and per-org sandbox pools.</li>
+      </ul>
+      ${dcall('danger', `With the default posture, workflow Code nodes and uploaded modules run <strong>arbitrary Python in the worker process on the host</strong> — treat the host as running your team's own code.`)}` },
+    { id: 'responsibilities', h: 'Operator responsibilities', html: `
+      <ul>
+        <li>Require authentication (<code>AUTH_REQUIRED=true</code>) and restrict edit/deploy access via roles (<code>viewer</code> / <code>editor</code> / <code>admin</code> / <code>owner</code>).</li>
+        <li>Enable <code>EXECUTION_SANDBOX=auto|required</code> whenever workflows execute AI-generated or otherwise untrusted code.</li>
+        <li>Use the unsafe-node policy (<code>UNSAFE_NODE_POLICY=warn|require_approval|block</code>) to gate risky nodes (Code, Execute Command, SSH, SQL-with-expressions, HTTP to private IPs) on deployment activation.</li>
+        <li>Set a strong <code>SECRET_KEY</code> and non-empty <code>INTERNAL_API_TOKEN</code> whenever the API is reachable beyond your own machine.</li>
+        <li>Keep credentials in the encrypted vault; never paste secrets into Code nodes.</li>
+      </ul>` },
+    { id: 'builtin', h: 'What Nodyra already does', html: `
+      <ul>
+        <li>Credentials encrypted at rest (per-credential DEK wrapped by a key derived from <code>SECRET_KEY</code>); the API returns only field names, never plaintext.</li>
+        <li>Secret values redacted from run outputs, logs, run events, and API responses.</li>
+        <li>Passwords use PBKDF2-HMAC-SHA256; session tokens are HMAC-signed.</li>
+        <li>Code-module discovery is AST-only — uploaded Python is parsed, never executed, in the API process.</li>
+        <li>Artifact storage keys are server-generated and path-traversal checked.</li>
+      </ul>` },
+    { id: 'report', h: 'Reporting a vulnerability', html: `
+      ${dcall('info', `Report security issues <strong>privately</strong> rather than opening a public issue — email the maintainers with a description, reproduction steps, and impact. Do not include real credentials or customer data in reports.`)}` }
+  ]
+}
+];
+var flatOrder = PAGES;
+var groupNames = [];
+(function () {
+  var seen = {};
+  PAGES.forEach(function (p) { if (!seen[p.g]) { seen[p.g] = true; groupNames.push(p.g); } });
+})();
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function stripTags(s) {
+  return s.replace(/<[^>]*>/g, ' ');
+}
+function hl(text, q) {
+  var i = text.toLowerCase().indexOf(q.toLowerCase());
+  if (i === -1) return esc(text);
+  return esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length)) + '</mark>' + esc(text.slice(i + q.length));
+}
+function findPage(id) {
+  for (var i = 0; i < PAGES.length; i++) if (PAGES[i].id === id) return PAGES[i];
+  return null;
+}
+
+function buildNav(activeId) {
+  var nav = document.getElementById('ds-nav');
+  var h = '';
+  groupNames.forEach(function (g) {
+    h += '<div class="ds-group" data-group="' + esc(g) + '"><div class="ds-group-label">' + esc(g) + '</div>';
+    PAGES.forEach(function (p) {
+      if (p.g !== g) return;
+      h += '<a class="ds-link' + (p.id === activeId ? ' active' : '') + '" href="#/' + p.id + '" data-page="' + p.id + '"><span class="ds-dot" aria-hidden="true"></span>' + esc(p.title) + '</a>';
+    });
+    h += '</div>';
+  });
+  nav.innerHTML = h;
+}
+
+var tocActive = null;
+function spy() {
+  var links = document.querySelectorAll('#dtoc-links a[data-sec]');
+  if (!links.length) return;
+  var current = null;
+  links.forEach(function (a) {
+    var el = document.getElementById('sec-' + a.getAttribute('data-sec'));
+    if (el && el.getBoundingClientRect().top <= 130) current = a.getAttribute('data-sec');
+  });
+  if (current !== tocActive) {
+    tocActive = current;
+    links.forEach(function (a) { a.classList.toggle('active', a.getAttribute('data-sec') === current); });
+  }
+}
+
+function renderPage(p) {
+  document.title = p.title + ' — Nodyra Docs';
+  var body = document.getElementById('doc-body');
+  var h = '';
+  h += '<nav class="dcrumb" aria-label="Breadcrumb"><a href="#/welcome">Docs</a><span class="sep">/</span><span class="here">' + esc(p.g) + ' / ' + esc(p.title) + '</span></nav>';
+  h += '<h1 class="dpage-title">' + esc(p.title) + '</h1>';
+  h += '<p class="dpage-desc">' + p.desc + '</p>';
+  var toc = '';
+  p.s.forEach(function (s) {
+    h += '<section class="dsec" id="sec-' + s.id + '"><h2 id="h-' + s.id + '">' + esc(s.h) + '<a class="hanchor" href="#/' + p.id + '/' + s.id + '" aria-label="Link to this section">#</a></h2>' + s.html + '</section>';
+    toc += '<a href="#/' + p.id + '/' + s.id + '" data-sec="' + s.id + '">' + esc(s.h) + '</a>';
+  });
+  body.innerHTML = h;
+  document.getElementById('dtoc-links').innerHTML = toc +
+    '<div class="dtoc-edit"><a class="dt-btn" href="https://github.com/Harshit-repo/noodle/blob/main/' + p.gh + '" rel="noopener">Edit on GitHub</a>' +
+    '<a class="dt-btn" href="https://github.com/Harshit-repo/noodle/issues" rel="noopener">Report issue</a></div>';
+  var idx = flatOrder.indexOf(p);
+  var prev = idx > 0 ? flatOrder[idx - 1] : null;
+  var next = idx < flatOrder.length - 1 ? flatOrder[idx + 1] : null;
+  var pg = '<div class="dpager">';
+  pg += prev ? '<a href="#/' + prev.id + '"><span class="dp-dir">← Previous</span><span class="dp-title">' + esc(prev.title) + '</span></a>' : '<span></span>';
+  pg += next ? '<a class="dp-next" href="#/' + next.id + '"><span class="dp-dir">Next →</span><span class="dp-title">' + esc(next.title) + '</span></a>' : '<span></span>';
+  pg += '</div>';
+  body.insertAdjacentHTML('beforeend', pg);
+  buildNav(p.id);
+  tocActive = null;
+  spy();
+  window.scrollTo(0, 0);
+}
+
+function route() {
+  var raw = location.hash.replace(/^#\/?/, '');
+  var parts = raw.split('/').filter(Boolean);
+  var p = findPage(parts[0]) || findPage('welcome');
+  renderPage(p);
+  if (parts[1]) {
+    setTimeout(function () {
+      var el = document.getElementById('sec-' + parts[1]);
+      if (el) el.scrollIntoView();
+    }, 40);
+  }
+  closeNav();
+}
+
+window.addEventListener('hashchange', route);
+
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('.dcode-copy');
+  if (!btn) return;
+  var pre = btn.closest('.dcode').querySelector('pre');
+  if (!pre) return;
+  navigator.clipboard.writeText(pre.textContent).then(function () {
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1600);
+  }).catch(function () {});
+});
+
+var results = document.getElementById('dt-results');
+var input = document.getElementById('dt-search-input');
+var selIdx = -1;
+var matches = [];
+
+function searchItems(q) {
+  q = q.toLowerCase();
+  var out = [];
+  PAGES.forEach(function (p) {
+    var titleHit = p.title.toLowerCase().indexOf(q) !== -1;
+    if (titleHit) out.push({ page: p, sub: p.g, html: hl(p.title, q) });
+    p.s.forEach(function (s) {
+      if (!titleHit && (s.h.toLowerCase().indexOf(q) !== -1 || stripTags(s.html).toLowerCase().indexOf(q) !== -1)) {
+        out.push({ page: p, sub: p.g + ' — ' + p.title, html: hl(s.h, q), sec: s.id });
+      }
+    });
+  });
+  return out.slice(0, 8);
+}
+function filterSidebar(q) {
+  var show = q.length >= 2;
+  document.querySelectorAll('.ds-link').forEach(function (a) {
+    var p = a.getAttribute('data-page');
+    a.style.display = (!show || p.toLowerCase().indexOf(q) !== -1) ? '' : 'none';
+  });
+  document.querySelectorAll('.ds-group').forEach(function (g) {
+    if (!show) { g.style.display = ''; return; }
+    var any = false;
+    g.querySelectorAll('.ds-link').forEach(function (a) { if (a.style.display !== 'none') any = true; });
+    g.style.display = any ? '' : 'none';
+  });
+}
+function updateSel() {
+  document.querySelectorAll('.dr-item').forEach(function (el, i) { el.classList.toggle('sel', i === selIdx); });
+}
+function go(m) {
+  location.hash = '#/' + m.page.id + (m.sec ? '/' + m.sec : '');
+  input.value = '';
+  results.classList.remove('open');
+  filterSidebar('');
+  input.blur();
+}
+input.addEventListener('input', function () {
+  var q = input.value.trim();
+  selIdx = -1;
+  if (q.length < 2) { results.classList.remove('open'); filterSidebar(''); return; }
+  matches = searchItems(q);
+  filterSidebar(q.toLowerCase());
+  if (!matches.length) {
+    results.innerHTML = '<div class="dr-empty">No results for “' + esc(q) + '”</div>';
+  } else {
+    var h = '';
+    matches.forEach(function (m, i) {
+      h += '<div class="dr-item" data-i="' + i + '" role="option"><span class="dr-title">' + m.html + '</span><span class="dr-sub">' + esc(m.sub) + '</span></div>';
+    });
+    results.innerHTML = h;
+  }
+  results.classList.add('open');
+});
+input.addEventListener('keydown', function (e) {
+  if (e.key === 'ArrowDown' && matches.length) { e.preventDefault(); selIdx = (selIdx + 1) % matches.length; updateSel(); }
+  else if (e.key === 'ArrowUp' && matches.length) { e.preventDefault(); selIdx = (selIdx - 1 + matches.length) % matches.length; updateSel(); }
+  else if (e.key === 'Enter' && matches.length) { e.preventDefault(); go(matches[Math.max(selIdx, 0)]); }
+  else if (e.key === 'Escape') { input.value = ''; results.classList.remove('open'); filterSidebar(''); input.blur(); }
+});
+results.addEventListener('click', function (e) {
+  var item = e.target.closest('.dr-item');
+  if (!item) return;
+  go(matches[Number(item.getAttribute('data-i'))]);
+});
+document.addEventListener('click', function (e) {
+  if (!e.target.closest('.dt-search')) results.classList.remove('open');
+});
+document.addEventListener('keydown', function (e) {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    input.focus();
+    input.select();
+  }
+});
+
+var burger = document.getElementById('dt-burger');
+var overlay = document.getElementById('ds-overlay');
+function openNav() { document.body.classList.add('nav-open'); burger.setAttribute('aria-expanded', 'true'); }
+function closeNav() { document.body.classList.remove('nav-open'); burger.setAttribute('aria-expanded', 'false'); }
+burger.addEventListener('click', function () {
+  if (document.body.classList.contains('nav-open')) closeNav(); else openNav();
+});
+overlay.addEventListener('click', closeNav);
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && document.body.classList.contains('nav-open')) closeNav();
+});
+
+if (!location.hash) location.replace('#/welcome');
+route();
+</script>
+</body>
+</html>

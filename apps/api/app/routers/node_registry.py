@@ -15,6 +15,7 @@ from app.config import settings
 from app.db import get_session
 from app.models import Environment, EnvironmentBuildJob, User
 from app.security import optional_current_user, require_permission
+from app.services.audit import log_audit
 from app.services.environment_builds import (
     enqueue_environment_build,
     notify_environment_build_workers,
@@ -316,6 +317,18 @@ async def install_package(
         env,
         reason=f"registry:{package_id}"[:40],
         requested_by=user,
+    )
+    # Installing a community package executes third-party code inside this
+    # deployment's environments — the single most consequential action a
+    # non-owner can take. Record who installed what, at which pinned version.
+    await log_audit(
+        session,
+        "install",
+        "registry_package",
+        package_id,
+        f"environment={environment_id} spec={locked_spec}",
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
     )
     await session.commit()
     await session.refresh(job)

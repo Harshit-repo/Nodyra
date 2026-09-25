@@ -4,10 +4,11 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from app.models import ProviderTriggerSubscription, ScheduleState
+from app.models import ProviderTriggerSubscription, ScheduleOccurrence, ScheduleState
 from app.services import provider_triggers, triggers
 from nodyra_nodes.integrations_v2.providers.github import triggers as github_triggers
 
@@ -435,6 +436,105 @@ async def test_webhook_method_must_match_node_method(client: AsyncClient) -> Non
     assert len(get_resp["runs"]) == 1
 
 
+def _ws_trigger_graph(path: str = "myws", **extra_params: Any) -> dict:
+    return {
+        "nodes": [
+            {
+                "id": "ws",
+                "type": "websocket_trigger",
+                "params": {"path": path, **extra_params},
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "proc",
+                "type": "code",
+                "params": {"code": "output = input"},
+                "position": {"x": 260, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "ws",
+                "source_output": "main",
+                "target": "proc",
+                "target_input": "input",
+            }
+        ],
+    }
+
+
+async def test_websocket_trigger_fires_run(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "WS Hook"})).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": _ws_trigger_graph(), "active": True},
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app, raise_server_exceptions=False) as tc:
+        with tc.websocket_connect("/ws/triggers/myws") as ws:
+            ws.send_text('{"v": 3}')
+            ack = ws.receive_json()
+    assert ack["status"] == 202
+    assert len(ack["runs"]) == 1
+
+    run = (await client.get(f"/runs/{ack['runs'][0]}")).json()
+    assert run["status"] == "success"
+    assert run["trigger_type"] == "provider"
+    results = {n["node_id"]: n for n in run["node_runs"]}
+    assert results["proc"]["output"]["main"]["v"] == 3
+
+
+async def test_websocket_trigger_unknown_path_closes(client: AsyncClient) -> None:
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.main import app
+
+    with TestClient(app, raise_server_exceptions=False) as tc:
+        with tc.websocket_connect("/ws/triggers/nothing-here") as ws:
+            msg = ws.receive_json()
+            assert msg["error"]
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+
+
+async def test_websocket_trigger_enforces_token_auth(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "WS Private"})).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={
+            "graph": _ws_trigger_graph(path="private", auth_type="token", auth_token="sekret"),
+            "active": True,
+        },
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.main import app
+
+    with TestClient(app, raise_server_exceptions=False) as tc:
+        with tc.websocket_connect("/ws/triggers/private") as ws:
+            with pytest.raises(WebSocketDisconnect):
+                ws.send_text('{"v": 9}')
+                ws.receive_json()
+        with tc.websocket_connect("/ws/triggers/private?token=wrong") as ws:
+            with pytest.raises(WebSocketDisconnect):
+                ws.send_text('{"v": 9}')
+                ws.receive_json()
+        with tc.websocket_connect("/ws/triggers/private?token=sekret") as ws:
+            ws.send_text('{"v": 9}')
+            ack = ws.receive_json()
+    assert len(ack["runs"]) == 1
+
+
 async def test_github_provider_trigger_lifecycle_and_dispatch(
     client: AsyncClient,
     monkeypatch,
@@ -632,6 +732,99 @@ async def test_schedule_tick_honours_cron(client: AsyncClient) -> None:
     runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"]
     assert len(runs) == 1
     assert runs[0]["trigger_type"] == "schedule"
+
+
+async def test_schedule_occurrence_retries_and_recovers_committed_run(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """A dispatch crash cannot lose a due occurrence or create a second run."""
+    workflow_id = (await client.post("/workflows", json={"name": "Durable schedule"})).json()["id"]
+    graph = {
+        "nodes": [
+            {
+                "id": "sched",
+                "type": "schedule_trigger",
+                "params": {"interval": "minutes", "every": 1},
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph, "active": True})
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+    await triggers._tick()
+
+    async with triggers.SessionLocal() as session:
+        state = await session.get(ScheduleState, workflow_id)
+        assert state is not None
+        state.last_fired = datetime.now(UTC) - timedelta(hours=1)
+        await session.commit()
+
+    real_start_run = triggers.start_run
+
+    async def fail_before_commit(*args, **kwargs):
+        raise RuntimeError("temporary admission failure")
+
+    monkeypatch.setattr(triggers, "start_run", fail_before_commit)
+    await triggers._tick()
+
+    async with triggers.SessionLocal() as session:
+        occurrence = (
+            await session.scalars(
+                select(ScheduleOccurrence).where(ScheduleOccurrence.workflow_id == workflow_id)
+            )
+        ).one()
+        assert occurrence.status == "pending"
+        assert occurrence.attempts == 1
+        assert occurrence.next_attempt_at is not None
+        occurrence.next_attempt_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+
+    monkeypatch.setattr(triggers, "start_run", real_start_run)
+    await triggers._tick()
+
+    async with triggers.SessionLocal() as session:
+        occurrence = (
+            await session.scalars(
+                select(ScheduleOccurrence).where(ScheduleOccurrence.workflow_id == workflow_id)
+            )
+        ).one()
+        assert occurrence.status == "dispatched"
+        assert occurrence.attempts == 2
+        assert occurrence.run_id is not None
+        committed_run_id = occurrence.run_id
+
+        # Simulate process death after start_run committed but before the outbox
+        # acknowledgement. Recovery must resolve the unique dispatch key.
+        occurrence.status = "dispatching"
+        occurrence.run_id = None
+        occurrence.dispatched_at = None
+        occurrence.dispatch_token = "abandoned"
+        occurrence.dispatch_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+
+    calls = 0
+
+    async def must_not_start_again(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("existing run should satisfy recovered occurrence")
+
+    monkeypatch.setattr(triggers, "start_run", must_not_start_again)
+    await triggers._tick()
+    assert calls == 0
+
+    async with triggers.SessionLocal() as session:
+        occurrence = (
+            await session.scalars(
+                select(ScheduleOccurrence).where(ScheduleOccurrence.workflow_id == workflow_id)
+            )
+        ).one()
+        assert occurrence.status == "dispatched"
+        assert occurrence.run_id == committed_run_id
+
+    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"]
+    assert len(runs) == 1
 
 
 def test_is_due_unknown_timezone_does_not_fire() -> None:
@@ -877,6 +1070,13 @@ def test_hmac_rejects_stale_timestamp() -> None:
     )
 
 
+def _stripe_signed_headers(body: bytes, secret: str, ts: str) -> dict[str, str]:
+    """Sign ``{ts}.{body}`` — Stripe's layout, the default when a timestamp
+    header is configured."""
+    sig = hmac.new(secret.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+    return {"x-signature": sig, "x-timestamp": ts}
+
+
 def test_hmac_accepts_fresh_timestamp() -> None:
     import time
 
@@ -888,10 +1088,87 @@ def test_hmac_accepts_fresh_timestamp() -> None:
         "hmac_timestamp_header": "X-Timestamp",
         "hmac_max_age_seconds": 300,
     }
-    headers = _signed_headers(body, secret)
-    headers["x-timestamp"] = str(int(time.time()))
+    headers = _stripe_signed_headers(body, secret, str(int(time.time())))
     assert (
         triggers._webhook_hmac_passes(node_params, {"hmac_secret": secret}, headers, body) is True
+    )
+
+
+def test_hmac_timestamp_is_bound_to_the_signature() -> None:
+    """When a timestamp header is configured, the signature must cover it.
+
+    Otherwise the freshness window is inert: the timestamp header is
+    attacker-controlled, so a signature over the body alone replays under any
+    fresh timestamp. Regression for that — a captured signature must not
+    validate once presented with a different timestamp, and a body-only
+    signature must be rejected outright when a timestamp header is in play.
+    """
+    import time
+
+    body = b'{"order": 42}'
+    secret = "whsec_test"
+    node_params = {
+        "hmac_verification": "on",
+        "hmac_header": "X-Signature",
+        "hmac_timestamp_header": "X-Timestamp",
+        "hmac_max_age_seconds": 300,
+    }
+    resolved = {"hmac_secret": secret}
+    now = int(time.time())
+
+    # A signature bound to ts=now validates only with that timestamp...
+    headers = _stripe_signed_headers(body, secret, str(now))
+    assert triggers._webhook_hmac_passes(node_params, resolved, headers, body) is True
+
+    # ...and not when the same signature is replayed under a different, still
+    # fresh timestamp (the attacker cannot forge a signature for a new ts).
+    replayed = dict(headers, **{"x-timestamp": str(now - 100)})
+    assert triggers._webhook_hmac_passes(node_params, resolved, replayed, body) is False
+
+    # A body-only signature (the old forgeable form) is rejected outright.
+    body_only = {
+        "x-signature": hmac.new(secret.encode(), body, hashlib.sha256).hexdigest(),
+        "x-timestamp": str(now),
+    }
+    assert triggers._webhook_hmac_passes(node_params, resolved, body_only, body) is False
+
+
+def test_hmac_supports_slack_v0_signed_payload() -> None:
+    import time
+
+    body = b"token=abc&team_id=T1"
+    secret = "whsec_test"
+    ts = str(int(time.time()))
+    node_params = {
+        "hmac_verification": "on",
+        "hmac_header": "X-Slack-Signature",
+        "hmac_prefix": "v0=",
+        "hmac_timestamp_header": "X-Slack-Request-Timestamp",
+        "hmac_max_age_seconds": 300,
+        "hmac_signed_payload": "v0:{ts}:{body}",
+    }
+    sig = hmac.new(secret.encode(), f"v0:{ts}:".encode() + body, hashlib.sha256).hexdigest()
+    headers = {"x-slack-signature": "v0=" + sig, "x-slack-request-timestamp": ts}
+    assert (
+        triggers._webhook_hmac_passes(node_params, {"hmac_secret": secret}, headers, body) is True
+    )
+
+
+def test_hmac_without_timestamp_header_stays_body_only() -> None:
+    """GitHub-style (no timestamp) is unchanged: HMAC over the raw body."""
+    body = b'{"order": 42}'
+    secret = "whsec_test"
+    node_params = {
+        "hmac_verification": "on",
+        "hmac_header": "X-Signature",
+        "hmac_prefix": "sha256=",
+    }
+    sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    assert (
+        triggers._webhook_hmac_passes(
+            node_params, {"hmac_secret": secret}, {"x-signature": sig}, body
+        )
+        is True
     )
 
 
@@ -1737,3 +2014,126 @@ async def test_webhook_unsupported_method_returns_ok(
     DELETE/OPTIONS). An OPTIONS request returns 204 without dispatch."""
     resp = await client.options("/webhook/any-path")
     assert resp.status_code == 204
+
+
+def test_dedup_key_without_a_template_is_ignored() -> None:
+    """A constant dedup key would drop every event after the first.
+
+    ``evaluate()`` returns the literal text when the expression has no
+    ``{{ }}``, so a plausible-looking ``body.id`` produces the same key for
+    every delivery. The first event runs, and every one after it is
+    acknowledged as a duplicate — silent event loss behind an HTTP 200.
+    """
+    from app.services.triggers import _webhook_dedup_key
+
+    params = {"dedup": "on", "dedup_key": "body.id"}
+    first = {"body": {"id": "evt_1"}}
+    second = {"body": {"id": "evt_2"}}
+
+    assert _webhook_dedup_key(params, first) is None
+    assert _webhook_dedup_key(params, second) is None
+
+
+def test_dedup_key_with_a_template_distinguishes_deliveries() -> None:
+    from app.services.triggers import _webhook_dedup_key
+
+    params = {"dedup": "on", "dedup_key": "{{ $json.body.id }}"}
+
+    assert _webhook_dedup_key(params, {"body": {"id": "evt_1"}}) == "evt_1"
+    assert _webhook_dedup_key(params, {"body": {"id": "evt_2"}}) == "evt_2"
+
+
+def test_dedup_key_is_none_when_dedup_is_off() -> None:
+    from app.services.triggers import _webhook_dedup_key
+
+    params = {"dedup": "off", "dedup_key": "{{ $json.body.id }}"}
+
+    assert _webhook_dedup_key(params, {"body": {"id": "evt_1"}}) is None
+
+
+# ---------------------------------------------------------------------------
+# Daylight-saving transitions
+#
+# Australia/Sydney springs forward on the first Sunday of October (02:00 ->
+# 03:00, so 02:30 never happens) and falls back on the first Sunday of April
+# (03:00 -> 02:00, so 02:30 happens twice).
+
+
+def _syd(year, month, day, hour, minute, *, fold=0):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime(
+        year, month, day, hour, minute, tzinfo=ZoneInfo("Australia/Sydney"), fold=fold
+    ).astimezone(ZoneInfo("UTC"))
+
+
+NIGHTLY_0230 = {"cron": "30 2 * * *", "tz": "Australia/Sydney"}
+
+
+def test_nightly_schedule_does_not_fire_twice_on_the_fall_back_day() -> None:
+    """The repeated hour must not run a nightly job a second time.
+
+    On 5 April 2026 the Sydney clock goes 03:00 -> 02:00, so 02:30 occurs
+    twice, an hour apart in real time. croniter's next occurrence after
+    02:30 AEDT is 02:30 AEST — the same nominal slot — so the schedule fired
+    again. For an invoicing or payout workflow that is the money moved twice,
+    once a year.
+    """
+    from app.services.triggers import _is_due
+
+    first_0230 = _syd(2026, 4, 5, 2, 30, fold=0)
+    repeated_0230 = _syd(2026, 4, 5, 2, 30, fold=1)
+
+    assert repeated_0230 > first_0230  # genuinely an hour later
+    assert _is_due(NIGHTLY_0230, first_0230, repeated_0230) is False
+    assert _is_due(NIGHTLY_0230, first_0230, _syd(2026, 4, 5, 9, 0)) is False
+
+
+def test_fall_back_guard_survives_a_tick_that_fires_a_minute_late() -> None:
+    """The guard must key off the cron slot, not the tick that fired it.
+
+    ``ScheduleState.last_fired`` records when the scheduler *noticed* the job
+    was due, which is at or after the nominal slot. A tick delayed past the
+    minute boundary — a slow previous tick, an API restart, a loaded host —
+    stores 02:31 for a 02:30 job. Comparing the repeated occurrence against
+    that stored wall-clock instead of against 02:30 disarms the guard, and the
+    nightly job runs twice on the fall-back day after all.
+    """
+    from app.services.triggers import _is_due
+
+    late_tick = _syd(2026, 4, 5, 2, 31, fold=0)
+    repeated_0230 = _syd(2026, 4, 5, 2, 30, fold=1)
+
+    assert repeated_0230 > late_tick  # the repeat is still later in real time
+    assert _is_due(NIGHTLY_0230, late_tick, repeated_0230) is False
+    assert _is_due(NIGHTLY_0230, late_tick, _syd(2026, 4, 5, 9, 0)) is False
+    # ...and the next day still runs.
+    assert _is_due(NIGHTLY_0230, late_tick, _syd(2026, 4, 6, 2, 31)) is True
+
+
+def test_nightly_schedule_still_fires_the_next_day_after_fall_back() -> None:
+    from app.services.triggers import _is_due
+
+    assert _is_due(NIGHTLY_0230, _syd(2026, 4, 5, 2, 30), _syd(2026, 4, 6, 2, 31)) is True
+
+
+def test_nightly_schedule_is_not_skipped_on_the_spring_forward_day() -> None:
+    """02:30 never happens on 4 October 2026 — the job must still run."""
+    from app.services.triggers import _is_due
+
+    assert _is_due(NIGHTLY_0230, _syd(2026, 10, 3, 2, 30), _syd(2026, 10, 4, 4, 0)) is True
+
+
+def test_ordinary_days_are_unaffected() -> None:
+    from app.services.triggers import _is_due
+
+    assert _is_due(NIGHTLY_0230, _syd(2026, 3, 10, 2, 30), _syd(2026, 3, 11, 2, 31)) is True
+    assert _is_due(NIGHTLY_0230, _syd(2026, 3, 10, 2, 30), _syd(2026, 3, 11, 1, 0)) is False
+
+
+def test_hourly_cron_is_unaffected_by_the_repeat_guard() -> None:
+    from app.services.triggers import _is_due
+
+    hourly = {"cron": "0 * * * *", "tz": "Australia/Sydney"}
+    assert _is_due(hourly, _syd(2026, 3, 10, 2, 0), _syd(2026, 3, 10, 3, 1)) is True

@@ -28,9 +28,9 @@ from app.schemas import (
     GenerateNodeRequest,
     GenerateNodeResponse,
 )
-from app.security import optional_current_user, require_permission
+from app.security import audit_recorder, optional_current_user, require_permission
 from app.services.ai_builder import generate_custom_node
-from app.services.audit import log_audit
+from app.services.audit import AuditRecorder, log_audit
 from app.services.starter_graph import build_starter_graph
 from nodyra.models import NodeManifest
 from nodyra.sdk import discover_module_function_manifests, discover_module_nodes
@@ -212,6 +212,7 @@ async def update_code_module(
     module_id: str,
     body: CodeModuleUpdate,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ):
     module = await _load(session, module_id)
     if body.name is not None:
@@ -221,6 +222,10 @@ async def update_code_module(
     if body.include_undecorated is not None:
         module.include_undecorated = body.include_undecorated
     await session.commit()
+    await audit(
+        "update", "code_module", module.id,
+        "fields=" + ",".join(sorted(body.model_dump(exclude_unset=True))),
+    )
     await session.refresh(module)
     return module
 

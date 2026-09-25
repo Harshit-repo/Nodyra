@@ -138,3 +138,38 @@ def pipeline():
         edge["source"] == "loaded" and edge["target"] == "transformed"
         for edge in result.graph["edges"]
     )
+
+
+def test_n8n_reports_connections_lost_with_a_dropped_node() -> None:
+    """Dropping a node severs the chain; the report has to say which branch.
+
+    A node in the middle of a chain takes both of its connections with it, so
+    everything downstream is silently orphaned. On a large import nobody
+    notices the severed tail — the graph just quietly does less than it did.
+    """
+    source = json.dumps(
+        {
+            "nodes": [
+                {"id": "t", "name": "Start", "type": "n8n-nodes-base.manualTrigger", "parameters": {}},
+                {"id": "f", "name": "Fetch", "type": "n8n-nodes-base.httpRequest",
+                 "parameters": {"url": "https://example.com"}},
+                {"id": "c", "name": "Score", "type": "n8n-nodes-base.code",
+                 "parameters": {"jsCode": "return items;"}},
+                {"id": "s", "name": "Notify", "type": "n8n-nodes-base.slack",
+                 "parameters": {"channel": "#ops"}},
+            ],
+            "connections": {
+                "Start": {"main": [[{"node": "Fetch", "type": "main", "index": 0}]]},
+                "Fetch": {"main": [[{"node": "Score", "type": "main", "index": 0}]]},
+                "Score": {"main": [[{"node": "Notify", "type": "main", "index": 0}]]},
+            },
+        }
+    )
+
+    result = analyze_migration(source, "n8n", allow_partial=True)
+
+    messages = [f.message for f in result.findings if f.source_type == "connection"]
+    assert any("'Fetch' -> 'Score'" in m for m in messages)
+    assert any("nothing now feeds 'Notify'" in m for m in messages)
+    # Only the one surviving connection is wired.
+    assert len(result.graph["edges"]) == 1

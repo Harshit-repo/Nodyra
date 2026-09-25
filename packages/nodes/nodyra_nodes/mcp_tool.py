@@ -56,9 +56,23 @@ def _record_debug_trace(
     input_kinds={"main": "any"},
     output_kinds={"main": "any"},
     params={
-        "connection_id": {"type": "mcp_connection", "label": "MCP Connection", "required": True},
-        "tool_name": {"type": "string", "label": "Tool Name", "required": True},
-        "arguments": {"type": "object", "label": "Arguments"},
+        "connection_id": {
+            "label": "MCP Connection",
+            "required": True,
+            "description": "ID of the managed MCP connection to call. The runner resolves it "
+            "to its server URL and decrypted secrets.",
+        },
+        "tool_name": {
+            "label": "Tool Name",
+            "required": True,
+            "description": "Name of the tool to invoke on the MCP server.",
+        },
+        "arguments": {
+            "type": "object",
+            "label": "Arguments",
+            "description": "Tool arguments as a JSON object. {{ }} expressions are resolved "
+            "against upstream node outputs.",
+        },
     },
 )
 async def mcp_tool(input: Any = None, *, ctx: RuntimeContext) -> Any:  # noqa: ANN401

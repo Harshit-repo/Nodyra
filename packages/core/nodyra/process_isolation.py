@@ -36,6 +36,56 @@ pool_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 
 
+def _picklable_artifact_store() -> Any:
+    """The current artifact store, or None when it cannot cross a process.
+
+    A remote/streaming store may hold sockets or file handles. Checking here
+    keeps the failure at "datasets are unavailable in the worker", which is
+    the status quo, rather than turning it into an unpicklable-argument crash
+    that takes the whole node with it.
+    """
+    try:
+        import pickle
+
+        from nodyra.context import artifact_store
+
+        store = artifact_store.get()
+        if store is None:
+            return None
+        pickle.dumps(store)
+        return store
+    except Exception:  # noqa: BLE001 - diagnosis must never break dispatch
+        _logger.debug("artifact store cannot cross into a worker", exc_info=True)
+        return None
+
+
+def _call_with_artifact_store(store: Any, fn: Callable[..., Any], kwargs: dict) -> Any:
+    """Run ``fn`` in this worker with ``store`` installed as its artifact store.
+
+    Module-level so it pickles. ``run_in_executor`` carries no contextvars
+    across the process boundary, so without this the worker's
+    ``artifact_store`` is unset and every dataset/artifact helper raises
+    "datasets are not available in this execution context" — including in a
+    Code node, which the engine deliberately hands DatasetRefs on the
+    understanding that it can read them.
+
+    A store that fails to travel is not worth failing the node for: the node
+    runs anyway, exactly as it did before, and only dataset access inside it
+    raises.
+    """
+    try:
+        from nodyra.context import artifact_store
+
+        # Set unconditionally, including to None. Workers are reused across
+        # runs, so a call that brings no store must clear the previous run's
+        # rather than inherit it — one run writing into another run's
+        # artifact directory is a worse failure than no dataset access.
+        artifact_store.set(store)
+    except Exception:  # noqa: BLE001 - never block the node on this
+        _logger.debug("could not install artifact store in worker", exc_info=True)
+    return fn(**kwargs)
+
+
 class ProcessIsolator(Protocol):
     """Runs a synchronous node function outside the calling process."""
 
@@ -46,6 +96,30 @@ class ProcessIsolator(Protocol):
         *,
         timeout: float | None,
     ) -> Any: ...
+
+
+class InlineProcessIsolator:
+    """Runs node functions in the calling process, on a worker thread.
+
+    Used by the runtime worker (``nodyra_runtime``): that process is already
+    the isolation boundary — the host spawns one disposable worker per
+    environment and kills it on wedge, timeout, or rebuild. Spawning a second
+    layer of ``ProcessPoolExecutor`` children inside the worker wedged on
+    Windows (HK-2): the spawn child inherits the worker's stdin pipe while
+    the host-callback reader thread is blocked on it, so the child's spawn
+    bootstrap deadlocks and code nodes hang until their timeout.
+    """
+
+    async def run(
+        self,
+        fn: Callable[..., Any],
+        kwargs: dict[str, Any],
+        *,
+        timeout: float | None,
+    ) -> Any:
+        if timeout is not None:
+            return await asyncio.wait_for(asyncio.to_thread(fn, **kwargs), timeout)
+        return await asyncio.to_thread(fn, **kwargs)
 
 
 class PooledProcessIsolator:
@@ -82,11 +156,16 @@ class PooledProcessIsolator:
     ) -> Any:
         key = pool_key.get()
         pool = self._checkout(key)
-        broken_pool_error = importlib.import_module(
-            "concurrent.futures.process"
-        ).BrokenProcessPool
+        broken_pool_error = importlib.import_module("concurrent.futures.process").BrokenProcessPool
         loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(pool, functools.partial(fn, **kwargs))
+        # Carry the caller's artifact store across the process boundary, so a
+        # node that reads a DatasetRef works in here as it does elsewhere.
+        # A store that cannot be pickled is dropped rather than failing the
+        # node — that is the behaviour this code has always had.
+        store = _picklable_artifact_store()
+        future = loop.run_in_executor(
+            pool, functools.partial(_call_with_artifact_store, store, fn, kwargs)
+        )
         try:
             if timeout is not None:
                 return await asyncio.wait_for(future, timeout)
@@ -107,10 +186,9 @@ class PooledProcessIsolator:
         with self._mutex:
             now = time.monotonic()
             idle = [
-                k for k, last in self._last_activity.items()
-                if k != key
-                and self._in_flight.get(k, 0) == 0
-                and now - last > self._idle_seconds
+                k
+                for k, last in self._last_activity.items()
+                if k != key and self._in_flight.get(k, 0) == 0 and now - last > self._idle_seconds
             ]
             for k in idle:
                 self._evict_locked(k)

@@ -9,12 +9,15 @@ whole table.
 
 from __future__ import annotations
 
+import os
 import re
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
+from app.config import settings
 from app.models import Artifact
 from app.services.artifact_backends import get_backend
 
@@ -39,6 +42,37 @@ class DatasetQueryError(ValueError):
     """Raised for invalid queries or unsupported artifacts."""
 
 
+class DatasetQueryControl:
+    """Thread-safe cancellation handle for one DuckDB explorer query."""
+
+    def __init__(self) -> None:
+        self._cancelled = threading.Event()
+        self._lock = threading.Lock()
+        self._connection: Any | None = None
+
+    def bind(self, connection: Any) -> None:
+        with self._lock:
+            self._connection = connection
+            cancelled = self._cancelled.is_set()
+        if cancelled:
+            connection.interrupt()
+
+    def unbind(self, connection: Any) -> None:
+        with self._lock:
+            if self._connection is connection:
+                self._connection = None
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        with self._lock:
+            connection = self._connection
+        if connection is not None:
+            try:
+                connection.interrupt()
+            except Exception:  # noqa: BLE001 - connection may be closing
+                pass
+
+
 def _validate_sql(sql: str) -> str:
     cleaned = sql.strip().rstrip(";").strip()
     if not cleaned:
@@ -59,26 +93,56 @@ def _local_path(artifact: Artifact) -> tuple[Path, Path | None]:
     Local artifacts resolve to their on-disk path directly. Object-store
     backends are streamed into a temp file so DuckDB can read them.
     """
+    max_bytes = max(0, int(settings.max_artifact_bytes or 0))
+    if max_bytes and artifact.size_bytes > max_bytes:
+        raise DatasetQueryError(
+            f"Dataset is {artifact.size_bytes} bytes; explorer limit is {max_bytes} bytes"
+        )
     backend = get_backend(artifact.storage_backend)
     path_for = getattr(backend, "path_for_artifact", None)
     if path_for is not None:
         path = path_for(artifact)
         if not Path(path).exists():
             raise DatasetQueryError("Artifact file not found")
+        if max_bytes and Path(path).stat().st_size > max_bytes:
+            raise DatasetQueryError("Artifact file exceeds the dataset explorer limit")
         return Path(path), None
     download = backend.open_download(artifact)
     if download.path is not None:
-        return Path(download.path), None
+        path = Path(download.path)
+        if max_bytes and path.stat().st_size > max_bytes:
+            raise DatasetQueryError("Artifact file exceeds the dataset explorer limit")
+        return path, None
     if download.stream is None:
         raise DatasetQueryError("Artifact backend produced no readable bytes")
-    tmp = Path(tempfile.mkstemp(suffix=".parquet")[1])
-    with tmp.open("wb") as fh:
-        for chunk in download.stream:
-            fh.write(chunk)
+    fd, tmp_name = tempfile.mkstemp(suffix=".parquet")
+    os.close(fd)
+    tmp = Path(tmp_name)
+    written = 0
+    try:
+        with tmp.open("wb") as fh:
+            for chunk in download.stream:
+                written += len(chunk)
+                if max_bytes and written > max_bytes:
+                    raise DatasetQueryError(
+                        "Artifact download exceeds the dataset explorer limit"
+                    )
+                fh.write(chunk)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     return tmp, tmp
 
 
-def run_dataset_query(artifact: Artifact, sql: str, limit: int) -> dict[str, Any]:
+def run_dataset_query(
+    artifact: Artifact,
+    sql: str,
+    limit: int,
+    *,
+    control: DatasetQueryControl | None = None,
+    memory_mb: int | None = None,
+    temp_mb: int | None = None,
+) -> dict[str, Any]:
     """Execute a read-only query against the artifact's Parquet file."""
     try:
         import duckdb  # type: ignore[import-not-found]
@@ -88,10 +152,17 @@ def run_dataset_query(artifact: Artifact, sql: str, limit: int) -> dict[str, Any
     cleaned = _validate_sql(sql)
     capped = max(1, min(int(limit or DEFAULT_ROWS), MAX_ROWS))
     path, tmp = _local_path(artifact)
+    memory_cap = max(64, min(int(memory_mb or settings.dataset_query_memory_mb), 4096))
+    temp_cap = max(64, min(int(temp_mb or settings.dataset_query_temp_mb), 16384))
+    query_control = control or DatasetQueryControl()
 
     started = time.perf_counter()
     conn = duckdb.connect(":memory:")
+    query_control.bind(conn)
     try:
+        conn.execute("SET threads=1")
+        conn.execute(f"SET memory_limit='{memory_cap}MB'")
+        conn.execute(f"SET max_temp_directory_size='{temp_cap}MB'")
         escaped = str(path).replace("'", "''")
         # Eagerly materialize into an in-memory TABLE (not a lazy view) so the
         # only external file access happens here, under our control. Then latch
@@ -131,6 +202,7 @@ def run_dataset_query(artifact: Artifact, sql: str, limit: int) -> dict[str, Any
     except Exception as exc:  # surface DuckDB parse/runtime errors verbatim
         raise DatasetQueryError(str(exc)) from exc
     finally:
+        query_control.unbind(conn)
         conn.close()
         if tmp is not None:
             try:

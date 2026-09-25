@@ -23,6 +23,7 @@ import contextlib
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 import uuid
@@ -36,6 +37,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.models import Environment
 from app.services.artifacts import artifact_base_dir
+from app.services.stream_limits import stream_limit_bytes
 from app.services.venv import ensure_environment_ready
 from nodyra.serialization import deserialize_value, serialize_value
 
@@ -208,9 +210,7 @@ def _worker_env() -> dict[str, str]:
         _WORKER_ENV_CACHE = dict(env)
         _WORKER_ENV_CACHE_AT = now
     env["NODYRA_CODE_NODE_TIMEOUT_SECONDS"] = str(settings.code_node_timeout_seconds)
-    env["NODYRA_RUNTIME_HEARTBEAT_SECONDS"] = str(
-        settings.runtime_heartbeat_interval_seconds
-    )
+    env["NODYRA_RUNTIME_HEARTBEAT_SECONDS"] = str(settings.runtime_heartbeat_interval_seconds)
     # SEC-3: egress policy for node HTTP/DB. If the operator pinned
     # NODYRA_ALLOW_PRIVATE_EGRESS it was copied through the allowlist above and
     # wins; otherwise the default follows the deployment model — hosted
@@ -304,6 +304,37 @@ async def _python_for_env(env_id: str | None) -> str:
     return sys.executable
 
 
+_STREAM_LIMIT_BYTES: int = stream_limit_bytes()
+
+
+async def _drain_startup_stderr(
+    process: asyncio.subprocess.Process, *, limit: int = 2000, timeout: float = 2.0
+) -> str:
+    """Return whatever a failed-to-start worker wrote to stderr, for the error.
+
+    Best-effort and time-boxed: a worker that died has already closed the pipe,
+    and one that merely hung must not make the caller wait a second time.
+    Returns "" when there is nothing to add, so callers can append it directly.
+    """
+    if process.stderr is None:
+        return ""
+    try:
+        raw = await asyncio.wait_for(process.stderr.read(limit), timeout=timeout)
+    except Exception:  # noqa: BLE001 - diagnosing a failure must not raise
+        return ""
+    text = raw.decode("utf-8", errors="replace").strip()
+    return f": {text}" if text else ""
+
+
+class _PoolPaused(Exception):
+    """The environment is being rebuilt; runs park in the durable queue.
+
+    Raised by ``_EnvPool.acquire`` while the pool is paused so a rebuild can
+    replace the environment directory on Windows (loaded ``.pyd`` files lock
+    it). The runner catches this and requeues the run with backoff.
+    """
+
+
 class _RuntimeProcess:
     def __init__(
         self,
@@ -313,6 +344,10 @@ class _RuntimeProcess:
         self.process = process
         self.env_id = env_id
         self.dead = False
+        # Set by _EnvPool.acquire when the worker is admitted; workers with a
+        # generation older than the pool's are closed on release (see
+        # _EnvPool.drain).
+        self.generation = 0
         self.idle_since = time.time()
         # Number of runs this process has serviced.  Used by the pool's
         # ``max_runs_per_subprocess`` cap to recycle processes before
@@ -347,6 +382,7 @@ class _RuntimeProcess:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            limit=_STREAM_LIMIT_BYTES,
         )
         if process.stdout is None or process.stdin is None:
             raise RuntimeError("runtime subprocess pipes were not opened")
@@ -354,21 +390,26 @@ class _RuntimeProcess:
         try:
             line = await asyncio.wait_for(process.stdout.readline(), timeout=_startup_timeout)
         except TimeoutError:
+            detail = await _drain_startup_stderr(process)
             process.kill()
             await process.wait()
             raise RuntimeError(
                 f"runtime for env {env_id!r} timed out waiting for ready event "
-                f"({_startup_timeout}s)"
+                f"({_startup_timeout}s){detail}"
             ) from None
         if not line:
-            raise RuntimeError(f"runtime for env {env_id!r} did not emit a ready event")
+            # The worker died before saying hello. Its stderr holds the reason —
+            # a SyntaxError in a node module, a missing dependency, an OOM kill —
+            # and nothing else will ever report it: the stderr consumer below
+            # only starts once a worker is ready. Reporting "did not emit a ready
+            # event" on its own sends the reader looking in the wrong place.
+            detail = await _drain_startup_stderr(process)
+            raise RuntimeError(f"runtime for env {env_id!r} exited before it was ready{detail}")
         ready = json.loads(line)
         if ready.get("type") != "ready":
             raise RuntimeError(f"unexpected first event: {ready}")
         # .get() — old workers without the field must keep working (rolling deploys).
-        logger.info(
-            "runtime worker ready env=%s startup_ms=%s", env_id, ready.get("startup_ms")
-        )
+        logger.info("runtime worker ready env=%s startup_ms=%s", env_id, ready.get("startup_ms"))
         wp = cls(process, env_id)
         wp._start_stderr_consumer()
         return wp
@@ -444,6 +485,51 @@ class _RuntimeProcess:
                 }
             )
 
+    async def _handle_call_mcp_tool(self, event: dict, run_id: str) -> None:
+        """Mirror of the in-process MCP hook: resolve the connection (org
+        scoping, secret decryption, allowlist, audit) and answer the runtime."""
+        from app.services.mcp_client import (
+            _load_conn_with_secret as _load_conn,
+        )
+        from app.services.mcp_client import call_tool as _call_tool
+        from app.services.mcp_client import ensure_tool_allowed
+
+        callback_id = event.get("callback_id", "")
+        try:
+            connection_id = str(event.get("connection_id") or "")
+            tool_name = str(event.get("tool_name") or "")
+            arguments = event.get("arguments") or {}
+            org_id = await _resolve_run_org(run_id)
+            async with SessionLocal() as session:
+                conn, secret = await _load_conn(connection_id, org_id, session)
+                ensure_tool_allowed(conn, tool_name)
+                result = await _call_tool(
+                    conn,
+                    tool_name,
+                    arguments,
+                    decrypted_secret=secret,
+                    audit_session=session,
+                    run_id=run_id,
+                )
+            await self._write_message(
+                {
+                    "type": "call_mcp_tool_response",
+                    "callback_id": callback_id,
+                    "result": result,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - surface back to the runtime
+            try:
+                await self._write_message(
+                    {
+                        "type": "call_mcp_tool_error",
+                        "callback_id": callback_id,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+            except RuntimeError:
+                pass  # worker died; the read loop reports it
+
     async def run(
         self,
         run_id: str,
@@ -498,9 +584,7 @@ class _RuntimeProcess:
                     }
                 )
                 while True:
-                    heartbeat_remaining = heartbeat_timeout - (
-                        time.monotonic() - last_liveness_at
-                    )
+                    heartbeat_remaining = heartbeat_timeout - (time.monotonic() - last_liveness_at)
                     if heartbeat_remaining <= 0:
                         await self.close()
                         raise RuntimeError(
@@ -558,6 +642,14 @@ class _RuntimeProcess:
                         task.add_done_callback(callbacks.discard)
                         continue
 
+                    # MCP tool call from the subprocess — same task pattern.
+                    if kind == "call_mcp_tool":
+                        last_progress_at = now
+                        task = asyncio.create_task(self._handle_call_mcp_tool(event, run_id))
+                        callbacks.add(task)
+                        task.add_done_callback(callbacks.discard)
+                        continue
+
                     if event_request_id != request_id:
                         continue
                     last_progress_at = now
@@ -604,13 +696,35 @@ class _RuntimeProcess:
             try:
                 await asyncio.wait_for(self.process.wait(), timeout=3)
             except TimeoutError:
-                self.process.kill()
+                self._kill_tree()
                 await self.process.wait()
         except ProcessLookupError:
             pass
         finally:
             self.dead = True
             await self._cancel_stderr_consumer()
+
+    def _kill_tree(self) -> None:
+        """Kill the worker and its whole descendant tree.
+
+        On Windows ``subprocess.kill`` only kills the direct child: the
+        runtime's process-isolator workers (multiprocessing spawn
+        grandchildren) would be orphaned and keep the env venv's ``.pyd``
+        files loaded, locking the environment directory against rebuilds
+        (PermissionError). ``taskkill /T`` removes the full tree.
+        """
+        if os.name != "nt" or self.process.pid is None:
+            self.process.kill()
+            return
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            self.process.kill()
 
     async def _cancel_stderr_consumer(self) -> None:
         if self._stderr_task is not None and not self._stderr_task.done():
@@ -658,6 +772,16 @@ class _EnvPool:
         self._idle: list[_RuntimeProcess] = []
         self._all: set[_RuntimeProcess] = set()
         self._lock = asyncio.Lock()
+        # Bumped whenever the environment is rebuilt/replaced. Workers stamped
+        # with an older generation are closed on release instead of returning
+        # to the idle list — a warm worker running the previous environment's
+        # code must never serve runs after a rebuild, and on Windows a live
+        # worker's loaded DLLs would otherwise block the rebuild itself.
+        self._generation = 0
+        # Set while the environment is being rebuilt: acquire() parks runs in
+        # the durable queue instead of spawning workers against a half-built
+        # environment directory.
+        self._paused = False
 
     @staticmethod
     def _alive(proc: _RuntimeProcess) -> bool:
@@ -670,6 +794,9 @@ class _EnvPool:
 
     async def acquire(self) -> _RuntimeProcess:
         await self._sem.acquire()
+        if self._paused:
+            self._sem.release()
+            raise _PoolPaused(self.env_id)
         async with self._lock:
             while self._idle:
                 cand = self._idle.pop()
@@ -688,6 +815,7 @@ class _EnvPool:
             self._sem.release()
             raise
         async with self._lock:
+            proc.generation = self._generation
             self._all.add(proc)
         return proc
 
@@ -700,12 +828,44 @@ class _EnvPool:
             asyncio.create_task(proc.close())
             self._sem.release()
             return
-        if self._alive(proc):
+        if self._alive(proc) and proc.generation == self._generation:
             proc.idle_since = time.time()
             self._idle.append(proc)
         else:
+            # Worker died, or its environment has since been drained/rebuilt —
+            # never keep a stale worker warm.
             self._all.discard(proc)
+            asyncio.create_task(proc.close())
         self._sem.release()
+
+    async def drain(self, *, force: bool = False) -> None:
+        """Close workers so a rebuild can replace the environment directory.
+
+        Idle workers are always closed. With ``force=True`` (the rebuild
+        path), in-flight workers are terminated too — on Windows their loaded
+        ``.pyd`` files lock the environment directory, and waiting for a
+        wedged or long-running run would block the rebuild indefinitely.
+        Their runs surface as errors when the worker's stdout closes. The
+        pool is paused until ``unpause()`` so no new workers spawn against
+        the half-built environment directory.
+        """
+        async with self._lock:
+            self._generation += 1
+            to_close = list(self._idle)
+            self._idle.clear()
+            for proc in to_close:
+                self._all.discard(proc)
+            if force:
+                to_close.extend(proc for proc in self._all if self._alive(proc))
+                self._all.clear()
+                self._paused = True
+        for proc in to_close:
+            await proc.close()
+
+    async def unpause(self) -> None:
+        """Allow runs to acquire workers again (build finished or failed)."""
+        async with self._lock:
+            self._paused = False
 
     async def reap_idle(self, threshold_seconds: float) -> int:
         """Close warm processes idle past the threshold, respecting ``min_size``.
@@ -982,6 +1142,29 @@ class RuntimePool:
                 self._envs[key] = envpool
             return envpool
 
+    async def drain_env(self, env_id: str | None, *, force: bool = False) -> None:
+        """Close warm workers for one environment before a rebuild/delete.
+
+        A warm worker keeps the previous environment's code in memory, and on
+        Windows its loaded ``.pyd`` files lock the environment directory so the
+        rebuild cannot replace them (PermissionError). With ``force=True``
+        in-flight workers are terminated and the env's pool is paused until
+        ``unpause_env`` runs.
+        """
+        key = env_id or "_default"
+        async with self._lock:
+            envpool = self._envs.get(key)
+        if envpool is not None:
+            await envpool.drain(force=force)
+
+    async def unpause_env(self, env_id: str | None) -> None:
+        """Resume dispatching runs for an env whose rebuild finished/failed."""
+        key = env_id or "_default"
+        async with self._lock:
+            envpool = self._envs.get(key)
+        if envpool is not None:
+            await envpool.unpause()
+
     async def dispatch(
         self,
         run_id: str,
@@ -1034,9 +1217,15 @@ class RuntimePool:
                         result = await run
                     proc.run_count += 1
                     return result
-                except TimeoutError as exc:
+                except TimeoutError:
                     await proc.close()
-                    raise RuntimeError(f"workflow run timed out after {timeout}s") from exc
+                    await on_event(
+                        {
+                            "type": "run_error",
+                            "error": f"workflow run timed out after {timeout}s",
+                        }
+                    )
+                    return "timed_out"
                 finally:
                     envpool.release(proc)
 

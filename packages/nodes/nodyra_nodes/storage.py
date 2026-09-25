@@ -62,6 +62,7 @@ def _coerce_json(value: Any, *, default: Any = None) -> Any:
 @node(
     name="MongoDB Query",
     id="mongodb_query",
+    requirements=["pymongo>=4.0"],
     category="Integrations",
     icon="brand:mongodb",
     params={
@@ -114,9 +115,7 @@ def mongodb_query(
     _ = input
     uri = credentials
     if not all((uri, database, collection)):
-        raise ValueError(
-            "mongodb_query: credentials, database, and collection are required"
-        )
+        raise ValueError("mongodb_query: credentials, database, and collection are required")
     try:
         from pymongo import MongoClient
     except ImportError as exc:
@@ -164,6 +163,7 @@ def mongodb_query(
 @node(
     name="Redis Command",
     id="redis_command",
+    requirements=["redis>=5.0"],
     category="Integrations",
     icon="brand:redis",
     params={
@@ -187,10 +187,7 @@ def mongodb_query(
         "key": {"description": "Key (or channel for publish)."},
         "value": {
             "group": "Options",
-            "description": (
-                "Value for set/publish/lpush. Falls back to the wired input "
-                "if blank."
-            ),
+            "description": ("Value for set/publish/lpush. Falls back to the wired input if blank."),
             "multiline": True,
         },
         "ttl_seconds": {
@@ -285,9 +282,7 @@ def elasticsearch_search(
     """Run a search against ElasticSearch via its REST API."""
     _ = input
     if not base_url or not index:
-        raise ValueError(
-            "elasticsearch_search: base_url and index are required"
-        )
+        raise ValueError("elasticsearch_search: base_url and index are required")
     creds = credentials or {}
     api_key = str(creds.get("api_key") or "")
     username = str(creds.get("username") or "")
@@ -320,6 +315,7 @@ def elasticsearch_search(
 @node(
     name="GCS Upload",
     id="gcs_upload",
+    requirements=["google-cloud-storage>=2.0"],
     category="Integrations",
     icon="brand:googlecloud",
     params={
@@ -385,6 +381,7 @@ def gcs_upload(
 @node(
     name="GCS List Objects",
     id="gcs_list_objects",
+    requirements=["google-cloud-storage>=2.0"],
     category="Integrations",
     icon="brand:googlecloud",
     params={
@@ -440,13 +437,12 @@ def gcs_list_objects(
 @node(
     name="Azure Blob Upload",
     id="azure_blob_upload",
+    requirements=["azure-storage-blob>=12.0"],
     category="Integrations",
     icon="brand:microsoftazure",
     params={
         "credentials": {
-            **cred_single(
-                "azure_blob", "connection_string", "Azure Storage connection string"
-            ),
+            **cred_single("azure_blob", "connection_string", "Azure Storage connection string"),
             "description": "Azure Storage account connection string.",
         },
         "container": {"description": "Blob container name."},
@@ -479,9 +475,7 @@ def azure_blob_upload(
     """Upload bytes to Azure Blob Storage."""
     connection_string = credentials
     if not all((connection_string, container, blob_path)):
-        raise ValueError(
-            "azure_blob_upload: credentials, container, and blob_path are required"
-        )
+        raise ValueError("azure_blob_upload: credentials, container, and blob_path are required")
     try:
         from azure.storage.blob import BlobServiceClient, ContentSettings
     except ImportError as exc:
@@ -501,9 +495,7 @@ def azure_blob_upload(
     blob.upload_blob(
         payload,
         overwrite=True,
-        content_settings=ContentSettings(
-            content_type=content_type or "application/octet-stream"
-        ),
+        content_settings=ContentSettings(content_type=content_type or "application/octet-stream"),
     )
     return {
         "container": container,
@@ -520,6 +512,7 @@ def azure_blob_upload(
 
 @node(
     name="DynamoDB Get Item",
+    requirements=["boto3>=1.34"],
     id="dynamodb_get_item",
     category="Integrations",
     icon="brand:amazondynamodb",
@@ -579,6 +572,7 @@ def dynamodb_get_item(
 
 @node(
     name="DynamoDB Put Item",
+    requirements=["boto3>=1.34"],
     id="dynamodb_put_item",
     category="Integrations",
     icon="brand:amazondynamodb",
@@ -627,9 +621,7 @@ def dynamodb_put_item(
     aws_secret_access_key = str(creds.get("aws_secret_access_key") or "")
     item = _coerce_json(item_json, default=input if isinstance(input, dict) else None)
     if not isinstance(item, dict):
-        raise ValueError(
-            "dynamodb_put_item: provide item_json or wire a dict to input"
-        )
+        raise ValueError("dynamodb_put_item: provide item_json or wire a dict to input")
     kwargs: dict[str, Any] = {"region_name": region or "us-east-1"}
     if aws_access_key_id and aws_secret_access_key:
         kwargs["aws_access_key_id"] = aws_access_key_id

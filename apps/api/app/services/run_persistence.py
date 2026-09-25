@@ -7,16 +7,19 @@ Everything here is invoked by ``runner._execute_run`` with an explicit
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from collections import deque
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
-from sqlalchemy import insert, select
+from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import NodeRun, Run, RunApproval, RunEvent
+from app.models import NodeRun, Run, RunApproval, RunEvent, RunQueueEntry
 from app.services import queue as run_queue
 from nodyra.serialization import truncate_serialized_value
 
@@ -40,9 +43,29 @@ AGENT_EVENT_TYPES: frozenset[str] = frozenset(
         "agent_tool_approval_decided",
     }
 )
-GUARDRAIL_EVENT_TYPES: frozenset[str] = frozenset(
-    {"guardrail_blocked", "guardrail_redacted"}
-)
+GUARDRAIL_EVENT_TYPES: frozenset[str] = frozenset({"guardrail_blocked", "guardrail_redacted"})
+
+# Node lifecycle events worth keeping after the run ends. A retry leaves no
+# other trace: the node run records only the final attempt, so four tries and
+# one slow try are indistinguishable once the live stream is gone.
+LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset({"node_retrying"})
+
+
+def _iteration_key(path: Any) -> str:
+    """Portable stable key for a node's loop iteration coordinates."""
+    canonical = json.dumps(path if isinstance(path, list) else [], separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def _locked_queue_entry(session: AsyncSession, run_id: str) -> RunQueueEntry | None:
+    stmt = (
+        select(RunQueueEntry)
+        .where(RunQueueEntry.run_id == run_id)
+        .execution_options(populate_existing=True, skip_org_filter=True)
+    )
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        stmt = stmt.with_for_update()
+    return await session.scalar(stmt)
 
 
 def _epoch_to_dt(value: float | None) -> datetime | None:
@@ -91,9 +114,7 @@ async def _upsert_run_approval(
     max_steps_raw = event.get("max_steps")
     max_steps = int(max_steps_raw) if max_steps_raw is not None else None
     reason = (
-        "Auto-approved by AI Agent setting."
-        if event_type == "agent_tool_auto_approved"
-        else ""
+        "Auto-approved by AI Agent setting." if event_type == "agent_tool_auto_approved" else ""
     )
 
     if approval is None:
@@ -149,9 +170,7 @@ async def _upsert_run_approval_in_memory(
     max_steps_raw = event.get("max_steps")
     max_steps = int(max_steps_raw) if max_steps_raw is not None else None
     reason = (
-        "Auto-approved by AI Agent setting."
-        if event_type == "agent_tool_auto_approved"
-        else ""
+        "Auto-approved by AI Agent setting." if event_type == "agent_tool_auto_approved" else ""
     )
 
     if approval is None:
@@ -255,9 +274,7 @@ def _graph_node_types(graph: dict) -> dict[str, str]:
     return out
 
 
-def _extract_webhook_response(
-    graph: dict, node_events: dict[str, dict]
-) -> dict | None:
+def _extract_webhook_response(graph: dict, node_events: dict[str, dict]) -> dict | None:
     """Pull the response a respond_to_webhook node recorded, if any.
 
     Returns the ``{status, headers, body, content_type}`` dict from the first
@@ -317,15 +334,28 @@ async def persist_run_outcome(
     node_run_records: dict[tuple[str, tuple], dict],
     run_events: deque[dict[str, Any]],
     output_cap: int,
-) -> None:
+    lease_token: str | None = None,
+    artifact_refs: list[dict[str, Any]] | None = None,
+) -> bool:
     """Write the terminal state of a run: Run row, NodeRun records, RunEvents,
     approval upserts/resume-state, and the durable-queue mirror transition.
 
     Failures degrade to a minimal status-only update so a flaky DB never
     leaves a run stuck in ``running``.
     """
+    queue_fence = {"lease_token": lease_token} if lease_token is not None else {}
+    artifact_cleanup: list[Path] = []
     try:
         async with session_factory() as session:
+            if lease_token is not None:
+                queue_entry = await _locked_queue_entry(session, run_id)
+                if queue_entry is None or queue_entry.lease_token != lease_token:
+                    logger.warning(
+                        "run_id=%s stale attempt refused outcome persistence token=%s",
+                        run_id,
+                        lease_token,
+                    )
+                    return False
             run = await session.get(Run, run_id)
             if run is not None:
                 from app.services.run_lifecycle import require_transition
@@ -374,10 +404,27 @@ async def persist_run_outcome(
             # individual INSERTs; this is now a single multi-row INSERT.
             from app.services.output_store import maybe_offload_output
 
+            attempt_id = lease_token or "legacy"
+            # The run_queue row lock above serializes repeated writes for one
+            # attempt. Replacing only that attempt's detail rows makes a retry
+            # idempotent without erasing history from earlier attempts.
+            await session.execute(
+                delete(NodeRun).where(
+                    NodeRun.run_id == run_id,
+                    NodeRun.attempt_id == attempt_id,
+                )
+            )
+            await session.execute(
+                delete(RunEvent).where(
+                    RunEvent.run_id == run_id,
+                    RunEvent.attempt_id == attempt_id,
+                )
+            )
             node_run_rows = [
                 {
                     "run_id": run_id,
                     "node_id": node_id,
+                    "attempt_id": attempt_id,
                     "status": event.get("status", "unknown"),
                     # Cap FIRST, then offload the bounded survivor. Offloading
                     # first would spill the full (uncapped) output to disk and
@@ -396,6 +443,7 @@ async def persist_run_outcome(
                     "finished_at": _epoch_to_dt(event.get("finished_at")),
                     "duration_ms": event.get("duration_ms"),
                     "iteration_path": event.get("iteration_path"),
+                    "iteration_key": _iteration_key(event.get("iteration_path")),
                 }
                 for (node_id, _path), event in node_run_records.items()
             ]
@@ -406,6 +454,7 @@ async def persist_run_outcome(
             run_event_rows = [
                 {
                     "run_id": run_id,
+                    "attempt_id": attempt_id,
                     "event_type": str(item["event"].get("type") or ""),
                     "sequence": int(item["sequence"]),
                     "ts": item["ts"],
@@ -464,11 +513,11 @@ async def persist_run_outcome(
             # Mirror the run outcome onto the durable queue entry so the
             # queue is the single source of truth for orchestration state.
             if status == "success":
-                await run_queue.complete(session, run_id=run_id)
+                await run_queue.complete(session, run_id=run_id, **queue_fence)
             elif status == "waiting":
-                await run_queue.wait_for_approval(session, run_id=run_id)
+                await run_queue.wait_for_approval(session, run_id=run_id, **queue_fence)
             elif status == "cancelled":
-                await run_queue.cancel(session, run_id=run_id)
+                await run_queue.cancel(session, run_id=run_id, **queue_fence)
             else:
                 failure_error = (
                     run.error
@@ -480,6 +529,7 @@ async def persist_run_outcome(
                     run_id=run_id,
                     retryable=False,
                     error=failure_error,
+                    **queue_fence,
                 )
             # C3: accumulate compute seconds + node_runs for terminal runs
             # ("waiting" resumes later and lands here again at the real end).
@@ -494,14 +544,38 @@ async def persist_run_outcome(
                 from app.services.run_batches import reconcile_batch  # noqa: PLC0415
 
                 await reconcile_batch(session, run.batch_id)
+            if artifact_refs:
+                from app.services.artifacts import persist_artifact_refs
+
+                await persist_artifact_refs(
+                    run_id, artifact_refs, session=session, cleanup_paths=artifact_cleanup
+                )
             await session.commit()
+            for path in artifact_cleanup:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return True
 
     except Exception:  # noqa: BLE001
-        logger.exception(
-            "run_id=%s DB persist failed; attempting minimal status update", run_id
-        )
+        logger.exception("run_id=%s DB persist failed; attempting minimal status update", run_id)
+        # A successful computation with missing results is not a successful run.
+        # Keep a durable failure so clients can act on it instead of seeing green
+        # while artifacts or node output are unavailable.
+        if status == "success":
+            status = "error"
         try:
             async with session_factory() as _s:
+                if lease_token is not None:
+                    queue_entry = await _locked_queue_entry(_s, run_id)
+                    if queue_entry is None or queue_entry.lease_token != lease_token:
+                        logger.warning(
+                            "run_id=%s stale attempt refused minimal persistence token=%s",
+                            run_id,
+                            lease_token,
+                        )
+                        return False
                 _r = await _s.get(Run, run_id)
                 if _r is not None and _r.status not in (
                     "success",
@@ -511,17 +585,18 @@ async def persist_run_outcome(
                     "waiting",
                 ):
                     _r.status = status
+                    _r.error = "Saving the run result failed. Review worker logs and retry the run."
                     _r.finished_at = datetime.now(UTC)
                     _r.checkpoint = None
                 # Outcome details are best-effort, but a failed bulk event write
                 # must never strand a durable queue lease. Mirror the terminal
                 # queue state in the fallback transaction as well.
                 if status == "success":
-                    await run_queue.complete(_s, run_id=run_id)
+                    await run_queue.complete(_s, run_id=run_id, **queue_fence)
                 elif status == "waiting":
-                    await run_queue.wait_for_approval(_s, run_id=run_id)
+                    await run_queue.wait_for_approval(_s, run_id=run_id, **queue_fence)
                 elif status == "cancelled":
-                    await run_queue.cancel(_s, run_id=run_id)
+                    await run_queue.cancel(_s, run_id=run_id, **queue_fence)
                 else:
                     await run_queue.fail(
                         _s,
@@ -532,7 +607,10 @@ async def persist_run_outcome(
                             if _r is not None and _r.error
                             else f"run finished with status={status}"
                         ),
+                        **queue_fence,
                     )
                 await _s.commit()
+                return True
         except Exception:  # noqa: BLE001
             logger.exception("run_id=%s minimal status fallback also failed", run_id)
+            return False

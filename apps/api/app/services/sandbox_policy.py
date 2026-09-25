@@ -43,6 +43,27 @@ def resolve_execution_mode(
     return mode
 
 
+def sandbox_fallback_allowed() -> bool:
+    """May a run degrade to the subprocess pool when no sandbox is active?
+
+    "auto" is documented as: use containers when a Docker daemon is reachable,
+    else fall back to subprocess. Only "auto" degrades.
+
+    "required" and strict multi-tenancy must keep failing closed — a deployment
+    that relies on an isolation boundary must never be able to lose it quietly.
+    "off" does not degrade either: a run that reached the sandbox branch with
+    sandboxing off got there because a workflow or run explicitly asked for it,
+    and that request stands rather than being silently downgraded.
+
+    Without this, deploy/docker-compose.yml — which ships EXECUTION_SANDBOX=auto
+    and mounts no Docker socket, sandboxing being opt-in via the separate
+    docker-compose.sandbox.yml overlay — produced a stack where every run failed.
+    """
+    if settings.multi_tenancy_enabled and settings.sandbox_policy_strict:
+        return False
+    return settings.execution_sandbox == "auto"
+
+
 def validate_sandbox_resources(payload: dict) -> dict:
     """Validate user-supplied per-workflow sandbox resource requests."""
     if not isinstance(payload, dict):

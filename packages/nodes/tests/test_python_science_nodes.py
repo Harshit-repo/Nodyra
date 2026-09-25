@@ -969,3 +969,11 @@ class TestSymPyMath:
 
         with pytest.raises(ImportError, match="sympy"):
             sympy_math(expression="x**2", operation="solve")
+
+@pytest.fixture(autouse=True)
+def _blocked_egress_posture(monkeypatch):
+    """These tests verify the BLOCKED posture of nodyra_nodes.http_security;
+    single-tenant API processes default to allowing private egress (mirroring
+    workers), so pin the env explicitly."""
+    monkeypatch.setenv("NODYRA_ALLOW_PRIVATE_EGRESS", "0")
+

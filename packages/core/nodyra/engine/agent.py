@@ -96,6 +96,26 @@ async def _dispatch_agent_action_request(
     if step >= max_steps:
         raise RuntimeError(f"agent reached max_steps={max_steps}")
 
+    # Tool-call ids must be unique within a request. Approvals are recorded as
+    # a set of ids and matched with ``call.id in approved_call_ids``, so two
+    # calls sharing an id would let one operator approval authorise both — and
+    # the second may be a different, side-effecting tool. Model-generated ids
+    # are normally unique, but they come from a context an attacker can steer
+    # through injected content, so "normally" is not a security property.
+    #
+    # Duplicates are malformed regardless: ``completed_by_id`` below is keyed on
+    # the id, so two calls sharing one collapse into a single replayed result
+    # when a paused run resumes.
+    seen_ids: set[str] = set()
+    for call in request.tool_calls:
+        if call.id in seen_ids:
+            raise ValueError(
+                f"agent emitted a duplicate tool_call id {call.id!r}; ids must be "
+                "unique within a request so approvals and replayed results "
+                "cannot be attributed to the wrong call"
+            )
+        seen_ids.add(call.id)
+
     tools = _tool_index(tool_values)
     await emit(
         {

@@ -1722,12 +1722,17 @@ async def test_debug_snapshot_404_for_unknown_run(client: AsyncClient) -> None:
 
 
 async def test_run_blocked_when_node_package_missing(client: AsyncClient) -> None:
+    # Was written against duckdb_sql, but duckdb is a hard dependency of
+    # nodyra-nodes and therefore importable in every environment — so blocking
+    # that run was wrong, and the starter template it blocked now runs. Use a
+    # requirement that genuinely is not bundled, which keeps the check this test
+    # exists for: pre-flight must still refuse a run whose packages are absent.
     env = (await client.post("/environments", json={"name": "bare", "packages": []})).json()
-    wf = (await client.post("/workflows", json={"name": "needs-duckdb"})).json()
+    wf = (await client.post("/workflows", json={"name": "needs-playwright"})).json()
     graph = {
         "nodes": [
             {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
-            {"id": "q", "type": "duckdb_sql", "params": {}, "position": {"x": 1, "y": 0}},
+            {"id": "q", "type": "browser_screenshot", "params": {}, "position": {"x": 1, "y": 0}},
         ],
         "edges": [
             {
@@ -1745,7 +1750,7 @@ async def test_run_blocked_when_node_package_missing(client: AsyncClient) -> Non
     )
     resp = await client.post(f"/workflows/{wf['id']}/run")
     assert resp.status_code == 400
-    assert "duckdb" in resp.json()["detail"].lower()
+    assert "playwright" in resp.json()["detail"].lower()
 
 
 # --- #14: list_runs must not eagerly load node_run details --------------------
@@ -1791,6 +1796,7 @@ def test_ws_run_streaming_replays_buffered_events_t06(monkeypatch) -> None:
     from fastapi.testclient import TestClient
 
     from app.main import app
+    from app.routers import runs as runs_router
     from app.services import events as events_mod
 
     async def _no_redis_connect() -> str:
@@ -1799,6 +1805,20 @@ def test_ws_run_streaming_replays_buffered_events_t06(monkeypatch) -> None:
     monkeypatch.setattr(events_mod.broker, "connect", _no_redis_connect)
 
     run_id = "ws-t06-run"
+
+    # The socket now refuses to stream a run the caller's org does not own, so
+    # the run has to exist for this streaming test to be about streaming.
+    class _OwningSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def scalar(self, _stmt):
+            return run_id
+
+    monkeypatch.setattr(runs_router, "SessionLocal", lambda: _OwningSession())
     events_mod.broker._publish_inprocess(run_id, {"type": "node_started", "node_id": "n1"})
     events_mod.broker._publish_inprocess(
         run_id, {"type": "node_finished", "node_id": "n1", "status": "success"}
@@ -1838,3 +1858,48 @@ def test_ws_run_streaming_rejects_invalid_auth_t06(monkeypatch) -> None:
         except (WebSocketDisconnect, Exception):
             rejected = True
     assert rejected, "Expected server to reject WebSocket with bad token"
+
+
+def test_ws_run_streaming_refuses_a_run_from_another_org(monkeypatch) -> None:
+    """Authentication is not authorization (F-23).
+
+    The stream used to be keyed only by run_id: any authenticated principal who
+    learned a run id belonging to another organization could subscribe to that
+    run's live events, which carry node outputs. Run ids are 128-bit and not
+    guessable, but they travel through logs, shared links and support tickets —
+    and the workflow socket already performed this check, so its absence here
+    was an oversight rather than a decision.
+    """
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.main import app
+    from app.routers import runs as runs_router
+    from app.services import events as events_mod
+
+    async def _no_redis_connect() -> str:
+        return "inprocess"
+
+    monkeypatch.setattr(events_mod.broker, "connect", _no_redis_connect)
+
+    class _ForeignSession:
+        """The org-scoped lookup resolves to nothing for another tenant's run."""
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def scalar(self, _stmt):
+            return None
+
+    monkeypatch.setattr(runs_router, "SessionLocal", lambda: _ForeignSession())
+    events_mod.broker._publish_inprocess(
+        "someone-elses-run", {"type": "node_finished", "output": "secret"}
+    )
+
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/ws/runs/someone-elses-run") as ws:
+                ws.receive_json()

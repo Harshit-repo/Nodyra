@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "./api";
+import { csvTextCell } from "./csv";
 import { SkeletonRows } from "./Skeleton";
 import type { AuditEvent } from "./types";
 
@@ -59,7 +60,6 @@ export function ActivityPage() {
   }, [actionFilter, events, fromDate, query, targetFilter, toDate]);
 
   function exportCsv(): void {
-    const escape = (value: string) => `"${value.replaceAll('"', '""')}"`;
     const rows = [
       ["created_at", "action", "target_type", "target_id", "detail"],
       ...visible.map((event) => [
@@ -70,7 +70,7 @@ export function ActivityPage() {
         event.detail,
       ]),
     ];
-    const csv = rows.map((row) => row.map(escape).join(",")).join("\n");
+    const csv = rows.map((row) => row.map(csvTextCell).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -101,13 +101,15 @@ export function ActivityPage() {
         <div className="activity-filters">
           <input
             className="field-input"
-            placeholder="Filter actor, target, action, detail..."
+            placeholder="Filter target, action, detail..."
+            aria-label="Search activity"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           <select
             className="field-input"
             value={actionFilter}
+            aria-label="Filter activity by action"
             onChange={(e) => setActionFilter(e.target.value)}
           >
             <option value="all">All actions</option>
@@ -120,6 +122,7 @@ export function ActivityPage() {
           <select
             className="field-input"
             value={targetFilter}
+            aria-label="Filter activity by target"
             onChange={(e) => setTargetFilter(e.target.value)}
           >
             <option value="all">All targets</option>
@@ -145,9 +148,9 @@ export function ActivityPage() {
           />
         </div>
 
-        {error && <p className="error-text">{error}</p>}
+        {error && <p className="error-text" role="alert">{error}</p>}
         {!events && !error && (
-          <div className="activity-list" aria-label="Loading activity">
+          <div role="status" className="activity-list" aria-label="Loading activity">
             <SkeletonRows count={7} />
           </div>
         )}

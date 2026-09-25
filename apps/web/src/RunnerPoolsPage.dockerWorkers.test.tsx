@@ -1,10 +1,13 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 
 import { DockerWorkerCard, RunnerPoolsPage } from "./RunnerPoolsPage";
 import { ConfirmProvider } from "./ConfirmProvider";
 import type { RunnerPoolInfo } from "./types";
+
+const entitlementMock = vi.hoisted(() => ({ hasDedicatedPools: true }));
+afterEach(() => { entitlementMock.hasDedicatedPools = true; });
 
 describe("DockerWorkerCard", () => {
   it("shows the sandbox checkbox with a trust warning", () => {
@@ -85,7 +88,7 @@ vi.mock("./entitlements", () => ({
   useEntitlements: () => ({
     atLimit: () => false,
     limitFor: () => null,
-    has: () => true,
+    has: () => entitlementMock.hasDedicatedPools,
   }),
 }));
 vi.mock("./queries", () => ({
@@ -109,6 +112,13 @@ vi.mock("./queries", () => ({
 }));
 
 describe("RunnerPoolsPage — Docker workers integration", () => {
+  it("explains the Enterprise requirement before offering a rejected creation flow", () => {
+    entitlementMock.hasDedicatedPools = false;
+    render(<MemoryRouter><ConfirmProvider><RunnerPoolsPage /></ConfirmProvider></MemoryRouter>);
+    expect(screen.queryByRole("button", { name: /New pool|Create runner pool/i })).toBeNull();
+    expect(screen.getByText(/Enterprise adds dedicated/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View license settings" })).toHaveAttribute("href", "/settings");
+  });
   it("renders the Docker workers card inside an expanded agent pool", async () => {
     render(
       <MemoryRouter>

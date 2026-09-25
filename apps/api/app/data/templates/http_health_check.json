@@ -1,0 +1,76 @@
+{
+  "id": "http_health_check",
+  "name": "HTTP health check with alert",
+  "description": "Poll an endpoint on a schedule and fail the run loudly when it stops answering, so your alerting sees it.",
+  "tags": [
+    "monitoring",
+    "http",
+    "schedule",
+    "starter"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "Outbound HTTPS to the endpoint you are checking"
+  ],
+  "expected_result": "A green run each time the endpoint answers healthily, and a failed run naming the status code when it does not.",
+  "permissions": [
+    "Network: the URL you configure"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
+  "screenshot_url": "/template-previews/http-health-check.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "every_5_min",
+        "type": "schedule_trigger",
+        "params": {
+          "interval": "minutes",
+          "every": 5
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "probe",
+        "type": "http_request",
+        "params": {
+          "url": "https://httpbin.org/json",
+          "method": "GET",
+          "timeout_seconds": 10,
+          "max_retries": 1,
+          "include_response_metadata": true
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "check",
+        "type": "code",
+        "params": {
+          "code": "# The probe requests status, headers and body metadata.\nstatus = input['status_code']\nif not 200 <= status < 300:\n    raise ValueError(f'health check failed: HTTP {status}')\nbody = input.get('body')\nif body in (None, '', {}, []):\n    raise ValueError('health check failed: empty response body')\noutput = {'healthy': True, 'status_code': status, 'body': body}"
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "every_5_min",
+        "target": "probe"
+      },
+      {
+        "source": "probe",
+        "target": "check"
+      }
+    ]
+  }
+}

@@ -22,8 +22,8 @@ from app.schemas import (
     RunCreated,
     RunListItem,
 )
-from app.security import optional_current_user, require_permission
-from app.services.audit import log_audit
+from app.security import audit_recorder, optional_current_user, require_permission
+from app.services.audit import AuditRecorder, log_audit
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
 from app.services.unsafe_nodes import classify as classify_unsafe_nodes
@@ -31,9 +31,7 @@ from app.services.unsafe_nodes import classify as classify_unsafe_nodes
 router = APIRouter(prefix="/deployments", tags=["deployments"])
 
 
-def _enforce_unsafe_node_policy(
-    version: WorkflowVersion, *, approved: bool
-) -> None:
+def _enforce_unsafe_node_policy(version: WorkflowVersion, *, approved: bool) -> None:
     """Raise 409 (with the findings) when the configured policy blocks activation.
 
     Findings travel back in the response detail so the UI can render the
@@ -155,9 +153,7 @@ async def list_deployments(
     if workflow_id is not None:
         filters.append(Deployment.workflow_id == workflow_id)
 
-    total = await session.scalar(
-        select(func.count()).select_from(Deployment).where(*filters)
-    )
+    total = await session.scalar(select(func.count()).select_from(Deployment).where(*filters))
 
     stmt = (
         select(Deployment)
@@ -168,9 +164,7 @@ async def list_deployments(
     )
     result = await session.scalars(stmt)
     deployments = result.all()
-    version_ids = {
-        d.workflow_version_id for d in deployments if d.workflow_version_id
-    }
+    version_ids = {d.workflow_version_id for d in deployments if d.workflow_version_id}
     versions: dict[str, WorkflowVersion] = {}
     if version_ids:
         versions = {
@@ -181,10 +175,7 @@ async def list_deployments(
                 )
             ).all()
         }
-    items = [
-        await _info(session, deployment, versions=versions)
-        for deployment in deployments
-    ]
+    items = [await _info(session, deployment, versions=versions) for deployment in deployments]
     return PageResponse(items=items, total=total or 0, limit=limit, offset=offset)
 
 
@@ -207,9 +198,11 @@ async def create_deployment(
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
     version = await _version_for_deployment(session, workflow, body.workflow_version_id)
-    if body.error_workflow_id is not None and await session.scalar(
-        select(Workflow).where(Workflow.id == body.error_workflow_id)
-    ) is None:
+    if (
+        body.error_workflow_id is not None
+        and await session.scalar(select(Workflow).where(Workflow.id == body.error_workflow_id))
+        is None
+    ):
         # Filtered select (not session.get) so the ORM org-filter hook fires:
         # a cross-org error_workflow_id resolves to None here and is rejected.
         # Otherwise org-A could point its error handler at org-B's workflow and
@@ -220,6 +213,7 @@ async def create_deployment(
         _validate_deployable(version)
         _enforce_unsafe_node_policy(version, approved=body.approve_unsafe_nodes)
         from app.services.licensing import enforce_resource_cap
+
         await enforce_resource_cap(session, "deployments")
 
     deployment = Deployment(
@@ -238,9 +232,14 @@ async def create_deployment(
         error_alerts=body.error_alerts,
     )
     session.add(deployment)
-    await log_audit(session, "create", "deployment", detail=body.name,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "create",
+        "deployment",
+        detail=body.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.commit()
     await session.refresh(deployment)
     return await _info(session, deployment)
@@ -295,14 +294,13 @@ async def update_deployment(
         )
         if workflow is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-        version = await _version_for_deployment(
-            session, workflow, body.workflow_version_id
-        )
+        version = await _version_for_deployment(session, workflow, body.workflow_version_id)
         version_changed = deployment.workflow_version_id != version.id
         deployment.workflow_version_id = version.id
     becoming_active = bool(body.active) and not deployment.active
     if becoming_active:
         from app.services.licensing import enforce_resource_cap
+
         await enforce_resource_cap(session, "deployments")
     if body.active is not None:
         deployment.active = body.active
@@ -320,17 +318,16 @@ async def update_deployment(
         )
         if workflow is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-        version = await _version_for_deployment(
-            session, workflow, deployment.workflow_version_id
-        )
+        version = await _version_for_deployment(session, workflow, deployment.workflow_version_id)
         _validate_deployable(version)
         _enforce_unsafe_node_policy(version, approved=body.approve_unsafe_nodes)
     if body.error_workflow_id is not None:
         # Filtered select (not session.get) so a cross-org error_workflow_id is
         # rejected by the ORM org-filter hook (R-2).
-        if await session.scalar(
-            select(Workflow).where(Workflow.id == body.error_workflow_id)
-        ) is None:
+        if (
+            await session.scalar(select(Workflow).where(Workflow.id == body.error_workflow_id))
+            is None
+        ):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")
         deployment.error_workflow_id = body.error_workflow_id
     if body.error_alerts is not None:
@@ -361,7 +358,11 @@ async def delete_deployment(
 ):
     deployment = await _load(session, deployment_id)
     await log_audit(
-        session, "delete", "deployment", deployment.id, deployment.name,
+        session,
+        "delete",
+        "deployment",
+        deployment.id,
+        deployment.name,
         actor_id=actor.id if actor else None,
         actor_email=actor.email if actor else None,
     )
@@ -375,7 +376,9 @@ async def delete_deployment(
     dependencies=[Depends(require_permission("deployment:run"))],
 )
 async def run_deployment(
-    deployment_id: str, session: AsyncSession = Depends(get_session)
+    deployment_id: str,
+    session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ):
     """'Run now' — fire the deployment with its default parameters."""
     deployment = await _load(session, deployment_id)
@@ -386,15 +389,11 @@ async def run_deployment(
     )
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-    version = await _version_for_deployment(
-        session, workflow, deployment.workflow_version_id
-    )
+    version = await _version_for_deployment(session, workflow, deployment.workflow_version_id)
     _validate_deployable(version)
     graph = version.graph or {"nodes": [], "edges": []}
     chosen = first_trigger_node(graph)
-    trigger_id = (
-        chosen["id"] if isinstance(chosen, dict) else getattr(chosen, "id", None)
-    )
+    trigger_id = chosen["id"] if isinstance(chosen, dict) else getattr(chosen, "id", None)
     try:
         run_id = await start_run(
             deployment.workflow_id,
@@ -409,6 +408,12 @@ async def run_deployment(
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    await audit(
+        "run",
+        "deployment",
+        deployment.id,
+        f"workflow={deployment.workflow_id} version={version.version} run={run_id}",
+    )
     return RunCreated(run_id=run_id)
 
 

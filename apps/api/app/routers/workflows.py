@@ -55,6 +55,7 @@ from app.schemas import (
 )
 from app.security import (
     _user_from_session_token,
+    get_client_ip,
     optional_current_user,
     require_permission,
     resolve_org_for,
@@ -139,12 +140,7 @@ def _validate_node_types(graph: dict | WorkflowGraph) -> None:
     unknown: set[str] = set()
     for n in nodes:
         t = n.type if hasattr(n, "type") else n.get("type")
-        if (
-            not t
-            or t in known
-            or t in STRUCTURAL_NODE_TYPES
-            or t.startswith("user:")
-        ):
+        if not t or t in known or t in STRUCTURAL_NODE_TYPES or t.startswith("user:"):
             continue
         unknown.add(t)
     if unknown:
@@ -208,9 +204,7 @@ def _node_outputs_for_check(result) -> dict[str, dict[str, Any]]:
     }
 
 
-def _lookup_expected_output(
-    node_outputs: dict[str, dict[str, Any]], key: str
-) -> tuple[bool, Any]:
+def _lookup_expected_output(node_outputs: dict[str, dict[str, Any]], key: str) -> tuple[bool, Any]:
     if key in node_outputs:
         return True, node_outputs[key]
     if "." in key:
@@ -362,8 +356,7 @@ def _overlay_direct_inputs(
     if unknown_ports:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Input override has no direct upstream edge for port(s): "
-            + ", ".join(unknown_ports),
+            "Input override has no direct upstream edge for port(s): " + ", ".join(unknown_ports),
         )
 
     next_cache = {node: dict(outputs) for node, outputs in cache.items()}
@@ -387,9 +380,7 @@ def _missing_direct_upstream(
             continue
         upstream_outputs = cache.get(edge.source)
         if not isinstance(upstream_outputs, dict) or edge.source_output not in upstream_outputs:
-            missing.append(
-                f"{edge.target_input} <- {edge.source}.{edge.source_output}"
-            )
+            missing.append(f"{edge.target_input} <- {edge.source}.{edge.source_output}")
     return missing
 
 
@@ -458,9 +449,7 @@ async def _latest_run(session: AsyncSession, workflow_id: str) -> Run | None:
     )
 
 
-async def _latest_runs(
-    session: AsyncSession, workflow_ids: list[str]
-) -> dict[str, Run]:
+async def _latest_runs(session: AsyncSession, workflow_ids: list[str]) -> dict[str, Run]:
     """Batch-load the most recent run per workflow in a single query.
 
     Avoids the N+1 that one ``_latest_run`` call per listed workflow would
@@ -483,11 +472,7 @@ async def _latest_runs(
         .subquery()
     )
     run_alias = aliased(Run, ranked)
-    rows = (
-        await session.scalars(
-            select(run_alias).where(ranked.c._rn == 1)
-        )
-    ).all()
+    rows = (await session.scalars(select(run_alias).where(ranked.c._rn == 1))).all()
     return {run.workflow_id: run for run in rows}
 
 
@@ -531,8 +516,7 @@ async def _provider_trigger_counts(
         if status_key in counts:
             counts[status_key] += int(count)
     return {
-        workflow_id: ProviderTriggerStatusCounts(**counts)
-        for workflow_id, counts in raw.items()
+        workflow_id: ProviderTriggerStatusCounts(**counts) for workflow_id, counts in raw.items()
     }
 
 
@@ -557,9 +541,7 @@ def _summary_from(
         last_run_status=latest_run.status if latest_run is not None else None,
         last_run_started_at=latest_run.started_at if latest_run is not None else None,
         last_run_finished_at=latest_run.finished_at if latest_run is not None else None,
-        provider_trigger_counts=(
-            provider_trigger_counts or ProviderTriggerStatusCounts()
-        ),
+        provider_trigger_counts=(provider_trigger_counts or ProviderTriggerStatusCounts()),
         folder_id=workflow.folder_id,
         updated_at=workflow.updated_at,
         created_at=workflow.created_at,
@@ -638,10 +620,7 @@ async def list_workflows(
     response.headers["Cache-Control"] = "no-store"
     count = await session.scalar(select(func.count()).select_from(Workflow))
     result = await session.scalars(
-        select(Workflow)
-        .order_by(Workflow.updated_at.desc())
-        .offset(offset)
-        .limit(limit)
+        select(Workflow).order_by(Workflow.updated_at.desc()).offset(offset).limit(limit)
     )
     workflows = result.all()
 
@@ -659,14 +638,15 @@ async def list_workflows(
             .group_by(WorkflowVersion.workflow_id)
             .subquery()
         )
-        latest_versions_rows = (await session.scalars(
-            select(WorkflowVersion)
-            .join(
-                max_ver_sq,
-                (WorkflowVersion.workflow_id == max_ver_sq.c.workflow_id)
-                & (WorkflowVersion.version == max_ver_sq.c.max_ver),
+        latest_versions_rows = (
+            await session.scalars(
+                select(WorkflowVersion).join(
+                    max_ver_sq,
+                    (WorkflowVersion.workflow_id == max_ver_sq.c.workflow_id)
+                    & (WorkflowVersion.version == max_ver_sq.c.max_ver),
+                )
             )
-        )).all()
+        ).all()
         # Attach the single loaded version so relationship access works.
         # Use set_committed_value to bypass the lazy-load trigger that fires on
         # direct assignment (w.versions = ...) when outside a greenlet context.
@@ -676,10 +656,7 @@ async def list_workflows(
             set_committed_value(w, "versions", [ver] if ver is not None else [])
     latest_by_wf = await _latest_runs(session, [w.id for w in workflows])
     provider_counts = await _provider_trigger_counts(session, [w.id for w in workflows])
-    items = [
-        _summary_from(w, latest_by_wf.get(w.id), provider_counts.get(w.id))
-        for w in workflows
-    ]
+    items = [_summary_from(w, latest_by_wf.get(w.id), provider_counts.get(w.id)) for w in workflows]
     return PageResponse(items=items, total=count or 0, limit=limit, offset=offset)
 
 
@@ -702,9 +679,14 @@ async def create_workflow(
     )
     workflow.versions.append(WorkflowVersion(version=1, graph=dict(EMPTY_GRAPH)))
     session.add(workflow)
-    await log_audit(session, "create", "workflow", detail=body.name,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "create",
+        "workflow",
+        detail=body.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await enqueue_github_push(session, workflow, "ui")
     try:
         await session.commit()
@@ -780,7 +762,14 @@ async def _workflow_ws_principal(websocket: WebSocket) -> tuple[User | None, str
         if not token:
             token = websocket.cookies.get(settings.session_cookie_name, "")
         if user is None and token:
-            user = await _user_from_session_token(token, session)
+            # Enforce ``auth_bind_token_to_ip`` here as well. The HTTP
+            # ``auth_gate`` middleware does it for every route, but middleware
+            # does not run for WebSocket connections — so a token pinned to
+            # another address, refused everywhere else, still opened a live
+            # event stream. Pinning is only worth anything if every door
+            # checks it.
+            client_ip = get_client_ip(websocket) if settings.auth_bind_token_to_ip else ""
+            user = await _user_from_session_token(token, session, client_ip=client_ip)
             if user is None:
                 await websocket.close(code=1008)
                 return None
@@ -812,9 +801,7 @@ async def workflow_events(websocket: WebSocket, workflow_id: str) -> None:
     _user, org_id = principal
     with run_as_org(org_id):
         async with SessionLocal() as session:
-            exists = await session.scalar(
-                select(Workflow.id).where(Workflow.id == workflow_id)
-            )
+            exists = await session.scalar(select(Workflow.id).where(Workflow.id == workflow_id))
             if exists is None:
                 await websocket.close(code=1008)
                 return
@@ -959,21 +946,27 @@ async def update_workflow(
         workflow.active = body.active
     sent = body.model_fields_set
     if "environment_id" in sent:
-        if body.environment_id is not None and await session.scalar(
-            select(Environment).where(Environment.id == body.environment_id)
-        ) is None:
+        if (
+            body.environment_id is not None
+            and await session.scalar(
+                select(Environment).where(Environment.id == body.environment_id)
+            )
+            is None
+        ):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Environment not found")
         workflow.environment_id = body.environment_id
     if "default_runner_pool_id" in sent:
-        if body.default_runner_pool_id is not None and await session.scalar(
-            select(RunnerPool).where(RunnerPool.id == body.default_runner_pool_id)
-        ) is None:
+        if (
+            body.default_runner_pool_id is not None
+            and await session.scalar(
+                select(RunnerPool).where(RunnerPool.id == body.default_runner_pool_id)
+            )
+            is None
+        ):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner pool not found")
         from app.services.isolation import validate_pool_assignment
 
-        await validate_pool_assignment(
-            session, workflow.org_id, body.default_runner_pool_id
-        )
+        await validate_pool_assignment(session, workflow.org_id, body.default_runner_pool_id)
         workflow.default_runner_pool_id = body.default_runner_pool_id
     if "error_workflow_id" in sent and body.error_workflow_id is not None:
         if body.error_workflow_id == workflow.id:
@@ -983,10 +976,21 @@ async def update_workflow(
             )
         # Filtered select (not session.get) so a cross-org error_workflow_id is
         # rejected by the ORM org-filter hook (R-2).
-        if await session.scalar(
-            select(Workflow).where(Workflow.id == body.error_workflow_id)
-        ) is None:
+        err_workflow = await session.scalar(
+            select(Workflow)
+            .where(Workflow.id == body.error_workflow_id)
+            .options(selectinload(Workflow.versions))
+        )
+        if err_workflow is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")
+        # Error dispatch runs the handler's latest PUBLISHED version; a handler
+        # with no published version silently never fires. Fail fast instead.
+        if not err_workflow.versions:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Error workflow has no published version. Publish it first, "
+                "then set it as the error workflow.",
+            )
         workflow.error_workflow_id = body.error_workflow_id
     elif "error_workflow_id" in sent:
         workflow.error_workflow_id = None
@@ -1006,13 +1010,9 @@ async def update_workflow(
             workflow.sandbox_resources = None
         else:
             try:
-                workflow.sandbox_resources = validate_sandbox_resources(
-                    body.sandbox_resources
-                )
+                workflow.sandbox_resources = validate_sandbox_resources(body.sandbox_resources)
             except ValueError as exc:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)
-                ) from exc
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     if "requirements" in sent:
         workflow.requirements = _validate_requirement_lines(body.requirements)
     if "run_timeout_seconds" in sent:
@@ -1097,9 +1097,7 @@ async def update_workflow(
             )
     if "folder_id" in body.model_fields_set:
         if body.folder_id is not None:
-            if await session.scalar(
-                select(Folder).where(Folder.id == body.folder_id)
-            ) is None:
+            if await session.scalar(select(Folder).where(Folder.id == body.folder_id)) is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Folder not found")
         workflow.folder_id = body.folder_id
     if body.graph is not None:
@@ -1114,7 +1112,7 @@ async def update_workflow(
                     "expected_graph_revision": body.expected_graph_revision,
                     "current_graph_revision": workflow.graph_revision,
                 },
-        )
+            )
         _validate_node_types(body.graph)
         workflow.draft_graph = body.graph.model_dump()
         bump_graph_revision(workflow)
@@ -1201,7 +1199,10 @@ async def get_version(
     for v in workflow.versions:
         if v.id == version_id:
             return WorkflowVersionInfo(
-                id=v.id, version=v.version, notes=v.notes, created_at=v.created_at,
+                id=v.id,
+                version=v.version,
+                notes=v.notes,
+                created_at=v.created_at,
                 node_count=len((v.graph or {}).get("nodes", [])),
                 published=(v.version == workflow.published_version),
             )
@@ -1245,6 +1246,23 @@ async def publish_workflow(
     workflow = await _load(session, workflow_id)
     latest = _latest(workflow)
     graph = _draft_graph(workflow)
+
+    # Publishing takes a graph live (active=True, triggers fire) — refuse to
+    # snapshot a graph that can never run or is structurally broken. Structural
+    # checks only (no node-registry lookups): workflows legitimately contain
+    # ``user:<module_id>:<fn>`` nodes whose modules are loaded per-run, so a
+    # registry check here would wrongly block every code-module workflow.
+    from nodyra.engine.types import GraphError
+    from nodyra.engine.validation import _validate_graph
+
+    try:
+        _validate_graph(WorkflowGraph.model_validate(graph), registry=None)
+    except GraphError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Cannot publish an invalid workflow graph: {exc}",
+        ) from exc
+
     if latest is not None and graph == (latest.graph or EMPTY_GRAPH):
         updated_deployments = 0
         if body.update_deployments:
@@ -1283,6 +1301,23 @@ async def publish_workflow(
     # matching requests — but the operator should know so they can
     # disambiguate if needed.
     _colliding_paths: list[str] = []
+    # Batch-load every other active workflow's published graph ONCE. The
+    # previous implementation fetched a single arbitrary workflow per path
+    # (``.limit(1)`` without a path filter) and checked only that one, so a
+    # collision was missed whenever any other active workflow existed.
+    _other_published_graphs = (
+        await session.execute(
+            select(Workflow.id, WorkflowVersion.graph)
+            .join(WorkflowVersion, WorkflowVersion.workflow_id == Workflow.id)
+            .where(
+                Workflow.id != workflow.id,
+                Workflow.active.is_(True),
+                # Latest version only — see _latest_versions_by_id pattern.
+                WorkflowVersion.version == Workflow.published_version,
+                WorkflowVersion.graph != None,  # noqa: E711
+            )
+        )
+    ).all()
     _seen_in_graph: set[str] = set()
     for node in graph.get("nodes", []):
         node_type = node.get("type")
@@ -1296,49 +1331,30 @@ async def publish_workflow(
         if not p or p in _seen_in_graph:
             continue
         _seen_in_graph.add(p)
-        # Look for any other *active* workflow whose latest version has
-        # a matching trigger path.
-        clash = await session.scalar(
-            select(Workflow.id)
-            .join(WorkflowVersion, WorkflowVersion.workflow_id == Workflow.id)
-            .where(
-                Workflow.id != workflow.id,
-                Workflow.active.is_(True),
-                # Latest version only — see _latest_versions_by_id pattern.
-                WorkflowVersion.version == Workflow.published_version,
-                WorkflowVersion.graph != None,  # noqa: E711
-            )
-            .limit(1)
-        )
-        if clash is not None:
-            # Verify the other workflow actually has a matching path.
-            clash_wf = await session.scalar(select(Workflow).where(Workflow.id == clash))
-            if clash_wf is not None:
-                clash_graph = clash_wf.draft_graph or (
-                    (await session.scalar(
-                        select(WorkflowVersion.graph)
-                        .where(
-                            WorkflowVersion.workflow_id == clash_wf.id,
-                            WorkflowVersion.version == clash_wf.published_version,
-                        )
-                    )) or {}
-                )
-                for cn in clash_graph.get("nodes", []):
-                    cnp = cn.get("params") or {}
-                    if cn.get("type") == "webhook_trigger":
-                        cp = str(cnp.get("path") or "").strip("/")
-                    elif cn.get("type") == "api_endpoint":
-                        cp = str(cnp.get("base_path") or "").strip("/")
-                    else:
-                        continue
-                    if cp == p:
-                        _colliding_paths.append(p)
-                        break
+        for _other_wf_id, other_version_graph in _other_published_graphs:
+            other_graph = other_version_graph or {}
+            matched = False
+            for cn in other_graph.get("nodes", []):
+                cnp = cn.get("params") or {}
+                if cn.get("type") == "webhook_trigger":
+                    cp = str(cnp.get("path") or "").strip("/")
+                elif cn.get("type") == "api_endpoint":
+                    cp = str(cnp.get("base_path") or "").strip("/")
+                else:
+                    continue
+                if cp == p:
+                    matched = True
+                    break
+            if matched:
+                _colliding_paths.append(p)
+                break
     if _colliding_paths:
         logger.warning(
             "webhook path collision detected — workflow %s (%s) shares paths %s "
             "with other active workflows. Both will fire on matching requests.",
-            workflow.id, workflow.name, _colliding_paths,
+            workflow.id,
+            workflow.name,
+            _colliding_paths,
         )
 
     # ── Webhook auth enforcement ────────────────────────────────────────
@@ -1353,12 +1369,27 @@ async def publish_workflow(
                 continue
             node_params = node.get("params") or {}
             auth_type = str(node_params.get("auth_type") or "none")
-            if auth_type == "none":
-                path = str(node_params.get("path") or node_params.get("base_path") or "").strip("/")
-                _unauthenticated.append(
-                    f"{node_type} '{node.get('name', node.get('id', 'unnamed'))}' "
-                    f"at path '{path or '/'}'"
-                )
+            if auth_type != "none":
+                continue
+            # HMAC signature verification is authentication — it is how Stripe,
+            # GitHub and Shopify sign their webhooks, and it authenticates the
+            # body as well as the caller. The message below already offers it,
+            # so checking auth_type alone rejected the very configuration it
+            # was telling people to use.
+            hmac_on = str(node_params.get("hmac_verification") or "off").lower() == "on"
+            hmac_secret = str(node_params.get("hmac_secret") or "").strip()
+            if hmac_on and hmac_secret:
+                continue
+            path = str(node_params.get("path") or node_params.get("base_path") or "").strip("/")
+            reason = (
+                "hmac_verification is on but no hmac_secret is set"
+                if hmac_on
+                else "no authentication configured"
+            )
+            _unauthenticated.append(
+                f"{node_type} '{node.get('name', node.get('id', 'unnamed'))}' "
+                f"at path '{path or '/'}' ({reason})"
+            )
         if _unauthenticated:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1481,9 +1512,15 @@ async def delete_workflow(
     actor: User | None = Depends(optional_current_user),
 ):
     workflow = await _load(session, workflow_id)
-    await log_audit(session, "delete", "workflow", workflow_id, workflow.name,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "delete",
+        "workflow",
+        workflow_id,
+        workflow.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.delete(workflow)
     await session.commit()
     publish_workflow_event(
@@ -1493,6 +1530,23 @@ async def delete_workflow(
         operation="delete",
         actor=actor,
     )
+
+
+def _bounded_node_test_output(outputs: Any, cap: int | None) -> Any:
+    """Bound what a single-node test sends back, without failing the node.
+
+    The whole output travels in the HTTP response, so it has to be bounded —
+    but bounding it by *failing* meant a node could fail on Test and succeed
+    on Run, because the run path enforces no such cap. It stores a truncated
+    copy and passes the complete value downstream, and that is the behaviour
+    to match: same verdict on whether the node works, a smaller payload.
+
+    Oversized ports come back as ``{_truncated, size_bytes, preview}`` — the
+    same shape a run persists, so the editor and the run record agree.
+    """
+    from app.services.run_persistence import _cap_output
+
+    return _cap_output(serialize_value(outputs), cap)
 
 
 @router.post(
@@ -1537,8 +1591,7 @@ async def test_workflow_node(
     if missing:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Missing cached upstream output(s) for single-node test: "
-            + ", ".join(missing),
+            "Missing cached upstream output(s) for single-node test: " + ", ".join(missing),
         )
 
     ephemeral_run_id = f"node-test-{uuid4().hex}"
@@ -1580,7 +1633,11 @@ async def test_workflow_node(
                 cache=deserialize_value(prep.cache or {}),
                 targets=[node_id],
                 default_timeouts=runner_service._engine_default_timeouts(),
-                max_node_output_bytes=prep.output_cap,
+                # Deliberately no max_node_output_bytes: a full run does not
+                # enforce it, so enforcing it here made a node fail on Test and
+                # succeed on Run — the editor stricter than production, which
+                # is backwards. The response is bounded below instead, the same
+                # way a run bounds what it persists.
                 process_isolator=runner_service.process_isolator,
             )
     finally:
@@ -1604,7 +1661,7 @@ async def test_workflow_node(
         workflow_id=workflow_id,
         node_id=node_id,
         status=str(node_result.status),
-        output=serialize_value(node_result.outputs),
+        output=_bounded_node_test_output(node_result.outputs, prep.output_cap),
         error=node_result.error,
         logs=serialize_value(node_result.logs),
         debug=serialize_value(node_result.debug),
@@ -1627,9 +1684,7 @@ async def explain_workflow(
     from app.services.ai_builder import explain_workflow as _explain
 
     wf = await session.scalar(
-        select(Workflow)
-        .where(Workflow.id == workflow_id)
-        .options(selectinload(Workflow.versions))
+        select(Workflow).where(Workflow.id == workflow_id).options(selectinload(Workflow.versions))
     )
     if wf is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
@@ -1649,9 +1704,7 @@ async def generate_workflow_tests(
     from app.services.ai_builder import generate_tests as _gen_tests
 
     wf = await session.scalar(
-        select(Workflow)
-        .where(Workflow.id == workflow_id)
-        .options(selectinload(Workflow.versions))
+        select(Workflow).where(Workflow.id == workflow_id).options(selectinload(Workflow.versions))
     )
     if wf is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
@@ -1696,9 +1749,7 @@ async def save_workflow_checks(
     workflow = await _load(session, workflow_id)
     cases = [case.model_dump(mode="json") for case in body.checks]
     if body.replace:
-        await session.execute(
-            delete(WorkflowCheck).where(WorkflowCheck.workflow_id == workflow_id)
-        )
+        await session.execute(delete(WorkflowCheck).where(WorkflowCheck.workflow_id == workflow_id))
 
     checks: list[WorkflowCheck] = []
     for case in cases:
@@ -1736,9 +1787,7 @@ async def run_workflow_checks(
             .order_by(WorkflowCheck.created_at.asc())
         )
     ).all()
-    results = [
-        await _run_and_persist_check(session, workflow, check) for check in checks
-    ]
+    results = [await _run_and_persist_check(session, workflow, check) for check in checks]
     await session.commit()
     return results
 

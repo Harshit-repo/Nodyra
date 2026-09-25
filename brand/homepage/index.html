@@ -377,7 +377,7 @@
       <div class="cap reveal"><h3>AI &amp; ML node suite</h3><p>LLM calls, RAG (loaders, splitters, vector stores, retrievers), agents &amp; tools, evals, fine-tuning, synthetic data, and statistical analysis — first-class nodes, not glue scripts.</p></div>
       <div class="cap reveal"><h3>MCP — both directions</h3><p>Expose any workflow as a <span class="mono">Model Context Protocol</span> tool for Claude &amp; other agents, and consume external MCP servers as nodes inside your graphs.</p></div>
       <div class="cap reveal"><h3>Code-first export</h3><p>Export any workflow to a standalone, runnable Python script — sub-workflows, credentials seams and all. Your automation is never trapped in our format.</p></div>
-      <div class="cap reveal"><span class="tag pro">Pro</span><h3>Sandboxed execution</h3><p>Run untrusted code in isolated, capability-tiered containers (runc → gVisor → Kata) with a warm pool keyed per environment. Off by default, one setting to require it.</p></div>
+      <div class="cap reveal"><span class="tag">Community</span><h3>Sandboxed execution</h3><p>Run untrusted code in isolated, capability-tiered containers (runc → gVisor → Kata) with a warm pool keyed per environment. Off by default, one setting to require it.</p></div>
       <div class="cap reveal"><span class="tag pro">Pro</span><h3>Observability</h3><p>OpenTelemetry tracing across the engine, queue, and node runs — wire Nodyra into the same dashboards you already use for everything else.</p></div>
       <div class="cap reveal"><span class="tag pro">Pro</span><h3>Remote runners &amp; deployments</h3><p>Durable run queue, remote runner pools (Docker / Kubernetes / agent), and version-pinned deployments fired by cron, webhook, or event.</p></div>
     </div>
@@ -434,9 +434,10 @@
         <div class="price-note">Self-hosted · no telemetry · no signup</div>
         <ul>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Every Python node &amp; the full canvas</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Sandboxed execution (isolated containers)</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> AI/ML nodes, MCP &amp; code export</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> 3 environments · 1 runner · 2 seats</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Up to 3 active deployments</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> 3 environments · 1 runner · 5 seats</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Up to 10 active deployments</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Encrypted vault · RBAC · audit log</li>
         </ul>
         <a href="#selfhost" class="btn">Self-host free</a>
@@ -450,7 +451,6 @@
         <div class="price-note">Flat, per instance · or $490/yr</div>
         <ul>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Everything in Community, plus:</li>
-          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> <b style="color:var(--ink)">Sandboxed execution</b> (isolated containers)</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> <b style="color:var(--ink)">OpenTelemetry</b> observability</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> <b style="color:var(--ink)">Git-backed</b> workflow versioning</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> 10 environments · 5 runners · 10 seats</li>
@@ -470,7 +470,7 @@
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Unlimited environments, runners &amp; seats</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> SSO/SAML · audit export · external KMS</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Dedicated runner pools · advanced RBAC</li>
-          <li class="soon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="var(--ink-3)" stroke-width="2"/><path d="M12 8v4l3 2" stroke="var(--ink-3)" stroke-width="2" stroke-linecap="round"/></svg> Multi-tenant organizations <span class="badge">soon</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="var(--ink-3)" stroke-width="2"/><path d="M12 8v4l3 2" stroke="var(--ink-3)" stroke-width="2" stroke-linecap="round"/></svg> Multi-tenant organizations with row-level isolation</li>
           <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Priority support &amp; SLA</li>
         </ul>
         <a href="mailto:sharma.har97@gmail.com?subject=Nodyra%20Enterprise" class="btn">Contact sales</a>

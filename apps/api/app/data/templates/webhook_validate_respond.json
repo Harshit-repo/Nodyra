@@ -1,0 +1,121 @@
+{
+  "id": "webhook_validate_respond",
+  "name": "Validate a webhook payload and reply",
+  "description": "Accept an inbound webhook, validate it against a JSON schema, and answer 200 or 422 so the caller learns immediately what was wrong.",
+  "tags": [
+    "webhook",
+    "validation",
+    "api"
+  ],
+  "version": "1.0.0",
+  "creator": "Nodyra maintainers",
+  "verified": true,
+  "credential_free": true,
+  "prerequisites": [
+    "An inbound webhook URL reachable by the caller",
+    "Configure webhook authentication before publishing; the production default requires it"
+  ],
+  "expected_result": "Valid payloads return 200; invalid ones return the validation errors rather than failing silently.",
+  "permissions": [
+    "Inbound: webhook"
+  ],
+  "compatibility": ">=1.0.0,<2.0.0",
+  "screenshot_url": "/template-previews/webhook-validate-respond.svg",
+  "graph": {
+    "nodes": [
+      {
+        "id": "hook",
+        "type": "webhook_trigger",
+        "params": {
+          "path": "validated-intake",
+          "http_method": "POST",
+          "response_mode": "Respond Node"
+        },
+        "position": {
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": "body",
+        "type": "code",
+        "params": {
+          "code": "output = (input or {}).get('body')"
+        },
+        "position": {
+          "x": 280,
+          "y": 40
+        }
+      },
+      {
+        "id": "validate",
+        "type": "json_schema_validate",
+        "params": {
+          "schema": "{\"type\": \"object\", \"required\": [\"email\", \"amount\"], \"properties\": {\"email\": {\"type\": \"string\"}, \"amount\": {\"type\": \"number\"}}}"
+        },
+        "position": {
+          "x": 560,
+          "y": 40
+        }
+      },
+      {
+        "id": "valid",
+        "type": "if",
+        "params": {
+          "field": "valid",
+          "operator": "is true"
+        },
+        "position": {
+          "x": 840,
+          "y": 40
+        }
+      },
+      {
+        "id": "accepted",
+        "type": "respond_to_webhook",
+        "params": {
+          "status_code": 200
+        },
+        "position": {
+          "x": 1120,
+          "y": -40
+        }
+      },
+      {
+        "id": "rejected",
+        "type": "respond_to_webhook",
+        "params": {
+          "status_code": 422
+        },
+        "position": {
+          "x": 1120,
+          "y": 160
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "hook",
+        "target": "body"
+      },
+      {
+        "source": "body",
+        "target": "validate"
+      },
+      {
+        "source": "validate",
+        "target": "valid"
+      },
+      {
+        "source": "valid",
+        "target": "accepted",
+        "source_output": "true"
+      },
+      {
+        "source": "valid",
+        "target": "rejected",
+        "source_output": "false"
+      }
+    ]
+  }
+}

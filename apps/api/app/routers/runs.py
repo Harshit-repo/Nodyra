@@ -38,8 +38,15 @@ from app.schemas import (
     RunTimeline,
     RunTimelineEvent,
 )
-from app.security import _user_from_session_token, optional_current_user, require_permission
+from app.security import (
+    _user_from_session_token,
+    audit_recorder,
+    get_client_ip,
+    optional_current_user,
+    require_permission,
+)
 from app.services import queue as run_queue
+from app.services.audit import AuditRecorder
 from app.services.data_ref import resolve_ref
 from app.services.events import broker
 from app.services.graph_utils import (
@@ -433,12 +440,22 @@ async def retry_from_failure(
     dependencies=[Depends(require_permission("workflow:run"))],
 )
 async def cancel_workflow_run(
-    run_id: str, session: AsyncSession = Depends(get_session)
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> RunCancelResponse:
     # Verify the run exists and belongs to this org before cancelling.
     # do_orm_execute appends the org_id filter automatically for select() queries.
     if await session.scalar(select(Run).where(Run.id == run_id)) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+    # Record the request BEFORE cancelling, for two reasons. Ordering: the
+    # recorder commits this request's session, and cancel_run tears the run
+    # down through a separate session, so auditing afterwards puts a write
+    # transaction in the way of that teardown. Meaning: what an auditor needs
+    # is that this operator asked for this run to stop — which is true whether
+    # the run then stopped promptly, was already finishing, or had to be
+    # reaped later.
+    await audit("cancel", "run", run_id, "cancellation requested")
     result = await cancel_run(run_id)
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
@@ -760,6 +777,7 @@ async def decide_run_approval(
     approval_id: str,
     body: RunApprovalDecisionRequest,
     session: AsyncSession = Depends(get_session),
+    audit: AuditRecorder = Depends(audit_recorder),
 ) -> RunApprovalInfo:
     """Record an operator decision for a pending AI tool approval."""
     # B-01: Use select() to trigger do_orm_execute org filter.  session.get()
@@ -819,6 +837,14 @@ async def decide_run_approval(
     await session.commit()
     await session.refresh(approval)
     broker.publish(run_id, event_payload)
+    # Recorded before the run resumes: the recorder commits this request's
+    # session, and resuming drives execution through separate sessions, so
+    # auditing afterwards would put a write transaction in the way of that
+    # work (see cancel_workflow_run).
+    await audit(
+        "approval_decision", "run", run_id,
+        f"approval={approval.id} decision={body.decision} node={approval.node_id}",
+    )
     # Resume the waiting run for both decisions: approval lets the tool run,
     # rejection feeds a denial back to the agent so it can wrap up gracefully
     # instead of leaving the run stuck in "waiting" forever.
@@ -879,6 +905,37 @@ async def run_debug_snapshot(
     )
 
 
+async def _run_is_visible(websocket: WebSocket, run_id: str) -> bool:
+    """Whether this connection's organization owns ``run_id``.
+
+    Mirrors the workflow socket: resolve the org the caller is acting in, then
+    look the run up through the org-scoped ORM filter (and Postgres RLS), so a
+    run belonging to another tenant simply resolves to None.
+    """
+    from app.security import resolve_org_for
+    from app.tenancy import current_org_id, run_as_org
+
+    token = current_org_id.set(None)
+    try:
+        async with SessionLocal() as session:
+            user: User | None = None
+            bearer = websocket.query_params.get("token", "")
+            if bearer:
+                user = await _user_from_session_token(bearer, session)
+            try:
+                org_id = await resolve_org_for(
+                    websocket.query_params.get("org_id"), user, session
+                )
+            except HTTPException:
+                return False
+    finally:
+        current_org_id.reset(token)
+
+    with run_as_org(org_id):
+        async with SessionLocal() as session:
+            return await session.scalar(select(Run.id).where(Run.id == run_id)) is not None
+
+
 @router.websocket("/ws/runs/{run_id}")
 async def run_events(websocket: WebSocket, run_id: str) -> None:
     if settings.auth_required:
@@ -910,9 +967,32 @@ async def run_events(websocket: WebSocket, run_id: str) -> None:
         # auth (``token == "ok"``) was already validated above.
         if token != "ok":
             async with SessionLocal() as session:
-                if not token or await _user_from_session_token(token, session) is None:
+                # ``auth_bind_token_to_ip`` is enforced by the HTTP auth_gate
+                # middleware, which does not run for WebSocket upgrades — so
+                # without this a token pinned to another address, refused on
+                # every HTTP route, still opened the stream.
+                client_ip = (
+                    get_client_ip(websocket) if settings.auth_bind_token_to_ip else ""
+                )
+                user = (
+                    await _user_from_session_token(token, session, client_ip=client_ip)
+                    if token
+                    else None
+                )
+                if user is None:
                     await websocket.close(code=1008)
                     return
+
+    # Authentication is not authorization. Without this the stream was keyed
+    # only by run_id: any authenticated principal who learned a run id from
+    # another organization could subscribe to that run's live events, which
+    # carry node outputs. Run ids are 128-bit and not guessable, but they
+    # travel through logs, shared links and support tickets. The workflow
+    # socket already performed this check; this one did not.
+    if not await _run_is_visible(websocket, run_id):
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
     try:
 

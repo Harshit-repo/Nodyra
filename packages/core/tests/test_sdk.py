@@ -534,3 +534,112 @@ def test_register_module_allows_safe_code() -> None:
     registered, skipped = register_module_functions("sec_mod5", source, reg)
     assert "transform" in registered
     assert not skipped
+
+
+MULTILINE_DOCSTRING_SOURCE = (
+    "def documented(x: int) -> int:\n"
+    '    """Do a thing.\n'
+    "\n"
+    "    Requires: something installed\n"
+    "    (a second line).\n"
+    '    """\n'
+    "    return x\n"
+)
+
+
+def test_docstring_indentation_does_not_leak_into_descriptions() -> None:
+    """A node's description is user-facing text, not Python source.
+
+    Docstring continuation lines carry the function's indentation. Four-space
+    indented lines are a code block in Markdown, so a plain sentence like
+    "Requires: playwright install chromium" renders as code wherever the
+    description is shown as Markdown - which is how an MCP client presents it
+    to a model.
+    """
+    reg = NodeRegistry()
+    register_module_functions("docs_mod", MULTILINE_DOCSTRING_SOURCE, reg)
+    manifest = next(m for m in reg.manifests() if m.name == "documented")
+
+    indented = [
+        line
+        for line in manifest.description.split("\n")[1:]
+        if line.startswith("    ") and line.strip()
+    ]
+    assert not indented, (
+        f"description keeps the docstring's own indentation: {indented!r}"
+    )
+
+
+def test_static_and_runtime_extraction_agree() -> None:
+    """The same function must be described identically however it was read.
+
+    ``ast.get_docstring`` dedents (``clean=True`` by default); ``__doc__.strip()``
+    does not. Nodyra reads docstrings both ways - statically when listing what a
+    module offers, at runtime when registering it - so the same function was
+    described two different ways depending on which surface asked.
+    """
+    manifests, _skipped = discover_module_function_manifests(
+        "agree_static", MULTILINE_DOCSTRING_SOURCE, include_undecorated=True
+    )
+    static = manifests[0].description
+
+    reg = NodeRegistry()
+    register_module_functions("agree_runtime", MULTILINE_DOCSTRING_SOURCE, reg)
+    runtime = reg.manifests()[0].description
+
+    assert static == runtime, (
+        f"static extraction gave {static!r} but runtime extraction gave "
+        f"{runtime!r}; the same function is described differently by surface"
+    )
+
+def test_manifest_hides_engine_reserved_ctx() -> None:
+    """``ctx`` is the engine-injected RuntimeContext, never a config param.
+
+    Rendering it in the manifest forced authors to supply a meaningless value
+    (``mcp_tool`` validated only after users set the hidden param) and hid the
+    node's real parameters.
+    """
+    reg = NodeRegistry()
+
+    @node(
+        name="MCP-ish",
+        category="MCP",
+        registry=reg,
+        params={
+            "connection_id": {"required": True},
+            "tool_name": {"required": True},
+            "arguments": {},
+        },
+    )
+    async def mcpish(input=None, *, ctx=None):  # noqa: ANN001
+        return {"ok": True}
+
+    manifest = reg.get("mcpish").manifest
+    assert [p.name for p in manifest.params] == ["connection_id", "tool_name", "arguments"]
+    assert manifest.params[0].required is True
+    assert manifest.params[2].required is False
+
+
+def test_decorator_only_params_appear_in_manifest() -> None:
+    """Params declared in the decorator but absent from the signature must
+    still reach the inspector (mcp_tool reads them from ctx.node_params)."""
+    reg = NodeRegistry()
+
+    @node(
+        name="Inspector",
+        category="Demo",
+        registry=reg,
+        params={
+            "api_key": {"type": "string", "required": True, "description": "Key."},
+            "verbose": {"default": False},
+        },
+    )
+    async def inspector(input=None, *, ctx=None):  # noqa: ANN001
+        return {"ok": True}
+
+    manifest = reg.get("inspector").manifest
+    specs = {p.name: p for p in manifest.params}
+    assert set(specs) == {"api_key", "verbose"}
+    assert specs["api_key"].required is True
+    assert specs["api_key"].description == "Key."
+    assert specs["verbose"].default is False

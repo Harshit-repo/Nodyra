@@ -296,6 +296,12 @@ async def verify_fixture(
                 is True
             )
             checks["terminal_run"] = bool(run and run.status == "success")
+            # Credential reads have a legacy master-key fallback. Verify the
+            # restored organization key too so that fallback cannot hide a
+            # migration run with a different deployment encryption secret.
+            org_keys.invalidate_kek_cache(DEFAULT_ORG_ID)
+            restored_keys = await org_keys.batch_get_org_keks([DEFAULT_ORG_ID], session)
+            checks["organization_key_decryptable"] = bool(restored_keys.get(DEFAULT_ORG_ID))
             checks["artifact_metadata"] = bool(
                 artifact
                 and artifact.checksum_sha256 == manifest["artifact"]["checksum_sha256"]
@@ -304,9 +310,7 @@ async def verify_fixture(
             if credential is None:
                 checks["credential_decryptable"] = False
             else:
-                plaintext = await org_keys.decrypt_credential_for(
-                    credential, session, strict=True
-                )
+                plaintext = await org_keys.decrypt_credential_for(credential, session, strict=True)
                 checks["credential_decryptable"] = plaintext == FIXTURE_SECRET
 
     client = _s3_client()
@@ -315,8 +319,7 @@ async def verify_fixture(
         Key=manifest["artifact"]["key"],
     )["Body"].read()
     checks["artifact_bytes"] = (
-        hashlib.sha256(restored).hexdigest()
-        == manifest["artifact"]["checksum_sha256"]
+        hashlib.sha256(restored).hexdigest() == manifest["artifact"]["checksum_sha256"]
         and len(restored) == manifest["artifact"]["size_bytes"]
     )
     checks["rto_budget"] = restore_seconds <= max_rto_seconds

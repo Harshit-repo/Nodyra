@@ -2,6 +2,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+import pytest
 from httpx import AsyncClient
 
 MANUAL_GRAPH = {
@@ -520,6 +521,35 @@ async def test_set_graph_rejects_unknown_node_type(client: AsyncClient) -> None:
     result = resp.json()["result"]
     assert result["isError"] is True
     assert "Unknown node types" in result["content"][0]["text"]
+
+
+async def test_set_graph_accepts_switch_rule_output_ports(client: AsyncClient) -> None:
+    # switch declares only `fallback` statically; branch ports come from the
+    # rules param and must validate without an outputs_override.
+    workflow_id = await make_workflow(client, "Switch Graph WF")
+    graph = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {"data": {"kind": "vip"}}},
+            {"id": "s", "type": "switch", "params": {"field": "kind", "rules": {"vip": "vip", "free": "free"}}},
+            {"id": "v", "type": "code", "params": {"code": "output = {'got': input}"}},
+        ],
+        "edges": [
+            {"source": "t", "source_output": "main", "target": "s", "target_input": "input"},
+            {"source": "s", "source_output": "vip", "target": "v", "target_input": "input"},
+        ],
+    }
+    resp = await client.post(
+        "/mcp",
+        json=rpc(
+            "tools/call",
+            {
+                "name": "set_workflow_graph",
+                "arguments": {"workflow_id": workflow_id, "graph": graph, **APPROVED},
+            },
+        ),
+    )
+    result = resp.json()["result"]
+    assert result["isError"] is False, result["content"][0]["text"]
 
 
 async def test_workflow_exposed_as_dynamic_tool(client: AsyncClient) -> None:
@@ -1057,14 +1087,14 @@ async def test_toggle_workflow(client: AsyncClient) -> None:
     data = _tool_payload(
         await client.post(
             "/mcp",
-            json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": True}}),
+            json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": True, "approved_by_user": True}}),
         )
     )
     assert data["active"] is True
     data2 = _tool_payload(
         await client.post(
             "/mcp",
-            json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": False}}),
+            json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": False, "approved_by_user": True}}),
         )
     )
     assert data2["active"] is False
@@ -1531,6 +1561,7 @@ async def test_create_code_node(client: AsyncClient) -> None:
     wf_id = await make_workflow(client)
     result = await _tool(client, "create_code_node", {
         "workflow_id": wf_id, "node_id": "transform", "code": "output = input * 2", "label": "Double",
+        "approved_by_user": True,
     })
     data = json.loads(result["content"][0]["text"])
     assert data["node_id"] == "transform"
@@ -1543,8 +1574,8 @@ async def test_create_code_node(client: AsyncClient) -> None:
 
 async def test_update_code(client: AsyncClient) -> None:
     wf_id = await make_workflow(client)
-    await _tool(client, "create_code_node", {"workflow_id": wf_id, "node_id": "fn", "code": "output = 1"})
-    result = await _tool(client, "update_code", {"workflow_id": wf_id, "node_id": "fn", "code": "output = 42"})
+    await _tool(client, "create_code_node", {"workflow_id": wf_id, "node_id": "fn", "code": "output = 1", "approved_by_user": True})
+    result = await _tool(client, "update_code", {"workflow_id": wf_id, "node_id": "fn", "code": "output = 42", "approved_by_user": True})
     data = json.loads(result["content"][0]["text"])
     assert data["node_id"] == "fn"
     node = json.loads((await _tool(client, "get_node", {"workflow_id": wf_id, "node_id": "fn"}))["content"][0]["text"])
@@ -1831,3 +1862,194 @@ async def test_workflow_settings_and_version_tools(client: AsyncClient) -> None:
     )
     diff_data = json.loads(diff_result["content"][0]["text"])
     assert diff_data["changed"] is False
+
+
+@pytest.mark.parametrize(
+    "tool,arguments",
+    [
+        ("update_code", {"node_id": "fn", "code": "import os"}),
+        ("create_code_node", {"node_id": "new_fn", "code": "output = 1"}),
+        ("toggle_workflow", {"active": True}),
+    ],
+)
+async def test_consequential_tools_refuse_over_the_wire_without_approval(
+    client: AsyncClient, tool: str, arguments: dict
+) -> None:
+    """The approval gate has to hold at the server, not only in the source.
+
+    test_mcp_approval_consistency.py checks that the gate is *present* on these
+    tools by reading the source. That would still pass if the helper stopped
+    refusing. This drives the real endpoint and asserts a refusal comes back.
+    """
+    wf_id = await make_workflow(client)
+    await _tool(
+        client,
+        "create_code_node",
+        {"workflow_id": wf_id, "node_id": "fn", "code": "output = 1", "approved_by_user": True},
+    )
+
+    result = await _tool(client, tool, {"workflow_id": wf_id, **arguments})
+    assert result["isError"] is True, (
+        f"{tool} ran without approved_by_user, so an agent reaches it without "
+        f"involving the human the gate exists for"
+    )
+    text = result["content"][0]["text"]
+    assert "approved_by_user" in text, (
+        f"{tool} refused but did not say what the caller must do: {text!r}"
+    )
+
+
+def _patch_tool_handler(monkeypatch, mcp_router, name: str, handler) -> None:
+    """Swap one tool's handler. McpTool is a frozen dataclass, so replace it."""
+    import dataclasses
+
+    original = mcp_router.get_tool
+    swapped = dataclasses.replace(original(name), handler=handler)
+    monkeypatch.setattr(
+        mcp_router,
+        "get_tool",
+        lambda tool_name: swapped if tool_name == name else original(tool_name),
+    )
+
+
+async def test_service_error_reaches_the_model_instead_of_an_error_id(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """A 4xx service error must arrive as its own message.
+
+    Running a workflow whose environment lacks a package raised
+    PackageNotInstalled, which is neither McpToolError nor HTTPException, so
+    it fell into the blanket handler and the model got
+    "Internal tool error (reference abc123)." The one sentence that says
+    which package and which node was left in the server log.
+    """
+    from app.exceptions import PackageNotInstalled
+    from app.routers import mcp as mcp_router
+
+    message = (
+        "This workflow's environment is missing packages required by its "
+        "nodes: statsmodels>=0.14 (needed by decompose)."
+    )
+
+    async def _boom(session, user, arguments):
+        raise PackageNotInstalled(message)
+
+    _patch_tool_handler(monkeypatch, mcp_router, "list_workflows", _boom)
+
+    result = (
+        await client.post(
+            "/mcp", json=rpc("tools/call", {"name": "list_workflows", "arguments": {}})
+        )
+    ).json()["result"]
+
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "statsmodels>=0.14" in text
+    assert "decompose" in text
+    assert "Internal tool error" not in text
+
+
+async def test_unexpected_error_still_hides_behind_a_reference(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """Genuine bugs stay opaque — only 4xx service errors are passed through."""
+    from app.routers import mcp as mcp_router
+
+    async def _boom(session, user, arguments):
+        raise RuntimeError("psycopg: connection string contains a password")
+
+    _patch_tool_handler(monkeypatch, mcp_router, "list_workflows", _boom)
+
+    result = (
+        await client.post(
+            "/mcp", json=rpc("tools/call", {"name": "list_workflows", "arguments": {}})
+        )
+    ).json()["result"]
+
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "Internal tool error" in text
+    assert "password" not in text
+
+
+async def test_running_an_unpublished_workflow_says_so(client: AsyncClient) -> None:
+    """A never-published draft must not report a missing trigger.
+
+    Creating a workflow leaves an empty version 1 behind, so running the
+    published version of a workflow whose draft was never published executed
+    that empty graph and failed with "Workflow needs a trigger to run." — and
+    the trigger node is sitting right there in the draft.
+    """
+    workflow_id = await make_workflow(client, "Never published")
+
+    result = (
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "run_workflow",
+                    "arguments": {"workflow_id": workflow_id, "use_draft": False},
+                },
+            ),
+        )
+    ).json()["result"]
+
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "has no nodes" in text
+    assert "publish_workflow" in text
+    assert "trigger" not in text.lower()
+
+
+async def test_running_the_draft_of_an_unpublished_workflow_works(
+    client: AsyncClient,
+) -> None:
+    """The remedy the message offers has to actually work."""
+    workflow_id = await make_workflow(client, "Draft runnable")
+
+    result = (
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "run_workflow",
+                    "arguments": {"workflow_id": workflow_id, "use_draft": True},
+                },
+            ),
+        )
+    ).json()["result"]
+
+    assert result["isError"] is False, result["content"][0]["text"]
+
+
+async def test_validating_an_empty_workflow_is_not_valid(client: AsyncClient) -> None:
+    """A brand-new workflow must not validate as ready.
+
+    The trigger check was skipped when a graph had no nodes at all, so
+    validate_workflow_graph answered {"valid": true} for an empty draft — at
+    the one moment the caller most needs to hear that nothing is there yet.
+    """
+    workflow_id = (await client.post("/workflows", json={"name": "Empty"})).json()["id"]
+
+    payload = _tool_payload_allowing_error(
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "validate_workflow_graph",
+                    "arguments": {"workflow_id": workflow_id},
+                },
+            ),
+        )
+    )
+
+    assert payload["valid"] is False
+    assert "no nodes" in payload["error"]
+
+
+def _tool_payload_allowing_error(resp) -> dict:
+    """validate_workflow_graph reports invalidity in its payload, not isError."""
+    return json.loads(resp.json()["result"]["content"][0]["text"])

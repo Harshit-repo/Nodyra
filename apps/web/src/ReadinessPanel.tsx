@@ -226,7 +226,7 @@ export function ReadinessPanel() {
   if (!status) {
     return (
       <ReadinessCardFrame>
-        <div className="nodyra-settings-skeleton" aria-label="Loading readiness status">
+        <div role="status" className="nodyra-settings-skeleton" aria-label="Loading readiness status">
           <span />
           <span />
           <span />

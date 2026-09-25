@@ -645,6 +645,9 @@ export function NodePalette() {
   }, [query, categoryFilter, paletteView]);
 
   const addNode = useEditor((s) => s.addNode);
+  // Count, not identity: the drop offset has to grow with the graph, or two
+  // keyboard-added nodes land on the same pixel.
+  const nodeCount = useEditor((s) => s.nodes.length);
 
   function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>): void {
     if (e.key === "ArrowDown") {
@@ -658,9 +661,17 @@ export function NodePalette() {
       if (pick) {
         e.preventDefault();
         // Drop near canvas center — the editor surface centers content around
-        // (400, 200) by default; jitter so repeated Enters don't stack.
-        const offset = (flatResults.length > 1 ? activeIdx % 3 : 0) * 24;
-        addNode(pick.id, { x: 400 + offset, y: 200 + offset });
+        // (400, 200) by default — stepping right and down per existing node so
+        // each addition is visible and its ports are clickable.
+        //
+        // This used to offset by activeIdx, the index of the highlighted search
+        // result. Searching "manual trigger" and then "code" both leave
+        // activeIdx at 0, so both nodes landed on exactly (400, 200): stacked,
+        // with the upper one's ports intercepting the lower one's. Nodes could
+        // be added from the keyboard but not connected, so no workflow could be
+        // built without a mouse.
+        const step = nodeCount % 8;
+        addNode(pick.id, { x: 400 + step * 220, y: 200 + step * 40 });
         recordRecent(pick.id);
         setQuery("");
       }

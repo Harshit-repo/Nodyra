@@ -38,6 +38,7 @@ from app.security import (
     current_user,
     get_client_ip,
     normalize_role,
+    optional_current_user,
     require_instance_permission,
     resolve_org,
     role_allows,
@@ -49,6 +50,7 @@ from app.services.crypto import (
     create_token,
     decode_payload_token,
     hash_password,
+    needs_rehash,
     verify_password,
 )
 from app.services.licensing import Feature as _Feature
@@ -452,13 +454,17 @@ async def resend_verification(
     return {"message": "Verification email sent.", "token": token}
 
 
-# Dummy bcrypt-like hash for constant-time comparison when the user doesn't
-# exist.  Prevents timing-based email enumeration: verify_password always runs,
-# taking the same wall-clock whether the user is found or not.
-_DUMMY_HASH = (
-    "$2b$12$LJ3m4ys3Lk0TSwHCpNqrRO"
-    "eMrmfW8zH6oGJqk9Ry1jDzE2pXsKlMuv3K4a1bQcVbN0d5sT6u7w8x9y0z"
-)
+# Stand-in hash verified when the submitted email matches no user, so the
+# handler burns the same wall-clock either way and cannot be used to enumerate
+# accounts.
+#
+# It must be a hash this deployment's hasher actually processes. The previous
+# value was a bcrypt-format literal, which no Nodyra hasher recognises: it was
+# rejected on a format check in microseconds while a real account paid the full
+# KDF cost, leaving exactly the timing oracle the constant-time path exists to
+# close. Hashing a random secret at import guarantees the current algorithm and
+# cost parameters, and the value is never a usable password.
+_DUMMY_HASH = hash_password(secrets.token_urlsafe(32))
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -482,9 +488,32 @@ async def login(
             status.HTTP_403_FORBIDDEN,
             "Email address not verified. Check your inbox or request a new verification link.",
         )
+    # Transparent upgrade: a hash from an older algorithm or cost is replaced
+    # now that the plaintext is in hand and verified. Doing it here — rather
+    # than in a migration — means nobody is logged out and no password is ever
+    # stored under weaker parameters after its owner next signs in.
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(body.password)
+        await session.flush()
+
     client_ip = get_client_ip(request) if settings.auth_bind_token_to_ip else ""
     result = _token_response(user, client_ip=client_ip)
     _set_session_cookies(response, result.token)
+    # Successful authentication. Failures are deliberately not recorded here:
+    # the handler answers identically for a wrong password and an unknown
+    # email (constant-time enumeration defence above), so an audit row would
+    # reintroduce the oracle. Rate-limit rejections are logged by
+    # _enforce_auth_rate_limit.
+    await log_audit(
+        session,
+        "login",
+        "user",
+        user.id,
+        f"{user.email} via password",
+        actor_id=user.id,
+        actor_email=user.email,
+    )
+    await session.commit()
     return result
 
 
@@ -499,12 +528,27 @@ def _revoke_sessions(user: User) -> None:
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(response: Response) -> None:
+async def logout(
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
+) -> None:
     """Clear the httpOnly session cookie and CSRF cookie.
 
     Safe to call when not signed in (idempotent cookie deletion).
     """
     _clear_session_cookies(response)
+    if actor is not None:
+        await log_audit(
+            session,
+            "logout",
+            "user",
+            actor.id,
+            actor.email,
+            actor_id=actor.id,
+            actor_email=actor.email,
+        )
+        await session.commit()
 
 
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
@@ -914,7 +958,7 @@ async def sso_acs(
         # Limit decompressed size to 1 MiB to prevent zip bombs
         inflated = zlib.decompress(decoded, -15, bufsize=1_048_576)
 
-        root = _lxml_etree.fromstring(inflated)
+        root = _lxml_etree.fromstring(inflated, parser=_saml_xml_parser())
         NS = {
             "saml2": "urn:oasis:names:tc:SAML:2.0:assertion",
             "saml2p": "urn:oasis:names:tc:SAML:2.0:protocol",
@@ -1023,6 +1067,15 @@ async def sso_acs(
             "sub": f"saml:{email}",
         }
         user = await get_or_create_sso_user(claims, sso_config, session=session)
+        await log_audit(
+            session,
+            "login",
+            "user",
+            user.id,
+            f"{user.email} via SAML SSO",
+            actor_id=user.id,
+            actor_email=user.email,
+        )
         await session.commit()
         result = _token_response(user)
         _set_session_cookies(response, result.token)
@@ -1067,3 +1120,32 @@ def _build_saml_authn_request(entity_id: str, acs_url: str) -> str:
 </saml2p:AuthnRequest>"""
     compressed = zlib.compress(xml.encode())[2:-4]
     return base64.b64encode(compressed).decode()
+
+
+def _saml_xml_parser():
+    """An lxml parser that refuses everything a SAML assertion never needs.
+
+    ``/auth/sso/acs`` is unauthenticated — the IdP posts to it and holds no
+    Nodyra credential — and the XML-DSig signature is verified only *after* the
+    document is parsed. Parsing is therefore the first thing an attacker
+    reaches, and has to be safe without any help from the checks that follow.
+
+    lxml's default already refuses external entities, so there is no file-read
+    XXE. It does expand entities declared in the internal subset, and that is
+    enough on its own: a 279-byte nested-entity document expands ~2,300x, and
+    one more level of nesting multiplies that by ten again. The handler's
+    100 KiB input cap bounds the request body; nothing bounds what parsing
+    turns it into. Only the parser can.
+
+    No legitimate SAML response uses entities, a DTD, or an XInclude, so
+    turning all three off costs nothing.
+    """
+    from lxml import etree as _etree
+
+    return _etree.XMLParser(
+        resolve_entities=False,
+        load_dtd=False,
+        no_network=True,
+        huge_tree=False,
+        collect_ids=False,
+    )

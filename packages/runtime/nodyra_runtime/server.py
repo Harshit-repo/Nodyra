@@ -46,6 +46,7 @@ predate this field simply omit it, so hosts must read it with ``.get()``.
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import sys
 import time
@@ -62,8 +63,9 @@ from nodyra.engine.subworkflows import (
     SubworkflowCall,
     SubworkflowMeta,
 )
+from nodyra.engine.types import _call_mcp_tool_impl, set_call_mcp_tool_impl
 from nodyra.models import WorkflowGraph
-from nodyra.process_isolation import PooledProcessIsolator
+from nodyra.process_isolation import InlineProcessIsolator
 from nodyra.sdk import register_module_functions, registry, unregister_module
 from nodyra.serialization import deserialize_value, serialize_value
 
@@ -122,15 +124,16 @@ def _runtime_heartbeat_seconds() -> float:
 
 _RUNTIME_HEARTBEAT_SECONDS = _runtime_heartbeat_seconds()
 
-# This warm runner process is already per-environment; one isolator with the
-# default (None) pool key is correct.
-_PROCESS_ISOLATOR = PooledProcessIsolator()
+_INLINE_ISOLATOR = InlineProcessIsolator()
 
 
 def _emit(event: dict) -> None:
     _PROTOCOL_OUT.write(json.dumps(serialize_value(event)))
     _PROTOCOL_OUT.write("\n")
     _PROTOCOL_OUT.flush()
+
+
+_stdin_reader: asyncio.StreamReader | None = None
 
 
 async def _read_line() -> str | None:
@@ -167,11 +170,38 @@ async def _run_subworkflow_via_host(call: SubworkflowCall) -> Any:
         _pending_callbacks.pop(callback_id, None)
 
 
+async def _call_mcp_tool_via_host(connection_id: str, tool_name: str, arguments: dict) -> Any:
+    """``RuntimeContext.call_mcp_tool`` impl that round-trips through the host.
+
+    The host resolves the MCP connection (org scoping, secret decryption,
+    allowlist checks, auditing) and answers with the tool result — the runtime
+    subprocess has no DB access of its own.
+    """
+    callback_id = uuid.uuid4().hex
+    future: asyncio.Future = asyncio.get_event_loop().create_future()
+    _pending_callbacks[callback_id] = future
+    _emit(
+        {
+            "type": "call_mcp_tool",
+            "callback_id": callback_id,
+            "request_id": _active_request_id,
+            "connection_id": connection_id,
+            "tool_name": tool_name,
+            "arguments": arguments,
+        }
+    )
+    try:
+        return await future
+    finally:
+        _pending_callbacks.pop(callback_id, None)
+
+
 async def _handle_run(request: dict[str, Any]) -> None:
     global _active_request_id
     request_id = request.get("request_id", "")
     run_id = str(request.get("run_id") or request_id)
     _active_request_id = request_id
+    sent_artifacts: set[str] = set()
 
     async def emit_heartbeats() -> None:
         while True:
@@ -186,6 +216,20 @@ async def _handle_run(request: dict[str, Any]) -> None:
             )
 
     async def on_event(event: dict) -> None:
+        if request.get("artifacts_upload_url"):
+            from nodyra_runtime.artifact_outputs import _refs
+
+            remote_store = artifact_store.get()
+            if remote_store is not None:
+                for ref in _refs(event):
+                    await asyncio.to_thread(remote_store.ensure_uploaded, ref)
+        if request.get("stream_artifacts"):
+            from nodyra_runtime.artifact_outputs import output_messages
+
+            store = artifact_store.get()
+            if store is not None:
+                for message in output_messages(event, store, sent_artifacts):
+                    _emit({"request_id": request_id, **message})
         _emit({"request_id": request_id, **event})
 
     # Register any per-run user code modules into the local registry. The
@@ -194,6 +238,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
     # warm process doesn't leak state across workflows.
     workflow_modules = request.get("workflow_modules") or []
     loaded_module_ids: list[str] = []
+    module_errors: dict[str, str] = {}
     for module in workflow_modules:
         module_id = str(module.get("id") or "")
         source = str(module.get("contents") or "")
@@ -208,20 +253,19 @@ async def _handle_run(request: dict[str, Any]) -> None:
             )
             loaded_module_ids.append(module_id)
         except Exception as exc:  # noqa: BLE001 - bad user code shouldn't crash the runner
+            module_errors[module_id] = f"{type(exc).__name__}: {exc}"
             _emit(
                 {
                     "request_id": request_id,
                     "type": "module_error",
                     "module_id": module_id,
-                    "error": f"{type(exc).__name__}: {exc}",
+                    "error": module_errors[module_id],
                 }
             )
 
     # Per-org amplification caps (multi-tenancy C5); empty = uncapped.
     raw_limits = request.get("org_limits")
-    limits_token = org_run_limits.set(
-        raw_limits if isinstance(raw_limits, dict) else {}
-    )
+    limits_token = org_run_limits.set(raw_limits if isinstance(raw_limits, dict) else {})
     artifact_token = None
     artifacts_upload_url = request.get("artifacts_upload_url")
     artifacts_dir = request.get("artifacts_dir")
@@ -250,17 +294,43 @@ async def _handle_run(request: dict[str, Any]) -> None:
             )
         )
     heartbeat_task = asyncio.create_task(emit_heartbeats())
+    # The mcp_tool node resolves its calls through RuntimeContext.call_mcp_tool;
+    # install the host round-trip so connections resolve on the API side.
+    set_call_mcp_tool_impl(_call_mcp_tool_via_host)
     try:
         graph = WorkflowGraph.model_validate(request["graph"])
+        # A graph referencing a node from a module that failed to register
+        # (e.g. rejected by the sandbox validator) would otherwise fail with a
+        # misleading "Unknown node type" from graph validation. Surface the
+        # module error instead.
+        if module_errors:
+            referenced = {
+                str(node.type or "").split(":", 2)[1]
+                for node in graph.nodes
+                if str(node.type or "").startswith("user:")
+            }
+            offenders = referenced & set(module_errors)
+            if offenders:
+                _emit(
+                    {
+                        "request_id": request_id,
+                        "type": "error",
+                        "error": "module registration failed: "
+                        + module_errors[sorted(offenders)[0]],
+                    }
+                )
+                return
         raw_agent_resume = request.get("agent_action_resume") or {}
-        agent_action_resume = {
-            str(node_id): AgentActionRequest.model_validate(action_request)
-            for node_id, action_request in raw_agent_resume.items()
-            if isinstance(action_request, dict)
-        } if isinstance(raw_agent_resume, dict) else {}
-        sub_meta = SubworkflowMeta.from_payload(
-            request.get("subworkflow_meta") or {}
+        agent_action_resume = (
+            {
+                str(node_id): AgentActionRequest.model_validate(action_request)
+                for node_id, action_request in raw_agent_resume.items()
+                if isinstance(action_request, dict)
+            }
+            if isinstance(raw_agent_resume, dict)
+            else {}
         )
+        sub_meta = SubworkflowMeta.from_payload(request.get("subworkflow_meta") or {})
         result = await execute(
             graph,
             registry,
@@ -270,7 +340,15 @@ async def _handle_run(request: dict[str, Any]) -> None:
             default_timeouts=_RUNTIME_DEFAULT_TIMEOUTS,
             pause_on_approval=bool(request.get("pause_on_approval")),
             agent_action_resume=agent_action_resume,
-            process_isolator=_PROCESS_ISOLATOR,
+            # HK-2: this process IS the isolation boundary — the host spawns
+            # one disposable worker per environment and kills it on wedge,
+            # timeout, or rebuild. Spawning a second layer of
+            # ProcessPoolExecutor children here wedged on Windows: their
+            # spawn bootstrap deadlocks against the stdin reader thread that
+            # must stay alive for host callbacks (call_workflow, mcp_tool),
+            # which left inline sub-workflow code nodes stuck until the
+            # 600s node timeout. Code nodes run on a worker thread here.
+            process_isolator=_INLINE_ISOLATOR,
             subworkflow_runner=_run_subworkflow_via_host,
             subworkflow_meta=sub_meta,
         )
@@ -293,7 +371,15 @@ async def _handle_run(request: dict[str, Any]) -> None:
         heartbeat_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
+        _call_mcp_tool_impl.set(None)
         if artifact_token is not None:
+            if artifacts_upload_url:
+                try:
+                    await asyncio.to_thread(artifact_store.get().cleanup)
+                except OSError:
+                    logging.getLogger(__name__).warning(
+                        "Could not clean completed remote-run scratch files", exc_info=True
+                    )
             artifact_store.reset(artifact_token)
         org_run_limits.reset(limits_token)
         for module_id in loaded_module_ids:
@@ -309,10 +395,10 @@ def _resolve_callback(message: dict[str, Any]) -> bool:
     future = _pending_callbacks.pop(callback_id, None)
     if future is None or future.done():
         return True
-    if message.get("type") == "call_workflow_error":
-        future.set_exception(
-            RuntimeError(message.get("error", "remote call_workflow error"))
-        )
+    if message.get("type") in ("call_workflow_error", "call_mcp_tool_error"):
+        future.set_exception(RuntimeError(message.get("error", "remote host callback error")))
+    elif message.get("type") == "call_mcp_tool_response":
+        future.set_result(deserialize_value(message.get("result")))
     elif "inline_graph" in message:
         # Inline directive — the ENGINE adapter executes it with correct
         # depth/chain meta (nodyra.engine.subworkflows.make_workflow_caller).
@@ -329,15 +415,19 @@ def _resolve_callback(message: dict[str, Any]) -> bool:
     return True
 
 
-# Node types that call ``workflow_caller`` and therefore need the host-side
-# stdin reader loop to stay alive so ``call_workflow_response`` messages can
-# be dispatched. If a new node type uses ``workflow_caller``, add it here.
-_HOST_CALLBACK_NODE_TYPES: frozenset[str] = frozenset({
-    "execute_workflow",
-    "map_items",
-    "map_group",
-    "map_dataset",
-})
+# Node types that call back into the host (workflow_caller for sub-workflows,
+# RuntimeContext.call_mcp_tool for MCP connections) and therefore need the
+# host-side stdin reader loop to stay alive so callback responses can be
+# dispatched. If a new node type uses either hook, add it here.
+_HOST_CALLBACK_NODE_TYPES: frozenset[str] = frozenset(
+    {
+        "execute_workflow",
+        "map_items",
+        "map_group",
+        "map_dataset",
+        "mcp_tool",
+    }
+)
 
 
 def _needs_host_callbacks(message: dict[str, Any]) -> bool:
@@ -345,10 +435,20 @@ def _needs_host_callbacks(message: dict[str, Any]) -> bool:
     nodes = graph.get("nodes") if isinstance(graph, dict) else None
     if not isinstance(nodes, list):
         return False
-    return any(
-        isinstance(node, dict) and node.get("type") in _HOST_CALLBACK_NODE_TYPES
-        for node in nodes
-    )
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if node.get("type") in _HOST_CALLBACK_NODE_TYPES:
+            return True
+        # Node lifecycle hooks can also call back: a `call_workflow` hook
+        # round-trips through the host. Missing this meant a hook-bearing
+        # graph ran on the sequential path, the main loop blocked awaiting
+        # the run, the host's callback response was never read from stdin,
+        # and the worker deadlocked — wedging every run behind it (HK-1).
+        for hook in node.get("hooks") or []:
+            if isinstance(hook, dict) and hook.get("type") == "call_workflow":
+                return True
+    return False
 
 
 async def run_forever() -> None:
@@ -369,13 +469,22 @@ async def run_forever() -> None:
         if _resolve_callback(message):
             continue
 
+        if message.get("type") == "artifact_input":
+            from nodyra_runtime.artifact_inputs import receive_upload
+
+            try:
+                receive_upload(message)
+            except (ValueError, KeyError, OSError) as exc:
+                _emit({"type": "error", "error": f"Upload transfer failed: {exc}"})
+            continue
+
         if message.get("type") != "run":
             _emit({"type": "error", "error": "unknown message type"})
             continue
 
-        # Most runs never call back to the host. Run those inline so the
-        # process does not keep a background stdin reader thread alive while
-        # user code imports heavy packages such as numpy/pandas on Windows.
+        # Most runs never call back to the host. Run those inline so a run's
+        # heavy imports (numpy/pandas on Windows) do not stall the stdin
+        # reader that must stay responsive for host callbacks.
         if _needs_host_callbacks(message):
             asyncio.create_task(_handle_run(message))
         else:

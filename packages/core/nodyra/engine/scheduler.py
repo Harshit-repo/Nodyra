@@ -28,6 +28,7 @@ from nodyra.engine.node_exec import (
     _install_capture,
     _run_one_node,
 )
+from nodyra.engine.timestamps import stamp_finish
 from nodyra.engine.types import EventCallback, ExecutionOptions, GraphError
 from nodyra.engine.validation import _validate_connection_kinds
 from nodyra.models import NodeRunResult, NodeStatus, RunResult, RunStatus, WorkflowGraph
@@ -119,9 +120,7 @@ def _topo_order(graph: WorkflowGraph) -> list[str]:
             successors[source].add(target)
 
     indegree = {nid: len(sources) for nid, sources in preds.items()}
-    ready = [
-        (node_index[nid], nid) for nid, degree in indegree.items() if degree == 0
-    ]
+    ready = [(node_index[nid], nid) for nid, degree in indegree.items() if degree == 0]
     heapq.heapify(ready)
     order: list[str] = []
 
@@ -146,10 +145,10 @@ class _Plan:
     one unit, represented by its ``loop_start`` node — the driver populates
     the owned nodes' outputs before the unit completes."""
 
-    units: list[str]                      # executable ids, graph insertion order
-    deps: dict[str, set[str]]             # unit -> units it must wait for
-    dependents: dict[str, list[str]]      # unit -> units waiting on it
-    index: dict[str, int]                 # node id -> graph.nodes position
+    units: list[str]  # executable ids, graph insertion order
+    deps: dict[str, set[str]]  # unit -> units it must wait for
+    dependents: dict[str, list[str]]  # unit -> units waiting on it
+    index: dict[str, int]  # node id -> graph.nodes position
 
 
 def _loop_owner_index(loop_regions: dict[str, "LoopRegion"]) -> dict[str, str]:
@@ -290,9 +289,11 @@ async def _execute_nodes(
         if run_deadline is not None and time.monotonic() > run_deadline:
             await finish(
                 NodeRunResult(
-                    node_id=nid, status=NodeStatus.error,
+                    node_id=nid,
+                    status=NodeStatus.error,
                     error="workflow run timed out before this node could start",
-                    started_at=time.time(), finished_at=time.time(),
+                    started_at=time.time(),
+                    finished_at=stamp_finish(),
                 )
             )
             return nid, RunStatus.timed_out
@@ -306,8 +307,12 @@ async def _execute_nodes(
         try:
             if gn.type == "meta_node":
                 st = await _run_metanode(
-                    node=gn, incoming=incoming, node_outputs=node_outputs,
-                    registry=registry, emit=emit, finish=finish,
+                    node=gn,
+                    incoming=incoming,
+                    node_outputs=node_outputs,
+                    registry=registry,
+                    emit=emit,
+                    finish=finish,
                     default_timeouts=default_timeouts,
                     max_node_output_bytes=max_node_output_bytes,
                     process_isolator=process_isolator,
@@ -315,30 +320,40 @@ async def _execute_nodes(
                 return nid, st
             if gn.type == "loop_start" and nid in loop_regions:
                 mode = str(gn.params.get("mode", "each") or "each")
-                driver = (
-                    _run_conditional_loop
-                    if mode in ("while", "until")
-                    else _run_loop
-                )
+                driver = _run_conditional_loop if mode in ("while", "until") else _run_loop
                 st = await driver(
                     region=loop_regions[nid],
-                    graph=graph, registry=registry, nodes_by_id=nodes_by_id,
-                    incoming=incoming, node_outputs=node_outputs, cache=cache,
-                    emit=emit, finish=finish, default_timeouts=default_timeouts,
+                    graph=graph,
+                    registry=registry,
+                    nodes_by_id=nodes_by_id,
+                    incoming=incoming,
+                    node_outputs=node_outputs,
+                    cache=cache,
+                    emit=emit,
+                    finish=finish,
+                    default_timeouts=default_timeouts,
                     max_node_output_bytes=max_node_output_bytes,
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
-                    loop_regions=loop_regions, owned=owned,
-                    node_sem=node_sem, type_sems=type_sems,
+                    loop_regions=loop_regions,
+                    owned=owned,
+                    node_sem=node_sem,
+                    type_sems=type_sems,
                     process_isolator=process_isolator,
                 )
                 return nid, st
             if node_sem is not None:
                 async with node_sem:
                     st = await _run_one_node(
-                        nid=nid, nodes_by_id=nodes_by_id, incoming=incoming,
-                        node_outputs=node_outputs, cache=cache, registry=registry,
-                        emit=emit, finish=finish, default_timeouts=default_timeouts,
+                        nid=nid,
+                        nodes_by_id=nodes_by_id,
+                        incoming=incoming,
+                        node_outputs=node_outputs,
+                        cache=cache,
+                        registry=registry,
+                        emit=emit,
+                        finish=finish,
+                        default_timeouts=default_timeouts,
                         max_node_output_bytes=max_node_output_bytes,
                         pause_on_approval=pause_on_approval,
                         agent_action_resume=agent_action_resume,
@@ -346,9 +361,15 @@ async def _execute_nodes(
                     )
             else:
                 st = await _run_one_node(
-                    nid=nid, nodes_by_id=nodes_by_id, incoming=incoming,
-                    node_outputs=node_outputs, cache=cache, registry=registry,
-                    emit=emit, finish=finish, default_timeouts=default_timeouts,
+                    nid=nid,
+                    nodes_by_id=nodes_by_id,
+                    incoming=incoming,
+                    node_outputs=node_outputs,
+                    cache=cache,
+                    registry=registry,
+                    emit=emit,
+                    finish=finish,
+                    default_timeouts=default_timeouts,
                     max_node_output_bytes=max_node_output_bytes,
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
@@ -413,9 +434,7 @@ async def _execute_nodes(
         # queue.join() alone deadlocks if one worker raises while queued items
         # remain: no surviving worker can necessarily make those dependencies
         # ready. Surface the first failed/early worker immediately instead.
-        done, _ = await asyncio.wait(
-            {join_task, *workers}, return_when=asyncio.FIRST_COMPLETED
-        )
+        done, _ = await asyncio.wait({join_task, *workers}, return_when=asyncio.FIRST_COMPLETED)
         if join_task not in done:
             worker = next(task for task in workers if task in done)
             await worker  # re-raise its original exception, including cancellation
@@ -506,9 +525,7 @@ async def execute(
 
     on_event = options.on_event
     default_timeouts = (
-        dict(options.default_timeouts)
-        if options.default_timeouts is not None
-        else None
+        dict(options.default_timeouts) if options.default_timeouts is not None else None
     )
     max_node_output_bytes = options.max_node_output_bytes
     pause_on_approval = options.pause_on_approval
@@ -524,7 +541,11 @@ async def execute(
 
     if subworkflow_runner is None:
         return await _execute_impl(
-            graph, registry, cache=cache, targets=targets, on_event=on_event,
+            graph,
+            registry,
+            cache=cache,
+            targets=targets,
+            on_event=on_event,
             default_timeouts=default_timeouts,
             max_node_output_bytes=max_node_output_bytes,
             pause_on_approval=pause_on_approval,
@@ -552,7 +573,11 @@ async def execute(
     )
     try:
         return await _execute_impl(
-            graph, registry, cache=cache, targets=targets, on_event=on_event,
+            graph,
+            registry,
+            cache=cache,
+            targets=targets,
+            on_event=on_event,
             default_timeouts=default_timeouts,
             max_node_output_bytes=max_node_output_bytes,
             pause_on_approval=pause_on_approval,

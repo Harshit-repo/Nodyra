@@ -1,7 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 
-export const EMAIL = "owner@e2e.local";
-export const PASSWORD = "e2e-password-123";
+export const EMAIL = process.env.E2E_EMAIL ?? "owner@e2e.local";
+export const PASSWORD = process.env.E2E_PASSWORD ?? "e2e-password-123";
 
 /**
  * Authenticate through the real login UI. The first test to reach a freshly
