@@ -11,6 +11,7 @@
 <meta property="og:title" content="Nodyra — Your AI agent builds the workflow">
 <meta property="og:description" content="Python-native workflow automation: MCP-driven builds, 500+ nodes, 40+ integrations, chat pages, REST endpoints, sandboxed runners. Self-hosted, fair-code.">
 <meta property="og:url" content="https://nodyra.io/">
+<link rel="canonical" href="https://nodyra.io/">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Nodyra — Your AI agent builds the workflow">
 <meta name="twitter:description" content="Python-native workflow automation: MCP-driven builds, 500+ nodes, 40+ integrations, chat pages, REST endpoints, sandboxed runners.">
@@ -31,7 +32,7 @@
   "offers": [
     { "@type": "Offer", "name": "Community", "price": "0", "priceCurrency": "USD" },
     { "@type": "Offer", "name": "Pro", "price": "49", "priceCurrency": "USD" },
-    { "@type": "Offer", "name": "Enterprise", "price": "0", "priceCurrency": "USD" }
+    { "@type": "Offer", "name": "Enterprise", "description": "Custom pricing. Contact sales for a quote." }
   ],
   "url": "https://nodyra.io/",
   "license": "https://github.com/Harshit-repo/noodle/blob/main/LICENSE"
@@ -71,7 +72,7 @@ h1,h2,h3{margin:0;letter-spacing:-0.02em}
 .btn:hover{background:var(--surface-3);border-color:var(--accent-deep)}
 .btn:active{transform:translateY(1px)}
 .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.btn-primary{font-weight:700;background:linear-gradient(180deg,var(--accent-2),var(--accent));color:#fff;border-color:var(--accent-deep);box-shadow:0 1px 0 rgba(255,255,255,0.22) inset,0 6px 16px -8px rgba(76,158,255,0.55)}
+.btn-primary{font-weight:700;background:linear-gradient(180deg,var(--accent-2),var(--accent));color:#071321;border-color:var(--accent-deep);box-shadow:0 1px 0 rgba(255,255,255,0.22) inset,0 6px 16px -8px rgba(76,158,255,0.55)}
 .btn-primary:hover{background:linear-gradient(180deg,#93c4ff,var(--accent-2));border-color:var(--accent-deep)}
 
 /* field input */
@@ -104,7 +105,7 @@ h1,h2,h3{margin:0;letter-spacing:-0.02em}
 .nav-mobile a:hover{color:var(--ink);background:var(--surface-2)}
 .nav-mobile a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .nav-mobile .nav-mobile-cta{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
-.skip-link{position:absolute;left:12px;top:-60px;z-index:100;background:var(--accent);color:#fff;font-weight:700;font-size:13px;padding:10px 16px;border-radius:8px;transition:top 140ms ease}
+.skip-link{position:absolute;left:12px;top:-60px;z-index:100;background:var(--accent);color:#071321;font-weight:700;font-size:13px;padding:10px 16px;border-radius:8px;transition:top 140ms ease}
 .skip-link:focus{top:12px;outline:2px solid #fff;outline-offset:2px}
 .brand-mark{width:28px;height:28px;flex-shrink:0;border-radius:6.5px;box-shadow:0 4px 14px -6px rgba(20,86,208,0.65)}
 .foot-brand .brand-mark{width:22px;height:22px;border-radius:5px}
@@ -161,13 +162,6 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .hero-sub{font-size:17px;color:var(--ink-2);max-width:48ch;line-height:1.65;margin-bottom:36px}
 .hero-sub b{color:var(--ink)}
 
-.waitlist-form{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
-.waitlist-form .field-input{flex:1;min-width:220px;font-size:14px;padding:10px 13px}
-.waitlist-form .btn-primary{font-size:14px;padding:10px 20px;white-space:nowrap;flex-shrink:0}
-.waitlist-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;border-radius:50%;animation:wspin 0.65s linear infinite}
-@keyframes wspin{to{transform:rotate(360deg)}}
-.waitlist-success{display:none;align-items:center;gap:8px;font-size:14px;color:var(--ok);font-weight:600;padding:10px 0}
-.waitlist-success.show{display:flex}
 .hero-note{margin-top:18px;font-family:var(--font-mono);font-size:12px;color:var(--ink-3)}
 
 /* cursor blink */
@@ -186,13 +180,6 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .ndv-modal::before{content:'';position:absolute;left:18px;right:18px;top:0;height:1px;border-radius:1px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 70%,transparent),transparent);opacity:0.7;pointer-events:none;z-index:1}
 .ndv-modal.ndv-edge-ok::before{background:linear-gradient(90deg,transparent,#57c98a,transparent);opacity:0.85}
 @keyframes pop{from{transform:translateY(-10px) scale(0.985);opacity:0}}
-
-/* drag-to-resize handle at bottom */
-.ndv-drag-handle{height:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:ns-resize;position:relative;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 18%,transparent),transparent);border-top:1px solid color-mix(in srgb,var(--accent) 15%,var(--line-2));border-radius:0 0 14px 14px;user-select:none}
-.ndv-drag-dots{display:flex;gap:3px}
-.ndv-drag-dots span{display:block;width:3px;height:3px;border-radius:50%;background:color-mix(in srgb,var(--accent) 40%,transparent)}
-.ndv-drag-tip{position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%) translateY(4px);background:var(--surface-2);border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:7px;padding:4px 10px;font-family:var(--font-mono);font-size:10px;color:var(--accent-2);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity 160ms,transform 160ms}
-.ndv-drag-handle:hover .ndv-drag-tip{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* header */
 .ndv-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 18px;border-bottom:1px solid color-mix(in srgb,var(--accent) 8%,var(--line-2));background:transparent;flex-wrap:wrap;flex-shrink:0}
@@ -224,7 +211,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 /* body */
 .ndv-body{flex:1;display:flex;flex-direction:column;min-height:0}
 .ndv-panels{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,420px) minmax(0,1fr);min-height:0}
-@media(max-width:860px){.ndv-panels{grid-template-columns:1fr}.ndv-panel:nth-child(1),.ndv-panel:nth-child(3){display:none}}
+@media(max-width:860px){.ndv-panels{grid-template-columns:minmax(0,1fr)}.ndv-panel:nth-child(1),.ndv-panel:nth-child(3){display:none}}
 
 /* input / output panels */
 .ndv-panel{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line-2);background:var(--bg)}
@@ -249,7 +236,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 /* Inspector ↔ Python mode toggle */
 .ndv-mode-toggle{display:inline-flex;gap:2px;padding:3px;background:color-mix(in srgb,var(--line) 35%,transparent);border:1px solid var(--line);border-radius:999px;margin-bottom:12px}
 .ndv-mode-toggle button{border:none;background:transparent;color:var(--ink-3);padding:4px 16px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;transition:background 120ms,color 120ms;font-family:var(--font-sans)}
-.ndv-mode-toggle button.active{background:var(--accent);color:#fff}
+.ndv-mode-toggle button.active{background:var(--accent);color:#071321}
 
 /* fields (real app class names) */
 .field{margin-bottom:15px}
@@ -354,7 +341,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .node.demo-highlight .node-hint-ring{opacity:1}
 @keyframes node-hint-pulse{0%,100%{box-shadow:0 0 0 5px var(--accent-glow),0 0 20px 4px rgba(76,158,255,0.2)}50%{box-shadow:0 0 0 9px rgba(76,158,255,0.06),0 0 30px 8px rgba(76,158,255,0.38)}}
 /* canvas tooltip */
-.canvas-tooltip{position:absolute;background:var(--accent);color:#fff;font-family:var(--font-sans);font-size:12px;font-weight:600;padding:5px 10px;border-radius:6px;white-space:nowrap;pointer-events:none;opacity:0;transform:translateY(4px) translateX(-50%);transition:opacity 350ms,transform 350ms;z-index:6;letter-spacing:0.01em}
+.canvas-tooltip{position:absolute;background:var(--accent);color:#071321;font-family:var(--font-sans);font-size:12px;font-weight:600;padding:5px 10px;border-radius:6px;white-space:nowrap;pointer-events:none;opacity:0;transform:translateY(4px) translateX(-50%);transition:opacity 350ms,transform 350ms;z-index:6;letter-spacing:0.01em}
 .canvas-tooltip::after{content:'';position:absolute;bottom:-5px;left:50%;transform:translateX(-50%);border:5px solid transparent;border-bottom:none;border-top-color:var(--accent)}
 .canvas-tooltip.visible{opacity:1;transform:translateY(0) translateX(-50%)}
 /* NDV toggle demo hint */
@@ -528,7 +515,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .aenv-htile-val{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--ink)}
 .aenv-htile-click .aenv-htile-val{color:var(--accent)}
 .aenv-actions{padding:10px 14px;display:flex;gap:7px;flex-wrap:wrap;background:var(--bg)}
-.aenv-btn-primary{font-size:12px;font-weight:600;padding:5px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.aenv-btn-primary{font-size:12px;font-weight:600;padding:5px 12px;background:var(--accent);color:#071321;border:none;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap}
 .aenv-btn-secondary{font-size:12px;font-weight:500;padding:5px 11px;background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line);border-radius:6px;cursor:pointer;font-family:inherit}
 .aenv-btn-ghost{font-size:12px;font-weight:500;padding:5px 11px;background:transparent;color:var(--ink-3);border:1px solid var(--line-2);border-radius:6px;cursor:pointer;font-family:inherit}
 /* ===== Package drawer ===== */
@@ -546,7 +533,7 @@ h1.hero-headline .grad{background:linear-gradient(135deg,var(--accent-2) 0%,var(
 .pkg-remove-btn{background:none;border:none;color:var(--ink-3);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;flex-shrink:0;margin-top:1px}
 .pkg-add-row{padding:8px 12px;border-bottom:1px solid var(--line-2);display:flex;gap:7px}
 .pkg-add-input{flex:1;background:var(--bg);border:1px solid var(--line-2);border-radius:6px;padding:5px 10px;font-family:var(--font-mono);font-size:12px;color:var(--ink);outline:none}
-.pkg-add-btn{font-size:12px;font-weight:600;padding:5px 14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;white-space:nowrap;font-family:inherit}
+.pkg-add-btn{font-size:12px;font-weight:600;padding:5px 14px;background:var(--accent);color:#071321;border:none;border-radius:6px;cursor:pointer;white-space:nowrap;font-family:inherit}
 .pkg-drop-zone{padding:9px 14px;font-size:11px;color:var(--ink-3);text-align:center;font-family:var(--font-mono);border:1px dashed var(--line);border-radius:6px;margin:8px 12px}
 /* ===== Runner Pools section ===== */
 .fleet-bar{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);padding:4px 8px;display:flex;flex-wrap:wrap;margin-bottom:24px}
@@ -618,7 +605,7 @@ section[id],footer[id]{scroll-margin-top:84px}
 h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);font-weight:800;line-height:1.05;letter-spacing:-0.03em;max-width:22ch;text-wrap:balance}
 
 /* scroll reveal — hidden only when JS is available to reveal it */
-.js .reveal{opacity:0;transform:translateY(22px);transition:opacity 560ms ease,transform 560ms ease}
+.js .reveal{opacity:1;transform:none}
 .reveal.in{opacity:1;transform:none}
 
 /* how it works */
@@ -719,6 +706,89 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
 .foot-links a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:5px}
 .foot-copy{margin-top:20px;font-size:12.5px;color:var(--ink-3);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
 @media(max-width:600px){.foot-in{flex-direction:column;align-items:flex-start}}
+
+/* Homepage presentation. Product-preview styles above stay scoped to their demos. */
+.wrap{max-width:1200px}
+.nav-in{gap:28px;height:76px}
+.nav-brand-name{letter-spacing:-.04em}
+.nav-links{gap:6px;margin-left:auto}
+.nav-links a{display:flex;align-items:center;min-height:44px;white-space:nowrap;padding:8px 10px;color:var(--ink-2);font-size:14px}
+.nav-source{font-size:14px;color:var(--ink-2);padding:12px 4px}
+.nav-toggle{width:44px;height:44px}
+.nav-mobile{top:76px;max-height:calc(100dvh - 76px);overflow:auto}
+.btn{min-height:44px;justify-content:center;font-family:var(--font-sans)}
+.btn.btn-primary{background:var(--accent);color:#071321;border-color:var(--accent);box-shadow:none}
+.btn.btn-primary:hover{background:var(--accent-2);border-color:var(--accent-2)}
+.skip-link,.canvas-tooltip{color:#071321}
+#hero{max-width:1320px;margin:0 auto;min-height:0;grid-template-columns:minmax(0,1fr) minmax(0,1.12fr);gap:48px;padding:80px 40px 88px}
+.hero-copy{padding:0;min-width:0}
+h1.hero-headline{font-size:clamp(42px,4.8vw,66px);line-height:1.04;letter-spacing:-.035em;text-wrap:balance;margin-bottom:24px}
+h1.hero-headline .grad{color:var(--accent-2);background:none}
+.hero-sub{font-size:18px;line-height:1.65;margin-bottom:28px;max-width:46ch}
+.status-pill{font-size:11px;margin-bottom:24px;border:0;background:none;padding:0;color:var(--ink-2);letter-spacing:.04em}
+.hero-actions{display:flex;gap:12px;flex-wrap:wrap}
+.hero-actions .btn{font-size:15px;padding:12px 18px;min-height:48px}
+.contact-note{font-size:12px;color:var(--ink-3);margin-top:12px;overflow-wrap:anywhere}
+.contact-note a{text-decoration:underline;text-underline-offset:3px}
+.hero-proof{display:flex;flex-wrap:wrap;gap:8px 20px;list-style:none;border-top:1px solid var(--line);padding-top:20px;margin-top:28px;font-size:13px;color:var(--ink-2)}
+.hero-proof li::before{content:'✓';color:var(--ok);margin-right:7px}
+.hero-canvas-wrap{height:540px;min-width:0;border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 64px -40px #000}
+.demo-caption{position:absolute;inset:0 0 auto;display:flex;align-items:center;gap:8px;padding:16px 20px;border-bottom:1px solid var(--line-2);font-size:12px;color:var(--ink-2)}
+.demo-caption>span:last-child{margin-left:auto;font-size:11px;color:var(--ink-3)}
+.demo-caption .status-dot{width:6px;height:6px;box-shadow:none;background:var(--accent)}
+.demo-bar{top:66px;padding:0 20px}
+.demo-bar[hidden]{display:none}
+.demo-prompt-box{max-width:none;box-shadow:none}
+.demo-status{font-size:10px}
+.node{opacity:1;transform:none;transition:none}
+#n1{left:calc(16% - 36px);top:44%}
+#n2{left:calc(39% - 36px);top:34%}
+#n3{left:calc(62% - 36px);top:60%}
+#n4{left:calc(85% - 36px);top:44%}
+.node-label{font-size:11px;width:108px;margin-left:-18px;margin-right:-18px}
+.canvas-toggle{bottom:18px}
+.canvas-toggle button{min-height:40px;min-width:84px}
+.python-pane{padding:70px 20px 82px;justify-content:flex-start;min-height:0}
+.python-pane pre{min-height:0;flex:1;font-size:12px;padding:16px;line-height:1.65;box-shadow:none}
+.py-node-tag{align-self:flex-start;flex-shrink:0}
+.section-pad{padding:80px 0}
+.section-h{margin-bottom:4px}
+.step p,.pcard p,.bento-card p,.ent-card p,.int-card p,.doc-card p{font-size:15px;line-height:1.65}
+.bento-card h3,.ent-card h3,.int-card h3{font-size:17px}
+.bento{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.bento-card{padding:24px}
+.bento-card:first-child{grid-column:span 2}
+.pcard:hover{transform:none}
+.price-tagline,.price-feat,.deploy-bullet-body{font-size:14px;line-height:1.6}
+.price-card{padding:26px}
+.price-limits{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.price-limit-l{font-size:10px;letter-spacing:.02em}
+.price-btn{margin-top:28px}
+.preview-note{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin-top:12px}
+.btn:disabled,.tact-btn:disabled,.env-act-btn:disabled,.pkg-remove-btn:disabled,.pkg-add-btn:disabled{cursor:default;opacity:.65}
+.cta-actions{justify-content:center;margin-top:32px}
+.cta-band{padding:56px 40px}
+.selfhost-body,.mini-terminal-body{overflow-x:auto;overflow-wrap:anywhere}
+.foot-links{gap:4px 20px}
+.foot-links a{display:inline-flex;align-items:center;min-height:44px}
+.ndv-modal{background:var(--surface);animation:none}
+.ndv-panel-head{flex-wrap:wrap;gap:10px}
+.ndv-middle,.ndv-middle-body{min-width:0}
+.field-desc{overflow-wrap:anywhere}
+.ndv-close{width:44px;height:44px;flex-shrink:0}
+.ndv-actions{flex-wrap:wrap;justify-content:flex-end}
+.ndv-tabs button,.ndv-mode-toggle button,.data-view-toggle button{min-height:40px}
+.ndv-tabs button:focus-visible,.ndv-mode-toggle button:focus-visible{outline-offset:-3px}
+.ndv-head .preview-note{margin:0}
+.ndv-head .btn:disabled,.ndv-action-sep{display:none}
+@media(max-width:1060px){#hero{gap:28px;padding:56px 32px 64px}.nav-in{gap:18px}.nav-source{display:none}.bento{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:960px){.nav-links,.nav-cta{display:none}.nav-toggle{display:flex;margin-left:auto}#hero{grid-template-columns:minmax(0,1fr);max-width:760px}.hero-copy{order:0}.hero-sub{max-width:55ch}.hero-canvas-wrap{height:460px!important}.hero-headline br{display:none}.hero-actions{gap:12px}.hero-proof{margin-bottom:4px}}
+@media(min-width:961px){.nav-mobile.open{display:none}}
+@media(max-width:600px){.wrap{padding:0 24px}#hero{padding:40px 24px 56px;gap:32px}h1.hero-headline{font-size:44px}.hero-sub{font-size:16px}.hero-actions .btn{flex:1 1 100%}.hero-canvas-wrap{height:480px!important}.demo-caption{padding:14px;font-size:11px}.demo-caption>span:last-child{display:none}.demo-bar{padding:0 14px;top:58px}.demo-prompt-text{font-size:11px}#n1{left:calc(24% - 36px);top:36%}#n2{left:calc(76% - 36px);top:36%}#n3{left:calc(24% - 36px);top:65%}#n4{left:calc(76% - 36px);top:65%}.node-label{font-size:11px}.canvas-toggle{bottom:14px}.hero-proof{font-size:12px;gap:8px 14px}.section-pad{padding:56px 0}.bento{grid-template-columns:minmax(0,1fr)}.bento-card:first-child{grid-column:auto}.steps,.pitch,.bento,.docs-grid,.pricing-grid{margin-top:32px}.cta-band{padding:36px 20px}.selfhost-body{padding:16px;font-size:11px}.ndv-modal{height:85dvh;max-height:calc(100dvh - 24px)}.modal-overlay{padding:12px}.ndv-head{padding:12px;align-items:flex-start}.ndv-actions .preview-note{display:none}.ndv-meta{flex-wrap:wrap}.ndv-middle{border:0}.ndv-tabs{flex-wrap:wrap}.ndv-tabs button{min-height:44px;padding-left:12px;padding-right:12px}.ndv-middle-body .field-input{font-size:16px}.fleet-stat{padding:10px 12px}.pool-meta-line{overflow-wrap:anywhere}.pkg-add-input{min-width:0}.env-metrics{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+html:not(.js) .canvas-toggle,html:not(.js) .nav-toggle{display:none}
+html:not(.js) .node{pointer-events:none}
+
 </style>
 </head>
 <body>
@@ -740,20 +810,16 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
       <svg class="brand-mark" aria-hidden="true"><use href="#nodyra-mark"/></svg>
       <span class="nav-brand-name">Nodyra</span>
     </a>
-    <nav class="nav-links" aria-label="Site sections">
+    <div class="nav-links" aria-label="Site sections">
       <a href="#how">How it works</a>
       <a href="#platform">Platform</a>
       <a href="#integrations">Integrations</a>
-      <a href="docs.html">Docs</a>
-      <a href="#environments">Environments</a>
-      <a href="#runners">Runners</a>
-      <a href="#enterprise">Enterprise</a>
       <a href="#pricing">Pricing</a>
-      <a href="https://github.com/Harshit-repo/noodle" rel="noopener">GitHub</a>
-    </nav>
+      <a href="docs.html">Docs</a>
+    </div>
     <div class="nav-cta">
-      <a href="#pricing" class="btn" style="font-size:13px">View pricing</a>
-      <a href="#cta" class="btn btn-primary">Join waitlist</a>
+      <a href="https://github.com/Harshit-repo/noodle" class="nav-source">GitHub <span aria-hidden="true">↗</span></a>
+      <a href="docs.html#/getting-started" class="btn btn-primary">Get started</a>
     </div>
     <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="nav-mobile" aria-label="Toggle navigation menu">
       <span></span><span></span><span></span>
@@ -771,26 +837,54 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
     <a href="https://github.com/Harshit-repo/noodle" rel="noopener">GitHub</a>
     <div class="nav-mobile-cta">
       <a href="#pricing" class="btn">View pricing</a>
-      <a href="#cta" class="btn btn-primary">Join waitlist</a>
+      <a href="docs.html#/getting-started" class="btn btn-primary">Get started</a>
     </div>
   </div>
 </nav>
 
-<main id="main">
+<main id="main" tabindex="-1">
 
 <!-- HERO -->
 <section id="hero" class="layer">
 
-  <!-- left: canvas panel -->
-  <div class="hero-canvas-wrap">
-    <div class="canvas-stage" id="canvas-stage" aria-hidden="true">
+  <!-- Value proposition and primary actions -->
+  <div class="hero-copy">
+    <div class="status-pill">
+      <span class="status-dot" aria-hidden="true"></span>
+      live on your infra · early access
+    </div>
+
+    <h1 class="hero-headline">
+      Your AI agent <br>
+      <span class="grad">builds the workflow.</span>
+    </h1>
+
+    <p class="hero-sub">
+      Describe what you need. The agent writes Python and lays it out as
+      <b>nodes on a canvas.</b> Every node is real code — inspect it, edit it, export it.
+      Deploy to any environment, run in Docker sandboxes, route to remote runners.
+    </p>
+
+    <div class="hero-actions">
+        <a href="docs.html#/getting-started" class="btn btn-primary">Start self-hosting <span aria-hidden="true">&rarr;</span></a>
+        <a href="mailto:sharma.har97@gmail.com?subject=Nodyra%20early%20access" class="btn">Request early access</a>
+      </div>
+      <p class="contact-note">Early access by email · <a href="mailto:sharma.har97@gmail.com">sharma.har97@gmail.com</a></p>
+
+    <ul class="hero-proof" aria-label="Platform highlights"><li>Python-native</li><li>Self-hosted</li><li>MCP server + client</li></ul>
+  </div>
+
+  <!-- Interactive product example -->
+  <div class="hero-canvas-wrap" role="region" aria-label="Interactive workflow example">
+    <div class="demo-caption"><span class="status-dot" aria-hidden="true"></span> Interactive example <span>Click a node to inspect</span></div>
+    <div class="canvas-stage" id="canvas-stage">
       <svg class="canvas-edges" id="canvas-edges" aria-hidden="true"></svg>
 
       <!-- canvas tooltip (positioned by JS) -->
       <div class="canvas-tooltip" id="canvas-tooltip" aria-hidden="true"></div>
 
       <!-- Node 1: Webhook Trigger -->
-      <div class="node" id="n1" style="left:370px;top:calc(50% - 80px);--cat:#4c9eff" onclick="openNDV('n1')" role="button" tabindex="0" aria-label="Open Webhook Trigger node" onkeydown="if(event.key==='Enter'||event.key===' ')openNDV('n1')">
+      <div class="node" id="n1" style="--cat:#4c9eff" onclick="openNDV('n1')" role="button" tabindex="0" aria-label="Open Webhook Trigger node" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNDV('n1')}">
         <div class="node-hint-ring"></div>
         <div class="node-tile">
           <svg width="28" height="28" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
@@ -802,7 +896,7 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
       </div>
 
       <!-- Node 2: Fetch Data -->
-      <div class="node" id="n2" style="left:530px;top:calc(50% - 180px);--cat:#37c8a8" onclick="openNDV('n2')" role="button" tabindex="0" aria-label="Open Fetch Data node" onkeydown="if(event.key==='Enter'||event.key===' ')openNDV('n2')">
+      <div class="node" id="n2" style="--cat:#37c8a8" onclick="openNDV('n2')" role="button" tabindex="0" aria-label="Open Fetch Data node" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNDV('n2')}">
         <div class="node-hint-ring"></div>
         <div class="node-tile">
           <svg width="28" height="28" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
@@ -817,7 +911,7 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
       </div>
 
       <!-- Node 3: Transform -->
-      <div class="node" id="n3" style="left:690px;top:calc(50% - 40px);--cat:#3fd0e0" onclick="openNDV('n3')" role="button" tabindex="0" aria-label="Open Transform node" onkeydown="if(event.key==='Enter'||event.key===' ')openNDV('n3')">
+      <div class="node" id="n3" style="--cat:#3fd0e0" onclick="openNDV('n3')" role="button" tabindex="0" aria-label="Open Transform node" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNDV('n3')}">
         <div class="node-hint-ring"></div>
         <div class="node-tile">
           <svg width="28" height="28" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
@@ -830,7 +924,7 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
       </div>
 
       <!-- Node 4: HTTP Request -->
-      <div class="node" id="n4" style="left:860px;top:calc(50% - 160px);--cat:#2f9bff" onclick="openNDV('n4')" role="button" tabindex="0" aria-label="Open HTTP Request node" onkeydown="if(event.key==='Enter'||event.key===' ')openNDV('n4')">
+      <div class="node" id="n4" style="--cat:#2f9bff" onclick="openNDV('n4')" role="button" tabindex="0" aria-label="Open HTTP Request node" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNDV('n4')}">
         <div class="node-hint-ring"></div>
         <div class="node-tile">
           <svg width="28" height="28" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
@@ -843,25 +937,25 @@ h2.section-h{font-family:var(--font-display);font-size:clamp(28px,3.8vw,44px);fo
     </div>
 
     <!-- Demo bar: AI prompt + LLM status -->
-    <div class="demo-bar" id="demo-bar" aria-live="polite">
+    <div class="demo-bar visible" id="demo-bar">
       <div class="demo-prompt-box">
         <span class="demo-prompt-icon" aria-hidden="true">⌘</span>
         <div class="demo-prompt-body">
-          <div class="demo-prompt-text" id="demo-prompt-text"><span class="demo-prompt-cursor"></span></div>
-          <div class="demo-status" id="demo-status"></div>
+          <div class="demo-prompt-text" id="demo-prompt-text">Fetch new signups from Postgres and notify via Slack</div>
+          <div class="demo-status visible" id="demo-status">Example workflow · 4 Python nodes</div>
         </div>
       </div>
     </div>
 
     <!-- Graph / Python toggle -->
     <div class="canvas-toggle" role="group" aria-label="View toggle">
-      <button id="btn-graph" class="active" onclick="setCanvasView('graph')">Graph</button>
-      <button id="btn-python" onclick="setCanvasView('python')">Python</button>
+      <button id="btn-graph" class="active" aria-pressed="true" onclick="setCanvasView('graph')">Graph</button>
+      <button id="btn-python" aria-pressed="false" onclick="setCanvasView('python')">Python</button>
     </div>
 
     <!-- Python source pane -->
-    <div class="python-pane" id="python-pane">
-      <div class="py-node-tag">workflow · exported Python</div>
+    <div class="python-pane" id="python-pane" aria-hidden="true" inert>
+      <div class="py-node-tag">workflow · illustrative Python</div>
       <pre><span class="py-cm"># nodyra export — fetch-signups-workflow.py</span>
 <span class="py-cm"># Run: python fetch-signups-workflow.py</span>
 
@@ -894,39 +988,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
     </div>
   </div>
 
-  <!-- right: copy panel -->
-  <div class="hero-copy">
-    <div class="status-pill">
-      <span class="status-dot" aria-hidden="true"></span>
-      live on your infra · early access
-    </div>
 
-    <h1 class="hero-headline">
-      Your AI agent<br>
-      <span class="grad">builds the workflow.</span>
-    </h1>
-
-    <p class="hero-sub">
-      Describe what you need. The agent writes Python and lays it out as
-      <b>nodes on a canvas.</b> Every node is real code — inspect it, edit it, export it.
-      Deploy to any environment, run in Docker sandboxes, route to remote runners.
-    </p>
-
-    <form class="waitlist-form" id="waitlist-hero" novalidate>
-      <label for="email-hero" style="position:absolute;opacity:0;pointer-events:none">Email address</label>
-      <input id="email-hero" class="field-input" type="email" placeholder="you@company.io"
-             autocomplete="email" aria-label="Email address" required>
-      <button type="submit" class="btn btn-primary" id="btn-hero-submit">Join the waitlist</button>
-    </form>
-    <div class="waitlist-success" id="success-hero" role="status" aria-live="polite">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      You're on the list. We'll be in touch.
-    </div>
-
-    <p class="hero-note">Self-hostable &nbsp;·&nbsp; Python-native &nbsp;·&nbsp; 500+ nodes &amp; 40+ integrations &nbsp;·&nbsp; MCP server + client &nbsp;·&nbsp; Chat pages &amp; REST endpoints &nbsp;·&nbsp; Docker sandboxing &nbsp;·&nbsp; Runner Pools</p>
-  </div>
 </section>
 
 <!-- HOW IT WORKS -->
@@ -1438,6 +1500,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
   <div class="wrap">
     <p class="eyebrow reveal">Python Environments</p>
     <h2 class="section-h reveal">Your packages. Your Python. Built fresh.</h2>
+    <p class="preview-note">Product preview · sample data</p>
     <div class="deploy-grid" style="margin-top:52px">
 
       <!-- Left: copy + feature bullets -->
@@ -1522,7 +1585,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
               <div class="aenv-htile-label">Workers</div>
               <div class="aenv-htile-val">8</div>
             </div>
-            <div class="aenv-htile aenv-htile-click" title="click to manage packages">
+            <div class="aenv-htile">
               <div class="aenv-htile-label">Packages</div>
               <div class="aenv-htile-val">4</div>
             </div>
@@ -1536,10 +1599,10 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             </div>
           </div>
           <div class="aenv-actions">
-            <button class="aenv-btn-primary">Manage packages</button>
-            <button class="aenv-btn-secondary">Edit</button>
-            <button class="aenv-btn-secondary">Rebuild</button>
-            <button class="aenv-btn-ghost">Delete</button>
+            <button disabled title="Product preview — available in your Nodyra instance" class="aenv-btn-primary">Manage packages</button>
+            <button disabled title="Product preview — available in your Nodyra instance" class="aenv-btn-secondary">Edit</button>
+            <button disabled title="Product preview — available in your Nodyra instance" class="aenv-btn-secondary">Rebuild</button>
+            <button disabled title="Product preview — available in your Nodyra instance" class="aenv-btn-ghost">Delete</button>
           </div>
         </div>
 
@@ -1550,7 +1613,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             <span class="pkg-drawer-sub">4 installed &nbsp;·&nbsp; rebuild runs on save</span>
           </div>
           <div class="pkg-filter">
-            <input class="pkg-filter-input" type="text" placeholder="filter" readonly>
+            <input disabled aria-label="Product preview" class="pkg-filter-input" type="text" placeholder="filter" readonly>
           </div>
           <div class="pkg-row">
             <span class="pkg-dot-ok"></span>
@@ -1558,7 +1621,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
               <div class="pkg-name">pandas <span style="color:var(--ink-3)">2.2.2</span></div>
               <div class="pkg-node-tag">node: load-csv &nbsp;·&nbsp; merge-data</div>
             </div>
-            <button class="pkg-remove-btn" aria-label="remove pandas">×</button>
+            <button disabled title="Product preview — available in your Nodyra instance" class="pkg-remove-btn" aria-label="remove pandas">×</button>
           </div>
           <div class="pkg-row">
             <span class="pkg-dot-ok"></span>
@@ -1566,7 +1629,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
               <div class="pkg-name">scikit-learn <span style="color:var(--ink-3)">1.4.0</span></div>
               <div class="pkg-node-tag">node: train-model</div>
             </div>
-            <button class="pkg-remove-btn" aria-label="remove scikit-learn">×</button>
+            <button disabled title="Product preview — available in your Nodyra instance" class="pkg-remove-btn" aria-label="remove scikit-learn">×</button>
           </div>
           <div class="pkg-row">
             <span class="pkg-dot-ok"></span>
@@ -1574,18 +1637,18 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
               <div class="pkg-name">boto3 <span style="color:var(--ink-3)">1.34</span></div>
               <div class="pkg-node-tag">node: s3-upload</div>
             </div>
-            <button class="pkg-remove-btn" aria-label="remove boto3">×</button>
+            <button disabled title="Product preview — available in your Nodyra instance" class="pkg-remove-btn" aria-label="remove boto3">×</button>
           </div>
           <div class="pkg-row">
             <span class="pkg-dot-ok"></span>
             <div class="pkg-name-block">
               <div class="pkg-name">requests</div>
             </div>
-            <button class="pkg-remove-btn" aria-label="remove requests">×</button>
+            <button disabled title="Product preview — available in your Nodyra instance" class="pkg-remove-btn" aria-label="remove requests">×</button>
           </div>
           <div class="pkg-add-row">
-            <input class="pkg-add-input" type="text" placeholder="pandas, numpy==2.1, httpx&gt;=0.27 …" readonly>
-            <button class="pkg-add-btn">Add</button>
+            <input disabled aria-label="Product preview" class="pkg-add-input" type="text" placeholder="pandas, numpy==2.1, httpx&gt;=0.27 …" readonly>
+            <button disabled title="Product preview — available in your Nodyra instance" class="pkg-add-btn">Add</button>
           </div>
           <div class="pkg-drop-zone">⤓ Drop a requirements.txt here, or browse</div>
         </div>
@@ -1708,6 +1771,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
   <div class="wrap">
     <p class="eyebrow reveal">Runner Pools</p>
     <h2 class="section-h reveal">Your compute. Any machine, any cloud.</h2>
+    <p class="preview-note">Product preview · sample data</p>
     <p class="reveal" style="font-size:16px;color:var(--ink-2);line-height:1.7;max-width:52ch;margin-top:16px">
       Connect VMs, Docker daemons, or Kubernetes clusters as runner pools. Each pool dispatches to real machines — the fleet dashboard shows every agent's health, capacity, and cached environments live.
     </p>
@@ -1741,9 +1805,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           <span class="pool-status-pill pool-status-online">● 3/4 online</span>
         </div>
         <div class="pool-actions">
-          <button class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Runners ▾</button>
-          <button class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Edit</button>
-          <button class="aenv-btn-ghost" style="font-size:11px;padding:4px 11px">Delete</button>
+          <button disabled title="Product preview — available in your Nodyra instance" class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Runners ▾</button>
+          <button disabled title="Product preview — available in your Nodyra instance" class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Edit</button>
+          <button disabled title="Product preview — available in your Nodyra instance" class="aenv-btn-ghost" style="font-size:11px;padding:4px 11px">Delete</button>
         </div>
       </div>
       <div class="pool-meta-line">max 32 concurrent &nbsp;·&nbsp; environments: ml-pipeline, etl-daily, api-gateway</div>
@@ -1813,9 +1877,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             </td>
             <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--ink-2)">3 envs</span></td>
             <td style="text-align:right;white-space:nowrap">
-              <button class="tact-btn tact-warn">Drain</button>&nbsp;
-              <button class="tact-btn tact-ghost">Edit</button>&nbsp;
-              <button class="tact-btn tact-ghost">Remove</button>
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-warn">Drain</button>&nbsp;
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-ghost">Edit</button>&nbsp;
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-ghost">Remove</button>
             </td>
           </tr>
           <tr class="runner-trow">
@@ -1837,9 +1901,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             </td>
             <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--ink-2)">2 envs</span></td>
             <td style="text-align:right;white-space:nowrap">
-              <button class="tact-btn tact-warn">Drain</button>&nbsp;
-              <button class="tact-btn tact-ghost">Edit</button>&nbsp;
-              <button class="tact-btn tact-ghost">Remove</button>
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-warn">Drain</button>&nbsp;
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-ghost">Edit</button>&nbsp;
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-ghost">Remove</button>
             </td>
           </tr>
           <tr class="runner-trow">
@@ -1861,9 +1925,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             </td>
             <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--ink-2)">1 env</span></td>
             <td style="text-align:right;white-space:nowrap">
-              <button class="tact-btn tact-warn">Drain</button>&nbsp;
-              <button class="tact-btn tact-ghost">Edit</button>&nbsp;
-              <button class="tact-btn tact-ghost">Remove</button>
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-warn">Drain</button>&nbsp;
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-ghost">Edit</button>&nbsp;
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-ghost">Remove</button>
             </td>
           </tr>
           <tr class="runner-trow">
@@ -1885,9 +1949,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             </td>
             <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--ink-3)">0 envs</span></td>
             <td style="text-align:right;white-space:nowrap">
-              <button class="tact-btn tact-ghost" style="opacity:0.5;cursor:default">Drain</button>&nbsp;
-              <button class="tact-btn tact-ghost">Edit</button>&nbsp;
-              <button class="tact-btn tact-ghost">Remove</button>
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-ghost" style="opacity:0.5;cursor:default">Drain</button>&nbsp;
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-ghost">Edit</button>&nbsp;
+              <button disabled title="Product preview — available in your Nodyra instance" class="tact-btn tact-ghost">Remove</button>
             </td>
           </tr>
         </tbody>
@@ -1903,9 +1967,9 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
           <span class="pool-status-pill pool-status-online">● 1/1 online</span>
         </div>
         <div class="pool-actions">
-          <button class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Runners ▸</button>
-          <button class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Edit</button>
-          <button class="aenv-btn-ghost" style="font-size:11px;padding:4px 11px">Delete</button>
+          <button disabled title="Product preview — available in your Nodyra instance" class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Runners ▸</button>
+          <button disabled title="Product preview — available in your Nodyra instance" class="aenv-btn-secondary" style="font-size:11px;padding:4px 11px">Edit</button>
+          <button disabled title="Product preview — available in your Nodyra instance" class="aenv-btn-ghost" style="font-size:11px;padding:4px 11px">Delete</button>
         </div>
       </div>
       <div class="pool-meta-line">max 4 concurrent &nbsp;·&nbsp; environments: dev-sandbox · host: local socket</div>
@@ -2144,7 +2208,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             Git sync (workflows as code)
           </div>
         </div>
-        <a href="#cta" class="btn price-btn">Get started free</a>
+        <a href="docs.html#/getting-started" class="btn price-btn">Get started free</a>
       </div>
 
       <!-- Pro (featured) -->
@@ -2189,7 +2253,7 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
             Custom roles (advanced RBAC)
           </div>
         </div>
-        <a href="#cta" class="btn btn-primary price-btn">Join the waitlist</a>
+        <a href="mailto:sharma.har97@gmail.com?subject=Nodyra%20early%20access" class="btn btn-primary price-btn">Request early access</a>
       </div>
 
       <!-- Enterprise -->
@@ -2273,18 +2337,11 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
         </div>
       </div>
 
-      <form class="cta-form-wrap" id="waitlist-cta" novalidate style="margin-top:36px">
-        <label for="email-cta" style="position:absolute;opacity:0;pointer-events:none">Email address</label>
-        <input id="email-cta" class="field-input" type="email" placeholder="you@company.io"
-               autocomplete="email" aria-label="Email address" required>
-        <button type="submit" class="btn btn-primary" id="btn-cta-submit">Join the waitlist</button>
-      </form>
-      <div class="waitlist-success" id="success-cta" role="status" aria-live="polite">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        You're on the list. We'll be in touch.
+      <div class="hero-actions cta-actions">
+        <a href="docs.html#/getting-started" class="btn btn-primary">Start self-hosting <span aria-hidden="true">&rarr;</span></a>
+        <a href="mailto:sharma.har97@gmail.com?subject=Nodyra%20early%20access" class="btn">Request early access</a>
       </div>
+      <p class="contact-note">Early access by email · <a href="mailto:sharma.har97@gmail.com">sharma.har97@gmail.com</a></p>
       <p class="cta-note">
         Self-hostable &nbsp;·&nbsp; Air-gap friendly &nbsp;·&nbsp; Fair-code Community edition &nbsp;·&nbsp;
         Docker Compose or Helm chart &nbsp;·&nbsp;
@@ -2346,8 +2403,10 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
   toggle.addEventListener('click', function () {
     setOpen(toggle.getAttribute('aria-expanded') !== 'true');
   });
+  window.matchMedia('(min-width: 961px)').addEventListener('change', function(e) { if (e.matches) setOpen(false); });
+  document.addEventListener('click', function(e) { if (!e.target.closest('#site-nav')) setOpen(false); });
   panel.addEventListener('click', function (e) {
-    if (e.target.tagName === 'A') setOpen(false);
+    if (e.target.closest('a')) setOpen(false);
   });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && panel.classList.contains('open')) {
@@ -2356,33 +2415,6 @@ workflow.<span class="py-fn">run</span>(webhook_trigger >> fetch_data >> transfo
     }
   });
 })();
-
-// waitlist form handler
-function handleWaitlistForm(formId, btnId, successId) {
-  var form = document.getElementById(formId);
-  var btn = document.getElementById(btnId);
-  var success = document.getElementById(successId);
-  if (!form) return;
-  form.addEventListener('submit', function (e) {
-    e.preventDefault();
-    var input = form.querySelector('input[type="email"]');
-    var email = input.value.trim();
-    var valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
-    input.setAttribute('aria-invalid', String(!valid));
-    if (!valid) {
-      input.focus();
-      return;
-    }
-    btn.disabled = true;
-    btn.innerHTML = '<span class="waitlist-spinner" aria-hidden="true"></span> Joining…';
-    setTimeout(function () {
-      form.style.display = 'none';
-      success.classList.add('show');
-    }, 900);
-  });
-}
-handleWaitlistForm('waitlist-hero', 'btn-hero-submit', 'success-hero');
-handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
 
 // canvas animation + toggle
 (function () {
@@ -2399,149 +2431,51 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
     };
   }
 
-  function drawEdge(svgEl, fromNode, toNode, delay) {
-    setTimeout(function () {
-      var from = getPortPos(fromNode, 'out');
-      var to = getPortPos(toNode, 'in');
-      var cx = (from.x + to.x) / 2;
-      var d = 'M ' + from.x + ' ' + from.y +
-              ' C ' + cx + ' ' + from.y + ',' + cx + ' ' + to.y + ',' + to.x + ' ' + to.y;
+  function drawEdges() {
+    var svg = document.getElementById('canvas-edges');
+    var nodes = Array.from(document.querySelectorAll('#canvas-stage .node'));
+    svg.replaceChildren();
+    nodes.slice(1).forEach(function (node, i) {
+      var from = getPortPos(nodes[i], 'out');
+      var to = getPortPos(node, 'in');
+      var bend = Math.max(32, Math.abs(to.x - from.x) / 2);
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', d);
+      path.setAttribute('d', 'M ' + from.x + ' ' + from.y + ' C ' + (from.x + bend) + ' ' + from.y + ',' + (to.x - bend) + ' ' + to.y + ',' + to.x + ' ' + to.y);
       path.setAttribute('fill', 'none');
       path.setAttribute('stroke', 'var(--accent)');
       path.setAttribute('stroke-width', '2');
-      path.setAttribute('stroke-linecap', 'round');
-      svgEl.appendChild(path);
-      if (!reduceMotion) {
-        var len = path.getTotalLength();
-        path.style.strokeDasharray = len;
-        path.style.strokeDashoffset = len;
-        path.getBoundingClientRect();
-        path.style.transition = 'stroke-dashoffset 500ms ease';
-        path.style.strokeDashoffset = '0';
-      }
-    }, delay);
-  }
-
-  function animateCanvas() {
-    var nodes = [
-      document.getElementById('n1'),
-      document.getElementById('n2'),
-      document.getElementById('n3'),
-      document.getElementById('n4'),
-    ];
-    var svg = document.getElementById('canvas-edges');
-    var cursor = document.getElementById('node-cursor');
-
-    if (reduceMotion) {
-      nodes.forEach(function (n) { n.classList.add('visible'); });
-      nodes.forEach(function (n, i) { if (i > 0) drawEdge(svg, nodes[i - 1], n, 0); });
-      return;
-    }
-
-    var delays = [0, 420, 840, 1260];
-    nodes.forEach(function (node, i) {
-      setTimeout(function () {
-        node.classList.add('visible');
-        if (i > 0 && svg) drawEdge(svg, nodes[i - 1], node, 180);
-        if (i === 1 && cursor) {
-          setTimeout(function () {
-            cursor.style.opacity = '1';
-            cursor.classList.add('blinking');
-            cursor.addEventListener('animationend', function () {
-              cursor.style.opacity = '0';
-            }, { once: true });
-          }, 300);
-        }
-      }, delays[i]);
+      svg.appendChild(path);
     });
   }
-
-  window.animateCanvas = animateCanvas;
-
-  // ---- Demo sequence: prompt → LLM thinking → nodes → highlight ----
-  var DEMO_PROMPT = 'Fetch new signups from Postgres and notify via Slack';
-
-  function escDemo(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  document.querySelectorAll('#canvas-stage .node').forEach(function (node) {
+    node.classList.add('visible');
+  });
+  var resizeFrame;
+  function scheduleEdges() {
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(drawEdges);
   }
-
-  function runDemoSequence() {
-    if (reduceMotion) { animateCanvas(); return; }
-
-    var bar  = document.getElementById('demo-bar');
-    var ptxt = document.getElementById('demo-prompt-text');
-    var stat = document.getElementById('demo-status');
-    var tip  = document.getElementById('canvas-tooltip');
-
-    // Phase 1: show prompt bar + typewriter
-    bar.classList.add('visible');
-    var i = 0;
-    function typeNext() {
-      var typed = DEMO_PROMPT.slice(0, i);
-      ptxt.innerHTML = escDemo(typed) + '<span class="demo-prompt-cursor" aria-hidden="true"></span>';
-      if (i < DEMO_PROMPT.length) {
-        i++;
-        setTimeout(typeNext, 32);
-      } else {
-        ptxt.innerHTML = escDemo(DEMO_PROMPT);
-        setTimeout(startThinking, 420);
-      }
-    }
-    setTimeout(typeNext, 500);
-
-    // Phase 2: LLM thinking dots
-    function startThinking() {
-      stat.innerHTML =
-        '<span class="demo-dot" aria-hidden="true"></span>' +
-        '<span class="demo-dot" aria-hidden="true"></span>' +
-        '<span class="demo-dot" aria-hidden="true"></span>' +
-        '<span style="margin-left:5px">Building workflow…</span>';
-      stat.classList.add('visible');
-      setTimeout(startNodes, 1700);
-    }
-
-    // Phase 3: node animation
-    function startNodes() {
-      stat.innerHTML = '<span style="color:var(--ok)">✦</span><span style="margin-left:5px">4 nodes created</span>';
-      animateCanvas();
-      // nodes draw in over ~1800ms; then dismiss bar and show hint
-      setTimeout(function () {
-        bar.classList.remove('visible');
-        setTimeout(showNodeHint, 380);
-      }, 1950);
-    }
-
-    // Phase 4: highlight n2, show tooltip
-    function showNodeHint() {
-      var node  = document.getElementById('n2');
-      var stage = document.getElementById('canvas-stage');
-      var sr    = stage.getBoundingClientRect();
-      var tile  = node.querySelector('.node-tile');
-      var tr    = tile.getBoundingClientRect();
-      var cx    = tr.left - sr.left + tr.width / 2;
-      var cy    = tr.top  - sr.top  - 44;
-      tip.style.left = cx + 'px';
-      tip.style.top  = cy + 'px';
-      tip.textContent = 'Click to inspect ↗';
-      node.classList.add('demo-highlight');
-      tip.classList.add('visible');
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', runDemoSequence);
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(scheduleEdges).observe(document.getElementById('canvas-stage'));
   } else {
-    runDemoSequence();
+    window.addEventListener('resize', scheduleEdges);
   }
+  scheduleEdges();
 
   window.setCanvasView = function (view) {
     var stage = document.getElementById('canvas-stage');
     var pane = document.getElementById('python-pane');
     var bg = document.getElementById('btn-graph');
     var bp = document.getElementById('btn-python');
-    if (view === 'python') {
+    var isPython = view === 'python';
+    stage.inert = isPython;
+    stage.setAttribute('aria-hidden', String(isPython));
+    pane.inert = !isPython;
+    pane.setAttribute('aria-hidden', String(!isPython));
+    document.getElementById('demo-bar').hidden = isPython;
+    bg.setAttribute('aria-pressed', String(!isPython));
+    bp.setAttribute('aria-pressed', String(isPython));
+    if (isPython) {
       stage.style.opacity = '0';
       stage.style.pointerEvents = 'none';
       pane.classList.add('visible');
@@ -2614,6 +2548,7 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
   };
 
   var _currentNode = null;
+  var returnFocus = null;
   var _currentTab = 'params';
   var _currentMode = 'inspector';
 
@@ -2655,7 +2590,7 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
     }
     var h = '<div class="json-tree-row">';
     if (expandable) {
-      h += '<button class="json-tree-twist" onclick="jtt(this,\'' + id + 'b\',\'' + id + 's\')" aria-expanded="' + !collapsed + '">' + (collapsed ? '▸' : '▾') + '</button>';
+      h += '<button class="json-tree-twist" aria-label="Toggle ' + esc(label) + '" onclick="jtt(this,\'' + id + 'b\',\'' + id + 's\')" aria-expanded="' + !collapsed + '">' + (collapsed ? '▸' : '▾') + '</button>';
     } else {
       h += '<span class="json-tree-twist-empty" aria-hidden="true"></span>';
     }
@@ -2672,7 +2607,7 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
   }
 
   function renderJsonTree(data) {
-    _jtIdx = 0;
+
     return '<div class="json-tree">' + jtValue(data, 0) + '</div>';
   }
 
@@ -2710,7 +2645,7 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
 
     var h = '<div class="schema-node"><div class="schema-row">';
     if (expandable) {
-      h += '<button class="schema-twist" onclick="stt(this,\'' + id + '\')">' + (open ? '▾' : '▸') + '</button>';
+      h += '<button class="schema-twist" aria-label="Toggle ' + esc(label) + '" aria-expanded="' + open + '" onclick="stt(this,\'' + id + '\')">' + (open ? '▾' : '▸') + '</button>';
     } else {
       h += '<span class="schema-twist-spacer"></span>';
     }
@@ -2735,7 +2670,7 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
   }
 
   function renderSchemaTree(data) {
-    _stIdx = 0;
+
     var h = '<div class="schema-tree">';
     if (Array.isArray(data)) {
       h += '<div class="schema-arrayhint">' + data.length + (data.length === 1 ? ' item' : ' items') + '</div>';
@@ -2783,23 +2718,6 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
   // ---- Data panel toggle (view switching) ----
   var _panelViews = {};
 
-  function ndvView(pid, view) {
-    ['schema','json','table','raw'].forEach(function(v) {
-      var el = document.getElementById(pid + '-' + v);
-      if (el) el.style.display = v === view ? '' : 'none';
-    });
-    var tog = document.getElementById(pid + '-toggle');
-    if (tog) tog.querySelectorAll('button[data-view]').forEach(function(btn) {
-      btn.classList.toggle('active', btn.getAttribute('data-view') === view);
-    });
-    _panelViews[pid] = view;
-  }
-
-  function ndvCopy(pid) {
-    var raw = document.getElementById(pid + '-raw');
-    if (raw) { var pre = raw.querySelector('pre'); if (pre) void navigator.clipboard.writeText(pre.textContent); }
-  }
-
   // ---- Full data panel section (replaces buildInputPanel / buildOutputPanel) ----
   function buildDataPanel(pid, title, data, isInput, footer) {
     var hasData = data !== null && data !== undefined;
@@ -2825,7 +2743,7 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
       h += '<button data-view="table" onclick="ndvView(\'' + pid + '\',\'table\')">Table</button>';
       h += '<button data-view="raw" onclick="ndvView(\'' + pid + '\',\'raw\')">Raw</button>';
     }
-    h += '<button onclick="ndvCopy(\'' + pid + '\')">Copy</button>';
+    if (hasData) h += '<button onclick="ndvCopy(\'' + pid + '\',this)" aria-live="polite">Copy</button>';
     h += '</div></header>';
 
     // body with all four views
@@ -2863,7 +2781,7 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
         '<div class="field-label"><span class="field-name">' + esc(p.name) + '</span>' +
           (p.isExpr ? '<span style="font-family:var(--font-mono);font-size:9.5px;color:var(--accent);background:var(--accent-glow);padding:1px 5px;border-radius:3px;margin-left:auto">fx</span>' : '') +
         '</div>' +
-        '<input class="field-input' + (p.isExpr ? ' field-input-expr' : '') + '" readonly value="' + esc(p.value) + '">' +
+        '<input aria-label="' + esc(p.name) + '" class="field-input' + (p.isExpr ? ' field-input-expr' : '') + '" readonly value="' + esc(p.value) + '">' +
         exprPreview +
         '</div>';
     }).join('');
@@ -2888,17 +2806,17 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
       '<div class="field">' +
         '<div class="field-label"><span class="field-name">On error</span></div>' +
         '<p class="field-desc">What happens if this node throws.</p>' +
-        '<select class="field-input"><option>Stop the workflow</option><option>Continue (pass empty data downstream)</option></select>' +
+        '<select class="field-input" disabled aria-label="Demo node setting"><option>Stop the workflow</option><option>Continue (pass empty data downstream)</option></select>' +
       '</div>' +
       '<div class="field">' +
         '<div class="field-label"><span class="field-name">Retry on fail</span></div>' +
         '<p class="field-desc">Re-run the node a few times before giving up.</p>' +
-        '<select class="field-input"><option>Disabled</option><option>Enabled — 2 retries, 1s delay</option></select>' +
+        '<select class="field-input" disabled aria-label="Demo node setting"><option>Disabled</option><option>Enabled — 2 retries, 1s delay</option></select>' +
       '</div>' +
       '<div class="field">' +
         '<div class="field-label"><span class="field-name">Timeout (s)</span></div>' +
         '<p class="field-desc">Blank = no timeout.</p>' +
-        '<input class="field-input" type="number" placeholder="no timeout">' +
+        '<input class="field-input" readonly aria-label="Timeout in seconds" type="number" placeholder="no timeout">' +
       '</div>';
   }
 
@@ -2924,9 +2842,22 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
     _panelViews[pid] = view;
   };
 
-  window.ndvCopy = function(pid) {
+  window.ndvCopy = async function(pid, button) {
     var raw = document.getElementById(pid + '-raw');
-    if (raw) { var pre = raw.querySelector('pre'); if (pre) void navigator.clipboard.writeText(pre.textContent); }
+    var pre = raw && raw.querySelector('pre');
+    if (!pre) return;
+    try {
+      await navigator.clipboard.writeText(pre.textContent);
+      button.textContent = 'Copied';
+    } catch (error) {
+      window.ndvView(pid, 'raw');
+      button.textContent = 'Select to copy';
+      var range = document.createRange();
+      range.selectNodeContents(pre);
+      var selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
   };
 
   window.openNDV = function(id) {
@@ -2937,6 +2868,7 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
     var tip = document.getElementById('canvas-tooltip');
     if (tip) tip.classList.remove('visible');
 
+    returnFocus = document.activeElement;
     _currentNode = id;
     _currentTab = 'params';
     _currentMode = 'inspector';
@@ -2964,8 +2896,8 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
             '<button class="btn btn-sm btn-run" disabled title="Demo only">&#9654; ' + (node.isWebhook ? 'Listen for event' : 'Execute step') + '</button>' +
             (node.isWebhook ? '' : '<button class="btn btn-sm btn-ghost" disabled>&#8635; Run fresh</button>') +
             '<span class="ndv-action-sep" aria-hidden="true"></span>' +
-            '<button class="btn btn-sm">Disable</button>' +
-            '<button class="btn btn-sm btn-danger-soft">Delete</button>' +
+            '<span class="preview-note">Read-only demo</span>' +
+            '' +
             '<button class="ndv-close" onclick="closeNDV()" aria-label="Close">&#215;</button>' +
           '</div>' +
         '</header>' +
@@ -3009,17 +2941,15 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
             ) +
           '</div>' +
         '</div>' +
-        // ── drag handle at bottom ──
-        '<div class="ndv-drag-handle" role="separator" aria-label="Drag to resize, double-click to reset">' +
-          '<div class="ndv-drag-dots"><span></span><span></span><span></span><span></span><span></span></div>' +
-          '<span class="ndv-drag-tip">double-click to reset</span>' +
-        '</div>' +
       '</div>';
 
     var overlay = document.getElementById('ndv-overlay');
     overlay.innerHTML = html;
     overlay.style.display = 'flex';
     document.body.style.overflow = 'hidden';
+    document.getElementById('main').inert = true;
+    document.getElementById('site-nav').inert = true;
+    document.getElementById('site-footer').inert = true;
     // focus the modal for keyboard nav
     var modal = overlay.querySelector('.ndv-modal');
     if (modal) modal.focus();
@@ -3052,6 +2982,7 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
   window.stt = function(btn, childId) {
     var open = btn.textContent === '▾';
     btn.textContent = open ? '▸' : '▾';
+    btn.setAttribute('aria-expanded', String(!open));
     var el = document.getElementById(childId);
     if (el) el.style.display = open ? 'none' : '';
   };
@@ -3062,7 +2993,8 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
     overlay.innerHTML = '';
     document.body.style.overflow = '';
     _currentNode = null;
-    // return focus to the node tile that opened the NDV
+    ['main', 'site-nav', 'site-footer'].forEach(function(id) { document.getElementById(id).inert = false; });
+    if (returnFocus && returnFocus.isConnected) returnFocus.focus();
   };
 
   window.ndvTab = function(tab) {
@@ -3070,7 +3002,7 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
     ['params','settings','docs','logs'].forEach(function(t) {
       var btn = document.getElementById('ndv-tab-' + t);
       var body = document.getElementById('ndv-body-' + t);
-      if (btn) btn.classList.toggle('active', t === tab);
+      if (btn) { btn.classList.toggle('active', t === tab); btn.setAttribute('aria-selected', String(t === tab)); }
       if (body) body.style.display = t === tab ? '' : 'none';
     });
   };
@@ -3083,9 +3015,27 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
     var btnP = document.getElementById('ndv-mode-python');
     if (inspector) inspector.style.display = mode === 'inspector' ? '' : 'none';
     if (python) python.style.display = mode === 'python' ? '' : 'none';
-    if (btnI) btnI.classList.toggle('active', mode === 'inspector');
-    if (btnP) btnP.classList.toggle('active', mode === 'python');
+    if (btnI) { btnI.classList.toggle('active', mode === 'inspector'); btnI.setAttribute('aria-selected', String(mode === 'inspector')); }
+    if (btnP) { btnP.classList.toggle('active', mode === 'python'); btnP.setAttribute('aria-selected', String(mode === 'python')); }
   };
+
+  // Keep focus inside the open modal; use arrow keys between tabs.
+  document.addEventListener('keydown', function(e) {
+    var modal = document.querySelector('#ndv-overlay .ndv-modal');
+    if (!modal) return;
+    if (e.key === 'Tab') {
+      var items = Array.from(modal.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')).filter(function(el) { return el.getClientRects().length; });
+      var first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === modal)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    if (e.target.getAttribute('role') === 'tab' && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+      var tabs = Array.from(e.target.parentElement.querySelectorAll('[role="tab"]'));
+      var idx = tabs.indexOf(e.target);
+      var next = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (idx + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      e.preventDefault(); tabs[next].click(); tabs[next].focus();
+    }
+  });
 
   // ESC closes NDV
   document.addEventListener('keydown', function(e) {
@@ -3095,20 +3045,10 @@ handleWaitlistForm('waitlist-cta', 'btn-cta-submit', 'success-cta');
   });
 })();
 
-// scroll reveal
-(function () {
-  var els = document.querySelectorAll('.reveal');
-  if (!els.length) return;
-  var io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) {
-      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-    });
-  }, { threshold: 0.12 });
-  els.forEach(function (el) { io.observe(el); });
-})();
+
 </script>
 
 <!-- NDV overlay portal — populated and shown by openNDV() -->
-<div id="ndv-overlay" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Node inspector" onclick="closeNDV()"></div>
+<div id="ndv-overlay" class="modal-overlay" style="display:none" onclick="closeNDV()"></div>
 </body>
 </html>
