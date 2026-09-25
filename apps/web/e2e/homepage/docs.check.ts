@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test';
 import axe from 'axe-core';
 
-test('documentation is the landing page, with a local animated tour', async ({ page }) => {
+test('documentation overview includes a local animated tour', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/docs.html');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Nodyra documentation');
   const tour = page.locator('.tour-animation');
   await expect(tour).toHaveAttribute('src', 'assets/nodyra-product-tour.gif');
@@ -24,7 +24,7 @@ test('documentation is the landing page, with a local animated tour', async ({ p
 });
 
 test('search works by keyboard, clears stale matches, and recovers from no results', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/docs.html');
   const input = page.getByRole('combobox', { name: 'Search documentation' });
   await input.fill('backup');
   await input.press('ArrowDown');
@@ -48,7 +48,7 @@ test('direct section routes, reload, history, and missing pages work', async ({ 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Security');
   await page.goBack();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Getting started');
-  await page.goto('/#/missing');
+  await page.goto('/docs.html#/missing');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Page not found');
   await page.getByRole('link', { name: 'return to the documentation home' }).click();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Nodyra documentation');
@@ -56,7 +56,7 @@ test('direct section routes, reload, history, and missing pages work', async ({ 
 
 test('copy failure selects the actual command and gives feedback', async ({ page }) => {
   await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: undefined }));
-  await page.goto('/#/getting-started');
+  await page.goto('/docs.html#/getting-started');
   await page.getByRole('button', { name: 'Copy', exact: true }).first().click();
   await expect(page.locator('#docs-status')).toContainText('Code selected');
   expect(await page.evaluate(() => window.getSelection()?.toString())).toContain('git clone --branch v1.0.5');
@@ -65,7 +65,7 @@ test('copy failure selects the actual command and gives feedback', async ({ page
 for (const width of [320, 390, 768, 1366]) {
   test(`docs fit at ${width}px and expose accessible navigation`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    await page.goto('/');
+    await page.goto('/docs.html');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (width < 901) {
       const toggle = page.getByRole('button', { name: 'Toggle documentation navigation' });
@@ -76,14 +76,14 @@ for (const width of [320, 390, 768, 1366]) {
       await toggle.click();
       await page.locator('#ds-nav').getByRole('link', { name: 'Getting started', exact: true }).click();
       await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    } else await page.goto('/#/getting-started');
+    } else await page.goto('/docs.html#/getting-started');
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Getting started');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
 
 test('landing and installation meet automated WCAG A/AA checks', async ({ page }) => {
-  for (const route of ['/', '/#/self-hosted']) {
+  for (const route of ['/docs.html', '/docs.html#/self-hosted']) {
     await page.goto(route);
     await page.addScriptTag({ content: axe.source });
     const violations = await page.evaluate(async () => (await (window as any).axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] } })).violations);
@@ -94,13 +94,13 @@ test('landing and installation meet automated WCAG A/AA checks', async ({ page }
 test('reduced motion pauses the GIF and no-script still provides docs and tour', async ({ browser }) => {
   const reduced = await browser.newContext({ reducedMotion: 'reduce' });
   const page = await reduced.newPage();
-  await page.goto('http://127.0.0.1:5187/');
+  await page.goto('http://127.0.0.1:5187/docs.html');
   await expect(page.getByRole('button', { name: 'Play product tour' })).toBeVisible();
   await expect(page.locator('.tour-animation')).toBeHidden();
   await reduced.close();
   const plain = await browser.newContext({ javaScriptEnabled: false });
   const doc = await plain.newPage();
-  await doc.goto('http://127.0.0.1:5187/');
+  await doc.goto('http://127.0.0.1:5187/docs.html');
   await expect(doc.getByRole('heading', { level: 1 })).toHaveText('Nodyra documentation');
   await expect(doc.locator('.tour-animation')).toBeVisible();
   await expect(doc.getByRole('link', { name: 'GitHub documentation', exact: true })).toBeVisible();
