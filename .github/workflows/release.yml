@@ -276,6 +276,7 @@ jobs:
           cosign attest --yes --type https://spdx.dev/Document --predicate sbom-runner.spdx.json "$RUNNER_REF"
 
       - name: Verify image signatures and SBOM attestations
+        timeout-minutes: 15
         env:
           API_REF: ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
           WEB_REF: ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
@@ -283,7 +284,10 @@ jobs:
           COSIGN_CERTIFICATE_IDENTITY_REGEXP: ^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$
           COSIGN_CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
         run: |
-          set -o pipefail
+          set -euo pipefail
+          # Large attestation lines stall Actions' log masking. Preserve the
+          # complete verification evidence in the release asset instead.
+          # https://github.com/sigstore/cosign/issues/3602
           for ref in "$API_REF" "$WEB_REF" "$RUNNER_REF"; do
             cosign verify \
               --certificate-identity-regexp "$COSIGN_CERTIFICATE_IDENTITY_REGEXP" \
@@ -294,7 +298,8 @@ jobs:
               --certificate-identity-regexp "$COSIGN_CERTIFICATE_IDENTITY_REGEXP" \
               --certificate-oidc-issuer "$COSIGN_CERTIFICATE_OIDC_ISSUER" \
               "$ref"
-          done 2>&1 | tee cosign-verification.txt
+          done > cosign-verification.txt 2>&1
+          echo "Verified signatures and SBOM attestations for all three image digests."
 
       # Keep certification and publishing on the same runner. Evidence remains
       # available even when the optional Actions artifact copy hits its quota.

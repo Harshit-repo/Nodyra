@@ -97,7 +97,7 @@ from nodyra_nodes.integrations_v2.providers import websocket_trigger as websocke
 from nodyra_nodes.integrations_v2.providers import woocommerce as woocommerce_v2
 from nodyra_nodes.integrations_v2.providers import zoom as zoom_v2
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 __all__ = [
     "ai_extra",
     "browser_automation",

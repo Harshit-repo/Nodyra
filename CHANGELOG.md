@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.4 - 2026-09-25
+
+- Keep full image-signature and SBOM-attestation verification evidence in the
+  release asset without streaming large payloads into GitHub Actions log masking.
+- Bound the verification step to 15 minutes while retaining all security gates.
+- Include the self-hosted runtime and editor improvements from 1.0.3. Its tag
+  passed certification and vulnerability scans, but publishing was cancelled
+  after attestation output stalled in the Actions log processor.
+
 ## 1.0.3 - 2026-09-25
 
 - Move API and worker images to a digest-pinned, patched Python 3.14.7 base

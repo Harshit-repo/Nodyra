@@ -2,7 +2,7 @@ clusterDomain: cluster.local
 
 image:
   repository: nodyra
-  tag: "1.0.3"
+  tag: "1.0.4"
   # Digest takes precedence over tag for immutable staged promotion.
   digest: ""
   pullPolicy: IfNotPresent
