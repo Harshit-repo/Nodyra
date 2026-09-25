@@ -31,20 +31,32 @@ for scheduled, webhook, or API-driven execution.
 
 ## Quick start
 
-You need Docker Engine or Docker Desktop with Docker Compose.
+Start with the [1.0.5 self-hosted beta release](https://github.com/Harshit-repo/Nodyra/releases/tag/v1.0.5)
+and the [single-host installation guide](docs/deployment/self-hosted.md).
+This release supplies source archives and checksums; Docker builds the images
+locally. Signed prebuilt 1.0.5 images are not included.
+
+You need Docker Engine or Docker Desktop with Docker Compose **2.24.4+**.
+To use the verified release from Git:
 
 ```bash
-git clone https://github.com/Harshit-repo/Nodyra.git
+git clone --branch v1.0.5 --depth 1 https://github.com/Harshit-repo/Nodyra.git
 cd Nodyra
 cp deploy/.env.example deploy/.env
 ```
 
-Open `deploy/.env` and replace the three `CHANGE-ME` values. Generate strong
-values with `openssl rand -hex 32` (run it once for each secret), then start the
-stack:
+Open `deploy/.env` and replace the three active `CHANGE-ME` values with separate
+random values (`openssl rand -hex 32` for each). Set a strong
+`POSTGRES_PASSWORD` too. Keep the MinIO password configured even though this
+local-storage profile does not start MinIO: Compose validates the base file.
+
+For loopback-only HTTP evaluation, set `SESSION_COOKIE_SECURE=false` and
+`CORS_ORIGINS=http://localhost:5173`. Use secure cookies and the HTTPS settings
+in the installation guide before allowing access from other machines.
 
 ```bash
-docker compose -f deploy/docker-compose.yml up --build -d
+docker compose -p nodyra -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.local-storage.yml up --build -d --wait
 ```
 
 Open <http://localhost:5173>. The first registered account becomes the owner;
@@ -64,6 +76,19 @@ and CSV export** template. The complete walkthrough is in
 For a persistent single-host installation without MinIO or a cloud bucket, use
 the [trusted-team self-hosting profile](docs/deployment/self-hosted.md). It also
 covers HTTPS, automatic service restarts, storage, and backups.
+
+## Documentation and product tour
+
+![Nodyra product tour: homepage, workflow execution, node inspector, and Python editor](docs/nodyra-product-tour.gif)
+
+- [Documentation index](docs/README.md): installation, workflow authoring, MCP,
+  workers, security, and operations.
+- [Release verification](docs/releases/1.0.5.md): tested scope and distribution
+  limits, with links to the published evidence.
+- [Product tour](docs/nodyra-product-tour.gif): homepage, workflow execution,
+  node inspector, and Python editor.
+- [Documentation website](docs/documentation-site.md): build and publish the
+  documentation landing page, with the product homepage available separately.
 
 ## Build workflows with an AI agent
 
@@ -143,12 +168,13 @@ environment. See [Architecture](docs/architecture.md) for the full model and
 
 ## Security boundary
 
-Nodyra workflows can execute arbitrary Python. With the default
-`EXECUTION_SANDBOX=off`, workflow authors must be trusted to run code on the
-worker host.
+Nodyra workflows can execute arbitrary Python. The Compose default
+`EXECUTION_SANDBOX=auto` can fall back to subprocess execution when a container
+runtime is unavailable. Workflow authors must therefore be trusted to run code
+on the worker host.
 
-For AI-generated or otherwise untrusted code, configure
-`EXECUTION_SANDBOX=auto` or `required`. Multi-tenant mode requires the sandbox
+For untrusted code, configure `EXECUTION_SANDBOX=required` with the documented
+sandbox runtime and verify that it is healthy. Multi-tenant mode requires the sandbox
 and refuses to start without it. Authentication and startup checks fail closed
 for unsafe secret or topology combinations.
 

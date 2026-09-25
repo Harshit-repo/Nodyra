@@ -5,3 +5,6 @@ uv.lock text eol=lf
 *.lock text eol=lf
 *.sh text eol=lf
 *.envsh text eol=lf
+brand/homepage/index.html text eol=lf
+brand/homepage/docs.html text eol=lf
+brand/homepage/docs.template.html text eol=lf

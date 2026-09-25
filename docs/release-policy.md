@@ -16,9 +16,11 @@ notes.
 | RC | No planned feature changes; known issues and rollback notes published | Five consecutive production-like runs meet budgets; no open release blocker |
 | GA | Support, security response, compatibility, and staged rollout are staffed | Scorecard remains within SLO; regression reopens the affected category |
 
-`0.1.0` is the first aligned Beta line. Pre-1.0 releases may still change APIs,
-but every breaking change requires a changelog entry, migration path, and at
-least one release of deprecation when technically feasible.
+The current release is **1.0.5, a self-hosted beta**. The numeric version alone
+does not announce GA, an LTS commitment, or support for every deployment
+topology. The [release verification page](releases/1.0.5.md) defines its tested
+single-host, trusted-author scope. Breaking changes require a changelog entry,
+migration path, and deprecation when technically feasible.
 
 ## SemVer contract
 
@@ -41,7 +43,7 @@ After GA, the current minor receives full support and the previous minor
 receives critical/security fixes for 90 days after supersession. Patch users
 must run the newest patch in their supported minor.
 
-There is no LTS line before `1.0`. An LTS decision must name the supported
+There is no announced LTS line. An LTS decision must name the supported
 minor, duration, infrastructure matrix, backport policy, and funding/owner; the
 absence of that announcement means standard support only.
 
@@ -59,8 +61,15 @@ infrastructure version is outside the compatibility matrix.
 
 ## Required release package
 
-Every release attaches test and migration evidence, upgrade/rollback result,
+The automated image-release process is intended to attach test and migration evidence, upgrade/rollback result,
 SBOMs, image digests, signatures/provenance verification, vulnerability scan,
 bundle/benchmark deltas, known issues, documentation version, and rollout
 stage. See [release evidence](operations/release-evidence.md) and
 [staged rollout](operations/staged-rollout.md).
+
+The 1.0.5 beta uses a **source-only distribution**: source archives, SHA-256
+checksums, local fresh-install acceptance evidence, and local vulnerability
+reports. Account billing blocked hosted jobs before they started, so it does
+not claim hosted certification, signed prebuilt images, SBOM attestations, or
+the full automated image-release evidence set. This is a documented limitation
+of this release, not a removal of the image-release security gates.
