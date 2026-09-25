@@ -1,6 +1,6 @@
 [project]
 name = "nodyra-nodes"
-version = "1.0.1"
+version = "1.0.2"
 description = "Nodyra built-in node library"
 requires-python = ">=3.12"
 dependencies = [

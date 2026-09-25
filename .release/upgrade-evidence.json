@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "target_version": "1.0.1",
+  "target_version": "1.0.2",
   "source_version": null,
   "outcome": "not_applicable",
-  "reason": "1.0.1 is the first published self-hosted release. The existing v1.0.0 tag did not produce a published release; no supported prior distribution is available for an N-1 upgrade claim.",
+  "reason": "1.0.2 is the first published self-hosted release. The existing v1.0.0 and v1.0.1 tags did not produce a published release; no supported prior distribution is available for an N-1 upgrade claim.",
   "required_for_next_release": true
 }
