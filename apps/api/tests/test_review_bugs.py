@@ -10,6 +10,7 @@ the fix cycle:
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -18,9 +19,9 @@ from sqlalchemy import select
 
 from app import models
 from app.config import settings
-from app.services import retention
 from app.services.runner import cancel_run
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, run_as_system
+from tests.mcp_approval_helpers import mcp_post
 
 # ---------------------------------------------------------------------------
 # Shared fixtures / helpers
@@ -217,21 +218,26 @@ async def test_mcp_publish_workflow_without_notes_succeeds(client: AsyncClient):
 
     After the fix: empty notes defaults to '' (the field default).
     """
-    from app.mcp import tools as mcp_tools
-
-    # Create and publish a workflow via HTTP so we have a valid workflow_id.
+    # Create a workflow with a valid graph before requesting publication.
     create_resp = await client.post("/workflows", json={"name": "MCP Pub Test"})
     assert create_resp.status_code == 201
     wf_id = create_resp.json()["id"]
     await client.put(f"/workflows/{wf_id}", json={"graph": TRIGGER_GRAPH})
 
-    async with retention.SessionLocal() as session:
-        # Simulate an approved MCP call with NO 'notes' key in args.
-        result = await mcp_tools._publish_workflow(
-            session,
-            user=None,
-            args={"workflow_id": wf_id, "approved_by_user": True},  # notes intentionally omitted
-        )
+    # Request and review a real command grant, with NO 'notes' key in args.
+    response = await mcp_post(
+        client,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "publish_workflow", "arguments": {"workflow_id": wf_id}},
+        },
+    )
+    assert response.status_code == 200
+    tool_result = response.json()["result"]
+    assert tool_result["isError"] is False, tool_result["content"][0]["text"]
+    result = json.loads(tool_result["content"][0]["text"])
 
     assert "workflow_version_id" in result, (
         "publish_workflow returned an unexpected result. "

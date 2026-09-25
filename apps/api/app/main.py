@@ -45,7 +45,9 @@ from app.routers import (
     health,
     internal,
     mcp,
+    mcp_approvals,
     mcp_connections,
+    mcp_gateway,
     node_registry,
     nodes,
     ops,
@@ -68,6 +70,7 @@ from app.services.audit import audit_webhook_loop
 from app.services.docker_workers import docker_workers_autoscale_loop
 from app.services.environment_builds import run_environment_build_dispatch_loop
 from app.services.events import broker_reaper_loop
+from app.services.execution_actor import ExecutionActorMiddleware
 from app.services.ghost_cleanup import ghost_cleanup_loop
 from app.services.github_sync_jobs import github_sync_dispatch_loop
 from app.services.json_responses import NodyraJSONResponse
@@ -757,6 +760,7 @@ async def _security_headers(request: Request, call_next):
 
 
 _AUTH_EXEMPT_PREFIXES = (
+    "/mcp-gateway",  # Every gateway route requires authenticated scoped access.
     "/auth",
     "/.well-known",
     "/health",
@@ -924,6 +928,7 @@ async def _tenant_context_scope(request: Request, call_next):
 # Registered last → outermost middleware (Starlette prepends each add_middleware).
 # This guarantees CORS headers are present even on error responses produced by
 # the middlewares above. See the note next to FastAPI(...) construction.
+app.add_middleware(ExecutionActorMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -974,6 +979,8 @@ app.include_router(runner_pools.router)
 app.include_router(orgs.router)
 app.include_router(expressions.router)
 app.include_router(mcp_connections.router)
+app.include_router(mcp_gateway.router)
+app.include_router(mcp_approvals.router)
 app.include_router(github_sync_router.router, prefix="/api")
 app.include_router(node_registry.router)
 app.include_router(billing.router)

@@ -64,6 +64,7 @@ from app.services.artifacts import (
 )
 from app.services.credentials import resolve_credential_refs
 from app.services.events import broker
+from app.services.execution_actor import RunAdmissionGuard, current_run_admission_guard
 from app.services.executors.base import RunExecutionContext
 from app.services.executors.local import LocalExecutor
 from app.services.executors.remote import RemoteExecutor
@@ -388,6 +389,8 @@ async def start_run(
                 )
         if _wf_org:
             org_token = current_org_id.set(_wf_org)
+    admission_guard = current_run_admission_guard.get()
+    admission_token = current_run_admission_guard.set(None)
     try:
         return await _start_run_impl(
             workflow_id,
@@ -408,8 +411,10 @@ async def start_run(
             runner_pool_id=runner_pool_id,
             execution_mode=execution_mode,
             required_labels=required_labels,
+            admission_guard=admission_guard,
         )
     finally:
+        current_run_admission_guard.reset(admission_token)
         if org_token is not None:
             current_org_id.reset(org_token)
 
@@ -451,6 +456,7 @@ async def _start_run_impl(
     runner_pool_id: str | None = None,
     execution_mode: str | None = None,
     required_labels: dict | None = None,
+    admission_guard: RunAdmissionGuard | None = None,
 ) -> str:
     """Create a run record and launch execution in the background.
 
@@ -462,6 +468,9 @@ async def _start_run_impl(
     trigger in graph order). A graph with no trigger raises ``ValueError``,
     which the router turns into a 400.
     """
+    from app.services.execution_actor import current_execution_actor, execution_graph_digest
+
+    original_graph_digest = execution_graph_digest(graph)
     if not targets:
         if trigger_node_id is None:
             chosen = first_trigger_node(graph, prefer_manual=True)
@@ -524,6 +533,11 @@ async def _start_run_impl(
 
     inline_lease_token: str | None = None
     async with SessionLocal() as session:
+        if admission_guard is not None:
+            # Validate and lock the approved target in this admission
+            # transaction. A request-owned lock would block our FK insert or
+            # the single-flight lock below while the request waits for us.
+            await admission_guard(session, workflow_id)
         # Resolve runner pool with a clear precedence chain:
         #   1. Deployment override (most specific)
         #   2. Workflow default pool
@@ -690,6 +704,7 @@ async def _start_run_impl(
                 if _lock is not None:
                     _lock.release()
 
+        initiator = current_execution_actor.get()
         run = Run(
             workflow_id=workflow_id,
             workflow_version=version,
@@ -704,6 +719,9 @@ async def _start_run_impl(
             required_labels=run_queue.normalize_required_labels(required_labels),
             deduplication_key=deduplication_key,
             batch_id=batch_id,
+            initiator_id=initiator.id,
+            initiator_kind=initiator.kind,
+            execution_graph_digest=original_graph_digest,
         )
         # A caller can pre-generate the run id (webhook raw-body capture writes
         # artifacts under runs/<pre_run_id>/ before the run exists). Leaving it
@@ -1074,6 +1092,11 @@ async def _execute_run(
         from app.tenancy import current_org_id
 
         org_token = current_org_id.set(org_id)
+    from app.services.execution_actor import ExecutionAttempt, current_execution_attempt
+
+    execution_attempt_token = current_execution_attempt.set(
+        ExecutionAttempt(run_id=run_id, lease_token=attempt_token)
+    )
     try:
         if fenced_attempt:
             # Claim or re-affirm the attempt before loading credentials or
@@ -1152,6 +1175,7 @@ async def _execute_run(
             if sp is not None:
                 sp.set_attribute("nodyra.status", status)
     finally:
+        current_execution_attempt.reset(execution_attempt_token)
         if heartbeat_task is not None:
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -1509,6 +1533,18 @@ async def _execute_run_impl(
 
     workflow_modules: list[dict] = []
     try:
+        if settings.mcp_gateway_enabled:
+            from app.services.execution_actor import execution_graph_digest
+
+            async with SessionLocal() as snapshot_session:
+                admitted_digest = await snapshot_session.scalar(
+                    select(Run.execution_graph_digest).where(Run.id == run_id)
+                )
+            if not admitted_digest or execution_graph_digest(graph_dict) != admitted_digest:
+                raise ValueError(
+                    "Workflow graph changed after run admission; start a new run "
+                    "against the reviewed workflow version"
+                )
         # Load secrets, resolve credentials, and gather code modules in one
         # DB session via the extracted helper (keeps _execute_run_impl readable).
         prep = await _prepare_run_context(
@@ -1745,35 +1781,24 @@ async def _execute_run_impl(
                     tool_name: str,
                     arguments: dict,
                 ) -> Any:
-                    from app.db import SessionLocal as _SessionLocal
-                    from app.services.mcp_client import (
-                        _load_conn_with_secret as _load_conn,
-                    )
-                    from app.services.mcp_client import (
-                        call_tool as _call_tool,
-                    )
-                    from app.services.mcp_client import ensure_tool_allowed
+                    from app.services.mcp_gateway import execute_for_run
 
-                    async with _SessionLocal() as _session:
-                        conn, secret = await _load_conn(connection_id, _run_org, _session)
-                        ensure_tool_allowed(conn, tool_name)
+                    async with SessionLocal() as _session:
                         started = time.monotonic()
                         _emit_mcp_event(
                             {
                                 "type": "mcp_tool_started",
                                 "run_id": run_id,
                                 "connection_id": connection_id,
-                                "connection_name": conn.name,
                                 "tool_name": tool_name,
                             }
                         )
                         try:
-                            result = await _call_tool(
-                                conn,
+                            result = await execute_for_run(
+                                _session,
+                                connection_id,
                                 tool_name,
                                 arguments,
-                                decrypted_secret=secret,
-                                audit_session=_session,
                                 run_id=run_id,
                             )
                         except Exception as exc:
@@ -1782,7 +1807,6 @@ async def _execute_run_impl(
                                     "type": "mcp_tool_finished",
                                     "run_id": run_id,
                                     "connection_id": connection_id,
-                                    "connection_name": conn.name,
                                     "tool_name": tool_name,
                                     "status": "error",
                                     "duration_ms": int((time.monotonic() - started) * 1000),
@@ -1795,7 +1819,6 @@ async def _execute_run_impl(
                                 "type": "mcp_tool_finished",
                                 "run_id": run_id,
                                 "connection_id": connection_id,
-                                "connection_name": conn.name,
                                 "tool_name": tool_name,
                                 "status": "success",
                                 "duration_ms": int((time.monotonic() - started) * 1000),

@@ -26,6 +26,12 @@ api:
       cpu: 1000m
       memory: 1Gi
 
+mcpGateway:
+  # Applies to API and workers. See docs/mcp-gateway.md before enabling.
+  enabled: false
+  rateLimitPerMinute: 120
+  maxArgumentsBytes: 65536
+
 worker:
   replicas: 1
   # Comma-separated key=value capability labels advertised by each worker pod.

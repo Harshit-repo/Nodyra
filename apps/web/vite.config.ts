@@ -84,7 +84,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
-      "/mcp": {
+      "^/mcp(?:\\?|$)": {
+        target: apiTarget,
+        changeOrigin: true,
+      },
+      "/mcp-gateway/": {
         target: apiTarget,
         changeOrigin: true,
       },

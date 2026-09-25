@@ -446,6 +446,8 @@ class _RuntimeProcess:
         self,
         event: dict,
         subworkflow_resolver: SubworkflowResolver | None,
+        *,
+        run_id: str | None = None,
     ) -> None:
         from nodyra.engine.subworkflows import InlineSubworkflow, SubworkflowCall
 
@@ -453,9 +455,23 @@ class _RuntimeProcess:
         try:
             if subworkflow_resolver is None:
                 raise RuntimeError("subprocess runner has no host-side sub-workflow resolver")
-            call = SubworkflowCall.from_payload(
-                {**event, "input": deserialize_value(event.get("input"))}
-            )
+            from app.models import Run
+            from app.tenancy import DEFAULT_ORG_ID, run_as_system
+
+            org_id = DEFAULT_ORG_ID
+            if run_id is not None:
+                with run_as_system():
+                    async with SessionLocal() as session:
+                        parent = await session.get(Run, run_id)
+                        if parent is None:
+                            raise ValueError("Sub-workflow parent run no longer exists")
+                        org_id = parent.org_id
+            call = SubworkflowCall.from_payload({
+                **event,
+                "input": deserialize_value(event.get("input")),
+                "parent_run_id": run_id,
+                "org_id": org_id,
+            })
             outcome = await subworkflow_resolver(call, parent_env_id=self.env_id)
             if isinstance(outcome, InlineSubworkflow):
                 await self._write_message(
@@ -488,27 +504,19 @@ class _RuntimeProcess:
     async def _handle_call_mcp_tool(self, event: dict, run_id: str) -> None:
         """Mirror of the in-process MCP hook: resolve the connection (org
         scoping, secret decryption, allowlist, audit) and answer the runtime."""
-        from app.services.mcp_client import (
-            _load_conn_with_secret as _load_conn,
-        )
-        from app.services.mcp_client import call_tool as _call_tool
-        from app.services.mcp_client import ensure_tool_allowed
+        from app.services.mcp_gateway import execute_for_run
 
         callback_id = event.get("callback_id", "")
         try:
             connection_id = str(event.get("connection_id") or "")
             tool_name = str(event.get("tool_name") or "")
-            arguments = event.get("arguments") or {}
-            org_id = await _resolve_run_org(run_id)
+            arguments = event.get("arguments", {})
             async with SessionLocal() as session:
-                conn, secret = await _load_conn(connection_id, org_id, session)
-                ensure_tool_allowed(conn, tool_name)
-                result = await _call_tool(
-                    conn,
+                result = await execute_for_run(
+                    session,
+                    connection_id,
                     tool_name,
                     arguments,
-                    decrypted_secret=secret,
-                    audit_session=session,
                     run_id=run_id,
                 )
             await self._write_message(
@@ -636,7 +644,7 @@ class _RuntimeProcess:
                     if kind == "call_workflow":
                         last_progress_at = now
                         task = asyncio.create_task(
-                            self._handle_call_workflow(event, subworkflow_resolver)
+                            self._handle_call_workflow(event, subworkflow_resolver, run_id=run_id)
                         )
                         callbacks.add(task)
                         task.add_done_callback(callbacks.discard)

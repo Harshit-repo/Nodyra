@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 import pytest
 from httpx import AsyncClient
 
+from tests.mcp_approval_helpers import mcp_post as _mcp_post
+
 MANUAL_GRAPH = {
     "nodes": [
         {
@@ -63,8 +65,7 @@ async def test_workflow_mcp_tool_name_validated(client: AsyncClient) -> None:
 
 
 async def test_initialize(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc(
             "initialize",
             {
@@ -86,8 +87,7 @@ async def test_initialize(client: AsyncClient) -> None:
 
 
 async def test_initialize_latest_protocol(client: AsyncClient) -> None:
-    response = await client.post(
-        "/mcp",
+    response = await _mcp_post(client,
         json=rpc(
             "initialize",
             {
@@ -101,15 +101,13 @@ async def test_initialize_latest_protocol(client: AsyncClient) -> None:
 
 
 async def test_invalid_origin_is_rejected(client: AsyncClient) -> None:
-    response = await client.post(
-        "/mcp", headers={"Origin": "https://evil.example"}, json=rpc("ping")
+    response = await _mcp_post(client, headers={"Origin": "https://evil.example"}, json=rpc("ping")
     )
     assert response.status_code == 403
 
 
 async def test_unsupported_protocol_header_is_rejected(client: AsyncClient) -> None:
-    response = await client.post(
-        "/mcp",
+    response = await _mcp_post(client,
         headers={"MCP-Protocol-Version": "2099-01-01"},
         json=rpc("ping"),
     )
@@ -124,8 +122,7 @@ async def test_protected_resource_metadata(client: AsyncClient) -> None:
 
 
 async def test_notification_returns_202(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"}
+    resp = await _mcp_post(client, json={"jsonrpc": "2.0", "method": "notifications/initialized"}
     )
     assert resp.status_code == 202
 
@@ -136,8 +133,7 @@ async def test_get_is_405(client: AsyncClient) -> None:
 
 async def test_batch_requests_are_rejected(client: AsyncClient) -> None:
     """Streamable HTTP accepts exactly one MCP message per POST."""
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=[
             rpc("ping", req_id=1),
             rpc("ping", req_id=2),
@@ -148,8 +144,7 @@ async def test_batch_requests_are_rejected(client: AsyncClient) -> None:
 
 
 async def test_batch_with_notification_is_rejected(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=[
             rpc("ping", req_id=1),
             {"jsonrpc": "2.0", "method": "notifications/initialized"},
@@ -159,15 +154,14 @@ async def test_batch_with_notification_is_rejected(client: AsyncClient) -> None:
 
 
 async def test_batch_all_notifications_is_rejected(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=[{"jsonrpc": "2.0", "method": "notifications/initialized"}],
     )
     assert resp.status_code == 400
 
 
 async def test_tools_list_contains_static_tools(client: AsyncClient) -> None:
-    resp = await client.post("/mcp", json=rpc("tools/list"))
+    resp = await _mcp_post(client, json=rpc("tools/list"))
     names = {t["name"] for t in resp.json()["result"]["tools"]}
     assert {
         "run_workflow",
@@ -216,7 +210,7 @@ async def test_mcp_tools_pagination_pages_dynamic_workflow_tools_without_full_ma
     static_count = len(mcp_router.STATIC_TOOLS)
     cursor = mcp_router._cursor(static_count + 250)
 
-    resp = await client.post("/mcp", json=rpc("tools/list", {"cursor": cursor}))
+    resp = await _mcp_post(client, json=rpc("tools/list", {"cursor": cursor}))
     body = resp.json()["result"]
 
     assert calls == [(250, mcp_router.TOOL_PAGE_SIZE, None, None)]
@@ -224,8 +218,7 @@ async def test_mcp_tools_pagination_pages_dynamic_workflow_tools_without_full_ma
     assert body["tools"][0]["name"] == "workflow_tool_250"
     assert "nextCursor" in body
 
-    await client.post(
-        "/mcp", json=rpc("tools/list", {"cursor": body["nextCursor"]})
+    await _mcp_post(client, json=rpc("tools/list", {"cursor": body["nextCursor"]})
     )
     assert calls[-1] == (
         0,
@@ -240,8 +233,7 @@ async def test_mcp_rejects_oversized_or_excessive_cursors(client: AsyncClient) -
 
     excessive = mcp_router._cursor(mcp_router.MAX_CURSOR_OFFSET + 1)
     for cursor in ("x" * (mcp_router.MAX_CURSOR_LENGTH + 1), excessive):
-        response = await client.post(
-            "/mcp", json=rpc("tools/list", {"cursor": cursor})
+        response = await _mcp_post(client, json=rpc("tools/list", {"cursor": cursor})
         )
         assert response.json()["error"]["code"] == -32602
         assert response.json()["error"]["message"] == "Invalid pagination cursor"
@@ -318,8 +310,7 @@ async def test_dynamic_workflow_keyset_is_stable_across_mutations(
 
 async def test_workflow_authoring_guide_tool(client: AsyncClient) -> None:
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -340,8 +331,7 @@ async def test_workflow_authoring_guide_tool(client: AsyncClient) -> None:
 
 async def test_get_node_contracts_returns_llm_guidance(client: AsyncClient) -> None:
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -361,8 +351,7 @@ async def test_get_node_contracts_returns_llm_guidance(client: AsyncClient) -> N
 
 async def test_get_node_type_includes_llm_guidance(client: AsyncClient) -> None:
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {"name": "get_node_type", "arguments": {"node_type": "schedule_trigger"}},
@@ -375,8 +364,7 @@ async def test_get_node_type_includes_llm_guidance(client: AsyncClient) -> None:
 
 
 async def test_tool_arguments_are_validated(client: AsyncClient) -> None:
-    response = await client.post(
-        "/mcp",
+    response = await _mcp_post(client,
         json=rpc("tools/call", {"name": "create_workflow", "arguments": {}}),
     )
     result = response.json()["result"]
@@ -395,8 +383,7 @@ async def test_validate_graph_rejects_cycles(client: AsyncClient) -> None:
             {"source": "code", "target": "trigger"},
         ],
     }
-    response = await client.post(
-        "/mcp",
+    response = await _mcp_post(client,
         json=rpc("tools/call", {"name": "validate_graph", "arguments": {"graph": graph}}),
     )
     result = response.json()["result"]
@@ -427,8 +414,7 @@ async def test_validate_graph_accepts_outputs_override_ports(client: AsyncClient
             }
         ],
     }
-    response = await client.post(
-        "/mcp",
+    response = await _mcp_post(client,
         json=rpc("tools/call", {"name": "validate_graph", "arguments": {"graph": graph}}),
     )
     result = response.json()["result"]
@@ -444,16 +430,14 @@ def _tool_payload(resp) -> dict:
 
 async def test_build_and_run_workflow_via_mcp(client: AsyncClient) -> None:
     created = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "create_workflow", "arguments": {"name": "Via MCP"}}),
         )
     )
     workflow_id = created["workflow_id"]
 
     set_resp = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -470,8 +454,7 @@ async def test_build_and_run_workflow_via_mcp(client: AsyncClient) -> None:
     assert set_resp["node_count"] == 1
 
     run = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {"name": "run_workflow", "arguments": {"workflow_id": workflow_id}},
@@ -484,8 +467,7 @@ async def test_build_and_run_workflow_via_mcp(client: AsyncClient) -> None:
 
 async def test_destructive_mcp_tool_requires_explicit_approval(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Approval WF")
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client, approve=False,
         json=rpc(
             "tools/call",
             {
@@ -496,13 +478,12 @@ async def test_destructive_mcp_tool_requires_explicit_approval(client: AsyncClie
     )
     result = resp.json()["result"]
     assert result["isError"] is True
-    assert "requires explicit human approval" in result["content"][0]["text"]
+    assert "human_approval_required" in result["content"][0]["text"]
 
 
 async def test_set_graph_rejects_unknown_node_type(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Bad Graph WF")
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc(
             "tools/call",
             {
@@ -538,8 +519,7 @@ async def test_set_graph_accepts_switch_rule_output_ports(client: AsyncClient) -
             {"source": "s", "source_output": "vip", "target": "v", "target_input": "input"},
         ],
     }
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc(
             "tools/call",
             {
@@ -560,13 +540,12 @@ async def test_workflow_exposed_as_dynamic_tool(client: AsyncClient) -> None:
         json={"mcp_enabled": True, "mcp_tool_name": "dyn_tool_wf"},
     )
 
-    listing = await client.post("/mcp", json=rpc("tools/list"))
+    listing = await _mcp_post(client, json=rpc("tools/list"))
     names = {t["name"] for t in listing.json()["result"]["tools"]}
     assert "dyn_tool_wf" in names
 
     run = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "dyn_tool_wf", "arguments": {}}),
         )
     )
@@ -574,15 +553,13 @@ async def test_workflow_exposed_as_dynamic_tool(client: AsyncClient) -> None:
 
 
 async def test_unknown_tool_is_method_not_found(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp", json=rpc("tools/call", {"name": "nope_tool", "arguments": {}})
+    resp = await _mcp_post(client, json=rpc("tools/call", {"name": "nope_tool", "arguments": {}})
     )
     assert resp.json()["error"]["code"] == -32601
 
 
 async def test_list_runs_empty(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("tools/call", {"name": "list_runs", "arguments": {"limit": 5}}),
     )
     data = _tool_payload(resp)
@@ -593,13 +570,11 @@ async def test_list_runs_empty(client: AsyncClient) -> None:
 async def test_list_runs_filtered_by_workflow(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "ListRuns WF")
     # trigger a run
-    await client.post(
-        "/mcp",
+    await _mcp_post(client,
         json=rpc("tools/call", {"name": "run_workflow", "arguments": {"workflow_id": workflow_id}}),
     )
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "list_runs", "arguments": {"workflow_id": workflow_id}}),
         )
     )
@@ -610,15 +585,13 @@ async def test_list_runs_filtered_by_workflow(client: AsyncClient) -> None:
 async def test_get_run_events(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Events WF")
     run_data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "run_workflow", "arguments": {"workflow_id": workflow_id}}),
         )
     )
     run_id = run_data["run_id"]
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "get_run_events", "arguments": {"run_id": run_id}}),
         )
     )
@@ -627,8 +600,7 @@ async def test_get_run_events(client: AsyncClient) -> None:
 
 
 async def test_get_run_events_missing_run(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("tools/call", {"name": "get_run_events", "arguments": {"run_id": "doesnotexist"}}),
     )
     assert resp.json()["result"]["isError"] is True
@@ -648,8 +620,7 @@ class _LoopbackSession:
 
     async def _post(self, method: str, params: dict) -> dict:
         self._seq += 1
-        resp = await self._client.post(
-            "/mcp",
+        resp = await _mcp_post(self._client,
             json={"jsonrpc": "2.0", "id": self._seq, "method": method, "params": params},
         )
         data = resp.json()
@@ -736,15 +707,13 @@ class _LoopbackSession:
 async def test_cancel_run(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Cancel WF")
     run_data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "run_workflow", "arguments": {"workflow_id": workflow_id}}),
         )
     )
     # Run already finished (success) — cancel returns its terminal status
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "cancel_run", "arguments": {"run_id": run_data["run_id"]}}),
         )
     )
@@ -753,8 +722,7 @@ async def test_cancel_run(client: AsyncClient) -> None:
 
 
 async def test_cancel_run_missing(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("tools/call", {"name": "cancel_run", "arguments": {"run_id": "ghost"}}),
     )
     assert resp.json()["result"]["isError"] is True
@@ -762,13 +730,11 @@ async def test_cancel_run_missing(client: AsyncClient) -> None:
 
 async def test_get_workflow_stats(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Stats WF")
-    await client.post(
-        "/mcp",
+    await _mcp_post(client,
         json=rpc("tools/call", {"name": "run_workflow", "arguments": {"workflow_id": workflow_id}}),
     )
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "get_workflow_stats", "arguments": {"workflow_id": workflow_id}}),
         )
     )
@@ -779,8 +745,7 @@ async def test_get_workflow_stats(client: AsyncClient) -> None:
 
 
 async def test_get_workflow_stats_missing_workflow(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("tools/call", {"name": "get_workflow_stats", "arguments": {"workflow_id": "ghost"}}),
     )
     assert resp.json()["result"]["isError"] is True
@@ -792,8 +757,7 @@ async def test_patch_node(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Patch WF")
     # patch the trigger node's params
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -822,8 +786,7 @@ async def test_patch_node(client: AsyncClient) -> None:
     }
 
     revisions = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -840,8 +803,7 @@ async def test_patch_node(client: AsyncClient) -> None:
 
 async def test_patch_node_rejects_stale_graph_revision(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Stale Patch WF")
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc(
             "tools/call",
             {
@@ -866,8 +828,7 @@ async def test_patch_node_rejects_stale_graph_revision(client: AsyncClient) -> N
 
 async def test_patch_node_missing_node(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "PatchMiss WF")
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc(
             "tools/call",
             {"name": "patch_node", "arguments": {"workflow_id": workflow_id, "node_id": "nope", "params": {}}},
@@ -880,8 +841,7 @@ async def test_add_and_remove_node(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "AddRemove WF")
 
     add_data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -898,8 +858,7 @@ async def test_add_and_remove_node(client: AsyncClient) -> None:
     assert add_data["node_count"] == 2
 
     rm_data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -914,8 +873,7 @@ async def test_add_and_remove_node(client: AsyncClient) -> None:
 
 async def test_add_node_duplicate_id(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "DupNode WF")
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc(
             "tools/call",
             {"name": "add_node", "arguments": {"workflow_id": workflow_id, "node": {"id": "t", "type": "manual_trigger", "params": {}}}},
@@ -926,8 +884,7 @@ async def test_add_node_duplicate_id(client: AsyncClient) -> None:
 
 async def test_add_node_unknown_type(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "UnkType WF")
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc(
             "tools/call",
             {"name": "add_node", "arguments": {"workflow_id": workflow_id, "node": {"id": "x", "type": "no_such_type", "params": {}}}},
@@ -939,16 +896,13 @@ async def test_add_node_unknown_type(client: AsyncClient) -> None:
 async def test_remove_node_also_removes_edges(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "EdgeClean WF")
     # Add second node and an edge between them using add_node + add_edge
-    await client.post(
-        "/mcp",
+    await _mcp_post(client,
         json=rpc("tools/call", {"name": "add_node", "arguments": {"workflow_id": workflow_id, "node": {"id": "n2", "type": "manual_trigger", "params": {}}}}),
     )
-    await client.post(
-        "/mcp",
+    await _mcp_post(client,
         json=rpc("tools/call", {"name": "add_edge", "arguments": {"workflow_id": workflow_id, "edge": {"source": "t", "target": "n2"}}}),
     )
-    await client.post(
-        "/mcp",
+    await _mcp_post(client,
         json=rpc(
             "tools/call",
             {
@@ -958,29 +912,26 @@ async def test_remove_node_also_removes_edges(client: AsyncClient) -> None:
         ),
     )
     graph_data = _tool_payload(
-        await client.post("/mcp", json=rpc("tools/call", {"name": "get_workflow", "arguments": {"workflow_id": workflow_id}}))
+        await _mcp_post(client, json=rpc("tools/call", {"name": "get_workflow", "arguments": {"workflow_id": workflow_id}}))
     )
     assert all(e.get("target") != "n2" for e in graph_data["graph"]["edges"])
 
 
 async def test_add_and_remove_edge(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "EdgeCRUD WF")
-    await client.post(
-        "/mcp",
+    await _mcp_post(client,
         json=rpc("tools/call", {"name": "add_node", "arguments": {"workflow_id": workflow_id, "node": {"id": "n2", "type": "manual_trigger", "params": {}}}}),
     )
 
     add_data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "add_edge", "arguments": {"workflow_id": workflow_id, "edge": {"source": "t", "target": "n2"}}}),
         )
     )
     assert add_data["edge_count"] == 1
 
     rm_data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -1000,8 +951,7 @@ async def test_add_and_remove_edge(client: AsyncClient) -> None:
 
 async def test_add_edge_missing_source_node(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "EdgeBad WF")
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("tools/call", {"name": "add_edge", "arguments": {"workflow_id": workflow_id, "edge": {"source": "ghost", "target": "t"}}}),
     )
     assert resp.json()["result"]["isError"] is True
@@ -1009,8 +959,7 @@ async def test_add_edge_missing_source_node(client: AsyncClient) -> None:
 
 async def test_remove_edge_not_found(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "EdgeNotFound WF")
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc(
             "tools/call",
             {
@@ -1030,8 +979,7 @@ async def test_remove_edge_not_found(client: AsyncClient) -> None:
 async def test_delete_workflow(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "ToDelete WF")
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -1051,8 +999,7 @@ async def test_delete_workflow(client: AsyncClient) -> None:
 async def test_duplicate_workflow(client: AsyncClient) -> None:
     source_id = await make_workflow(client, "Source WF")
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {"name": "duplicate_workflow", "arguments": {"workflow_id": source_id, "name": "Copy WF"}},
@@ -1065,7 +1012,7 @@ async def test_duplicate_workflow(client: AsyncClient) -> None:
 
     # copy should have the same graph
     copy_data = _tool_payload(
-        await client.post("/mcp", json=rpc("tools/call", {"name": "get_workflow", "arguments": {"workflow_id": data["workflow_id"]}}))
+        await _mcp_post(client, json=rpc("tools/call", {"name": "get_workflow", "arguments": {"workflow_id": data["workflow_id"]}}))
     )
     assert len(copy_data["graph"]["nodes"]) == 1
 
@@ -1073,8 +1020,7 @@ async def test_duplicate_workflow(client: AsyncClient) -> None:
 async def test_duplicate_workflow_default_name(client: AsyncClient) -> None:
     source_id = await make_workflow(client, "Original WF")
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "duplicate_workflow", "arguments": {"workflow_id": source_id}}),
         )
     )
@@ -1085,15 +1031,13 @@ async def test_duplicate_workflow_default_name(client: AsyncClient) -> None:
 async def test_toggle_workflow(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Toggle WF")
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": True, "approved_by_user": True}}),
         )
     )
     assert data["active"] is True
     data2 = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": False, "approved_by_user": True}}),
         )
     )
@@ -1104,8 +1048,7 @@ async def test_list_workflow_versions(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Versions WF")
     await client.post(f"/workflows/{workflow_id}/publish", json={"notes": "v2"})
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "list_workflow_versions", "arguments": {"workflow_id": workflow_id}}),
         )
     )
@@ -1120,8 +1063,7 @@ async def test_rollback_workflow(client: AsyncClient) -> None:
     await client.post(f"/workflows/{workflow_id}/publish", json={"notes": "v2"})
 
     data = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -1140,8 +1082,7 @@ async def test_schedule_crud(client: AsyncClient) -> None:
     assert publish.status_code == 200
 
     created = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -1162,16 +1103,14 @@ async def test_schedule_crud(client: AsyncClient) -> None:
 
     # list
     listing = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc("tools/call", {"name": "list_schedules", "arguments": {"workflow_id": workflow_id}}),
         )
     )
     assert any(s["schedule_id"] == schedule_id for s in listing["schedules"])
 
     updated = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -1190,8 +1129,7 @@ async def test_schedule_crud(client: AsyncClient) -> None:
 
     # toggle off
     toggled = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -1205,8 +1143,7 @@ async def test_schedule_crud(client: AsyncClient) -> None:
 
     # delete
     deleted = _tool_payload(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -1220,8 +1157,7 @@ async def test_schedule_crud(client: AsyncClient) -> None:
 
 
 async def test_create_schedule_missing_workflow(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc(
             "tools/call",
             {
@@ -1239,8 +1175,7 @@ async def test_create_schedule_missing_workflow(client: AsyncClient) -> None:
 
 
 async def test_resources_in_capabilities(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}),
     )
     caps = resp.json()["result"]["capabilities"]
@@ -1248,7 +1183,7 @@ async def test_resources_in_capabilities(client: AsyncClient) -> None:
 
 
 async def test_resources_list(client: AsyncClient) -> None:
-    resp = await client.post("/mcp", json=rpc("resources/list"))
+    resp = await _mcp_post(client, json=rpc("resources/list"))
     result = resp.json()["result"]
     assert "resources" in result
     uris = {r["uri"] for r in result["resources"]}
@@ -1257,7 +1192,7 @@ async def test_resources_list(client: AsyncClient) -> None:
 
 
 async def test_resource_templates_list(client: AsyncClient) -> None:
-    response = await client.post("/mcp", json=rpc("resources/templates/list"))
+    response = await _mcp_post(client, json=rpc("resources/templates/list"))
     templates = response.json()["result"]["resourceTemplates"]
     uri_templates = {template["uriTemplate"] for template in templates}
     assert "nodyra://workflow/{workflow_id}" in uri_templates
@@ -1266,14 +1201,13 @@ async def test_resource_templates_list(client: AsyncClient) -> None:
 
 async def test_resources_list_includes_workflows(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Resource WF")
-    resp = await client.post("/mcp", json=rpc("resources/list"))
+    resp = await _mcp_post(client, json=rpc("resources/list"))
     uris = {r["uri"] for r in resp.json()["result"]["resources"]}
     assert f"nodyra://workflow/{workflow_id}" in uris
 
 
 async def test_resources_read_node_types(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("resources/read", {"uri": "nodyra://node-types"}),
     )
     result = resp.json()["result"]
@@ -1285,8 +1219,7 @@ async def test_resources_read_node_types(client: AsyncClient) -> None:
 
 
 async def test_resources_read_workflow_authoring_guide(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("resources/read", {"uri": "nodyra://workflow-authoring-guide"}),
     )
     result = resp.json()["result"]
@@ -1296,8 +1229,7 @@ async def test_resources_read_workflow_authoring_guide(client: AsyncClient) -> N
 
 
 async def test_resources_read_node_type_contract(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("resources/read", {"uri": "nodyra://node-type/api_endpoint"}),
     )
     result = resp.json()["result"]
@@ -1308,8 +1240,7 @@ async def test_resources_read_node_type_contract(client: AsyncClient) -> None:
 
 async def test_resources_read_workflow(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "ReadRes WF")
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("resources/read", {"uri": f"nodyra://workflow/{workflow_id}"}),
     )
     result = resp.json()["result"]
@@ -1319,8 +1250,7 @@ async def test_resources_read_workflow(client: AsyncClient) -> None:
 
 
 async def test_resources_read_unknown_uri(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("resources/read", {"uri": "nodyra://nonexistent"}),
     )
     assert resp.json()["error"]["code"] == -32601
@@ -1332,15 +1262,14 @@ async def test_resources_read_unknown_uri(client: AsyncClient) -> None:
 
 
 async def test_prompts_in_capabilities(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}),
     )
     assert "prompts" in resp.json()["result"]["capabilities"]
 
 
 async def test_prompts_list(client: AsyncClient) -> None:
-    resp = await client.post("/mcp", json=rpc("prompts/list"))
+    resp = await _mcp_post(client, json=rpc("prompts/list"))
     result = resp.json()["result"]
     assert "prompts" in result
     names = {p["name"] for p in result["prompts"]}
@@ -1348,8 +1277,7 @@ async def test_prompts_list(client: AsyncClient) -> None:
 
 
 async def test_prompts_get_build_workflow(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("prompts/get", {"name": "build_workflow", "arguments": {"description": "send a daily email"}}),
     )
     result = resp.json()["result"]
@@ -1363,16 +1291,14 @@ async def test_prompts_get_build_workflow(client: AsyncClient) -> None:
 
 
 async def test_prompts_validate_required_arguments(client: AsyncClient) -> None:
-    response = await client.post(
-        "/mcp",
+    response = await _mcp_post(client,
         json=rpc("prompts/get", {"name": "build_workflow", "arguments": {}}),
     )
     assert response.json()["error"]["code"] == -32602
 
 
 async def test_prompts_get_debug_run(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("prompts/get", {"name": "debug_run", "arguments": {"run_id": "abc123"}}),
     )
     result = resp.json()["result"]
@@ -1380,8 +1306,7 @@ async def test_prompts_get_debug_run(client: AsyncClient) -> None:
 
 
 async def test_prompts_get_unknown(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/mcp",
+    resp = await _mcp_post(client,
         json=rpc("prompts/get", {"name": "nonexistent_prompt", "arguments": {}}),
     )
     assert resp.json()["error"]["code"] == -32601
@@ -1499,10 +1424,10 @@ async def test_mcp_rate_limit(client: AsyncClient, monkeypatch) -> None:
 
     monkeypatch.setattr(mcp_router, "_rate_allow", _deny_after_one)
 
-    r1 = await client.post("/mcp", json=rpc("ping"))
+    r1 = await _mcp_post(client, json=rpc("ping"))
     assert r1.status_code == 200
 
-    r2 = await client.post("/mcp", json=rpc("ping"))
+    r2 = await _mcp_post(client, json=rpc("ping"))
     assert r2.status_code == 429
 
 
@@ -1511,8 +1436,8 @@ async def test_mcp_rate_limit(client: AsyncClient, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _tool(client: AsyncClient, name: str, args: dict) -> dict:
-    resp = await client.post("/mcp", json=rpc("tools/call", {"name": name, "arguments": args}))
+async def _tool(client: AsyncClient, name: str, args: dict, *, approve: bool = True) -> dict:
+    resp = await _mcp_post(client, approve=approve, json=rpc("tools/call", {"name": name, "arguments": args}))
     assert resp.status_code == 200
     return resp.json()["result"]
 
@@ -1888,7 +1813,7 @@ async def test_consequential_tools_refuse_over_the_wire_without_approval(
         {"workflow_id": wf_id, "node_id": "fn", "code": "output = 1", "approved_by_user": True},
     )
 
-    result = await _tool(client, tool, {"workflow_id": wf_id, **arguments})
+    result = await _tool(client, tool, {"workflow_id": wf_id, **arguments}, approve=False)
     assert result["isError"] is True, (
         f"{tool} ran without approved_by_user, so an agent reaches it without "
         f"involving the human the gate exists for"
@@ -1937,8 +1862,7 @@ async def test_service_error_reaches_the_model_instead_of_an_error_id(
     _patch_tool_handler(monkeypatch, mcp_router, "list_workflows", _boom)
 
     result = (
-        await client.post(
-            "/mcp", json=rpc("tools/call", {"name": "list_workflows", "arguments": {}})
+        await _mcp_post(client, json=rpc("tools/call", {"name": "list_workflows", "arguments": {}})
         )
     ).json()["result"]
 
@@ -1961,8 +1885,7 @@ async def test_unexpected_error_still_hides_behind_a_reference(
     _patch_tool_handler(monkeypatch, mcp_router, "list_workflows", _boom)
 
     result = (
-        await client.post(
-            "/mcp", json=rpc("tools/call", {"name": "list_workflows", "arguments": {}})
+        await _mcp_post(client, json=rpc("tools/call", {"name": "list_workflows", "arguments": {}})
         )
     ).json()["result"]
 
@@ -1983,8 +1906,7 @@ async def test_running_an_unpublished_workflow_says_so(client: AsyncClient) -> N
     workflow_id = await make_workflow(client, "Never published")
 
     result = (
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -2009,8 +1931,7 @@ async def test_running_the_draft_of_an_unpublished_workflow_works(
     workflow_id = await make_workflow(client, "Draft runnable")
 
     result = (
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {
@@ -2034,8 +1955,7 @@ async def test_validating_an_empty_workflow_is_not_valid(client: AsyncClient) ->
     workflow_id = (await client.post("/workflows", json={"name": "Empty"})).json()["id"]
 
     payload = _tool_payload_allowing_error(
-        await client.post(
-            "/mcp",
+        await _mcp_post(client,
             json=rpc(
                 "tools/call",
                 {

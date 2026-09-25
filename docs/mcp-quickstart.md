@@ -51,8 +51,10 @@ node, and runs it". Useful tool names: `list_workflows`, `create_workflow`,
 - Tokens are org-scoped; tools honour the token's scopes.
 - All tool calls hit the audit log like any API call.
 - `/mcp` is rate-limited at 120 requests per minute per principal.
-- Destructive tools (`delete_workflow`, rollbacks) require an explicit
-  `approve: true` argument.
+- Sensitive commands return an approval link. Review the exact command in
+  Nodyra with a separate browser session, then let the client retry unchanged
+  arguments with the single-use `approval_id`. An agent's approval boolean is
+  ignored. See [the approval flow](connect-mcp.md).
 - Graph edits accept `expected_graph_revision` for optimistic concurrency, so
   agents editing alongside humans get a conflict error instead of clobbering.
 - If `auth_required=false`, read-only MCP tools are anonymous by design. Put

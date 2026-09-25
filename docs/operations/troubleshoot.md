@@ -66,9 +66,12 @@ trace UI.
 Run:
 
 ```bash
-NODYRA_MCP_URL=http://localhost:8000/mcp python scripts/mcp_smoke.py --no-token
+NODYRA_MCP_URL=http://localhost:8000/mcp python scripts/mcp_smoke.py
 ```
 
-If auth is required, set `NODYRA_MCP_TOKEN` to a token with workflow
-permissions. Tool write calls must include approval; the smoke script already
-sends `approved_by_user=true`.
+Set `NODYRA_MCP_TOKEN` to a PAT with workflow permissions, and
+`NODYRA_WEB_URL` to the browser URL if it differs from the API origin. Run the
+script in an interactive terminal: it shows a review link for each sensitive
+command. Sign in separately in your browser, review the command, then continue
+the script. Agent-supplied approval booleans cannot authorize execution. See
+[MCP command approvals](../connect-mcp.md).

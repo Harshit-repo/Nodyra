@@ -4,6 +4,7 @@ import json
 
 import app.mcp.tools as mcp_tools
 import app.routers.runs as runs_router
+from tests.mcp_approval_helpers import mcp_post
 
 MANUAL_GRAPH = {
     "nodes": [
@@ -73,8 +74,8 @@ async def test_run_workflow_sandbox_flag_stamps_run(client, monkeypatch):
 
 async def test_mcp_create_workflow_sets_mode_and_resources(client):
     created = tool_payload(
-        await client.post(
-            "/mcp",
+        await mcp_post(
+            client,
             json=tool_call(
                 "create_workflow",
                 {
@@ -93,8 +94,8 @@ async def test_mcp_create_workflow_sets_mode_and_resources(client):
 async def test_mcp_update_workflow_settings_sets_mode(client):
     wf = (await client.post("/workflows", json={"name": "MCP update"})).json()
     result = tool_payload(
-        await client.post(
-            "/mcp",
+        await mcp_post(
+            client,
             json=tool_call(
                 "update_workflow_settings",
                 {"workflow_id": wf["id"], "execution_mode": "sandboxed"},
@@ -114,8 +115,8 @@ async def test_mcp_run_workflow_sandbox_flag_stamps_run(client, monkeypatch):
     monkeypatch.setattr(mcp_tools, "start_run", fake_start_run)
     wf = (await client.post("/workflows", json={"name": "MCP run"})).json()
     result = tool_payload(
-        await client.post(
-            "/mcp",
+        await mcp_post(
+            client,
             json=tool_call(
                 "run_workflow",
                 {

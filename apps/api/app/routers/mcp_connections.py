@@ -190,6 +190,10 @@ async def update_mcp_connection(
         conn.enabled = bool(body["enabled"])
     if "allowed_tools" in body:
         conn.allowed_tools = _validated_allowed_tools(body["allowed_tools"])
+    if set(body) & {"url", "transport", "auth_type", "auth_secret", "headers", "allowed_tools"}:
+        conn.gateway_policy = None
+        conn.tool_cache = None
+        conn.last_synced_at = None
 
     await log_audit(
         session,
@@ -364,6 +368,7 @@ def _row_to_dict(conn: MCPConnection) -> dict:
         "enabled": conn.enabled,
         "allowed_tools": conn.allowed_tools,
         "tool_cache": conn.tool_cache,
+        "gateway_policy_revision": (conn.gateway_policy or {}).get("revision"),
         "last_synced_at": (conn.last_synced_at.isoformat() if conn.last_synced_at else None),
         "created_at": conn.created_at.isoformat() if conn.created_at else None,
         "updated_at": conn.updated_at.isoformat() if conn.updated_at else None,

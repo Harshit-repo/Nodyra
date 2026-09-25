@@ -56,4 +56,7 @@ Outbound MCP tool calls are written to the audit log with action
 `mcp_tool_call`. Operators can review recent calls per connection in Settings
 or through `GET /mcp-connections/{connection_id}/calls`; each row records the
 tool name, run id when available, duration, actor when known, and success or
-error status.
+error status. With the optional [managed gateway](mcp-gateway.md) enabled,
+registered connection calls use a separate durable invocation ledger that
+distinguishes policy denial, provider-reported success, tool errors, and unknown
+outcomes. Direct-URL integration nodes remain outside that managed boundary.

@@ -599,17 +599,23 @@ async def dispatch_provider_webhook(
             await session.commit()
 
         try:
-            run_id = await start_run(
-                workflow.id,
-                version.graph or {"nodes": [], "edges": []},
-                version.version,
-                workflow_version_id=version.id,
-                mode="production",
-                trigger_type="provider",
-                cache={row.node_id: {"main": event.payload}},
-                trigger_node_id=row.node_id,
-                deduplication_key=dedupe_key,
-            )
+            from app.services.execution_actor import system_execution_actor
+
+            # handle_event verified the provider signature and accepted a real
+            # payload above. Attribute the resulting automation independently
+            # from an optional Nodyra session on the incoming HTTP request.
+            with system_execution_actor():
+                run_id = await start_run(
+                    workflow.id,
+                    version.graph or {"nodes": [], "edges": []},
+                    version.version,
+                    workflow_version_id=version.id,
+                    mode="production",
+                    trigger_type="provider",
+                    cache={row.node_id: {"main": event.payload}},
+                    trigger_node_id=row.node_id,
+                    deduplication_key=dedupe_key,
+                )
         except DuplicateRun:
             # Concurrent deliveries of one provider event both passed the
             # "seen this key?" read above before either committed. The unique

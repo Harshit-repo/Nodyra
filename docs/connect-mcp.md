@@ -15,13 +15,60 @@ This guide covers:
 
 ---
 
-## What the agent can do without asking you
+## Human approval is bound to the exact action
 
-Nodyra's MCP tools split into two groups, and the split is worth understanding
-before you point an LLM at a production instance.
+Permission-bearing static tools that create, edit, run, retry, or publish work
+require a **server-owned, single-use approval**. Reads (`get_*` / `list_*`) and
+`cancel_run` do not require a new command approval. Published workflows exposed
+as dynamic MCP tools follow their publication and execution policy.
 
-**These 20 tools refuse until the caller passes `approved_by_user=true`,**
-so a well-behaved client has to come back to you first:
+On the first sensitive `tools/call`, Nodyra returns `isError: true` with a JSON
+object in the text content:
+
+```json
+{
+  "error": "human_approval_required",
+  "approval_id": "<32-character approval ID>",
+  "review_path": "/mcp-approvals/<approval ID>",
+  "org_id": "<workspace ID>",
+  "correlation_id": "<request correlation ID>",
+  "expires_at": "<expiry timestamp>"
+}
+```
+
+The client must show that path on the **Nodyra web app's origin**. The token's
+owner signs in separately in a browser, selects the matching workspace, reviews
+the displayed tool, arguments and target revision, and approves or denies it.
+Only then should the client retry the **same arguments** with the returned
+`approval_id` added. Approval expires after 15 minutes and is consumed once,
+including when the subsequent execution fails. A timeout is not permission to
+repeat an external effect: inspect the recorded outcome before requesting a new
+review.
+
+The server binds the grant to the requesting credential, actor, organization,
+tool, normalized arguments and current target snapshot. A different token,
+changed arguments, edited workflow, expired grant or replay is rejected.
+`approved_by_user` remains accepted for compatibility but **cannot authorize an
+action**.
+
+For `resolve_run_approval`, pass the waiting workflow approval's ID as
+`run_approval_id`. The separate `approval_id` field is reserved for the browser
+review grant authorizing that decision. Existing callers must rename the old
+run-target `approval_id` argument to `run_approval_id`.
+
+Repeating the same pending request with the same credential reuses its review
+ID. Each actor can have up to 25 pending reviews per workspace. Command approval
+records and gateway invocation records follow `AUDIT_LOG_RETENTION_DAYS`
+(90 days by default; `0` disables automatic cleanup).
+
+Use a scoped `ndpat_...` automation token for the MCP client and keep the browser
+session separate. The approval API rejects bearer/PAT approval requests and
+rejects using the requesting session credential as its own browser reviewer.
+The browser decision uses session cookies and CSRF protection. Do not hand an
+agent your browser session cookie or automate the approval decision.
+
+The policy includes `create_workflow`, `run_workflow`, `retry_run`, node and
+workflow edits, and these consequential operations:
 
 - `add_environment_package`
 - `apply_workflow_patch`
@@ -44,34 +91,13 @@ so a well-behaved client has to come back to you first:
 - `update_code`
 - `update_schedule`
 
-The rule they follow: a tool is gated when it changes *what code will run*,
-*whether it runs*, or *whether a human has signed something off*.
-
-**Everything else runs unattended** — every read, and also `run_workflow`,
-`retry_run` and `cancel_run`. Executing a graph that was already approved is the
-point of the integration; the approval happened when the graph was written.
-
-### The honest limit of this
-
-`approved_by_user` is a convention, not a wall. It is a flag the client sets,
-and a client that wanted to could set it without asking anyone. It exists to
-make the consequential moments visible to you in your agent's transcript, not to
-stop a hostile client — for that, the real boundaries are the bearer token, the
-role attached to it, and the sandbox.
-
-So scope the token you hand an agent the way you would scope a colleague's
-access. An MCP session authenticates as a real user and inherits exactly that
-user's permissions: give an agent an owner token and it can do what an owner can.
-
-`apps/api/tests/test_mcp_approval_consistency.py` keeps this page honest — it
-fails if a gated tool stops being gated, if a consequential tool is added
-without a gate, or if this list drifts from the code.
+An approval does not expand RBAC or token scopes. The actor still needs the
+underlying permission when the action is requested, reviewed and executed.
 
 ## Choosing which workflows an agent may run
 
-The section above is about *how* an agent asks. This one is about *what it can
-reach at all*, and it is the stronger of the two controls, because it is enforced
-by the server rather than asserted by the client.
+Command approvals and workflow opt-in are independent server-enforced controls.
+Approval binds one command; opt-in limits which workflows MCP may execute.
 
 By default `run_workflow` accepts any workflow id in the workspace. That is
 usually what you want on a laptop, where the agent and the workflows are both
@@ -129,7 +155,8 @@ agent may execute, it does not widen anything. Scope the token too.
 
 ### Getting a token
 
-Nodyra uses the same session token everywhere. Mint one by logging in:
+Sign in to Nodyra in your browser to review approvals. For read-only API
+experiments, a session bearer token can also be obtained by logging in:
 
 ```bash
 curl -s -X POST http://localhost:8000/auth/login \
@@ -138,12 +165,14 @@ curl -s -X POST http://localhost:8000/auth/login \
 # -> {"token":"eyJ...","user":{...}}
 ```
 
-Use the `token` value as the bearer token. Session tokens carry an `exp`
+Session tokens carry an `exp`
 expiry — when calls start returning `401 Invalid or expired token`, log in
 again for a fresh one. When `AUTH_REQUIRED=false` (pure local dev) the header
-may be omitted entirely.
+may be omitted for read-only local development. Sensitive commands still need
+an authenticated requester and independent browser approval.
 
-For unattended agents, create a revocable token with `POST /auth/api-tokens`:
+For agents, create a revocable automation token with `POST /auth/api-tokens`.
+Keep this token distinct from the browser session used for human review:
 
 ```bash
 curl -s -X POST https://your-host/auth/api-tokens \
@@ -162,6 +191,19 @@ external OAuth 2.1 authorization server protects the deployment. Introspection
 responses must include `active: true`, a Nodyra user id/email in `sub`, the
 tenant in `org_id`, and space-delimited Nodyra permissions in `scope`.
 
+### Calling external tools through the gateway
+
+The workflow-authoring server at `/mcp` is separate from the managed external
+tool gateway at `/mcp-gateway/{connection_id}`. To invoke that gateway with a
+PAT, explicitly grant **`mcp_gateway:call`**; workflow edit/run scopes alone do not grant
+external tool access. The owner must also configure an enabled MCP connection,
+approve its discovered tool catalog, and set its tool policy. Credentials for
+the downstream server stay with Nodyra.
+
+See [the MCP gateway guide](mcp-gateway.md) for deployment, catalog review,
+schema drift behavior, limits, and execution outcomes. Neither MCP endpoint
+makes provider-reported success proof that a downstream write committed.
+
 ### What each token can do (RBAC)
 
 Tool permissions map onto Nodyra's existing role table:
@@ -169,8 +211,9 @@ Tool permissions map onto Nodyra's existing role table:
 | Tool group | Permission | Minimum role |
 |---|---|---|
 | `list_*`, `get_*`, `validate_graph` | none | viewer (no auth needed if `AUTH_REQUIRED=false`) |
-| `run_workflow`, per-workflow tools | `workflow:run` | editor |
-| `create_workflow`, `set_workflow_graph`, `publish_workflow` | `workflow:write` | editor |
+| `run_workflow`, per-workflow tools | `workflow:run` | editor; static run commands also need a bound approval |
+| `create_workflow`, `set_workflow_graph`, `publish_workflow` | `workflow:write` | editor plus a bound approval |
+| External gateway tool calls | `mcp_gateway:call` | editor, admin or owner; explicitly scoped on the PAT |
 
 A transport-level auth failure is HTTP `401`. A *tool*-level failure (bad node
 type, missing param, run error) comes back as a normal MCP result with
@@ -256,13 +299,25 @@ above works regardless of version.)
 
 ### Raw script (no SDK)
 
-See [`scripts/mcp_smoke.py`](../scripts/mcp_smoke.py) — a ~80-line stdlib-only
-client that runs the full `initialize → create → set_graph → validate → run →
-publish` loop. Drive it with:
+See [`scripts/mcp_smoke.py`](../scripts/mcp_smoke.py), a stdlib-only client for
+Nodyra's JSON HTTP endpoint. It initializes the protocol, creates a workflow,
+validates and saves its graph, runs it, and publishes only after a successful
+run. Run it from an **interactive terminal**:
 
 ```bash
-NODYRA_MCP_TOKEN=eyJ... python scripts/mcp_smoke.py
+NODYRA_MCP_TOKEN=ndpat_... \
+NODYRA_MCP_URL=http://localhost:8000/mcp \
+NODYRA_WEB_URL=http://localhost:5173 \
+python scripts/mcp_smoke.py
 ```
+
+Set `NODYRA_WEB_URL` to your actual browser origin (for example the Compose web
+port or your public HTTPS URL). At each sensitive action the script prints its
+review link. Approve it in Nodyra, then press Enter in the terminal to retry the
+exact command. Pressing Enter alone does not grant approval; the server checks
+the browser decision. The script never calls the review decision API and never
+sets `approved_by_user`. Without an interactive terminal, it stops and prints
+the review link and exact `tools/call` retry payload.
 
 ---
 
@@ -324,15 +379,16 @@ The reliable loop an LLM should follow (and the one `mcp_smoke.py` demonstrates)
 
 1. `list_node_types` (with `search`/`category`) → shortlist nodes.
 2. `get_node_type` on each chosen node → exact param names, defaults, ports.
-3. `create_workflow` → get `workflow_id`.
+3. `create_workflow` → request review, retry with its approval ID, get `workflow_id`.
 4. `set_workflow_graph` → save the draft (returns validation errors as readable
    text — fix and retry).
-5. `run_workflow` (`use_draft: true`) → check `status`/`output`/`errors`.
-6. `publish_workflow` once green.
+5. `run_workflow` (`use_draft: true`) → review this run, then check `status`/`output`/`errors`.
+6. Review and retry `publish_workflow` once green. Each command uses its own grant.
 
-### Verified example
+### Example after browser approvals
 
-Running `scripts/mcp_smoke.py` against the local stack produces:
+After approving each requested action, a successful local smoke run has this
+shape (approval prompts omitted):
 
 ```
 initialize -> {'name': 'nodyra', 'version': '0.0.1'}
@@ -359,8 +415,9 @@ publish_workflow -> {... "version": 2}
 > with an `http_request` node and returns the `stargazers_count`. Run and show
 > me the output."
 
-Because run errors and validation errors come back as `isError` text, the model
-will iterate (wrong key, missing param, unknown node id) until the run is green.
+Validation errors come back as `isError` text so the client can correct an
+invalid graph. A `human_approval_required` response must instead be shown to the
+user; the model cannot satisfy it by setting a boolean or modifying the command.
 
 ---
 

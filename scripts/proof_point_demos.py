@@ -7,8 +7,10 @@ an external LLM provider. It proves:
 2. AI-inspectable: the same workflow can be explained, checked, and published
    through the human-review surfaces.
 
-The MCP-native proof is `scripts/mcp_smoke.py`, which runs in the same CI smoke
-job and exercises workflow creation/running/publishing through MCP tools.
+The MCP-native proof is `scripts/ci_mcp_approval_smoke.py`, which runs in the
+same disposable CI job and exercises workflow creation/running/publishing
+through MCP tools with a separate browser reviewer. Operators use
+`scripts/mcp_smoke.py` with interactive human review.
 """
 
 from __future__ import annotations

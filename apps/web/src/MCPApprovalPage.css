@@ -1,0 +1,23 @@
+.mcp-approval-page { max-width: 900px; padding: 32px; margin: 0 auto; }
+.mcp-approval-heading { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 28px; }
+.mcp-approval-heading svg { color: var(--accent); flex-shrink: 0; margin-top: 5px; }
+.mcp-approval-page h1 { margin: 0 0 8px; font-size: 26px; line-height: 1.25; }
+.mcp-approval-page h2 { font-size: 18px; margin: 30px 0 8px; }
+.mcp-approval-page p { line-height: 1.6; max-width: 72ch; }
+.mcp-approval-heading p { margin: 0; color: var(--ink-2); }
+.mcp-approval-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 32px; padding: 24px 0; border-block: 1px solid var(--line); }
+.mcp-approval-page dt { color: var(--ink-2); font-size: 12px; margin-bottom: 5px; }
+.mcp-approval-page dd { margin: 0; overflow-wrap: anywhere; }
+.mcp-approval-code { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 20px; max-height: 460px; overflow: auto; font: 13px/1.6 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.mcp-approval-decision { margin: 28px 0; padding-top: 24px; border-top: 1px solid var(--line); }
+.mcp-approval-confirm { display: flex; gap: 10px; align-items: center; min-height: 44px; cursor: pointer; }
+.mcp-approval-confirm input { width: 18px; height: 18px; accent-color: var(--accent); flex-shrink: 0; }
+.mcp-approval-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.mcp-approval-actions .btn { min-height: 44px; }
+.mcp-approval-error { color: var(--color-error); }
+.mcp-approval-outcome { padding-block: 20px; }
+.mcp-approval-reference { margin: 24px 0; }
+.mcp-approval-reference summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; text-decoration: underline; text-underline-offset: 3px; }
+.mcp-approval-reference dd { margin-bottom: 12px; }
+.mcp-approval-page :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 640px) { .mcp-approval-page { padding: 24px 16px; } .mcp-approval-facts { grid-template-columns: 1fr; gap: 18px; } .mcp-approval-code { padding: 14px; } .mcp-approval-actions { flex-direction: column; } }

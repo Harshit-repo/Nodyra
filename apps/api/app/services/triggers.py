@@ -34,6 +34,7 @@ from app.models import (
     Workflow,
     WorkflowVersion,
 )
+from app.services.execution_actor import system_execution_actor
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
 from app.tenancy import run_as_org, run_as_system
@@ -996,18 +997,21 @@ async def dispatch_webhook(
                 # shorter transaction boundary.
                 await dispatch_session.commit()
                 try:
-                    run_id = await start_run(
-                        workflow.id,
-                        graph,
-                        version_number,
-                        workflow_version_id=version_id,
-                        mode="test" if prefer_draft else "production",
-                        trigger_type="webhook",
-                        cache={node["id"]: {seed_output: node_payload}},
-                        trigger_node_id=node["id"],
-                        deduplication_key=dedup_key,
-                        run_id=pre_run_id,
-                    )
+                    # The configured trigger and its ingress checks authorize
+                    # this automation; the HTTP caller is not a Nodyra user.
+                    with system_execution_actor():
+                        run_id = await start_run(
+                            workflow.id,
+                            graph,
+                            version_number,
+                            workflow_version_id=version_id,
+                            mode="test" if prefer_draft else "production",
+                            trigger_type="webhook",
+                            cache={node["id"]: {seed_output: node_payload}},
+                            trigger_node_id=node["id"],
+                            deduplication_key=dedup_key,
+                            run_id=pre_run_id,
+                        )
                 except DuplicateRun:
                     # Another delivery of this same event won the race between
                     # the read above and the insert. That is the idempotency
@@ -1160,16 +1164,17 @@ async def _execute_poll(
         graph = version.graph or {}
 
     for event_payload in result.events:
-        await start_run(
-            sub.workflow_id,
-            graph,
-            version.version,
-            workflow_version_id=version.id,
-            mode="production",
-            trigger_type="provider_trigger",
-            trigger_node_id=sub.node_id,
-            cache={sub.node_id: {"main": event_payload}},
-        )
+        with system_execution_actor():
+            await start_run(
+                sub.workflow_id,
+                graph,
+                version.version,
+                workflow_version_id=version.id,
+                mode="production",
+                trigger_type="provider_trigger",
+                trigger_node_id=sub.node_id,
+                cache={sub.node_id: {"main": event_payload}},
+            )
 
 
 async def _poll_subscriptions(now: datetime) -> None:
@@ -1353,7 +1358,7 @@ async def _dispatch_schedule_occurrences(now: datetime, *, limit: int = 100) -> 
         error: Exception | None = None
         if run_id is None:
             try:
-                with run_as_org(occurrence.org_id):
+                with run_as_org(occurrence.org_id), system_execution_actor():
                     run_id = await start_run(
                         occurrence.workflow_id,
                         occurrence.graph,

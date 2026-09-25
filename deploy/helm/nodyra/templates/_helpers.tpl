@@ -54,6 +54,12 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
   value: {{ .Values.api.publicApiUrl | quote }}
 - name: MCP_AUTHORIZATION_SERVER_URL
   value: {{ .Values.api.mcpAuthorizationServerUrl | quote }}
+- name: MCP_GATEWAY_ENABLED
+  value: {{ .Values.mcpGateway.enabled | quote }}
+- name: MCP_GATEWAY_RATE_LIMIT_PER_MINUTE
+  value: {{ .Values.mcpGateway.rateLimitPerMinute | quote }}
+- name: MCP_GATEWAY_MAX_ARGUMENTS_BYTES
+  value: {{ .Values.mcpGateway.maxArgumentsBytes | quote }}
 - name: MCP_OAUTH_INTROSPECTION_URL
   value: {{ .Values.api.mcpOauthIntrospectionUrl | quote }}
 - name: MCP_OAUTH_CLIENT_ID

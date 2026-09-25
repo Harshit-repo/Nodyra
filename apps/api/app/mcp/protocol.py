@@ -31,7 +31,12 @@ SERVER_INSTRUCTIONS = (
     "to choose nodes, validate_workflow_graph before running, run_workflow with "
     "use_draft=true for tests, and publish_workflow only after validation succeeds "
     "and human approval is explicit. Production schedules require create_schedule "
-    "or update_schedule after publishing."
+    "or update_schedule after publishing. Static mutations require server-verified "
+    "human approval: call with the intended arguments, show the returned review_path "
+    "to the user in their Nodyra browser, and retry the same arguments with approval_id "
+    "after approval. approved_by_user is not authorization. Use an automation token "
+    "for MCP and a separate browser session for review. Reads, emergency cancel_run, "
+    "and explicitly published dynamic workflow tools do not require per-call approval."
 )
 SERVER_CAPABILITIES: dict[str, Any] = {
     # This endpoint is intentionally stateless and opens no server-initiated

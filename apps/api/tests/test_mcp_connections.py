@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-import httpx
 import pytest
 
 from app.models import MCPConnection
 from app.services.mcp_client import (
+    _PROTOCOL_VERSIONS,
     MCPError,
+    MCPTransportError,
     _build_auth_headers,
     _load_conn_with_secret,
     _unwrap_mcp_result,
@@ -25,7 +26,7 @@ from app.services.mcp_client import (
 
 _MOCK_TOOLS_RESPONSE = {
     "jsonrpc": "2.0",
-    "id": 1,
+    "id": 2,
     "result": {
         "tools": [
             {
@@ -60,7 +61,7 @@ _MOCK_TOOLS_RESPONSE = {
 
 _MOCK_CALL_RESPONSE = {
     "jsonrpc": "2.0",
-    "id": 1,
+    "id": 2,
     "result": {
         "content": [{"type": "text", "text": "hello world"}],
     },
@@ -68,7 +69,7 @@ _MOCK_CALL_RESPONSE = {
 
 _MOCK_CALL_ERROR = {
     "jsonrpc": "2.0",
-    "id": 1,
+    "id": 2,
     "error": {"code": -32000, "message": "Tool execution failed"},
 }
 
@@ -76,6 +77,29 @@ _MOCK_CALL_ERROR = {
 # ---------------------------------------------------------------------------
 # Unit tests for service functions
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def mcp_http_lifecycle(httpx_mock):
+    """Legacy transport cases now negotiate a real MCP session first."""
+    httpx_mock.add_response(
+        method="POST",
+        match_json={
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": _PROTOCOL_VERSIONS[0], "capabilities": {},
+                       "clientInfo": {"name": "nodyra", "version": "1.0"}},
+        },
+        json={"jsonrpc": "2.0", "id": 1, "result": {
+            "protocolVersion": _PROTOCOL_VERSIONS[0], "capabilities": {"tools": {}},
+            "serverInfo": {"name": "fixture", "version": "1.0"},
+        }},
+        is_optional=True, is_reusable=True,
+    )
+    httpx_mock.add_response(
+        method="POST", status_code=202,
+        match_json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        is_optional=True, is_reusable=True,
+    )
 
 
 class TestBuildAuthHeaders:
@@ -189,14 +213,14 @@ class TestDiscoverTools:
         httpx_mock.add_response(
             url="https://mcp.example.com/",
             method="POST",
-            json={"jsonrpc": "2.0", "id": 1, "error": {"message": "bad request"}},
+            json={"jsonrpc": "2.0", "id": 2, "error": {"code": -32602, "message": "bad request"}},
         )
         conn = AsyncMock(spec=MCPConnection)
         conn.url = "https://mcp.example.com/"
         conn.headers = {}
         conn.auth_type = "none"
 
-        with pytest.raises(MCPError, match="bad request"):
+        with pytest.raises(MCPError, match="Tool execution failed"):
             await discover_tools(conn, decrypted_secret=None)
 
     async def test_ssrf_blocked(self, httpx_mock, monkeypatch):
@@ -261,7 +285,7 @@ class TestCallTool:
         conn.headers = {}
         conn.auth_type = "none"
 
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(MCPTransportError, match="status 500"):
             await call_tool(conn, "echo", {}, decrypted_secret=None)
 
 
@@ -410,11 +434,13 @@ async def test_mcp_tool_audit_records_success_and_error_calls(client, httpx_mock
     httpx_mock.add_response(
         url="https://mcp.example.com/mcp",
         method="POST",
+        match_json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "echo", "arguments": {"message": "hello"}}},
         json=_MOCK_CALL_RESPONSE,
     )
     httpx_mock.add_response(
         url="https://mcp.example.com/mcp",
         method="POST",
+        match_json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "explode", "arguments": {}}},
         json=_MOCK_CALL_ERROR,
     )
 

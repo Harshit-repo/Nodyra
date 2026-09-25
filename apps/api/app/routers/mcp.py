@@ -58,11 +58,19 @@ from app.models import User
 from app.security import (
     _PERMISSION_MIN_ROLE,
     _REQUIRES_AUTHENTICATED,
-    _role_for,
     current_user,
-    role_allows,
+    require_permission,
 )
+from app.services.execution_actor import current_run_admission_guard
 from app.services.json_responses import NodyraJSONResponse
+from app.services.mcp_approvals import (
+    RUN_COMMANDS,
+    ApprovalError,
+    ApprovalRequired,
+    approved_command,
+    authorize_command,
+    run_admission_guard,
+)
 from app.services.rate_limit import allow as _rate_allow
 from app.tenancy import current_org_id
 
@@ -232,7 +240,6 @@ async def _check_permission(
     """RBAC for one tool call. Raises McpToolError on denial."""
     if permission is None:
         return
-    minimum = _PERMISSION_MIN_ROLE[permission]
     if user is None:
         # Mirror require_permission: some permissions demand an authenticated
         # actor even when auth_required is globally off (see security.py).
@@ -240,16 +247,14 @@ async def _check_permission(
             raise McpToolError("Authentication required for this tool.")
         return
     org_id = current_org_id.get() if settings.multi_tenancy_enabled else None
-    role = await _role_for(session, user, org_id)
-    if not role_allows(role, minimum):
-        raise McpToolError(f"This tool requires the {minimum} role or higher.")
-    token_scopes = getattr(request.state, "api_token_scopes", None)
-    if (
-        token_scopes is not None
-        and permission not in token_scopes
-        and "*" not in token_scopes
-    ):
-        raise McpToolError(f"Automation token does not grant {permission}.")
+    try:
+        # Use exactly the REST permission policy: a custom role replaces its
+        # membership's built-in role, and automation scopes remain an upper bound.
+        await require_permission(permission)(
+            request=request, user=user, org_id=org_id, session=session,
+        )
+    except HTTPException as exc:
+        raise McpToolError(str(exc.detail)) from exc
 
 
 async def _dispatch_single(
@@ -339,7 +344,29 @@ async def _dispatch_single(
                 # metadata added by ``McpTool.descriptor`` is accepted by the
                 # call path as well as advertised to clients.
                 validate_tool_arguments(tool.descriptor()["inputSchema"], arguments)
-                payload = await tool.handler(session, user, arguments)
+                if tool.requires_approval:
+                    approval = await authorize_command(
+                        session, user, request, tool_name=name,
+                        permission=tool.permission, arguments=arguments,
+                        input_schema=tool.descriptor()["inputSchema"],
+                    )
+                    token = approved_command.set(name)
+                    guard_token = current_run_admission_guard.set(
+                        run_admission_guard(approval, arguments) if name in RUN_COMMANDS else None
+                    )
+                    try:
+                        if name in RUN_COMMANDS:
+                            # Runner owns its own admission transaction; it
+                            # rechecks the snapshot under its own row locks.
+                            # Keeping these locks while awaiting it deadlocks
+                            # PostgreSQL FK checks and single-flight admission.
+                            await session.close()
+                        payload = await tool.handler(session, user, arguments)
+                    finally:
+                        current_run_admission_guard.reset(guard_token)
+                        approved_command.reset(token)
+                else:
+                    payload = await tool.handler(session, user, arguments)
                 return jsonrpc_result(req_id, tool_result(payload))
             # Dynamic per-workflow tool — running a workflow needs workflow:run.
             await _check_permission(session, user, "workflow:run", request)
@@ -347,6 +374,10 @@ async def _dispatch_single(
             if payload is not None:
                 return jsonrpc_result(req_id, tool_result(payload))
             return jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown tool: {name}")
+        except ApprovalRequired as exc:
+            return jsonrpc_result(req_id, tool_result(exc.payload, is_error=True))
+        except ApprovalError as exc:
+            return jsonrpc_result(req_id, tool_result(str(exc), is_error=True))
         except McpToolError as exc:
             return jsonrpc_result(req_id, tool_result(str(exc), is_error=True))
         except HTTPException as exc:

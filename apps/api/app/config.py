@@ -543,6 +543,11 @@ class Settings(BaseSettings):
     # JSON-RPC response body so a hostile server can't balloon worker memory.
     mcp_tool_timeout_seconds: float = 30.0
     mcp_max_response_bytes: int = 5 * 1024 * 1024
+    # Optional embedded gateway. No separate service is required. Managed
+    # worker calls use the same policy when enabled on API and workers.
+    mcp_gateway_enabled: bool = False
+    mcp_gateway_rate_limit_per_minute: int = Field(default=120, ge=1, le=100000)
+    mcp_gateway_max_arguments_bytes: int = Field(default=65536, ge=1024, le=1048576)
     # C3: Session hardening — httpOnly cookie auth + CSRF + WS tickets.
     # When auth_required=True, the SPA can authenticate via either:
     #   1. Bearer token in Authorization header (existing, unchanged)

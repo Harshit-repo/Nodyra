@@ -27,6 +27,8 @@ from app.db import SessionLocal
 from app.models import (
     Artifact,
     AuditEvent,
+    MCPCommandApproval,
+    MCPGatewayInvocation,
     NodeRun,
     Run,
     RunApproval,
@@ -194,6 +196,12 @@ async def prune_audit_logs(now: datetime | None = None) -> int:
     async with SessionLocal() as session:
         result = await session.execute(
             delete(AuditEvent).where(AuditEvent.created_at < cutoff)
+        )
+        await session.execute(
+            delete(MCPCommandApproval).where(MCPCommandApproval.created_at < cutoff)
+        )
+        await session.execute(
+            delete(MCPGatewayInvocation).where(MCPGatewayInvocation.created_at < cutoff)
         )
         await session.commit()
     return int(result.rowcount or 0)
