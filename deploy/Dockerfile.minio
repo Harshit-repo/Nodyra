@@ -1,0 +1,25 @@
+# Upstream MinIO is source-only; do not rely on retired registry images.
+# The local-storage profile does not build or run this optional S3 service.
+FROM golang:1.26-bookworm AS server-build
+ENV CGO_ENABLED=0
+RUN go install github.com/minio/minio@RELEASE.2025-10-15T17-29-55Z
+
+FROM golang:1.26-bookworm AS client-build
+ENV CGO_ENABLED=0
+RUN go install github.com/minio/mc@RELEASE.2025-08-13T08-35-41Z
+
+FROM alpine:3.24 AS server
+RUN apk add --no-cache ca-certificates curl
+COPY --from=server-build /go/bin/minio /usr/local/bin/minio
+COPY --from=client-build /go/bin/mc /usr/local/bin/mc
+LABEL org.opencontainers.image.source="https://github.com/minio/minio" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
+ENTRYPOINT ["minio"]
+CMD ["server", "/data", "--console-address", ":9001"]
+
+FROM alpine:3.24 AS client
+RUN apk add --no-cache ca-certificates
+COPY --from=client-build /go/bin/mc /usr/local/bin/mc
+LABEL org.opencontainers.image.source="https://github.com/minio/mc" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
+ENTRYPOINT ["mc"]

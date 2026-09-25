@@ -18,6 +18,10 @@ env:
 jobs:
   certify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
     services:
       postgres:
         image: postgres:16
@@ -129,17 +133,6 @@ jobs:
           if-no-files-found: error
           retention-days: 400
 
-  release:
-    needs: certify
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-      id-token: write
-
-    steps:
-      - uses: actions/checkout@v7
-
       - name: Normalize container repository names
         shell: bash
         run: |
@@ -215,6 +208,8 @@ jobs:
           image: ${{ env.IMAGE_API }}@${{ steps.build-api.outputs.digest }}
           format: spdx-json
           output-file: sbom-api.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
 
       - name: Generate Web SBOM
         uses: anchore/sbom-action@v0
@@ -222,6 +217,8 @@ jobs:
           image: ${{ env.IMAGE_WEB }}@${{ steps.build-web.outputs.digest }}
           format: spdx-json
           output-file: sbom-web.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
 
       - name: Generate Runner SBOM
         uses: anchore/sbom-action@v0
@@ -229,6 +226,8 @@ jobs:
           image: ${{ env.IMAGE_RUNNER }}@${{ steps.build-runner.outputs.digest }}
           format: spdx-json
           output-file: sbom-runner.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
 
       # anchore/scan-action v7.4.0, pinned to the immutable release commit.
       - name: Scan API SBOM for high and critical vulnerabilities
@@ -295,11 +294,15 @@ jobs:
               "$ref"
           done 2>&1 | tee cosign-verification.txt
 
-      - name: Download certification evidence
-        uses: actions/download-artifact@v8
-        with:
-          name: release-certification-evidence
-          path: certification-evidence
+      # Keep certification and publishing on the same runner. Evidence remains
+      # available even when the optional Actions artifact copy hits its quota.
+      - name: Collect certification evidence
+        run: |
+          mkdir -p certification-evidence
+          cp --parents pytest-results-release.xml pip-audit-release.json \
+            product-scorecard-evidence.json engine-planning-benchmark.json \
+            apps/web/npm-audit-release.json apps/web/web-test-summary.txt \
+            apps/web/dist/bundle-budget-report.json certification-evidence/
 
       - name: Build hash-addressed release evidence manifest
         run: |

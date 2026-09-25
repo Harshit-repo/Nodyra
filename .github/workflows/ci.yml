@@ -41,6 +41,7 @@ jobs:
           --output engine-throughput-benchmark.json
       - name: Upload engine throughput trend artifact
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: engine-throughput-benchmark
@@ -48,6 +49,7 @@ jobs:
           retention-days: 30
       - name: Upload engine planning trend artifact
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: engine-planning-benchmark
@@ -499,6 +501,7 @@ jobs:
             --max-rto-seconds 3600
       - name: Upload redacted recovery evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: recovery-evidence

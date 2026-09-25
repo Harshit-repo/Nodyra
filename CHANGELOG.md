@@ -3,8 +3,11 @@
 ## 1.0.1 - 2026-09-25
 
 - Self-hosted installation with persistent local artifacts and documented HTTPS setup.
-- Restore fresh installs using official MinIO Quay images with pinned digests.
+- Restore bundled S3 installs by building pinned official MinIO source releases
+  instead of relying on retired registry images. The local-storage profile needs
+  no MinIO service.
 - Include Debian PCRE2 security updates in the Python container images.
+- Update AnyIO and Soup Sieve to resolve newly reported security findings.
 - Bind configured webhook timestamps to their HMAC signatures to prevent replay
   by replacing the timestamp on a captured payload.
 - Improve runtime callbacks, environment rebuild handling, loop execution,
