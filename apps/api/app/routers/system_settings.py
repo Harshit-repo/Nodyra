@@ -1,8 +1,9 @@
 """Workspace-wide runtime settings (singleton row), editable by admins."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import get_session
 from app.models import SystemSetting, User
 from app.schemas import (
@@ -86,6 +87,7 @@ def _license_info(lic) -> LicenseInfo:
             "seats": lic.limits.seats,
         },
         notice=lic.notice,
+        managed_by_environment=bool(settings.license_key),
     )
 
 
@@ -108,8 +110,13 @@ async def apply_license(
     session: AsyncSession = Depends(get_session),
     actor: User | None = Depends(optional_current_user),
 ):
+    if settings.license_key:
+        raise HTTPException(409, "This license is managed by NODYRA_LICENSE_KEY. Update or remove that environment setting and restart before applying a key here.")
+    candidate = licensing.verify_license_key(body.license_key.strip())
+    if not candidate.valid or candidate.edition is licensing.Edition.COMMUNITY:
+        raise HTTPException(400, "The key is invalid, expired, or does not grant a paid edition. Your installed license has not changed.")
     row = await _load(session)
-    row.license_key = body.license_key
+    row.license_key = body.license_key.strip()
     await log_audit(
         session, "update", "license", row.id, "license key applied",
         actor_id=actor.id if actor else None,
@@ -129,6 +136,8 @@ async def remove_license(
     session: AsyncSession = Depends(get_session),
     actor: User | None = Depends(optional_current_user),
 ):
+    if settings.license_key:
+        raise HTTPException(409, "This license is managed by NODYRA_LICENSE_KEY. Remove that environment setting and restart to return to Community.")
     row = await _load(session)
     row.license_key = None
     await log_audit(

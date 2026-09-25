@@ -1,4 +1,4 @@
-"""Offline license-key minting tool. Run by the vendor, never shipped.
+"""Offline license-key minting tool. Run only by the vendor.
 
 Generate a keypair once:
     python -m tools.mint_license keygen --out license_key
@@ -50,7 +50,7 @@ def _sign(args: argparse.Namespace) -> None:
         "customer": args.customer,
         "issued_at": int(time.time()),
     }
-    if args.seats:
+    if args.seats is not None:
         payload["seats"] = args.seats
     if args.days:
         payload["expires_at"] = int(time.time()) + args.days * 86400
@@ -59,6 +59,13 @@ def _sign(args: argparse.Namespace) -> None:
     body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=")
     sig = base64.urlsafe_b64encode(priv.sign(body)).rstrip(b"=")
     print(f"{body.decode()}.{sig.decode()}")
+
+
+def _nonnegative(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
+    return number
 
 
 def main() -> None:
@@ -72,8 +79,8 @@ def main() -> None:
     sg.add_argument("--private", required=True, help="path to the PEM private key")
     sg.add_argument("--tier", required=True, choices=["pro", "enterprise"])
     sg.add_argument("--customer", required=True)
-    sg.add_argument("--seats", type=int, default=0)
-    sg.add_argument("--days", type=int, default=0, help="validity in days (0 = perpetual)")
+    sg.add_argument("--seats", type=_nonnegative, default=None, help="seat limit (omit for edition default; 0 = unlimited)")
+    sg.add_argument("--days", type=_nonnegative, default=0, help="validity in days (0 = perpetual)")
     sg.add_argument("--feature", action="append", default=[], help="extra feature grant")
 
     args = p.parse_args()

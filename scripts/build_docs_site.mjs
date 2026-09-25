@@ -43,6 +43,7 @@ const guides = [
   ['architecture', 'Architecture', 'Project reference', 'docs/architecture.md'],
   ['status-matrix', 'Feature status', 'Project reference', 'docs/status-matrix.md'],
   ['licensing', 'Licensing', 'Project reference', 'docs/licensing.md'],
+  ['subscriptions', 'Paid licenses and renewal', 'Project reference', 'docs/subscriptions.md'],
   ['release-policy', 'Release policy', 'Project reference', 'docs/release-policy.md'],
   ['documentation-site', 'Publish this website', 'Project reference', 'docs/documentation-site.md'],
 ];

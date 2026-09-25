@@ -54,7 +54,8 @@ for (const width of [320, 390, 768, 1024, 1366]) {
 
 test('email actions are honest and self-hosting opens the quickstart', async ({ page }) => {
   const links = page.getByRole('link', { name: 'Request early access', exact: true });
-  await expect(links).toHaveCount(3);
+  await expect(links).toHaveCount(2);
+  await expect(page.getByRole('link', { name: 'Request a license', exact: true })).toHaveAttribute('href', 'mailto:sharma.har97@gmail.com?subject=Nodyra%20license%20enquiry');
   for (const link of await links.all()) await expect(link).toHaveAttribute('href', 'mailto:sharma.har97@gmail.com?subject=Nodyra%20early%20access');
   await expect(page.locator('form')).toHaveCount(0);
   await page.getByRole('link', { name: 'Start self-hosting' }).first().click();

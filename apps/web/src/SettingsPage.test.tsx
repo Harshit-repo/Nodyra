@@ -195,4 +195,16 @@ describe("SettingsPage", () => {
     expect(screen.getAllByText(/\/mcp/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Bearer <paste-token-here>/).length).toBeGreaterThan(0);
   });
+
+  it("explains environment-managed licensing and disables misleading mutations", async () => {
+    setUser(owner);
+    vi.spyOn(api, "authRequired").mockResolvedValue(authFor(owner));
+    vi.spyOn(api, "listMyOrgs").mockResolvedValue([]);
+    vi.spyOn(api, "getLicense").mockResolvedValue({ edition: "pro", customer: "Test buyer", expires_at: null, entitlements: [], limits: { seats: 10 }, notice: null, managed_by_environment: true });
+    renderSettings();
+    expect(await screen.findByText(/This license is managed by NODYRA_LICENSE_KEY/)).toBeTruthy();
+    expect(screen.getByPlaceholderText("Paste license key")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Apply license" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove license" })).toBeDisabled();
+  });
 });

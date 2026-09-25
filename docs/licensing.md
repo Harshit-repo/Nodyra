@@ -48,6 +48,17 @@ and OEM licenses are available.
 
 ## FAQ
 
+**How do I buy and activate a paid license?**
+Contact **sharma.har97@gmail.com** for a quote and manual invoice. Confirm the
+edition, currency, taxes, seats, and license term before payment. After payment
+is confirmed, apply the supplied signed key in **Settings → Plan & license**.
+Online card checkout is not live yet. See [paid licenses and renewal](subscriptions.md).
+
+Pro includes ten seats, ten environments, five runners, and unlimited active
+deployments by default. Enterprise defaults to unlimited resource caps. A
+customer-specific key may override these limits. Restart API and worker processes
+after an edition change for features configured at startup.
+
 **Is Nodyra open source?**
 Not by the OSI definition — the Sustainable Use License restricts commercial
 redistribution and hosting. It is *fair-code*: source available, free to
@@ -79,5 +90,6 @@ keeps a future license change (e.g., toward a more permissive license)
 possible.
 
 **Does the license phone home?**
-No. License keys are verified offline with an embedded public key. Air-gapped
-deployments are fully supported.
+Verification is offline with an embedded public key. Air-gapped deployments can
+install and renew keys manually. Optional automatic renewal contacts the configured
+license server only when explicitly enabled; it is off by default.

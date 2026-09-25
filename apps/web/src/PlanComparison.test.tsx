@@ -43,6 +43,7 @@ describe("PlanComparison", () => {
     expect(screen.getByText("Pro")).toBeInTheDocument();
     expect(screen.getByText("Enterprise")).toBeInTheDocument();
     expect(screen.getByText("Current plan")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Contact sales for a license" })).toHaveAttribute("href", "mailto:sharma.har97@gmail.com?subject=Nodyra%20license%20enquiry");
   });
 
   it("names what an upgrade would actually unlock", async () => {

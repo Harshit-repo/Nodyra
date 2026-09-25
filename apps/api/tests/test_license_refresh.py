@@ -257,3 +257,23 @@ async def test_a_key_signed_by_the_wrong_authority_is_reported(monkeypatch, stor
     with caplog.at_level("ERROR"):
         assert await license_refresh.refresh_once() is False
     assert any("did not verify" in record.message for record in caplog.records)
+    assert stored.written is None
+    assert (await licensing.current_license()).edition.value == "pro"
+
+
+async def test_expired_license_recovers_when_renewal_returns(monkeypatch, stored):
+    stored.install(_key(-2))
+    assert (await licensing.current_license()).edition.value == "community"
+    renewed = _key(45)
+    monkeypatch.setattr(httpx, "AsyncClient", _client_returning(_Response(200, {"license_key": renewed})))
+    assert await license_refresh.refresh_once() is True
+    assert stored.written == renewed
+
+
+@pytest.mark.parametrize("payload", [[], "bad", 12, {"license_key": []}, {"license_key": "invalid"}])
+async def test_malformed_renewals_preserve_installed_license(monkeypatch, stored, payload):
+    stored.install(_key(2))
+    monkeypatch.setattr(httpx, "AsyncClient", _client_returning(_Response(200, payload)))
+    assert await license_refresh.refresh_once() is False
+    assert stored.written is None
+    assert (await licensing.current_license()).edition.value == "pro"

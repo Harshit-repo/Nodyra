@@ -770,6 +770,11 @@ function LicensePanel() {
             <p className="nodyra-license-expiry">Expires {new Date(info.expires_at * 1000).toLocaleDateString()}</p>
           )}
           {info.notice && <div className="nodyra-settings-inline-warning"><WarningCircle size={17} aria-hidden="true" />{info.notice}</div>}
+          {info.managed_by_environment && (
+            <p className="nodyra-settings-inline-warning" role="status">
+              This license is managed by NODYRA_LICENSE_KEY. Update or remove that server environment setting and restart to change it.
+            </p>
+          )}
           <div className="nodyra-license-apply">
             <label className="nodyra-settings-field nodyra-settings-field-wide">
               <span className="nodyra-settings-label">Apply a Pro or Enterprise license key</span>
@@ -781,6 +786,7 @@ function LicensePanel() {
                   spellCheck={false}
                   placeholder="Paste license key"
                   value={keyDraft}
+                  disabled={Boolean(info.managed_by_environment)}
                   onChange={(event) => setKeyDraft(event.target.value)}
                 />
                 <button
@@ -792,15 +798,15 @@ function LicensePanel() {
                   {revealKey ? <EyeSlash size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
                 </button>
               </span>
-              <small>The key is sent securely to this installation and is never stored in your browser.</small>
+              <small>The key is stored on this installation, not in your browser. Use HTTPS when accessing Nodyra over a network. Restart the API and workers after changing edition to apply startup-only features.</small>
             </label>
             {error && <p className="error-text" role="alert">{error}</p>}
             <div className="settings-actions">
-              <button className="btn btn-primary" type="button" onClick={() => void apply()} disabled={busy || !keyDraft.trim()}>
+              <button className="btn btn-primary" type="button" onClick={() => void apply()} disabled={busy || !keyDraft.trim() || Boolean(info.managed_by_environment)}>
                 {busy ? "Applying…" : "Apply license"}
               </button>
               {info.edition !== "community" && (
-                <button className="btn btn-danger" type="button" onClick={() => void remove()} disabled={busy}>
+                <button className="btn btn-danger" type="button" onClick={() => void remove()} disabled={busy || Boolean(info.managed_by_environment)}>
                   Remove license
                 </button>
               )}
