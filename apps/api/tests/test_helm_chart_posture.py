@@ -197,6 +197,17 @@ def test_ingress_uses_web_proxy_to_strip_the_browser_api_prefix() -> None:
     }
     assert paths["/api"] == {"name": "release-web", "port": {"number": 5200}}
     assert paths["/mcp"]["name"] == "release-api"
+    assert paths["/mcp-gateway"]["name"] == "release-api"
+
+
+def test_gateway_enforcement_configuration_reaches_api_and_workers() -> None:
+    docs = _render("--set", "mcpGateway.enabled=true", "--set", "mcpGateway.rateLimitPerMinute=42", "--set", "mcpGateway.maxArgumentsBytes=8192")
+    for name in ("release-api", "release-worker"):
+        container = _deployments(docs)[name]["spec"]["template"]["spec"]["containers"][0]
+        env = {item["name"]: item.get("value") for item in container["env"]}
+        assert env["MCP_GATEWAY_ENABLED"] == "true"
+        assert env["MCP_GATEWAY_RATE_LIMIT_PER_MINUTE"] == "42"
+        assert env["MCP_GATEWAY_MAX_ARGUMENTS_BYTES"] == "8192"
 
 
 def test_api_and_workers_share_retained_runtime_storage() -> None:

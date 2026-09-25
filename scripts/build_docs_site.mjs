@@ -38,6 +38,8 @@ const guides = [
   ['deployment', 'Deployment reference', 'Operate Nodyra', 'docs/deployment.md'],
   ['backup-restore', 'Backup and restore', 'Operate Nodyra', 'docs/backup-restore.md'],
   ['workers', 'Workers and scaling', 'Operate Nodyra', 'docs/deployment/workers.md'],
+  ['mcp-gateway', 'MCP gateway', 'Operate Nodyra', 'docs/mcp-gateway.md'],
+  ['connect-mcp', 'Connect an MCP client', 'Build workflows', 'docs/connect-mcp.md'],
   ['security', 'Security', 'Operate Nodyra', 'SECURITY.md'],
   ['architecture-chooser', 'Choose a topology', 'Project reference', 'docs/architecture-chooser.md'],
   ['architecture', 'Architecture', 'Project reference', 'docs/architecture.md'],

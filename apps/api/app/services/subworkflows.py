@@ -35,6 +35,7 @@ from app.services.artifacts import (
     prepare_uploaded_files,
 )
 from app.services.credentials import resolve_credential_refs
+from app.services.execution_actor import execution_graph_digest
 from app.services.graph_utils import first_trigger_node, resolve_trigger_targets
 from nodyra.engine import execute
 from nodyra.engine.subworkflows import (
@@ -65,8 +66,8 @@ def meta_for_root_run(
 
 async def _load_workflow_graph(
     session: AsyncSession, workflow_id: str, *, use_published: bool
-) -> tuple[dict, dict[str, dict]]:
-    """(graph_dict, pinned_cache) for a child workflow.
+) -> tuple[dict, dict[str, dict], str | None, int]:
+    """(graph_dict, pinned_cache, published_version_id, version) for a child.
 
     Production runs execute the most recently published version (Slice 11
     contract); manual editor runs (``use_published=False``) propagate "use
@@ -86,11 +87,18 @@ async def _load_workflow_graph(
     pinned = {row.node_id: row.payload for row in pinned_rows.all()}
     published = latest.graph or {"nodes": [], "edges": []}
     if not use_published and workflow.draft_graph:
-        return workflow.draft_graph, pinned
-    return published, pinned
+        return workflow.draft_graph, pinned, None, latest.version
+    return published, pinned, latest.id, latest.version
 
 
-async def _create_child_run(call: SubworkflowCall, workflow_id: str) -> str:
+async def _create_child_run(
+    call: SubworkflowCall,
+    workflow_id: str,
+    *,
+    graph_digest: str | None = None,
+    workflow_version_id: str | None = None,
+    workflow_version: int = 1,
+) -> str:
     """Persist a Run row for a spawned/in-process child.
 
     Gives the child a real identity: ``_resolve_run_org`` keys artifact
@@ -110,14 +118,32 @@ async def _create_child_run(call: SubworkflowCall, workflow_id: str) -> str:
     with run_as_system():
         async with SessionLocal() as session:
             org_id = call.org_id or "default"
+            parent = (
+                await session.get(Run, call.parent_run_id)
+                if call.parent_run_id
+                else None
+            )
+            # Identity is inherited from trusted durable host state, never from
+            # the worker's SubworkflowCall. A missing parent remains a system
+            # action; a cross-org reference cannot borrow a human initiator.
+            initiator_id = None
+            initiator_kind = "system"
+            if parent is not None and parent.org_id == org_id:
+                initiator_id = parent.initiator_id
+                initiator_kind = parent.initiator_kind
             session.add(
                 Run(
                     id=child_run_id,
                     org_id=org_id,
                     workflow_id=workflow_id,
+                    workflow_version=workflow_version,
+                    workflow_version_id=workflow_version_id,
+                    execution_graph_digest=graph_digest,
                     parent_run_id=call.parent_run_id,
                     mode="subworkflow",
                     trigger_type="subworkflow",
+                    initiator_id=initiator_id,
+                    initiator_kind=initiator_kind,
                     status="running",
                 )
             )
@@ -170,9 +196,10 @@ async def resolve_subworkflow(
         async with SessionLocal() as session:
             workflow = await session.get(Workflow, call.workflow_id)
             sub_env_id = workflow.environment_id if workflow else None
-            graph_dict, pinned_cache = await _load_workflow_graph(
+            graph_dict, pinned_cache, version_id, version = await _load_workflow_graph(
                 session, call.workflow_id, use_published=call.use_published
             )
+            original_graph_digest = execution_graph_digest(graph_dict)
             graph_dict = await resolve_credential_refs(
                 session, graph_dict, workflow_id=call.workflow_id
             )
@@ -192,7 +219,7 @@ async def resolve_subworkflow(
             resolve_trigger_targets(graph_dict, trigger.id, None) if trigger is not None else None
         )
 
-        if (
+        if not settings.mcp_gateway_enabled and (
             parent_sandboxed or (settings.use_subprocess_runner and parent_env_id is not None)
         ) and parent_env_id == sub_env_id:
             async with SessionLocal() as session:
@@ -218,7 +245,10 @@ async def resolve_subworkflow(
                 sources=tuple(sorted(sources)),
             )
 
-        child_run_id = await _create_child_run(call, call.workflow_id)
+        child_run_id = await _create_child_run(
+            call, call.workflow_id, graph_digest=original_graph_digest,
+            workflow_version_id=version_id, workflow_version=version,
+        )
         child_meta = SubworkflowMeta(
             use_published=call.use_published,
             parent_run_id=child_run_id,
@@ -303,17 +333,29 @@ async def resolve_subworkflow(
                 return extract_leaf_value(sources, node_status, node_outputs)
 
             from app.services import runner as _runner
+            from app.services.mcp_gateway import execute_for_run
+            from nodyra.engine.types import _call_mcp_tool_impl
 
-            result = await execute(
-                graph,
-                _runner.node_registry,
-                cache=cache or None,
-                targets=sub_targets,
-                default_timeouts=_runner._engine_default_timeouts(),
-                process_isolator=_runner.process_isolator,
-                subworkflow_runner=resolve_subworkflow,
-                subworkflow_meta=child_meta,
-            )
+            async def child_mcp_call(connection_id: str, tool_name: str, arguments: dict) -> Any:
+                async with SessionLocal() as session:
+                    return await execute_for_run(
+                        session, connection_id, tool_name, arguments, run_id=child_run_id
+                    )
+
+            callback_token = _call_mcp_tool_impl.set(child_mcp_call)
+            try:
+                result = await execute(
+                    graph,
+                    _runner.node_registry,
+                    cache=cache or None,
+                    targets=sub_targets,
+                    default_timeouts=_runner._engine_default_timeouts(),
+                    process_isolator=_runner.process_isolator,
+                    subworkflow_runner=resolve_subworkflow,
+                    subworkflow_meta=child_meta,
+                )
+            finally:
+                _call_mcp_tool_impl.reset(callback_token)
             status = str(result.status)
             if status != "success":
                 failure = next((r.error for r in result.nodes.values() if r.error), status)

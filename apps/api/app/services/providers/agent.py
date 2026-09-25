@@ -371,6 +371,15 @@ async def resolve_remote_subworkflow(conn: _AgentConnection, msg: dict) -> None:
 
     callback_id = msg.get("callback_id", "")
     try:
+        # Remote callbacks currently carry caller-supplied ancestry and do not
+        # transport the host's immutable execution attempt. Until that protocol
+        # is bound to an active assignment, never let a remote worker create a
+        # host-side child that could obtain a system gateway identity.
+        if settings.mcp_gateway_enabled:
+            raise ValueError(
+                "Remote subworkflow callbacks are not supported while the MCP gateway is enabled; "
+                "use local execution for workflows that call other workflows"
+            )
         call = SubworkflowCall.from_payload(msg)
 
         # Resolve the parent run's org so the workflow fetch and credential

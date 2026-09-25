@@ -29,6 +29,7 @@ from app.config import settings
 from app.db import get_session
 from app.models import ApiToken, CustomRole, Membership, Organization, User
 from app.services.crypto import decode_session_token
+from app.services.execution_actor import bind_authenticated_actor
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, run_as_system
 
 # ---------------------------------------------------------------------------
@@ -105,6 +106,7 @@ CUSTOM_ROLE_PERMISSION_REGISTRY: frozenset[str] = frozenset({
     "credential:create",
     "audit:read",
     "mcp_connection:manage",
+    "mcp_gateway:call",
 })
 
 
@@ -159,6 +161,8 @@ _PERMISSION_MIN_ROLE = {
     "runner_pool:write": "admin",
     "audit:read": "admin",
     "mcp_connection:manage": "admin",
+    "mcp_gateway:call": "editor",
+    "mcp_gateway:manage": "admin",
     "workflow:delete": "admin",
     "workflow:publish": "editor",
     "run:cancel_others": "admin",
@@ -356,8 +360,8 @@ async def _principal_for_request(
 ) -> tuple[User, ApiToken | ExternalTokenGrant | None] | None:
     # Provider webhooks frequently carry third-party Bearer credentials. Never
     # forward those to the configured OAuth introspection endpoint; Nodyra PAT
-    # and external OAuth grants are deliberately limited to /mcp.
-    if request is None or request.url.path != "/mcp":
+    # and external OAuth grants are limited to MCP control/gateway endpoints.
+    if request is None or (request.url.path != "/mcp" and not request.url.path.startswith("/mcp-gateway/")):
         user = await _user_from_session_token(token, session)
         return (user, None) if user is not None else None
     return await _principal_from_token(token, session)
@@ -387,6 +391,7 @@ async def current_user(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     user, api_token = principal
     _set_principal_state(request, api_token)
+    bind_authenticated_actor(user.id)
     # Surface cookie-auth mode so the CSRF middleware can check it.
     request.state.cookie_auth = is_cookie
     return user
@@ -407,6 +412,7 @@ async def optional_current_user(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     user, api_token = principal
     _set_principal_state(request, api_token)
+    bind_authenticated_actor(user.id)
     request.state.cookie_auth = is_cookie
     return user
 
@@ -436,6 +442,7 @@ async def _lenient_session_user(
     user, api_token = principal
     if request is not None:
         _set_principal_state(request, api_token)
+        bind_authenticated_actor(user.id)
     return user
 
 
@@ -637,7 +644,7 @@ def validate_custom_role_permissions(permissions: list[str]) -> None:
 # let an anonymous request create or delete users, including owners — and the
 # "only owner can manage owners" guard short-circuits because the actor is
 # None. Anything that modifies the user/role surface itself goes here.
-_REQUIRES_AUTHENTICATED = frozenset({"user:manage", "admin:billing"})
+_REQUIRES_AUTHENTICATED = frozenset({"user:manage", "admin:billing", "mcp_gateway:call", "mcp_gateway:manage"})
 
 
 def require_permission(permission: str) -> Callable[..., Awaitable[User | None]]:

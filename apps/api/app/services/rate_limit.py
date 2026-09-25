@@ -117,10 +117,12 @@ async def allow(
     *,
     limit: int,
     window_seconds: int = 60,
+    fail_closed: bool = False,
 ) -> bool:
     """Return True if a hit on ``(bucket, identifier)`` is within ``limit`` per
     ``window_seconds``; False when it should be throttled. ``limit <= 0``
-    disables the limit (always allows)."""
+    disables the limit (always allows). With ``fail_closed``, a configured
+    Redis counter outage denies the hit instead of using a local fallback."""
     if limit <= 0:
         return True
     key = f"{bucket}:{identifier}"
@@ -128,4 +130,6 @@ async def allow(
         result = await _allow_redis(key, limit, window_seconds)
         if result is not None:
             return result
+        if fail_closed:
+            return False
     return _allow_in_process(key, limit, window_seconds)

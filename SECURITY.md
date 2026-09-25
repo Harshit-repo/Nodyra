@@ -41,6 +41,28 @@ quotas/fairness, and per-org sandbox pools.
   process (the same trust boundary as the Code node).
 - Artifact storage keys are server-generated and path-traversal checked.
 
+## MCP execution and approvals
+
+Sensitive built-in MCP commands require a short-lived, single-use approval
+reviewed with a separate browser session. The grant is bound to the requesting
+actor and credential, command, canonical arguments, and workflow revision.
+An agent-supplied `approved_by_user` flag is not an authorization decision.
+This separates client credentials from review authority; it is not hardware
+proof of human presence. Published workflow tools retain their existing
+publication and permission checks; cancellation remains immediately available.
+
+The optional [MCP gateway](docs/mcp-gateway.md) governs registered MCP connections
+used by managed worker callbacks and authenticated gateway clients. It pins
+approved tool schemas/capabilities, restricts arguments, rechecks worker leases,
+and stores decisions separately from provider responses. Provider-reported
+success is not independent proof that a downstream write happened.
+
+The gateway does not intercept arbitrary Python, direct-URL integration nodes,
+or external runner traffic that bypasses managed callbacks. It also does not
+freeze separately stored code modules or dependencies. Keep sandbox and network
+egress controls in place, restrict workflow authors, and approve new published
+versions explicitly. These controls complement the trust model above.
+
 ## Pen-test checklist
 
 Before a production release or a material security change, run the checks in

@@ -76,6 +76,11 @@ UNAUDITED_BY_DESIGN: dict[str, str] = {
     "artifacts:query_artifact": "read path that uses POST for its query body",
     "mcp:mcp_post": "transport envelope; mcp/tools.py audits each tool call",
     "mcp:mcp_delete": "transport envelope; closes an MCP session",
+    # This specific proxy records execution intent, denial and observed outcome
+    # in MCPGatewayInvocation via services/mcp_gateway.py, rather than adding a
+    # second AuditEvent. test_mcp_gateway.py asserts denied calls and executed
+    # calls create that durable ledger. tools/list is a read-only POST variant.
+    "mcp_gateway:proxy": "managed tool calls use the MCPGatewayInvocation ledger; discovery is read-only",
 
     # ── Auth flows that establish no session ────────────────────────────────
     # login, logout and SSO sign-in ARE audited. These three are not: they

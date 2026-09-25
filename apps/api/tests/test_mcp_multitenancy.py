@@ -5,6 +5,8 @@ import json
 from httpx import AsyncClient
 
 from app.config import settings
+from app.mcp.tools import get_tool
+from tests.mcp_approval_helpers import review
 
 
 def rpc(method: str, params: dict | None = None, req_id: int = 1) -> dict:
@@ -17,12 +19,32 @@ def rpc(method: str, params: dict | None = None, req_id: int = 1) -> dict:
 async def tool(
     client: AsyncClient, headers: dict[str, str], name: str, arguments: dict
 ) -> dict:
+    descriptor = get_tool(name)
+    browser_token = None
+    if descriptor and descriptor.requires_approval and not headers["Authorization"].startswith("Bearer ndpat_"):
+        browser_token = headers["Authorization"].removeprefix("Bearer ")
+        token_response = await client.post("/auth/api-tokens", headers=headers,
+                                          json={"name": "reviewed-mutation", "scopes": [descriptor.permission], "expires_in_days": 1})
+        assert token_response.status_code == 201, token_response.text
+        headers = {**headers, "Authorization": f"Bearer {token_response.json()['token']}"}
     response = await client.post(
         "/mcp",
         headers=headers,
         json=rpc("tools/call", {"name": name, "arguments": arguments}),
     )
     assert response.status_code == 200
+    pending = response.json().get("result", {}).get("structuredContent", {})
+    if not pending:
+        try:
+            pending = json.loads(response.json()["result"]["content"][0]["text"])
+        except (ValueError, KeyError, IndexError):
+            pending = {}
+    if browser_token and isinstance(pending, dict) and pending.get("error") == "human_approval_required":
+        decision = await review(client, pending["approval_id"], browser_token, org_id=headers.get("X-Org-Id"))
+        assert decision.status_code == 200, decision.text
+        response = await client.post("/mcp", headers=headers, json=rpc("tools/call", {
+            "name": name, "arguments": {**arguments, "approval_id": pending["approval_id"]},
+        }))
     return response.json()["result"]
 
 
@@ -98,6 +120,18 @@ async def test_mcp_isolates_tools_resources_and_tokens_by_org(
     )
     assert enabled_a["isError"] is False
     assert enabled_b["isError"] is False
+
+    pending = await client.post("/mcp", headers=headers_a, json=rpc("tools/call", {
+        "name": "rename_workflow", "arguments": {"workflow_id": wf_a, "name": "Awaiting review"},
+    }))
+    approval_id = json.loads(pending.json()["result"]["content"][0]["text"])["approval_id"]
+    previous_cookies = client.cookies
+    client.cookies = {settings.session_cookie_name: session_token}
+    try:
+        foreign_approval = await client.get(f"/mcp-approvals/{approval_id}", headers={"X-Org-Id": org_b})
+    finally:
+        client.cookies = previous_cookies
+    assert foreign_approval.status_code == 404
 
     token_response = await client.post(
         "/auth/api-tokens",

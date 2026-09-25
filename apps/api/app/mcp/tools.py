@@ -52,6 +52,7 @@ from app.services.environment_builds import (
 from app.services.github_sync import enqueue_github_push
 from app.services.github_sync_jobs import notify_sync_workers
 from app.services.graph_utils import first_trigger_node
+from app.services.mcp_approvals import approved_command
 from app.services.runner import cancel_run as _runner_cancel_run
 from app.services.runner import start_run
 from app.services.sandbox_policy import (
@@ -146,8 +147,8 @@ APPROVAL_REQUIRED_TOOL_NAMES = {
 MCP_HUMAN_APPROVAL_PROPERTY = {
     "type": "boolean",
     "description": (
-        "Required for this production-impacting operation. Set to true only "
-        "after an explicit human approval in the client conversation."
+        "Deprecated compatibility field. This boolean does not authorize an action. "
+        "Use the approval_id from a browser-reviewed Nodyra approval request."
     ),
 }
 
@@ -160,18 +161,26 @@ class McpTool:
     permission: str | None
     handler: Callable[[AsyncSession, User | None, dict], Awaitable[Any]]
 
+    @property
+    def requires_approval(self) -> bool:
+        return self.permission is not None and not self.name.startswith(("get_", "list_")) and self.name != "cancel_run"
+
     def descriptor(self) -> dict:
         read_only = self.permission is None or self.name.startswith(("get_", "list_"))
         destructive = self.name in DESTRUCTIVE_TOOL_HINTS or self.name.startswith(
             ("delete_", "remove_", "cancel_")
         )
         input_schema = self.input_schema
-        if self.name in APPROVAL_REQUIRED_TOOL_NAMES:
+        if self.requires_approval:
             input_schema = {
                 **self.input_schema,
                 "properties": {
                     **self.input_schema.get("properties", {}),
                     "approved_by_user": MCP_HUMAN_APPROVAL_PROPERTY,
+                    "approval_id": {
+                        "type": "string", "minLength": 32, "maxLength": 32,
+                        "description": "One-use server approval ID. First call without it, have the user review the returned Nodyra link, then retry the same arguments with this ID.",
+                    },
                 },
             }
         return {
@@ -185,7 +194,7 @@ class McpTool:
                 "idempotentHint": read_only
                 or self.name.startswith(("set_", "toggle_", "update_", "rename_", "move_")),
                 "openWorldHint": self.name in OPEN_WORLD_TOOL_HINTS,
-                "requiresHumanApprovalHint": self.name in APPROVAL_REQUIRED_TOOL_NAMES,
+                "requiresHumanApprovalHint": self.requires_approval,
             },
             "execution": {"taskSupport": "forbidden"},
         }
@@ -287,11 +296,12 @@ def _check_expected_graph_revision(workflow: Workflow, args: dict) -> None:
 
 
 def _require_explicit_mcp_approval(args: dict, tool_name: str, action: str) -> None:
-    if args.get("approved_by_user") is True:
+    if approved_command.get() == tool_name:
         return
     raise McpToolError(
         f"{tool_name} requires explicit human approval before it can {action}. "
-        "Ask the user to confirm, then retry with approved_by_user=true."
+        "Request a Nodyra browser review and retry with its approval_id. "
+        "approved_by_user is not authorization."
     )
 
 
@@ -2564,6 +2574,13 @@ async def _set_environment_packages(
     _require_explicit_mcp_approval(
         args, "set_environment_packages", "replace an environment package set"
     )
+    return await _replace_environment_packages(session, user, args)
+
+
+async def _replace_environment_packages(
+    session: AsyncSession, user: User | None, args: dict,
+) -> Any:
+    """Shared mutation after the add/remove/replace command's own approval gate."""
     env = await _load_environment(session, str(args.get("environment_id") or ""))
     packages = args.get("packages")
     if not isinstance(packages, list):
@@ -2606,13 +2623,12 @@ async def _add_environment_package(session: AsyncSession, user: User | None, arg
     if not package:
         raise McpToolError("package is required.")
     next_packages = _dedupe_packages([*(env.packages or []), package])
-    return await _set_environment_packages(
+    return await _replace_environment_packages(
         session,
         user,
         {
             "environment_id": env.id,
             "packages": next_packages,
-            "approved_by_user": args.get("approved_by_user"),
         },
     )
 
@@ -2631,13 +2647,12 @@ async def _remove_environment_package(session: AsyncSession, user: User | None, 
     next_packages = [
         existing for existing in env.packages or [] if canonical_package_name(existing) != target
     ]
-    return await _set_environment_packages(
+    return await _replace_environment_packages(
         session,
         user,
         {
             "environment_id": env.id,
             "packages": next_packages,
-            "approved_by_user": args.get("approved_by_user"),
         },
     )
 
@@ -3066,10 +3081,10 @@ async def _resolve_run_approval(session: AsyncSession, user: User | None, args: 
     from app.schemas import RunApprovalDecisionRequest
 
     run_id = str(args.get("run_id") or "").strip()
-    approval_id = str(args.get("approval_id") or "").strip()
+    approval_id = str(args.get("run_approval_id") or "").strip()
     decision = str(args.get("decision") or "").strip()
     if not run_id or not approval_id:
-        raise McpToolError("run_id and approval_id are required.")
+        raise McpToolError("run_id and run_approval_id are required.")
     result = await decide_run_approval(
         run_id,
         approval_id,
@@ -4313,11 +4328,11 @@ STATIC_TOOLS: list[McpTool] = [
                     "description": "Required for this production-impacting operation. Set to true only after an explicit human approval in the client conversation.",
                 },
                 "run_id": {"type": "string"},
-                "approval_id": {"type": "string"},
+                "run_approval_id": {"type": "string", "description": "ID of the pending run approval returned by list_run_approvals. Distinct from the command's approval_id."},
                 "decision": {"type": "string", "enum": ["approve", "reject", "approve_all"]},
                 "reason": {"type": "string"},
             },
-            "required": ["run_id", "approval_id", "decision"],
+            "required": ["run_id", "run_approval_id", "decision"],
         },
         permission="workflow:run",
         handler=_resolve_run_approval,

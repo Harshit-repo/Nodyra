@@ -139,15 +139,18 @@ class _FakeStdin:
 
 
 class _FakeStdout:
-    def __init__(self, lines):
+    def __init__(self, lines, *, before_eof=None):
         self._lines = list(lines)
+        self._before_eof = before_eof
 
     async def readline(self):
         await asyncio.sleep(0)  # always yield so callback tasks can progress
         if self._lines:
             return self._lines.pop(0)
-        # No more scripted lines: give parked callbacks a tick, then EOF.
-        await asyncio.sleep(0.02)
+        # Let the real host callback finish its parent lookup and enter the
+        # parked resolver before simulating a broken worker pipe.
+        if self._before_eof is not None:
+            await asyncio.wait_for(self._before_eof.wait(), timeout=5)
         return b""
 
 
@@ -168,13 +171,24 @@ class _FakeProc:
 
 
 @pytest.mark.asyncio
-async def test_runtime_run_cancels_callbacks_on_error():
+async def test_runtime_run_cancels_callbacks_on_error(client):
+    from app.models import Run
+    from app.services import runtime_pool
     from app.services.runtime_pool import _RuntimeProcess
+
+    workflow = (await client.post("/workflows", json={"name": "Callback cancellation"})).json()
+    async with runtime_pool.SessionLocal() as session:
+        parent = Run(workflow_id=workflow["id"], org_id="default", status="running")
+        session.add(parent)
+        await session.commit()
+        run_id = parent.id
 
     caller_started = asyncio.Event()
     caller_cancelled = asyncio.Event()
 
     async def hanging_caller(call, *, parent_env_id=None):
+        assert call.parent_run_id == run_id
+        assert call.org_id == "default"
         caller_started.set()
         try:
             await asyncio.Event().wait()  # never resolves
@@ -193,12 +207,12 @@ async def test_runtime_run_cancels_callbacks_on_error():
         ).encode()
         + b"\n"
     )
-    stdout = _FakeStdout([call_workflow_event])
+    stdout = _FakeStdout([call_workflow_event], before_eof=caller_started)
     proc = _RuntimeProcess(_FakeProc(stdout), None)
 
     with pytest.raises(RuntimeError):
         await proc.run(
-            "run1",
+            run_id,
             {"nodes": [], "edges": []},
             None,
             None,

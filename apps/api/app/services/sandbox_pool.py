@@ -219,28 +219,21 @@ class SandboxWorker:
         org_id: str,
     ) -> None:
         """Mirror of the in-process MCP hook over the attach socket."""
-        from app.services.mcp_client import (
-            _load_conn_with_secret as _load_conn,
-        )
-        from app.services.mcp_client import call_tool as _call_tool
-        from app.services.mcp_client import ensure_tool_allowed
+        from app.services.mcp_gateway import execute_for_run
 
         callback_id = event.get("callback_id", "")
         try:
             connection_id = str(event.get("connection_id") or "")
             tool_name = str(event.get("tool_name") or "")
-            arguments = event.get("arguments") or {}
+            arguments = event.get("arguments", {})
             from app.db import SessionLocal
 
             async with SessionLocal() as session:
-                conn, secret = await _load_conn(connection_id, org_id, session)
-                ensure_tool_allowed(conn, tool_name)
-                result = await _call_tool(
-                    conn,
+                result = await execute_for_run(
+                    session,
+                    connection_id,
                     tool_name,
                     arguments,
-                    decrypted_secret=secret,
-                    audit_session=session,
                     run_id=run_id,
                 )
             await self._send(
@@ -362,7 +355,9 @@ class SandboxWorker:
                 elif etype == "call_workflow":
                     last_progress_at = now
                     task = asyncio.create_task(
-                        self._handle_call_workflow(event, subworkflow_resolver, loop, artifacts)
+                        self._handle_call_workflow(
+                            event, subworkflow_resolver, loop, artifacts, run_id=run_id
+                        )
                     )
                     callbacks.add(task)
                     task.add_done_callback(callbacks.discard)
@@ -420,6 +415,8 @@ class SandboxWorker:
         subworkflow_resolver,
         loop: asyncio.AbstractEventLoop,
         artifacts: SandboxArtifacts | None = None,
+        *,
+        run_id: str | None = None,
     ) -> None:
         """Mirror of runtime_pool._handle_call_workflow over the attach socket."""
         from nodyra.engine.subworkflows import (  # noqa: PLC0415
@@ -431,9 +428,12 @@ class SandboxWorker:
         try:
             if subworkflow_resolver is None:
                 raise RuntimeError("sandbox runner has no host-side sub-workflow resolver")
-            call = SubworkflowCall.from_payload(
-                {**event, "input": deserialize_value(event.get("input"))}
-            )
+            call = SubworkflowCall.from_payload({
+                **event,
+                "input": deserialize_value(event.get("input")),
+                "parent_run_id": run_id,
+                "org_id": self.key[0] or DEFAULT_ORG_ID,
+            })
             outcome = await subworkflow_resolver(
                 call, parent_env_id=self.key[1], parent_sandboxed=True
             )

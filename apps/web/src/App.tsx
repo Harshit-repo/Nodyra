@@ -44,6 +44,7 @@ function named<T extends Record<string, unknown>, K extends keyof T>(
 }
 
 const ActivityPage = lazy(named(() => import("./ActivityPage"), "ActivityPage"));
+const MCPApprovalPage = lazy(named(() => import("./MCPApprovalPage"), "MCPApprovalPage"));
 const ArtifactsPage = lazy(named(() => import("./ArtifactsPage"), "ArtifactsPage"));
 const ChatPublicPage = lazy(named(() => import("./ChatPublicPage"), "ChatPublicPage"));
 const CodeLibraryPage = lazy(named(() => import("./CodeLibraryPage"), "CodeLibraryPage"));
@@ -287,7 +288,7 @@ export default function App() {
               {auth.license_notice}
             </div>
           )}
-          <FirstRunWizard auth={auth} />
+          {!location.pathname.startsWith("/mcp-approvals/") && <FirstRunWizard auth={auth} />}
           <Routes>
             <Route element={<HomeLayout />}>
               <Route path="/" element={<PageErrorBoundary><WorkflowsPage /></PageErrorBoundary>} />
@@ -304,6 +305,7 @@ export default function App() {
               <Route path="/settings/roles" element={<PageErrorBoundary><RolesPage /></PageErrorBoundary>} />
               <Route path="/settings/audit-log" element={<PageErrorBoundary><AuditLogPage /></PageErrorBoundary>} />
               <Route path="/settings/mcp-connections" element={<PageErrorBoundary><McpConnectionsPage /></PageErrorBoundary>} />
+              <Route path="/mcp-approvals/:id" element={<PageErrorBoundary><MCPApprovalPage /></PageErrorBoundary>} />
               <Route path="/settings/node-registry" element={<PageErrorBoundary><NodeRegistryPage /></PageErrorBoundary>} />
               <Route path="/settings/kms" element={<PageErrorBoundary><KMSSettingsPage /></PageErrorBoundary>} />
               <Route path="/settings/sso" element={<PageErrorBoundary><SSOSettingsPage /></PageErrorBoundary>} />

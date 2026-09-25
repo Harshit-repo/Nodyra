@@ -65,6 +65,8 @@ improves the input/output header layout shown in the recording.
 - [Security policy](../SECURITY.md) — execution trust boundaries, operator
   responsibilities, and vulnerability reporting.
 - [Workers and scaling](deployment/workers.md).
+- [MCP gateway](mcp-gateway.md) — approve managed tool contracts, restrict
+  arguments, authorize workflow versions, and inspect external call outcomes.
 - [Disposable evaluation profile](hosted-evaluation.md).
 - [Soak testing](soak-testing.md).
 - [Rename migration](upgrading-to-nodyra.md) — update deployments and clients

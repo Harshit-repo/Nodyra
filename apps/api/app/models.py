@@ -821,6 +821,13 @@ class Run(Base):
     checkpoint: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     queue_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
+    # Captured from authenticated request context when the run is admitted.
+    # No FK: retaining historical attribution must survive account deletion.
+    initiator_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    initiator_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="system", server_default="system"
+    )
+    execution_graph_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
@@ -1472,6 +1479,36 @@ class RunQueueEntry(Base):
     )
 
 
+class MCPCommandApproval(Base):
+    """A human decision bound to one authenticated MCP command, consumed once."""
+
+    __tablename__ = "mcp_command_approvals"
+    __table_args__ = (Index("ix_mcp_approvals_org_actor", "org_id", "actor_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False,
+        server_default="default",
+    )
+    actor_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False,
+    )
+    principal_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    permission: Mapped[str] = mapped_column(String(80), nullable=False)
+    arguments_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    arguments_preview: Mapped[dict] = mapped_column(JSON, nullable=False)
+    target_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class MCPConnection(Base):
     """An external MCP server connection with cached tool listing.
 
@@ -1502,11 +1539,41 @@ class MCPConnection(Base):
     )
     allowed_tools: Mapped[list | None] = mapped_column(JSON, nullable=True)
     tool_cache: Mapped[dict | None] = mapped_column(POSTGRES_JSON, nullable=True)
+    # An operator-approved contract, independent of the discovery cache.
+    gateway_policy: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class MCPGatewayInvocation(Base):
+    """Durable intent and observed outcome; never an agent's success narrative."""
+
+    __tablename__ = "mcp_gateway_invocations"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False, server_default="default")
+    # References are retained as values so deleting a connection/run cannot
+    # erase the audit evidence of its external effects.
+    connection_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actor_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    workflow_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    workflow_version_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    workflow_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    graph_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    arguments_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    argument_keys: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    policy_revision: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    decision: Mapped[str] = mapped_column(String(20), nullable=False, default="denied")
+    reason: Mapped[str] = mapped_column(String(80), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(40), nullable=False, default="not_dispatched")
+    result_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SSOConfig(Base):
