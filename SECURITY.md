@@ -5,8 +5,11 @@
 Nodyra supports three execution postures. In the default trusted single-tenant
 posture, workflow authors are trusted and Code nodes run in warm worker
 subprocesses on the host at native speed. In the sandboxed posture
-(`EXECUTION_SANDBOX=auto|required`), each run executes in a disposable hardened
-container. In the multi-tenant posture, `MULTI_TENANCY_ENABLED=true` requires
+(`EXECUTION_SANDBOX=required` with a configured sandbox runtime), each run
+executes in a disposable hardened container. Compose uses `auto` by default,
+which can fall back to host subprocesses when the runtime is unavailable;
+`auto` alone is not an isolation guarantee. In the multi-tenant posture,
+`MULTI_TENANCY_ENABLED=true` requires
 `EXECUTION_SANDBOX=required` and combines row-level security, org-scoped keys,
 quotas/fairness, and per-org sandbox pools.
 
@@ -16,8 +19,8 @@ quotas/fairness, and per-org sandbox pools.
   to trusted users via roles (`viewer` / `editor` / `admin` / `owner`).
 - Run trusted single-tenant deployments on hosts you treat as running your
   team's own code.
-- Enable `EXECUTION_SANDBOX=auto|required` whenever workflows execute
-  AI-generated or otherwise untrusted code.
+- Require `EXECUTION_SANDBOX=required` and verify the sandbox runtime whenever
+  workflows execute untrusted code. Review AI-generated code before execution.
 - Use the unsafe-node policy (`UNSAFE_NODE_POLICY=warn|require_approval|block`)
   to gate risky nodes (Code, Execute Command, SSH, SQL-with-expressions, HTTP to
   private IPs) on deployment activation.
@@ -31,7 +34,8 @@ quotas/fairness, and per-org sandbox pools.
   from `SECRET_KEY`); the API returns only field names, never plaintext.
 - Secret values are redacted from run outputs, logs, run events, and API
   responses.
-- Passwords use PBKDF2-HMAC-SHA256; session tokens are HMAC-signed.
+- New passwords use Argon2id. Existing PBKDF2-HMAC-SHA256 hashes are verified and
+  upgraded after successful sign-in; session tokens are HMAC-signed.
 - Code-module discovery is **AST-only** — uploaded Python is parsed, never
   executed, in the API process. Execution happens only in the workflow's worker
   process (the same trust boundary as the Code node).

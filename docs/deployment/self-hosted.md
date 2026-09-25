@@ -8,7 +8,13 @@ high-availability configuration.
 ## Install
 
 Install Docker Engine or Docker Desktop with Compose **2.24.4 or newer**.
-Download the reviewed release source, then run from its root directory:
+Download the ZIP or tarball from the
+[1.0.5 release](https://github.com/Harshit-repo/Nodyra/releases/tag/v1.0.5),
+along with `SHA256SUMS`. Compare the downloaded archive's SHA-256 hash with its
+entry in that file. For example, use `sha256sum nodyra-1.0.5.tar.gz` on Linux,
+`shasum -a 256 nodyra-1.0.5.tar.gz` on macOS, or
+`Get-FileHash .\nodyra-1.0.5.zip -Algorithm SHA256` in PowerShell.
+Extract the archive and run from its root directory:
 
 ```sh
 cp deploy/.env.example deploy/.env
@@ -20,9 +26,21 @@ the file: Compose validates the base file before applying the overlay, although
 this profile never starts MinIO. Also set a strong `POSTGRES_PASSWORD` before the
 first installation on a shared host. Keep `deploy/.env` private and backed up.
 
+For this initial loopback-only HTTP setup, set:
+
+```dotenv
+CORS_ORIGINS=http://localhost:5173
+SESSION_COOKIE_SECURE=false
+```
+
+Use `http://localhost:5173` consistently; if you use another hostname or port,
+update `CORS_ORIGINS` to that exact origin. The HTTPS configuration below turns
+secure cookies back on. This release builds images locally and does not include
+signed prebuilt 1.0.5 images. See [release verification](../releases/1.0.5.md).
+
 ```sh
 docker compose -p nodyra -f deploy/docker-compose.yml \
-  -f deploy/docker-compose.local-storage.yml up --build -d
+  -f deploy/docker-compose.local-storage.yml up --build -d --wait
 ```
 
 Open `http://localhost:5173` and create the owner account. Check

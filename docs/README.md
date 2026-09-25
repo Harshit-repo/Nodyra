@@ -1,5 +1,29 @@
 # Nodyra documentation
 
+Install Nodyra on your own infrastructure, build Python workflows, and inspect
+every run. Start with the **1.0.5 self-hosted beta** for a single Docker host and
+trusted workflow authors. There is no hosted Nodyra service.
+
+## Install the current release
+
+1. [Download 1.0.5](https://github.com/Harshit-repo/Nodyra/releases/tag/v1.0.5)
+   and verify the source archive with the attached `SHA256SUMS`.
+2. Follow the [single-host installation guide](deployment/self-hosted.md) to
+   configure secrets, build the containers, and create your owner account.
+3. Run the [first workflow](getting-started.md#4-run-a-verified-starter-template)
+   and download its verified artifacts.
+
+The release builds images locally. See [release verification](releases/1.0.5.md)
+for the tested scope, evidence, and limits. Configure HTTPS and backups before
+allowing access from other machines.
+
+## See Nodyra in action
+
+![Nodyra product tour showing a workflow run, node inspector, and Python editor](nodyra-product-tour.gif)
+
+The tour shows a real local workflow execution. The latest release also
+improves the input/output header layout shown in the recording.
+
 ## Start here
 
 - [Getting started](getting-started.md) — run Nodyra and complete a first

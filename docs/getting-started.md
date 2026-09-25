@@ -6,35 +6,55 @@ available. A first local build can take longer depending on network and CPU.
 
 ## 1. Requirements
 
-- **Docker route (recommended):** Docker Engine or Docker Desktop with Compose.
+- **Docker route (recommended):** Docker Engine or Docker Desktop with Compose
+  **2.24.4 or newer**.
 - **Local dev route:** Python 3.12, [uv](https://docs.astral.sh/uv/), Node.js
   20+, and Docker for Postgres/Redis/MinIO.
 
 ## 2. Start Nodyra with Docker Compose
 
-Copy the example environment file:
+Download the source archive from [release 1.0.5](https://github.com/Harshit-repo/Nodyra/releases/tag/v1.0.5),
+or clone the release tag. This beta builds its container images locally.
+
+```bash
+git clone --branch v1.0.5 --depth 1 https://github.com/Harshit-repo/Nodyra.git
+cd Nodyra
+```
+
+Copy the example environment file (PowerShell: `Copy-Item deploy/.env.example deploy/.env`):
 
 ```bash
 cp deploy/.env.example deploy/.env
 ```
 
-Open `deploy/.env` and replace all three `CHANGE-ME` values. Run
-`openssl rand -hex 32` three times and paste one generated value into each
-setting. Shell expressions such as `$(openssl ...)` are not expanded inside an
-environment file.
+Open `deploy/.env` and replace all three active `CHANGE-ME` values and
+`POSTGRES_PASSWORD` with independently generated secrets. For example, run
+`openssl rand -hex 32` separately for each secret. Shell expressions such as
+`$(openssl ...)` are not expanded inside an environment file.
 
 Do not hand-write `deploy/.env` from scratch: `docker compose` hard-requires
 `MINIO_ROOT_PASSWORD` as well, and fails before starting anything if it is
 missing. Copying the example is the supported path.
 
-Start the stack:
+For the first visit over loopback HTTP, set these values in `deploy/.env`:
 
-```bash
-docker compose -f deploy/docker-compose.yml up --build -d
+```dotenv
+SESSION_COOKIE_SECURE=false
+CORS_ORIGINS=http://localhost:5173
 ```
 
-Open <http://localhost:5173>. The stack includes PostgreSQL, Redis, MinIO, the
-FastAPI control plane, a dispatch worker, and the web app. Verify health:
+Start the supported single-host stack with local artifact storage:
+
+```bash
+docker compose -p nodyra -f deploy/docker-compose.yml -f deploy/docker-compose.local-storage.yml up --build -d --wait
+```
+
+Open <http://localhost:5173>. The stack includes PostgreSQL, Redis, the
+FastAPI control plane, a dispatch worker, and the web app. Artifacts persist in
+a Docker volume. Configure HTTPS and restore `SESSION_COOKIE_SECURE=true`
+before allowing access from another machine; follow the
+[single-host guide](deployment/self-hosted.md) for ingress and backups.
+Verify health:
 
 ```bash
 curl http://localhost:8000/health/live
@@ -134,7 +154,7 @@ completely fresh demo database.
 
 ## 7. Let an AI agent build workflows for you
 
-Nodyra ships a first-class MCP server with 61 tools. Connect Claude Code:
+Nodyra ships an MCP server for creating and running workflows. Connect Claude Code:
 
 ```bash
 claude mcp add --transport http nodyra https://your-instance/mcp \
@@ -149,9 +169,10 @@ testable, and deployable. Full guide: [MCP quickstart](mcp-quickstart.md).
 - **Publish** your workflow to create an immutable version, then create a
   **deployment** pinned to that version. Drafts never affect production.
 - Add **schedule** or **webhook** triggers to the deployment.
-- Pick an execution posture (see [SECURITY.md](../SECURITY.md)): trusted
-  single-tenant (default), sandboxed (`EXECUTION_SANDBOX=auto|required` —
-  recommended when workflows run AI-generated code), or multi-tenant.
+- Review the execution trust boundary in [SECURITY.md](../SECURITY.md).
+  This beta targets trusted workflow authors on one host. For a fail-closed
+  sandbox, configure a supported sandbox backend and set
+  `EXECUTION_SANDBOX=required`; `auto` can fall back to local execution.
 - Read the [deployment guide](deployment.md) for Helm, scaling workers, and
   the production checklist, and [backup & restore](backup-restore.md) before
   you rely on it.
