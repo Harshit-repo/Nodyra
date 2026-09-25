@@ -1681,58 +1681,63 @@ export function DataPanel({
 
   return (
     <section className={panelClassName}>
-      <header className="ndv-panel-head">
-        <h3>
-          <DirIcon
-            className="ndv-panel-dir"
-            size={13}
-            weight="bold"
-            aria-hidden="true"
-          />
-          {title}
-          <span className="ndv-dir-badge">{isInput ? "IN" : "OUT"}</span>
-          {!empty && itemCount !== null && (
-            <span className="ndv-count-badge">
-              {itemCount} {itemCount === 1 ? "item" : "items"}
-            </span>
-          )}
-          {typeof durationMs === "number" && (
-            <span className="ndv-duration" title="Execution time">
-              {durationMs} ms
-            </span>
-          )}
-          {tokenUsage && (
-            <span
-              className="ndv-token-usage"
-              title={`${tokenUsage.prompt_tokens} prompt + ${tokenUsage.completion_tokens} completion tokens`}
+      <header className="ndv-panel-head ndv-data-panel-head">
+        <div className="ndv-panel-summary">
+          <h3>
+            <DirIcon
+              className="ndv-panel-dir"
+              size={13}
+              weight="bold"
+              aria-hidden="true"
+            />
+            {title}
+            <span className="ndv-dir-badge">{isInput ? "IN" : "OUT"}</span>
+          </h3>
+          <div className="ndv-panel-metrics">
+            {!empty && itemCount !== null && (
+              <span className="ndv-count-badge">
+                {itemCount} {itemCount === 1 ? "item" : "items"}
+              </span>
+            )}
+            {typeof durationMs === "number" && (
+              <span className="ndv-duration" title="Execution time">
+                {durationMs} ms
+              </span>
+            )}
+            {tokenUsage && (
+              <span
+                className="ndv-token-usage"
+                title={`${tokenUsage.prompt_tokens} prompt + ${tokenUsage.completion_tokens} completion tokens${tokenUsage.model ? ` · ${tokenUsage.model}` : ""}`}
+              >
+                {tokenUsage.total_tokens.toLocaleString()} tok
+                {tokenUsage.model && ` · ${shortModelLabel(tokenUsage.model) ?? tokenUsage.model}`}
+                {" · "}
+                {formatCost(estimateCost(tokenUsage))}
+              </span>
+            )}
+          </div>
+          {!dragPrefix && !empty && (
+            <select
+              className="data-coerce-select"
+              aria-label="Coerce output type"
+              value={coerce}
+              onChange={(e) => setCoerce(e.target.value as CoerceTarget | "")}
+              title="Preview data coerced to a different type"
             >
-              {tokenUsage.total_tokens.toLocaleString()} tok
-              {tokenUsage.model && ` · ${shortModelLabel(tokenUsage.model) ?? tokenUsage.model}`}
-              {" · "}
-              {formatCost(estimateCost(tokenUsage))}
-            </span>
+              <option value="">as-is</option>
+              <option value="string">→ string</option>
+              <option value="number">→ number</option>
+              <option value="boolean">→ boolean</option>
+              <option value="json">→ JSON parse</option>
+            </select>
           )}
-        </h3>
-        {!dragPrefix && !empty && (
-          <select
-            className="data-coerce-select"
-            aria-label="Coerce output type"
-            value={coerce}
-            onChange={(e) => setCoerce(e.target.value as CoerceTarget | "")}
-            title="Preview data coerced to a different type"
-          >
-            <option value="">as-is</option>
-            <option value="string">→ string</option>
-            <option value="number">→ number</option>
-            <option value="boolean">→ boolean</option>
-            <option value="json">→ JSON parse</option>
-          </select>
-        )}
-        <div className="data-view-toggle">
+        </div>
+        <div className="data-view-toggle" role="group" aria-label={`${title} views`}>
           {canVisual && (
             <button
               type="button"
               className={effectiveView === "visual" ? "active" : ""}
+              aria-pressed={effectiveView === "visual"}
               onClick={() => setView("visual")}
               title={report ? "Render report" : "Render chart"}
             >
@@ -1743,6 +1748,7 @@ export function DataPanel({
             <button
               type="button"
               className={effectiveView === "schema" ? "active" : ""}
+              aria-pressed={effectiveView === "schema"}
               onClick={() => setView("schema")}
               title="Field schema (drag fields into parameters)"
             >
@@ -1752,6 +1758,7 @@ export function DataPanel({
           <button
             type="button"
             className={effectiveView === "json" ? "active" : ""}
+            aria-pressed={effectiveView === "json"}
             onClick={() => setView("json")}
           >
             JSON
@@ -1759,6 +1766,7 @@ export function DataPanel({
           <button
             type="button"
             className={effectiveView === "raw" ? "active" : ""}
+            aria-pressed={effectiveView === "raw"}
             onClick={() => setView("raw")}
             title="Raw stringified JSON"
           >
@@ -1767,6 +1775,7 @@ export function DataPanel({
           <button
             type="button"
             className={effectiveView === "table" ? "active" : ""}
+            aria-pressed={effectiveView === "table"}
             onClick={() => canTable && setView("table")}
             disabled={!canTable}
             title={canTable ? "Show as a table" : "Data is not tabular"}
@@ -1777,6 +1786,7 @@ export function DataPanel({
             <button
               type="button"
               className={effectiveView === "html" ? "active" : ""}
+              aria-pressed={effectiveView === "html"}
               onClick={() => setView("html")}
               title="Render HTML output"
             >
@@ -1787,6 +1797,7 @@ export function DataPanel({
             <button
               type="button"
               className={effectiveView === "logs" ? "active" : ""}
+              aria-pressed={effectiveView === "logs"}
               onClick={() => setView("logs")}
               title={
                 hasLogs
@@ -1801,6 +1812,7 @@ export function DataPanel({
             <button
               type="button"
               className={effectiveView === "variables" ? "active" : ""}
+              aria-pressed={effectiveView === "variables"}
               onClick={() => setView("variables")}
               title="Inspect Python variables"
             >

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.5 - 2026-09-25
+
+- Fix crowded node input/output headers: keep timing and item counts readable,
+  wrap data-view controls, and expose the selected view to assistive technology.
+- Improve the preview type selector, keyboard focus, and touch targets.
+- Include the standalone homepage polish and a product tour captured from a
+  real workflow execution, node inspector, and Python editor.
+- Distribute source for local Docker builds. The account billing block prevents
+  hosted release jobs from starting; this release does not include newly
+  published signed container images.
+
 ## 1.0.4 - 2026-09-25
 
 - Keep full image-signature and SBOM-attestation verification evidence in the
