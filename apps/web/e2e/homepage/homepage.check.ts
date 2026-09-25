@@ -2,7 +2,21 @@ import { test, expect } from '@playwright/test';
 import axe from 'axe-core';
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/nodyra.html');
+  await page.goto('/');
+});
+
+test('site root serves the product page and documentation links back home', async ({ page }) => {
+  const heading = await page.getByRole('heading', { level: 1 }).textContent();
+  await page.getByRole('link', { name: 'Docs', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/docs.html$/);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Nodyra documentation');
+  await page.getByRole('link', { name: 'Nodyra home', exact: true }).click();
+  await expect(page).toHaveURL(/\/index.html$/);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(heading!);
+  await page.goto('/nodyra.html#how');
+  await expect(page.locator('#how')).toBeInViewport();
+  await page.goto('/#how');
+  await expect(page.locator('#how')).toBeInViewport();
 });
 
 for (const width of [320, 390, 768, 1024, 1366]) {

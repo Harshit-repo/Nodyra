@@ -1,9 +1,13 @@
 # Documentation website
 
-The website opens directly into the documentation. Its guides are generated
-from the repository Markdown, so GitHub and the website share the same source.
-The product tour GIF appears in both the repository README and the docs landing
-page. The original interactive product page remains at `nodyra.html`.
+The website opens on the interactive product page from
+`brand/homepage/nodyra.html`. The build copies that page to `index.html`, so it
+appears at the site's root URL. The original `/nodyra.html` URL still works.
+
+Documentation is available at `/docs.html` through the product page's **Docs**
+links. Its guides are generated from repository Markdown, so GitHub and the
+website share the same source. The product tour GIF appears in the repository
+README and the documentation overview.
 
 ## Build and preview
 
@@ -16,11 +20,14 @@ node scripts/build_docs_site.mjs --check
 python -m http.server 5187 --bind 127.0.0.1 --directory brand/homepage
 ```
 
-Open <http://localhost:5187>. No API, account, database, or Docker service is
-needed to read the site. Search and guide navigation run in the browser; the
-landing page and GitHub guide links remain available without JavaScript.
+Open <http://localhost:5187> for the product page or
+<http://localhost:5187/docs.html> for documentation. No API, account, database,
+or Docker service is needed to read the site. Search and guide navigation run
+in the browser; the product page, documentation overview, and GitHub guide
+links remain available without JavaScript.
 
-Edit the Markdown guides, `brand/homepage/docs.template.html`, or
+Edit `brand/homepage/nodyra.html` for the product landing page. For documentation,
+edit the Markdown guides, `brand/homepage/docs.template.html`, or
 `brand/homepage/docs-site.js`, then rebuild. Commit the generated `index.html`
 and `docs.html` along with their sources. The latter preserves older guide links.
 The build checks internal page links and section anchors for the included guides.

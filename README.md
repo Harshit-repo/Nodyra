@@ -88,7 +88,7 @@ covers HTTPS, automatic service restarts, storage, and backups.
 - [Product tour](docs/nodyra-product-tour.gif): homepage, workflow execution,
   node inspector, and Python editor.
 - [Documentation website](docs/documentation-site.md): build and publish the
-  documentation landing page, with the product homepage available separately.
+  product landing page and its linked documentation.
 
 ## Build workflows with an AI agent
 
