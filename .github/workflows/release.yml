@@ -50,7 +50,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           # Match the production container interpreter; CI also covers 3.12.
           python-version: "3.14"
@@ -233,7 +233,7 @@ jobs:
 
       # anchore/scan-action v7.4.0, pinned to the immutable release commit.
       - name: Scan API SBOM for high and critical vulnerabilities
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439
         with:
           sbom: sbom-api.spdx.json
           fail-build: true
@@ -242,7 +242,7 @@ jobs:
           output-file: vulnerability-api.json
 
       - name: Scan Web SBOM for high and critical vulnerabilities
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439
         with:
           sbom: sbom-web.spdx.json
           fail-build: true
@@ -251,7 +251,7 @@ jobs:
           output-file: vulnerability-web.json
 
       - name: Scan Runner SBOM for high and critical vulnerabilities
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439
         with:
           sbom: sbom-runner.spdx.json
           fail-build: true
