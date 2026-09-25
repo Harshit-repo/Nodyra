@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
       # Guard the committed lockfile: fail if uv.lock has drifted from the
@@ -100,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.14"
       - run: uv lock --check
@@ -133,7 +133,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
       - run: uv lock --check
@@ -182,7 +182,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
       - run: uv sync --all-packages
@@ -260,7 +260,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
       - run: uv sync --locked --all-packages
@@ -330,7 +330,7 @@ jobs:
       # Match the release gate before tagging, including unfixed findings and
       # interpreter/binary packages that the complementary Trivy scan may miss.
       - name: Release-grade API vulnerability gate
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: nodyra-api:ci
           fail-build: true
@@ -338,7 +338,7 @@ jobs:
           output-format: json
           output-file: vulnerability-api-ci.json
       - name: Release-grade web vulnerability gate
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: nodyra-web:ci
           fail-build: true
@@ -370,7 +370,7 @@ jobs:
           --set api.corsOrigins=https://nodyra.example.com
           --set-string secret.key=ci-secret-key-at-least-32-bytes-long
           --set-string secret.internalApiToken=ci-internal-token
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
       - run: uv sync --locked --all-packages
@@ -405,7 +405,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
       - name: Write deploy/.env the way the guide says
         run: |
           cp deploy/.env.example deploy/.env
@@ -452,7 +452,7 @@ jobs:
       SANDBOX_RUNTIME: runc
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
       - run: uv sync --locked --all-packages
@@ -563,7 +563,7 @@ jobs:
       ARTIFACT_STORAGE_BACKEND: local
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
       - run: uv sync --locked --all-packages
@@ -691,7 +691,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
       - run: uv sync --all-packages
