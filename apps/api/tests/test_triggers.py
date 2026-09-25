@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
@@ -435,6 +436,105 @@ async def test_webhook_method_must_match_node_method(client: AsyncClient) -> Non
     assert len(get_resp["runs"]) == 1
 
 
+def _ws_trigger_graph(path: str = "myws", **extra_params: Any) -> dict:
+    return {
+        "nodes": [
+            {
+                "id": "ws",
+                "type": "websocket_trigger",
+                "params": {"path": path, **extra_params},
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "proc",
+                "type": "code",
+                "params": {"code": "output = input"},
+                "position": {"x": 260, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "ws",
+                "source_output": "main",
+                "target": "proc",
+                "target_input": "input",
+            }
+        ],
+    }
+
+
+async def test_websocket_trigger_fires_run(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "WS Hook"})).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": _ws_trigger_graph(), "active": True},
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app, raise_server_exceptions=False) as tc:
+        with tc.websocket_connect("/ws/triggers/myws") as ws:
+            ws.send_text('{"v": 3}')
+            ack = ws.receive_json()
+    assert ack["status"] == 202
+    assert len(ack["runs"]) == 1
+
+    run = (await client.get(f"/runs/{ack['runs'][0]}")).json()
+    assert run["status"] == "success"
+    assert run["trigger_type"] == "provider"
+    results = {n["node_id"]: n for n in run["node_runs"]}
+    assert results["proc"]["output"]["main"]["v"] == 3
+
+
+async def test_websocket_trigger_unknown_path_closes(client: AsyncClient) -> None:
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.main import app
+
+    with TestClient(app, raise_server_exceptions=False) as tc:
+        with tc.websocket_connect("/ws/triggers/nothing-here") as ws:
+            msg = ws.receive_json()
+            assert msg["error"]
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+
+
+async def test_websocket_trigger_enforces_token_auth(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "WS Private"})).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={
+            "graph": _ws_trigger_graph(path="private", auth_type="token", auth_token="sekret"),
+            "active": True,
+        },
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.main import app
+
+    with TestClient(app, raise_server_exceptions=False) as tc:
+        with tc.websocket_connect("/ws/triggers/private") as ws:
+            with pytest.raises(WebSocketDisconnect):
+                ws.send_text('{"v": 9}')
+                ws.receive_json()
+        with tc.websocket_connect("/ws/triggers/private?token=wrong") as ws:
+            with pytest.raises(WebSocketDisconnect):
+                ws.send_text('{"v": 9}')
+                ws.receive_json()
+        with tc.websocket_connect("/ws/triggers/private?token=sekret") as ws:
+            ws.send_text('{"v": 9}')
+            ack = ws.receive_json()
+    assert len(ack["runs"]) == 1
+
+
 async def test_github_provider_trigger_lifecycle_and_dispatch(
     client: AsyncClient,
     monkeypatch,
@@ -638,9 +738,7 @@ async def test_schedule_occurrence_retries_and_recovers_committed_run(
     client: AsyncClient, monkeypatch
 ) -> None:
     """A dispatch crash cannot lose a due occurrence or create a second run."""
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Durable schedule"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Durable schedule"})).json()["id"]
     graph = {
         "nodes": [
             {
@@ -673,9 +771,7 @@ async def test_schedule_occurrence_retries_and_recovers_committed_run(
     async with triggers.SessionLocal() as session:
         occurrence = (
             await session.scalars(
-                select(ScheduleOccurrence).where(
-                    ScheduleOccurrence.workflow_id == workflow_id
-                )
+                select(ScheduleOccurrence).where(ScheduleOccurrence.workflow_id == workflow_id)
             )
         ).one()
         assert occurrence.status == "pending"
@@ -690,9 +786,7 @@ async def test_schedule_occurrence_retries_and_recovers_committed_run(
     async with triggers.SessionLocal() as session:
         occurrence = (
             await session.scalars(
-                select(ScheduleOccurrence).where(
-                    ScheduleOccurrence.workflow_id == workflow_id
-                )
+                select(ScheduleOccurrence).where(ScheduleOccurrence.workflow_id == workflow_id)
             )
         ).one()
         assert occurrence.status == "dispatched"
@@ -723,9 +817,7 @@ async def test_schedule_occurrence_retries_and_recovers_committed_run(
     async with triggers.SessionLocal() as session:
         occurrence = (
             await session.scalars(
-                select(ScheduleOccurrence).where(
-                    ScheduleOccurrence.workflow_id == workflow_id
-                )
+                select(ScheduleOccurrence).where(ScheduleOccurrence.workflow_id == workflow_id)
             )
         ).one()
         assert occurrence.status == "dispatched"

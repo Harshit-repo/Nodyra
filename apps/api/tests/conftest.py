@@ -12,6 +12,7 @@ from sqlalchemy.pool import NullPool
 import app.main as main_module
 import app.mcp.tools as mcp_tools_module
 import app.routers.chat_public as chat_public_module
+import app.routers.provider_webhooks as provider_webhooks_module
 import app.routers.runner_pools as runner_pools_module
 import app.services.agentic_builder as agentic_builder_module
 import app.services.artifact_reconcile as artifact_reconcile_module
@@ -394,6 +395,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         remote_dispatch_module: remote_dispatch_module.SessionLocal,
         runner_pools_module: runner_pools_module.SessionLocal,
         chat_public_module: chat_public_module.SessionLocal,
+        provider_webhooks_module: provider_webhooks_module.SessionLocal,
         subworkflows_module: subworkflows_module.SessionLocal,
         mcp_tools_module: mcp_tools_module.SessionLocal,
         main_module: main_module.SessionLocal,
@@ -417,6 +419,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     remote_dispatch_module.SessionLocal = test_session
     runner_pools_module.SessionLocal = test_session
     chat_public_module.SessionLocal = test_session
+    provider_webhooks_module.SessionLocal = test_session
     subworkflows_module.SessionLocal = test_session
     mcp_tools_module.SessionLocal = test_session
     main_module.SessionLocal = test_session

@@ -268,6 +268,33 @@ async def test_loop_runs_body_once_per_item_in_order():
     assert str(result.nodes["e"].status) == "success"
     assert result.nodes["e"].outputs["results"] == [2, 4, 6]
     assert result.nodes["e"].outputs["errors"] == []
+    assert result.nodes["e"].finished_at is not None
+
+
+async def test_loop_end_aliases_results_as_main_and_feeds_downstream():
+    # loop_end is the only node without a single-value `main` port; the driver
+    # must alias `results` so the universal `main` wiring convention works.
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3]}),
+            _n("s", "loop_start"),
+            _n("b", "code", {"code": "output = input * 2"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+            _n("d", "code", {"code": "output = {'saw': input}"}),
+        ],
+        [
+            _e("trig", "s"),
+            _e("s", "b", src_out="item"),
+            _e("b", "e"),
+            _e("e", "d"),  # default source_output is "main"
+        ],
+    )
+    result = await execute(g, registry)
+    e = result.nodes["e"]
+    assert str(e.status) == "success"
+    assert e.outputs["main"] == [2, 4, 6]
+    assert result.nodes["d"].outputs["main"]["saw"] == [2, 4, 6]
+    assert e.finished_at is not None
 
 
 async def test_loop_on_error_continue_collects_errors():

@@ -610,6 +610,53 @@ def test_needs_host_callbacks_empty_graph() -> None:
     assert _needs_host_callbacks({"type": "run", "graph": {"nodes": [], "edges": []}}) is False
 
 
+def test_needs_host_callbacks_true_for_call_workflow_hooks() -> None:
+    # HK-1: a call_workflow hook round-trips through the host even though no
+    # callback-typed node is present; the worker must stay on the concurrent
+    # path or the main loop deadlocks awaiting a response it never reads.
+    msg = {
+        "type": "run",
+        "graph": {
+            "nodes": [
+                {
+                    "id": "n1",
+                    "type": "code",
+                    "params": {"code": "output = 1"},
+                    "hooks": [
+                        {
+                            "trigger": "on_success",
+                            "type": "call_workflow",
+                            "config": {"workflow_id": "other"},
+                        }
+                    ],
+                    "position": {"x": 0, "y": 0},
+                }
+            ],
+            "edges": [],
+        },
+    }
+    assert _needs_host_callbacks(msg) is True
+
+
+def test_needs_host_callbacks_ignores_non_callback_hooks() -> None:
+    msg = {
+        "type": "run",
+        "graph": {
+            "nodes": [
+                {
+                    "id": "n1",
+                    "type": "code",
+                    "params": {"code": "output = 1"},
+                    "hooks": [{"trigger": "on_success", "type": "log", "config": {}}],
+                    "position": {"x": 0, "y": 0},
+                }
+            ],
+            "edges": [],
+        },
+    }
+    assert _needs_host_callbacks(msg) is False
+
+
 def test_needs_host_callbacks_missing_graph() -> None:
     assert _needs_host_callbacks({"type": "run"}) is False
 

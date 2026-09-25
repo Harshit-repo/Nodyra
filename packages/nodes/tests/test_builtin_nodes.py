@@ -277,6 +277,62 @@ async def test_switch_routes_via_dynamic_rules() -> None:
     assert result.nodes["caught"].outputs["main"] == {"kind": "vip"}
 
 
+async def test_switch_routes_without_outputs_override() -> None:
+    # SW-1: rules keys are ports even when outputs_override is absent —
+    # the branch value must not be swallowed under the static `fallback` port.
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(
+                id="t",
+                type="manual_trigger",
+                params={"data": {"kind": "vip"}},
+            ),
+            GraphNode(
+                id="s",
+                type="switch",
+                params={"field": "kind", "rules": {"vip": "vip", "free": "free"}},
+            ),
+            GraphNode(id="caught", type="no_op"),
+            GraphNode(id="fallback_never", type="no_op"),
+        ],
+        edges=[
+            Edge(source="t", target="s"),
+            Edge(source="s", source_output="vip", target="caught"),
+            Edge(source="s", source_output="fallback", target="fallback_never"),
+        ],
+    )
+    result = await execute(graph, registry)
+    assert result.nodes["s"].outputs == {"vip": {"kind": "vip"}}
+    assert result.nodes["caught"].outputs["main"] == {"kind": "vip"}
+    assert str(result.nodes["fallback_never"].status) == "skipped"
+
+
+async def test_switch_fallback_when_no_rule_matches() -> None:
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(
+                id="t",
+                type="manual_trigger",
+                params={"data": {"kind": "other"}},
+            ),
+            GraphNode(
+                id="s",
+                type="switch",
+                params={"field": "kind", "rules": {"vip": "vip"}},
+            ),
+            GraphNode(id="caught", type="no_op"),
+        ],
+        edges=[
+            Edge(source="t", target="s"),
+            Edge(source="s", source_output="fallback", target="caught"),
+        ],
+    )
+    result = await execute(graph, registry)
+    assert result.nodes["s"].outputs == {"fallback": {"kind": "other"}}
+    assert result.nodes["caught"].outputs["main"] == {"kind": "other"}
+
+
+
 async def test_loop_over_items_routes_each_item_and_done_summary() -> None:
     graph = WorkflowGraph(
         nodes=[

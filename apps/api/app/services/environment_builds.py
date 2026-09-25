@@ -412,12 +412,14 @@ async def process_environment_build_job(job_id: str) -> None:
         # Warm runtime workers hold the previous environment's code in memory
         # and, on Windows, their loaded .pyd files lock the environment
         # directory — a rebuild cannot overwrite them (PermissionError:
-        # Access is denied). Drain the env's idle workers first; any in-flight
-        # run finishes and its worker closes on release.
+        # Access is denied). Force-drain the env: idle AND in-flight workers
+        # are terminated and the env's pool is paused so no new worker can
+        # spawn against the half-built directory. Runs in flight fail visibly;
+        # queued runs park until the build completes.
         try:
             from app.services.runtime_pool import pool as _runtime_pool
 
-            await _runtime_pool.drain_env(job.environment_id)
+            await _runtime_pool.drain_env(job.environment_id, force=True)
         except Exception:  # noqa: BLE001 - draining must never block a build
             logger.exception("environment build: could not drain runtime workers")
 
@@ -466,6 +468,24 @@ async def process_environment_build_job(job_id: str) -> None:
             await heartbeat
         if retryable_failure:
             await notify_environment_build_workers()
+        # Keep the env's pool paused while the build job stays retryable —
+        # unpausing between attempts let parked runs spawn fresh workers that
+        # re-locked the (Windows) environment directory and re-failed the
+        # build. Unpause only on a terminal job state.
+        await _unpause_if_terminal(job_id)
+
+
+async def _unpause_if_terminal(job_id: str) -> None:
+    """Resume dispatching runs once the build job can no longer retry."""
+    try:
+        async with SessionLocal() as session:
+            job = await get_environment_build_job(session, job_id)
+            if job is None or job.status in ("succeeded", "failed", "cancelled", "superseded"):
+                from app.services.runtime_pool import pool as _runtime_pool
+
+                await _runtime_pool.unpause_env(job.environment_id if job is not None else None)
+    except Exception:  # noqa: BLE001
+        logger.exception("environment build: could not unpause runtime pool")
 
 
 async def run_environment_build_dispatch_loop() -> None:

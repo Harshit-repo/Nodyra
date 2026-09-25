@@ -523,6 +523,35 @@ async def test_set_graph_rejects_unknown_node_type(client: AsyncClient) -> None:
     assert "Unknown node types" in result["content"][0]["text"]
 
 
+async def test_set_graph_accepts_switch_rule_output_ports(client: AsyncClient) -> None:
+    # switch declares only `fallback` statically; branch ports come from the
+    # rules param and must validate without an outputs_override.
+    workflow_id = await make_workflow(client, "Switch Graph WF")
+    graph = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {"data": {"kind": "vip"}}},
+            {"id": "s", "type": "switch", "params": {"field": "kind", "rules": {"vip": "vip", "free": "free"}}},
+            {"id": "v", "type": "code", "params": {"code": "output = {'got': input}"}},
+        ],
+        "edges": [
+            {"source": "t", "source_output": "main", "target": "s", "target_input": "input"},
+            {"source": "s", "source_output": "vip", "target": "v", "target_input": "input"},
+        ],
+    }
+    resp = await client.post(
+        "/mcp",
+        json=rpc(
+            "tools/call",
+            {
+                "name": "set_workflow_graph",
+                "arguments": {"workflow_id": workflow_id, "graph": graph, **APPROVED},
+            },
+        ),
+    )
+    result = resp.json()["result"]
+    assert result["isError"] is False, result["content"][0]["text"]
+
+
 async def test_workflow_exposed_as_dynamic_tool(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Dyn Tool WF")
     await client.post(f"/workflows/{workflow_id}/publish", json={})

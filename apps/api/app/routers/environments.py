@@ -607,12 +607,13 @@ async def delete_environment(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "The global environment cannot be deleted")
     await audit("delete", "environment", env.id, f"name={env.name}")
     # Warm runtime workers hold the env's code (and on Windows its .pyd
-    # files); drain them so the directory can be removed and no worker ever
+    # files); force-drain them (in-flight runs included — a deleted env
+    # cannot finish them) so the directory can be removed and no worker ever
     # serves a deleted environment again.
     try:
         from app.services.runtime_pool import pool as _runtime_pool
 
-        await _runtime_pool.drain_env(env.id)
+        await _runtime_pool.drain_env(env.id, force=True)
     except Exception:  # noqa: BLE001 - deletion must proceed regardless
         logger.exception("delete_environment: could not drain runtime workers")
     # Remove the venv directory itself. Without this, every deleted

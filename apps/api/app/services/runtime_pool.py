@@ -23,6 +23,7 @@ import contextlib
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 import uuid
@@ -323,6 +324,15 @@ async def _drain_startup_stderr(
         return ""
     text = raw.decode("utf-8", errors="replace").strip()
     return f": {text}" if text else ""
+
+
+class _PoolPaused(Exception):
+    """The environment is being rebuilt; runs park in the durable queue.
+
+    Raised by ``_EnvPool.acquire`` while the pool is paused so a rebuild can
+    replace the environment directory on Windows (loaded ``.pyd`` files lock
+    it). The runner catches this and requeues the run with backoff.
+    """
 
 
 class _RuntimeProcess:
@@ -686,13 +696,35 @@ class _RuntimeProcess:
             try:
                 await asyncio.wait_for(self.process.wait(), timeout=3)
             except TimeoutError:
-                self.process.kill()
+                self._kill_tree()
                 await self.process.wait()
         except ProcessLookupError:
             pass
         finally:
             self.dead = True
             await self._cancel_stderr_consumer()
+
+    def _kill_tree(self) -> None:
+        """Kill the worker and its whole descendant tree.
+
+        On Windows ``subprocess.kill`` only kills the direct child: the
+        runtime's process-isolator workers (multiprocessing spawn
+        grandchildren) would be orphaned and keep the env venv's ``.pyd``
+        files loaded, locking the environment directory against rebuilds
+        (PermissionError). ``taskkill /T`` removes the full tree.
+        """
+        if os.name != "nt" or self.process.pid is None:
+            self.process.kill()
+            return
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            self.process.kill()
 
     async def _cancel_stderr_consumer(self) -> None:
         if self._stderr_task is not None and not self._stderr_task.done():
@@ -746,6 +778,10 @@ class _EnvPool:
         # code must never serve runs after a rebuild, and on Windows a live
         # worker's loaded DLLs would otherwise block the rebuild itself.
         self._generation = 0
+        # Set while the environment is being rebuilt: acquire() parks runs in
+        # the durable queue instead of spawning workers against a half-built
+        # environment directory.
+        self._paused = False
 
     @staticmethod
     def _alive(proc: _RuntimeProcess) -> bool:
@@ -758,6 +794,9 @@ class _EnvPool:
 
     async def acquire(self) -> _RuntimeProcess:
         await self._sem.acquire()
+        if self._paused:
+            self._sem.release()
+            raise _PoolPaused(self.env_id)
         async with self._lock:
             while self._idle:
                 cand = self._idle.pop()
@@ -799,15 +838,16 @@ class _EnvPool:
             asyncio.create_task(proc.close())
         self._sem.release()
 
-    async def drain(self) -> None:
-        """Close every idle worker and invalidate in-flight workers.
+    async def drain(self, *, force: bool = False) -> None:
+        """Close workers so a rebuild can replace the environment directory.
 
-        Called before an environment rebuild (and on delete): a warm worker
-        holds the previous environment's code in memory, and on Windows its
-        loaded ``.pyd`` files lock the environment directory, so a rebuild
-        cannot overwrite them until the workers are gone. In-flight runs are
-        left untouched — they close themselves on release thanks to the
-        generation bump.
+        Idle workers are always closed. With ``force=True`` (the rebuild
+        path), in-flight workers are terminated too — on Windows their loaded
+        ``.pyd`` files lock the environment directory, and waiting for a
+        wedged or long-running run would block the rebuild indefinitely.
+        Their runs surface as errors when the worker's stdout closes. The
+        pool is paused until ``unpause()`` so no new workers spawn against
+        the half-built environment directory.
         """
         async with self._lock:
             self._generation += 1
@@ -815,8 +855,17 @@ class _EnvPool:
             self._idle.clear()
             for proc in to_close:
                 self._all.discard(proc)
+            if force:
+                to_close.extend(proc for proc in self._all if self._alive(proc))
+                self._all.clear()
+                self._paused = True
         for proc in to_close:
             await proc.close()
+
+    async def unpause(self) -> None:
+        """Allow runs to acquire workers again (build finished or failed)."""
+        async with self._lock:
+            self._paused = False
 
     async def reap_idle(self, threshold_seconds: float) -> int:
         """Close warm processes idle past the threshold, respecting ``min_size``.
@@ -1093,19 +1142,28 @@ class RuntimePool:
                 self._envs[key] = envpool
             return envpool
 
-    async def drain_env(self, env_id: str | None) -> None:
+    async def drain_env(self, env_id: str | None, *, force: bool = False) -> None:
         """Close warm workers for one environment before a rebuild/delete.
 
         A warm worker keeps the previous environment's code in memory, and on
         Windows its loaded ``.pyd`` files lock the environment directory so the
-        rebuild cannot replace them (PermissionError). In-flight runs are left
-        running; their workers close on release thanks to the generation bump.
+        rebuild cannot replace them (PermissionError). With ``force=True``
+        in-flight workers are terminated and the env's pool is paused until
+        ``unpause_env`` runs.
         """
         key = env_id or "_default"
         async with self._lock:
             envpool = self._envs.get(key)
         if envpool is not None:
-            await envpool.drain()
+            await envpool.drain(force=force)
+
+    async def unpause_env(self, env_id: str | None) -> None:
+        """Resume dispatching runs for an env whose rebuild finished/failed."""
+        key = env_id or "_default"
+        async with self._lock:
+            envpool = self._envs.get(key)
+        if envpool is not None:
+            await envpool.unpause()
 
     async def dispatch(
         self,

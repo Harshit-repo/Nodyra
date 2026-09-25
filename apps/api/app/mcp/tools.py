@@ -903,6 +903,11 @@ def _validate_graph_payload(graph: Any, *, require_trigger: bool = True) -> Work
             valid = {port.name for port in source_manifest.outputs}
             if source_node.outputs_override:
                 valid.update(str(port) for port in source_node.outputs_override if port)
+            if source_node.type == "switch":
+                # switch branches are dynamic: each rules key is an output port
+                # (builtin.py declares only `fallback` statically).
+                rules = (source_node.params or {}).get("rules") or {}
+                valid.update(str(k) for k in rules if k)
             if source_node.tool_mode:
                 valid.add("tool")
             if edge.source_output not in valid:

@@ -612,6 +612,43 @@ async def test_env_pool_release_keeps_current_generation_worker_warm() -> None:
 
 
 @pytest.mark.asyncio
+async def test_env_pool_drain_force_closes_inflight_and_pauses(monkeypatch) -> None:
+    """A rebuild must not wait on wedged/long in-flight runs: force-drain
+    terminates them, and acquire() parks runs until the pool is unpaused."""
+    import app.services.runtime_pool as rp_module
+    from app.services.runtime_pool import _EnvPool, _PoolPaused
+
+    pool = _EnvPool(env_id="e1", min_size=1, max_size=2, rss_estimate=0)
+    inflight = _FakeProcess()
+    inflight.generation = 0
+    pool._all.add(inflight)
+
+    await pool.drain(force=True)
+
+    assert inflight.closed is True
+    assert pool._all == set()
+    with pytest.raises(_PoolPaused):
+        await pool.acquire()
+
+    await pool.unpause()
+    fresh = _FakeProcess()
+    monkeypatch.setattr(
+        rp_module._RuntimeProcess, "spawn", _AsyncSpawn(fresh).spawn
+    )
+    proc = await pool.acquire()
+    assert proc is fresh
+    pool.release(proc)
+
+
+class _AsyncSpawn:
+    def __init__(self, proc: _FakeProcess) -> None:
+        self._proc = proc
+
+    async def spawn(self, env_id: str) -> _FakeProcess:
+        return self._proc
+
+
+@pytest.mark.asyncio
 async def test_runtime_pool_drain_env_targets_only_that_env() -> None:
     pool = RuntimePool()
     env_a = _EnvPool(env_id="env-a", min_size=1, max_size=2, rss_estimate=0)

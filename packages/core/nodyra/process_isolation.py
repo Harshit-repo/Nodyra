@@ -98,6 +98,30 @@ class ProcessIsolator(Protocol):
     ) -> Any: ...
 
 
+class InlineProcessIsolator:
+    """Runs node functions in the calling process, on a worker thread.
+
+    Used by the runtime worker (``nodyra_runtime``): that process is already
+    the isolation boundary — the host spawns one disposable worker per
+    environment and kills it on wedge, timeout, or rebuild. Spawning a second
+    layer of ``ProcessPoolExecutor`` children inside the worker wedged on
+    Windows (HK-2): the spawn child inherits the worker's stdin pipe while
+    the host-callback reader thread is blocked on it, so the child's spawn
+    bootstrap deadlocks and code nodes hang until their timeout.
+    """
+
+    async def run(
+        self,
+        fn: Callable[..., Any],
+        kwargs: dict[str, Any],
+        *,
+        timeout: float | None,
+    ) -> Any:
+        if timeout is not None:
+            return await asyncio.wait_for(asyncio.to_thread(fn, **kwargs), timeout)
+        return await asyncio.to_thread(fn, **kwargs)
+
+
 class PooledProcessIsolator:
     """One ProcessPoolExecutor per isolation key (environment id).
 
@@ -132,9 +156,7 @@ class PooledProcessIsolator:
     ) -> Any:
         key = pool_key.get()
         pool = self._checkout(key)
-        broken_pool_error = importlib.import_module(
-            "concurrent.futures.process"
-        ).BrokenProcessPool
+        broken_pool_error = importlib.import_module("concurrent.futures.process").BrokenProcessPool
         loop = asyncio.get_running_loop()
         # Carry the caller's artifact store across the process boundary, so a
         # node that reads a DatasetRef works in here as it does elsewhere.
@@ -164,10 +186,9 @@ class PooledProcessIsolator:
         with self._mutex:
             now = time.monotonic()
             idle = [
-                k for k, last in self._last_activity.items()
-                if k != key
-                and self._in_flight.get(k, 0) == 0
-                and now - last > self._idle_seconds
+                k
+                for k, last in self._last_activity.items()
+                if k != key and self._in_flight.get(k, 0) == 0 and now - last > self._idle_seconds
             ]
             for k in idle:
                 self._evict_locked(k)

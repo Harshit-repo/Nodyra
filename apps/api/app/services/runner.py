@@ -90,7 +90,7 @@ from app.services.remote_dispatch import (
     build_env_payload,
     dispatcher,
 )
-from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
+from app.services.runtime_pool import _org_run_limits_for, _PoolPaused, _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
 from app.services.sandbox_policy import (
     resolve_execution_mode,
@@ -756,6 +756,18 @@ async def _start_run_impl(
                 f"A run for deduplication key {deduplication_key!r} already exists."
             ) from None
         run_id = run.id
+        # Pinned outputs (editor freeze) must apply on every dispatch path —
+        # previously only the queued-worker path (_execute_queued_entry)
+        # loaded them, so immediate-dispatch deployments silently ran pinned
+        # nodes for real. Caller-supplied cache entries (webhook payloads,
+        # seeded triggers) win; pins fill the rest.
+        pinned_rows = await session.scalars(
+            select(PinnedData).where(PinnedData.workflow_id == workflow_id)
+        )
+        for pinned_row in pinned_rows.all():
+            if pinned_row.node_id not in (cache or {}):
+                cache = dict(cache or {})
+                cache[pinned_row.node_id] = pinned_row.payload
         # Durable queue ledger entry; immediate dispatch happens below so this
         # only adds latency cost when capacity is unavailable (failure path
         # transitions the entry back to ``queued`` for the worker to retry).
@@ -1821,6 +1833,33 @@ async def _execute_run_impl(
                 engine_pool_key.reset(pool_key_token)
                 for module_id in loaded_module_ids:
                     unregister_module(module_id, node_registry)
+    except _PoolPaused as paused_exc:
+        # The environment is being rebuilt: park the run in the durable queue
+        # (retry with backoff) instead of failing it — it should execute on
+        # the NEW environment once the build completes. Mirrors the
+        # _QueuedError requeue path.
+        async with SessionLocal() as session:
+            entry = await run_queue.fail(
+                session,
+                run_id=run_id,
+                retryable=True,
+                error=(
+                    f"environment {paused_exc} is being rebuilt; "
+                    "the run is parked and will retry"
+                ),
+                lease_token=lease_token,
+            )
+            run = await session.get(Run, run_id)
+            if run is not None:
+                if entry is not None and entry.status == "queued":
+                    run.status = "queued"
+                    run.finished_at = None
+                else:
+                    run.status = "error"
+                    run.finished_at = datetime.now(UTC)
+            await session.commit()
+        _log_run_id.reset(run_id_token)
+        return "queued"
     except asyncio.CancelledError:
         if lease_lost.is_set():
             status = "error"

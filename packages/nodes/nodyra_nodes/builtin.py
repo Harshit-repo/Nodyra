@@ -965,7 +965,7 @@ def loop_start(
     id="loop_end",
     category="Logic",
     icon="repeat",
-    outputs=["results", "errors"],
+    outputs=["main", "results", "errors"],
     params={
         "loop_start_id": {
             "widget": "hidden",

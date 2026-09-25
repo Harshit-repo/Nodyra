@@ -30,7 +30,7 @@ def test_loop_start_has_mode_and_per_mode_params():
 def test_loop_end_registered_with_outputs_and_hidden_pair_param():
     nd = registry.get("loop_end")
     m = nd.manifest
-    assert [o.name for o in m.outputs] == ["results", "errors"]
+    assert [o.name for o in m.outputs] == ["main", "results", "errors"]
     pnames = {p.name for p in m.params}
     assert {"loop_start_id", "output_mode", "conditional_output"} <= pnames
 

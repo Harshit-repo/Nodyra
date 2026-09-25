@@ -690,7 +690,10 @@ async def _last_node_output(session, run_id: str) -> object:
     row = await session.scalar(
         select(NodeRun.output)
         .where(NodeRun.run_id == run_id)
-        .order_by(NodeRun.finished_at.desc().nullslast())
+        .order_by(
+            NodeRun.finished_at.desc().nullslast(),
+            NodeRun.started_at.desc().nullslast(),
+        )
         .limit(1)
     )
     # A large output is stored as an offload marker; resolve it so the webhook

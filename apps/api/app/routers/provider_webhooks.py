@@ -1,4 +1,4 @@
-"""Provider-managed webhook ingress."""
+"""Provider-managed webhook + WebSocket trigger ingress."""
 
 from __future__ import annotations
 
@@ -7,10 +7,16 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
+from sqlalchemy import select
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from app.config import settings
+from app.db import SessionLocal
+from app.models import ProviderTriggerSubscription, Workflow, WorkflowVersion
 from app.security import get_client_ip
 from app.services.provider_triggers import (
+    _node_params_by_id,
+    _resolved_params,
     dispatch_provider_webhook,
 )
 from nodyra_nodes.integrations_v2.specs import ProviderTriggerRequest
@@ -127,3 +133,128 @@ for _method in _METHODS:
         methods=[_method],
         operation_id=f"provider_webhook_{_method.lower()}",
     )
+
+
+_WS_AUTH_HEADER_MAX = 512
+
+
+def _ws_client_token(websocket: WebSocket) -> str:
+    query_token = websocket.query_params.get("token", "")
+    if query_token:
+        return query_token
+    raw = (websocket.headers.get("authorization") or "")[:_WS_AUTH_HEADER_MAX]
+    if raw.lower().startswith("bearer "):
+        return raw[7:].strip()
+    return raw
+
+
+def _ws_auth_expected(resolved_params: dict) -> str:
+    value = resolved_params.get("auth_token")
+    if isinstance(value, dict):
+        value = value.get("token")
+    return str(value or "")
+
+
+async def _ws_subscriptions_for_path(path: str) -> list[tuple[dict, str]]:
+    """(resolved_params, subscription_id) for every active websocket_trigger
+    subscription whose ``path`` param matches the requested URL path.
+
+    Cross-org by design (like provider webhooks): the subscription decides
+    which org's workflow fires.
+    """
+    from app.tenancy import run_as_system
+
+    with run_as_system():
+        async with SessionLocal() as session:
+            rows = (
+                await session.scalars(
+                    select(ProviderTriggerSubscription).where(
+                        ProviderTriggerSubscription.status == "active",
+                        ProviderTriggerSubscription.node_type == "websocket_trigger",
+                    )
+                )
+            ).all()
+            matches: list[tuple[dict, str]] = []
+            for row in rows:
+                workflow = await session.get(Workflow, row.workflow_id)
+                if workflow is None:
+                    continue
+                version: WorkflowVersion | None = None
+                if row.workflow_version_id:
+                    version = await session.get(WorkflowVersion, row.workflow_version_id)
+                if version is None:
+                    continue
+                graph = version.graph or {"nodes": [], "edges": []}
+                params = _node_params_by_id(graph).get(row.node_id, {})
+                resolved = await _resolved_params(
+                    session,
+                    workflow_id=workflow.id,
+                    environment_id=workflow.environment_id,
+                    params=params,
+                )
+                resolved = resolved if isinstance(resolved, dict) else {}
+                if str(resolved.get("path") or "ws").strip("/") != path:
+                    continue
+                matches.append((resolved, row.id))
+    return matches
+
+
+@router.websocket("/ws/triggers/{path}")
+async def websocket_trigger_ingress(websocket: WebSocket, path: str) -> None:
+    """Inbound WebSocket messages for websocket_trigger subscriptions.
+
+    One connection can serve every subscription that shares a ``path``; each
+    text message is dispatched to all of them. Auth per the subscription's
+    ``auth_type`` param: token/header require a matching token in the
+    ``?token=`` query param or the ``Authorization`` header.
+    """
+    await websocket.accept()
+    try:
+        matches = await _ws_subscriptions_for_path(path.strip("/"))
+        if not matches:
+            await websocket.send_json({"error": f"no active websocket trigger at path '{path}'"})
+            await websocket.close(code=1008)
+            return
+
+        protected = [m for m in matches if str(m[0].get("auth_type") or "none") != "none"]
+        if protected:
+            provided = _ws_client_token(websocket)
+            for resolved, _sub_id in protected:
+                if not provided or provided != _ws_auth_expected(resolved):
+                    await websocket.close(code=1008)
+                    return
+
+        while True:
+            try:
+                message = await websocket.receive_text()
+            except WebSocketDisconnect:
+                return
+            headers = dict(websocket.headers)
+            query = dict(websocket.query_params)
+            for resolved, subscription_id in matches:
+                max_size = int(resolved.get("max_message_size") or 262_144)
+                if len(message.encode("utf-8", errors="replace")) > max_size:
+                    await websocket.send_json(
+                        {"error": "message size exceeds the subscription limit"}
+                    )
+                    continue
+                request = ProviderTriggerRequest(
+                    headers=headers,
+                    query=query,
+                    body=message,
+                    raw_body=message.encode("utf-8"),
+                )
+                try:
+                    disp = await dispatch_provider_webhook(subscription_id, request)
+                except KeyError:
+                    continue
+                await websocket.send_json(
+                    {
+                        "path": path,
+                        "subscription_id": subscription_id,
+                        "status": disp.status,
+                        "runs": disp.run_ids,
+                    }
+                )
+    except WebSocketDisconnect:
+        pass

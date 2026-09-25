@@ -65,7 +65,7 @@ from nodyra.engine.subworkflows import (
 )
 from nodyra.engine.types import _call_mcp_tool_impl, set_call_mcp_tool_impl
 from nodyra.models import WorkflowGraph
-from nodyra.process_isolation import PooledProcessIsolator
+from nodyra.process_isolation import InlineProcessIsolator
 from nodyra.sdk import register_module_functions, registry, unregister_module
 from nodyra.serialization import deserialize_value, serialize_value
 
@@ -124,15 +124,16 @@ def _runtime_heartbeat_seconds() -> float:
 
 _RUNTIME_HEARTBEAT_SECONDS = _runtime_heartbeat_seconds()
 
-# This warm runner process is already per-environment; one isolator with the
-# default (None) pool key is correct.
-_PROCESS_ISOLATOR = PooledProcessIsolator()
+_INLINE_ISOLATOR = InlineProcessIsolator()
 
 
 def _emit(event: dict) -> None:
     _PROTOCOL_OUT.write(json.dumps(serialize_value(event)))
     _PROTOCOL_OUT.write("\n")
     _PROTOCOL_OUT.flush()
+
+
+_stdin_reader: asyncio.StreamReader | None = None
 
 
 async def _read_line() -> str | None:
@@ -339,7 +340,15 @@ async def _handle_run(request: dict[str, Any]) -> None:
             default_timeouts=_RUNTIME_DEFAULT_TIMEOUTS,
             pause_on_approval=bool(request.get("pause_on_approval")),
             agent_action_resume=agent_action_resume,
-            process_isolator=_PROCESS_ISOLATOR,
+            # HK-2: this process IS the isolation boundary — the host spawns
+            # one disposable worker per environment and kills it on wedge,
+            # timeout, or rebuild. Spawning a second layer of
+            # ProcessPoolExecutor children here wedged on Windows: their
+            # spawn bootstrap deadlocks against the stdin reader thread that
+            # must stay alive for host callbacks (call_workflow, mcp_tool),
+            # which left inline sub-workflow code nodes stuck until the
+            # 600s node timeout. Code nodes run on a worker thread here.
+            process_isolator=_INLINE_ISOLATOR,
             subworkflow_runner=_run_subworkflow_via_host,
             subworkflow_meta=sub_meta,
         )
@@ -426,9 +435,20 @@ def _needs_host_callbacks(message: dict[str, Any]) -> bool:
     nodes = graph.get("nodes") if isinstance(graph, dict) else None
     if not isinstance(nodes, list):
         return False
-    return any(
-        isinstance(node, dict) and node.get("type") in _HOST_CALLBACK_NODE_TYPES for node in nodes
-    )
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if node.get("type") in _HOST_CALLBACK_NODE_TYPES:
+            return True
+        # Node lifecycle hooks can also call back: a `call_workflow` hook
+        # round-trips through the host. Missing this meant a hook-bearing
+        # graph ran on the sequential path, the main loop blocked awaiting
+        # the run, the host's callback response was never read from stdin,
+        # and the worker deadlocked — wedging every run behind it (HK-1).
+        for hook in node.get("hooks") or []:
+            if isinstance(hook, dict) and hook.get("type") == "call_workflow":
+                return True
+    return False
 
 
 async def run_forever() -> None:
@@ -462,9 +482,9 @@ async def run_forever() -> None:
             _emit({"type": "error", "error": "unknown message type"})
             continue
 
-        # Most runs never call back to the host. Run those inline so the
-        # process does not keep a background stdin reader thread alive while
-        # user code imports heavy packages such as numpy/pandas on Windows.
+        # Most runs never call back to the host. Run those inline so a run's
+        # heavy imports (numpy/pandas on Windows) do not stall the stdin
+        # reader that must stay responsive for host callbacks.
         if _needs_host_callbacks(message):
             asyncio.create_task(_handle_run(message))
         else:

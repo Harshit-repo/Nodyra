@@ -32,6 +32,7 @@ from nodyra.engine.datasets import (
     _auto_expand_dataset_inputs,
     _auto_promote_outputs,
 )
+from nodyra.engine.timestamps import stamp_finish
 from nodyra.engine.types import EventCallback, NodeValidationError, RuntimeContext
 from nodyra.engine.validation import (
     _validate_input_kinds,
@@ -256,7 +257,9 @@ def _sanitize_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return _clean(schema)
 
 
-def _validate_node_input_schema(params: dict[str, Any], node_input: dict[str, Any], node_id: str) -> None:
+def _validate_node_input_schema(
+    params: dict[str, Any], node_input: dict[str, Any], node_id: str
+) -> None:
     """Validate wired inputs against the code node's optional ``input_schema``.
 
     ``input_schema`` is a JSON Schema dict stored in the node's params.
@@ -279,7 +282,9 @@ def _validate_node_input_schema(params: dict[str, Any], node_input: dict[str, An
             ) from exc
 
 
-def _validate_node_output_schema(params: dict[str, Any], outputs: dict[str, Any], node_id: str) -> None:
+def _validate_node_output_schema(
+    params: dict[str, Any], outputs: dict[str, Any], node_id: str
+) -> None:
     """Validate node outputs against the code node's optional ``output_schema``.
 
     ``output_schema`` is a JSON Schema dict stored in the node's params.
@@ -315,9 +320,7 @@ def _normalize_outputs(raw: Any, output_names: list[str], node_id: str) -> dict[
     if len(output_names) == 1:
         return {output_names[0]: raw}
     if not isinstance(raw, dict):
-        raise ValueError(
-            f"node '{node_id}' declares multiple outputs and must return a dict"
-        )
+        raise ValueError(f"node '{node_id}' declares multiple outputs and must return a dict")
     return {name: raw[name] for name in output_names if name in raw}
 
 
@@ -335,21 +338,39 @@ _HOOK_LOGGER = logging.getLogger("nodyra.hooks")
 
 # Hostname blocks that are NEVER safe webhook targets — loopback, RFC 1918
 # private ranges, link-local, and cloud metadata endpoints.
-_SSRF_BLOCKED_HOSTS: frozenset[str] = frozenset({
-    "127.0.0.1",
-    "::1",
-    "0.0.0.0",
-    "169.254.169.254",  # AWS / GCP / Azure metadata endpoint
-    "metadata.google.internal",
-    "metadata",
-    "localhost",
-})
+_SSRF_BLOCKED_HOSTS: frozenset[str] = frozenset(
+    {
+        "127.0.0.1",
+        "::1",
+        "0.0.0.0",
+        "169.254.169.254",  # AWS / GCP / Azure metadata endpoint
+        "metadata.google.internal",
+        "metadata",
+        "localhost",
+    }
+)
 
 _SSRF_BLOCKED_PREFIXES: tuple[str, ...] = (
-    "10.", "172.16.", "172.17.", "172.18.", "172.19.",
-    "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
-    "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
-    "172.30.", "172.31.", "192.168.", "169.254.", "fc00:",
+    "10.",
+    "172.16.",
+    "172.17.",
+    "172.18.",
+    "172.19.",
+    "172.20.",
+    "172.21.",
+    "172.22.",
+    "172.23.",
+    "172.24.",
+    "172.25.",
+    "172.26.",
+    "172.27.",
+    "172.28.",
+    "172.29.",
+    "172.30.",
+    "172.31.",
+    "192.168.",
+    "169.254.",
+    "fc00:",
     "fd00:",
 )
 
@@ -388,9 +409,7 @@ def _is_safe_webhook_url(url_str: str) -> tuple[bool, str]:
     return True, ""
 
 
-def matches_display_when(
-    display_when: Any, params: "dict[str, Any]"
-) -> bool:
+def matches_display_when(display_when: Any, params: "dict[str, Any]") -> bool:
     """Is a param visible, given the node's current param values?
 
     Consolidated integration nodes hold the union of every operation's params
@@ -455,15 +474,19 @@ async def _run_node_hooks(
                 level = str(config.get("level") or "info").lower()
                 message = str(config.get("message") or "")
                 if not message:
-                    message = (
-                        f"node {node_id} ({node_type}) {trigger}"
-                        + (f": {error}" if error else "")
+                    message = f"node {node_id} ({node_type}) {trigger}" + (
+                        f": {error}" if error else ""
                     )
-                log_kwargs: dict[str, Any] = {"extra": {
-                    "hook": hook_type, "trigger": trigger,
-                    "node_id": node_id, "node_type": node_type,
-                    "status": status, "attempt": attempt,
-                }}
+                log_kwargs: dict[str, Any] = {
+                    "extra": {
+                        "hook": hook_type,
+                        "trigger": trigger,
+                        "node_id": node_id,
+                        "node_type": node_type,
+                        "status": status,
+                        "attempt": attempt,
+                    }
+                }
                 if error:
                     log_kwargs["extra"]["error"] = error
                 getattr(_HOOK_LOGGER, level, _HOOK_LOGGER.info)(message, **log_kwargs)  # type: ignore[arg-type]
@@ -477,7 +500,10 @@ async def _run_node_hooks(
                 if not safe:
                     _HOOK_LOGGER.warning(
                         "webhook hook blocked node_id=%s trigger=%s url=%s reason=%s",
-                        node_id, trigger, url, reason,
+                        node_id,
+                        trigger,
+                        url,
+                        reason,
                     )
                     continue
                 if payload is None:
@@ -495,8 +521,10 @@ async def _run_node_hooks(
                 # Best-effort: short timeout, no retry, no redirects (SSRF).
                 try:
                     import httpx
+
                     async with httpx.AsyncClient(
-                        timeout=5.0, follow_redirects=False,
+                        timeout=5.0,
+                        follow_redirects=False,
                     ) as client:
                         await client.post(url, json=payload)
                 except Exception:  # noqa: BLE001
@@ -517,13 +545,12 @@ async def _run_node_hooks(
                         "timestamp": time.time(),
                     }
                     if outputs is not None:
-                        payload["outputs"] = {
-                            k: str(v)[:200] for k, v in outputs.items()
-                        }
+                        payload["outputs"] = {k: str(v)[:200] for k, v in outputs.items()}
                 # Fire-and-forget: dispatch the target workflow with
                 # the error context as its trigger parameters.
                 try:
                     from nodyra.context import workflow_caller as _wf_caller_ctx
+
                     _caller = _wf_caller_ctx.get()
                     if _caller is not None:
                         await _caller(
@@ -536,13 +563,14 @@ async def _run_node_hooks(
         except Exception:  # noqa: BLE001
             _HOOK_LOGGER.debug(
                 "hook failed node_id=%s trigger=%s type=%s",
-                node_id, trigger, hook_type, exc_info=True,
+                node_id,
+                trigger,
+                hook_type,
+                exc_info=True,
             )
 
 
-def _declared_output_names(
-    graph_node: Any, registry: NodeRegistry
-) -> set[str] | None:
+def _declared_output_names(graph_node: Any, registry: NodeRegistry) -> set[str] | None:
     """Output ports this node can ever emit, or None when that is unknowable.
 
     None means "do not judge": an unregistered type, or a node whose manifest
@@ -564,6 +592,11 @@ def _declared_output_names(
     for port in getattr(graph_node, "outputs_override", None) or ():
         if port:
             declared.add(str(port))
+    if str(getattr(graph_node, "type", "")) == "switch":
+        # switch branches are dynamic: each rules key is an output port
+        # (builtin.py declares only `fallback` statically).
+        rules = (getattr(graph_node, "params", None) or {}).get("rules") or {}
+        declared.update(str(k) for k in rules if k)
     if getattr(graph_node, "tool_mode", False):
         declared.add("tool")
     # The engine routes caught failures to a node's "$error" port.
@@ -596,9 +629,14 @@ async def _run_one_node(
     if nid in cache:
         outputs = dict(cache[nid])
         node_outputs[nid] = _freeze_outputs(outputs)
+        now = stamp_finish()
         await finish(
             NodeRunResult(
-                node_id=nid, status=NodeStatus.success, outputs=outputs
+                node_id=nid,
+                status=NodeStatus.success,
+                outputs=outputs,
+                started_at=now,
+                finished_at=now,
             )
         )
         return run_status
@@ -617,38 +655,32 @@ async def _run_one_node(
                 # not a branch that happened not to fire. Skipping it made a
                 # malformed graph finish "successfully" having done nothing —
                 # every node after the bad edge skipped, and the run green.
-                declared = _declared_output_names(
-                    nodes_by_id.get(source), registry
-                )
+                declared = _declared_output_names(nodes_by_id.get(source), registry)
                 if declared is not None and source_output not in declared:
                     wiring_error = (
                         f"node '{source}' has no output '{source_output}'; "
                         f"it emits {sorted(declared)}"
                     )
                 else:
-                    skip_reason = (
-                        f"branch '{source_output}' of node '{source}' was not taken"
-                    )
+                    skip_reason = f"branch '{source_output}' of node '{source}' was not taken"
                 break
         if wiring_error is not None or skip_reason is not None:
             break
     if wiring_error is not None:
-        await finish(
-            NodeRunResult(node_id=nid, status=NodeStatus.error, error=wiring_error)
-        )
+        await finish(NodeRunResult(node_id=nid, status=NodeStatus.error, error=wiring_error))
         return RunStatus.error
     if skip_reason is not None:
-        await finish(
-            NodeRunResult(node_id=nid, status=NodeStatus.skipped, error=skip_reason)
-        )
+        await finish(NodeRunResult(node_id=nid, status=NodeStatus.skipped, error=skip_reason))
         return run_status
 
     node_hooks: list[dict[str, Any]] = getattr(graph_node, "hooks", None) or []
     await emit({"type": "node_started", "node_id": nid})
     if node_hooks:
         await _run_node_hooks(
-            node_hooks, "on_start",
-            node_id=nid, node_type=graph_node.type,
+            node_hooks,
+            "on_start",
+            node_id=nid,
+            node_type=graph_node.type,
             status="running",
         )
     started = time.time()
@@ -659,17 +691,24 @@ async def _run_one_node(
         run_status = RunStatus.error
         await finish(
             NodeRunResult(
-                node_id=nid, status=NodeStatus.error, error=str(exc),
-                started_at=started, finished_at=time.time(),
+                node_id=nid,
+                status=NodeStatus.error,
+                error=str(exc),
+                started_at=started,
+                finished_at=stamp_finish(),
             )
         )
         return run_status
 
     output_names = (
-        graph_node.outputs_override
-        or [o.name for o in node_def.manifest.outputs]
-        or ["main"]
+        graph_node.outputs_override or [o.name for o in node_def.manifest.outputs] or ["main"]
     )
+    if graph_node.type == "switch" and not graph_node.outputs_override:
+        # Dynamic branch ports must survive _normalize_outputs; without them
+        # every rule-branch result gets wrapped under the single static
+        # `fallback` port (SW-1).
+        rules = (graph_node.params or {}).get("rules") or {}
+        output_names = list(output_names) + [str(k) for k in rules if k]
 
     if graph_node.disabled:
         passthrough: Any = None
@@ -682,8 +721,11 @@ async def _run_one_node(
         node_outputs[nid] = _freeze_outputs(outputs)
         await finish(
             NodeRunResult(
-                node_id=nid, status=NodeStatus.success, outputs=outputs,
-                started_at=started, finished_at=time.time(),
+                node_id=nid,
+                status=NodeStatus.success,
+                outputs=outputs,
+                started_at=started,
+                finished_at=stamp_finish(),
             )
         )
         return run_status
@@ -698,9 +740,11 @@ async def _run_one_node(
             run_status = RunStatus.error
             await finish(
                 NodeRunResult(
-                    node_id=nid, status=NodeStatus.error,
+                    node_id=nid,
+                    status=NodeStatus.error,
                     error=f"{type(exc).__name__}: {exc}",
-                    started_at=started, finished_at=time.time(),
+                    started_at=started,
+                    finished_at=stamp_finish(),
                 )
             )
             return run_status
@@ -708,8 +752,11 @@ async def _run_one_node(
         node_outputs[nid] = _freeze_outputs(tool_outputs)
         await finish(
             NodeRunResult(
-                node_id=nid, status=NodeStatus.success, outputs=tool_outputs,
-                started_at=started, finished_at=time.time(),
+                node_id=nid,
+                status=NodeStatus.success,
+                outputs=tool_outputs,
+                started_at=started,
+                finished_at=stamp_finish(),
                 node_type_version=node_def.manifest.version,
             )
         )
@@ -719,10 +766,7 @@ async def _run_one_node(
     for port in node_def.manifest.inputs:
         if port.name in edges_in:
             connections = _incoming_connections(edges_in[port.name])
-            values = [
-                node_outputs[source][source_output]
-                for source, source_output in connections
-            ]
+            values = [node_outputs[source][source_output] for source, source_output in connections]
             if len(values) > 1 and getattr(port, "data_kind", "any") == "ai_tool":
                 kwargs[port.name] = values
             else:
@@ -738,8 +782,11 @@ async def _run_one_node(
         run_status = RunStatus.error
         await finish(
             NodeRunResult(
-                node_id=nid, status=NodeStatus.error, error=str(exc),
-                started_at=started, finished_at=time.time(),
+                node_id=nid,
+                status=NodeStatus.error,
+                error=str(exc),
+                started_at=started,
+                finished_at=stamp_finish(),
             )
         )
         return run_status
@@ -764,25 +811,19 @@ async def _run_one_node(
         run_status = RunStatus.error
         await finish(
             NodeRunResult(
-                node_id=nid, status=NodeStatus.error,
+                node_id=nid,
+                status=NodeStatus.error,
                 error=f"missing required parameters: {', '.join(missing)}",
-                started_at=started, finished_at=time.time(),
+                started_at=started,
+                finished_at=stamp_finish(),
             )
         )
         return run_status
 
-    first_input_name = (
-        node_def.manifest.inputs[0].name
-        if node_def.manifest.inputs
-        else None
-    )
+    first_input_name = node_def.manifest.inputs[0].name if node_def.manifest.inputs else None
     expr_context = build_context(
         first_input=kwargs.get(first_input_name) if first_input_name else None,
-        inputs={
-            p.name: kwargs.get(p.name)
-            for p in node_def.manifest.inputs
-            if p.name in kwargs
-        },
+        inputs={p.name: kwargs.get(p.name) for p in node_def.manifest.inputs if p.name in kwargs},
         node_outputs=node_outputs,
     )
     for spec in node_def.manifest.params:
@@ -792,23 +833,17 @@ async def _run_one_node(
             # an HTTP headers/body object) may carry ``{{ }}`` templates in nested
             # values. Evaluate every container; for plain strings keep the cheap
             # "{{" fast-path and skip scalars that can never hold a template.
-            if isinstance(val, (dict, list)) or (
-                isinstance(val, str) and "{{" in val
-            ):
+            if isinstance(val, (dict, list)) or (isinstance(val, str) and "{{" in val):
                 kwargs[spec.name] = evaluate(val, expr_context)
 
-    timeout = _node_timeout(
-        graph_node.type, graph_node.timeout_seconds, default_timeouts
-    )
+    timeout = _node_timeout(graph_node.type, graph_node.timeout_seconds, default_timeouts)
     _deadline = run_deadline.get()
     timeout_from_run_deadline = False
     if _deadline is not None:
         remaining = max(_deadline - time.monotonic(), 0.001)
         timeout_from_run_deadline = timeout is None or remaining <= timeout
         timeout = remaining if timeout is None else min(timeout, remaining)
-    attempts = (
-        max(1, graph_node.retries + 1) if graph_node.retry_on_fail else 1
-    )
+    attempts = max(1, graph_node.retries + 1) if graph_node.retry_on_fail else 1
     caught: Exception | None = None
     outputs: dict[str, Any] | None = None
     debug: dict[str, Any] = {}
@@ -817,16 +852,12 @@ async def _run_one_node(
     debug_token = node_debug.set(debug)
     node_token = current_node_id.set(nid)
     emitter_token = node_emitter.set(
-        _make_chunk_emitter(
-            asyncio.get_running_loop(), emit, nid, iteration_path.get()
-        )
+        _make_chunk_emitter(asyncio.get_running_loop(), emit, nid, iteration_path.get())
     )
     if node_def.accepts_var_keyword or not node_def.param_names:
         base_call_kwargs = dict(kwargs)
     else:
-        base_call_kwargs = {
-            k: v for k, v in kwargs.items() if k in node_def.param_names
-        }
+        base_call_kwargs = {k: v for k, v in kwargs.items() if k in node_def.param_names}
 
     # Inject RuntimeContext when the node function accepts a ``ctx`` parameter
     # (e.g., mcp_tool nodes that dispatch MCP calls through the platform hook).
@@ -845,17 +876,12 @@ async def _run_one_node(
     async def invoke_node(current_kwargs: dict[str, Any]) -> Any:
         if node_def.is_async:
             if timeout is not None:
-                return await asyncio.wait_for(
-                    node_def.func(**current_kwargs), timeout
-                )
+                return await asyncio.wait_for(node_def.func(**current_kwargs), timeout)
             return await node_def.func(**current_kwargs)
         if graph_node.type in PROCESS_ISOLATED_NODE_TYPES:
             # Timeout-evict and broken-pool translation live inside the
             # isolator; TimeoutError/ValueError surface here unchanged.
-            isolator = (
-                process_isolator if process_isolator is not None
-                else default_isolator()
-            )
+            isolator = process_isolator if process_isolator is not None else default_isolator()
             return await isolator.run(node_def.func, current_kwargs, timeout=timeout)
 
         # Sync nodes run in a thread. Give each invocation its own
@@ -889,9 +915,7 @@ async def _run_one_node(
                 emit=emit,
                 pause_on_approval=pause_on_approval,
             )
-            if not (
-                node_def.accepts_var_keyword or "agent_resume" in node_def.param_names
-            ):
+            if not (node_def.accepts_var_keyword or "agent_resume" in node_def.param_names):
                 return response
             _loop_iter += 1
             if _loop_iter >= _MAX_AGENT_LOOP_ITERATIONS:
@@ -911,9 +935,12 @@ async def _run_one_node(
             if attempt > 0:
                 if node_hooks:
                     await _run_node_hooks(
-                        node_hooks, "on_retry",
-                        node_id=nid, node_type=graph_node.type,
-                        status="retrying", error=str(caught) if caught else None,
+                        node_hooks,
+                        "on_retry",
+                        node_id=nid,
+                        node_type=graph_node.type,
+                        status="retrying",
+                        error=str(caught) if caught else None,
                         attempt=attempt,
                     )
                 # Put the retry on the run's own timeline. Without this the
@@ -1000,6 +1027,7 @@ async def _run_one_node(
     # Lazy import so the engine has no hard dependency on the API's metrics module.
     try:
         from app.services.metrics import node_executions_total
+
         node_executions_total.inc(node_type=graph_node.type)
     except Exception:  # noqa: BLE001 — metrics are best-effort
         pass
@@ -1010,15 +1038,22 @@ async def _run_one_node(
         node_outputs[nid] = _freeze_outputs(outputs)
         if node_hooks:
             await _run_node_hooks(
-                node_hooks, "on_success",
-                node_id=nid, node_type=graph_node.type,
-                status="success", outputs=outputs,
+                node_hooks,
+                "on_success",
+                node_id=nid,
+                node_type=graph_node.type,
+                status="success",
+                outputs=outputs,
             )
         await finish(
             NodeRunResult(
-                node_id=nid, status=NodeStatus.success, outputs=outputs,
-                logs=logs, debug=debug,
-                started_at=started, finished_at=time.time(),
+                node_id=nid,
+                status=NodeStatus.success,
+                outputs=outputs,
+                logs=logs,
+                debug=debug,
+                started_at=started,
+                finished_at=stamp_finish(),
                 node_type_version=node_def.manifest.version,
             )
         )
@@ -1029,9 +1064,12 @@ async def _run_one_node(
         pass
     elif caught is not None and node_hooks:
         await _run_node_hooks(
-            node_hooks, "on_failure",
-            node_id=nid, node_type=graph_node.type,
-            status="error", error=(
+            node_hooks,
+            "on_failure",
+            node_id=nid,
+            node_type=graph_node.type,
+            status="error",
+            error=(
                 f"timed out after {timeout}s"
                 if isinstance(caught, (TimeoutError, asyncio.TimeoutError))
                 else f"{type(caught).__name__}: {caught}"
@@ -1056,7 +1094,7 @@ async def _run_one_node(
                 logs=logs,
                 debug=debug,
                 started_at=started,
-                finished_at=time.time(),
+                finished_at=stamp_finish(),
                 node_type_version=node_def.manifest.version,
             )
         )
@@ -1064,37 +1102,40 @@ async def _run_one_node(
 
     if isinstance(caught, (TimeoutError, asyncio.TimeoutError)):
         error_msg = f"node timed out after {timeout}s"
-        timeout_status = (
-            RunStatus.timed_out
-            if timeout_from_run_deadline
-            else RunStatus.error
-        )
+        timeout_status = RunStatus.timed_out if timeout_from_run_deadline else RunStatus.error
     else:
         error_msg = f"{type(caught).__name__}: {caught}"
         notes = getattr(caught, "__notes__", None) or ()
         if notes:
             error_msg = "\n\n".join((error_msg, *notes))
         timeout_status = RunStatus.error
-    continue_on_error = (
-        graph_node.on_error == "continue" or graph_node.always_output_data
-    )
+    continue_on_error = graph_node.on_error == "continue" or graph_node.always_output_data
     if continue_on_error:
         fallback_outputs = {output_names[0]: None}
         node_outputs[nid] = _freeze_outputs(fallback_outputs)
         await finish(
             NodeRunResult(
-                node_id=nid, status=NodeStatus.error, error=error_msg,
-                outputs=fallback_outputs, logs=logs, debug=debug,
-                started_at=started, finished_at=time.time(),
+                node_id=nid,
+                status=NodeStatus.error,
+                error=error_msg,
+                outputs=fallback_outputs,
+                logs=logs,
+                debug=debug,
+                started_at=started,
+                finished_at=stamp_finish(),
             )
         )
     else:
         run_status = timeout_status
         await finish(
             NodeRunResult(
-                node_id=nid, status=NodeStatus.error, error=error_msg,
-                logs=logs, debug=debug,
-                started_at=started, finished_at=time.time(),
+                node_id=nid,
+                status=NodeStatus.error,
+                error=error_msg,
+                logs=logs,
+                debug=debug,
+                started_at=started,
+                finished_at=stamp_finish(),
             )
         )
     return run_status
