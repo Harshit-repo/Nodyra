@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.1 - 2026-09-25
+
+- Self-hosted installation with persistent local artifacts and documented HTTPS setup.
+- Restore fresh installs using official MinIO Quay images with pinned digests.
+- Include Debian PCRE2 security updates in the Python container images.
+- Bind configured webhook timestamps to their HMAC signatures to prevent replay
+  by replacing the timestamp on a captured payload.
+- Improve runtime callbacks, environment rebuild handling, loop execution,
+  pinned outputs, and MCP graph validation.
+- Include source archives, checksums, certification evidence, vulnerability
+  reports, SBOMs, and signed container images with the release.
+
 ## 1.0.0 - 2026-08-30
 
 ### Security

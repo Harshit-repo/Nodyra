@@ -89,7 +89,10 @@ jobs:
           --junitxml=pytest-results-release.xml -q
 
       - name: Python dependency vulnerability gate
-        run: uvx pip-audit --skip-editable --format json --output pip-audit-release.json
+        run: >-
+          uvx pip-audit --skip-editable
+          --path "$(uv run python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          --format json --output pip-audit-release.json
 
       - name: Web certification suite
         working-directory: apps/web
@@ -327,12 +330,22 @@ jobs:
             --artifact cosign-verification.txt \
             --output release-evidence.json
 
+      - name: Package self-hosted source and checksums
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          git archive --format=zip --prefix="nodyra-$version/" -o "nodyra-$version.zip" HEAD
+          git archive --format=tar.gz --prefix="nodyra-$version/" -o "nodyra-$version.tar.gz" HEAD
+          sha256sum "nodyra-$version.zip" "nodyra-$version.tar.gz" > SHA256SUMS
+
       - name: Create GitHub Release with evidence
         uses: softprops/action-gh-release@v3
         with:
           fail_on_unmatched_files: true
           prerelease: ${{ contains(steps.meta.outputs.version, '-') }}
           files: |
+            nodyra-*.zip
+            nodyra-*.tar.gz
+            SHA256SUMS
             release-evidence.json
             .release/known-issues.md
             .release/rollback.md
@@ -343,6 +356,10 @@ jobs:
             cosign-verification.txt
           body: |
             ## Nodyra ${{ github.ref_name }}
+
+            Download a source archive below, verify it against SHA256SUMS,
+            extract it, and follow `docs/deployment/self-hosted.md` for a
+            trusted-team installation with persistent local artifacts.
 
             Release begins at the **internal** rollout stage. Promote the same
             immutable digests through pilot, canary, and broad only after the

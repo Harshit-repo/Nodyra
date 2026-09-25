@@ -1797,7 +1797,7 @@ wheels = [
 
 [[package]]
 name = "nodyra"
-version = "1.0.0"
+version = "1.0.1"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -1842,7 +1842,7 @@ dev = [
 
 [[package]]
 name = "nodyra-api"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "alembic" },
@@ -1963,7 +1963,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "nodyra-core"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "jsonschema" },
@@ -1978,7 +1978,7 @@ requires-dist = [
 
 [[package]]
 name = "nodyra-exporter"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/exporter" }
 dependencies = [
     { name = "nodyra-core" },
@@ -1989,7 +1989,7 @@ requires-dist = [{ name = "nodyra-core", editable = "packages/core" }]
 
 [[package]]
 name = "nodyra-importer"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/importer" }
 dependencies = [
     { name = "nodyra-core" },
@@ -2000,7 +2000,7 @@ requires-dist = [{ name = "nodyra-core", editable = "packages/core" }]
 
 [[package]]
 name = "nodyra-nodes"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/nodes" }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -2114,7 +2114,7 @@ provides-extras = ["ml", "storage", "voice", "deepgram", "ollama", "azure-speech
 
 [[package]]
 name = "nodyra-runner"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/runner" }
 dependencies = [
     { name = "httpx" },
@@ -2131,7 +2131,7 @@ requires-dist = [
 
 [[package]]
 name = "nodyra-runtime"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/runtime" }
 dependencies = [
     { name = "httpx" },
