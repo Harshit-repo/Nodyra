@@ -133,9 +133,10 @@ export function PlanComparison() {
         })}
       </div>
       <p className="muted nodyra-plan-footnote">
-        Paste a key above to change edition. Keys renew themselves when this
-        installation is configured with a licence server; otherwise apply the new
-        key before the current one expires.
+        Pro and Enterprise are available through manual invoicing.{' '}
+        <a href="mailto:sharma.har97@gmail.com?subject=Nodyra%20license%20enquiry">Contact sales for a license</a>,
+        then paste the supplied key above. Automatic card checkout is not available yet.
+        Renew before the key expires, or configure optional renewal with your license server.
       </p>
     </section>
   );

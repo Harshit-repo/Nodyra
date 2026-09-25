@@ -1,9 +1,9 @@
-"""Self-serve subscription endpoints.
+"""Customer entitlements and vendor-assisted subscription endpoints.
 
 Two audiences share this router, and the split matters:
 
 * **Issuer routes** (``/billing/webhook``, ``/billing/license``,
-  ``/billing/checkout``, ``/billing/portal``) run only on the single instance
+  ``/billing/checkout``, ``/billing/portal``, and activation) run only on the single instance
   the vendor operates as its licence server. They are not mounted at all unless
   ``license_issuer_enabled`` is on, so a customer's deployment does not expose
   them even misconfigured.
@@ -17,20 +17,22 @@ idempotent because Stripe retries.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
 from app.models import LicenseSubscription, ProcessedWebhookEvent
-from app.security import audit_recorder, get_client_ip, require_permission
+from app.security import audit_recorder, get_client_ip, require_instance_permission
 from app.services import billing, license_issuer, rate_limit
-from app.services.audit import AuditRecorder
+from app.services.audit import AuditRecorder, log_audit
 from app.services.licensing import Edition, current_license
 from app.tenancy import run_as_system
 
@@ -99,7 +101,7 @@ async def billing_status() -> BillingStatus:
         edition=lic.edition.value,
         customer=lic.customer,
         expires_at=lic.expires_at,
-        auto_renew=bool(settings.license_server_url and settings.license_refresh_token),
+        auto_renew=bool(settings.license_server_url and settings.license_refresh_token and not settings.license_key),
         notice=lic.notice,
     )
 
@@ -107,11 +109,12 @@ async def billing_status() -> BillingStatus:
 # ── Issuer-only routes ─────────────────────────────────────────────────────
 
 issuer_router = APIRouter(prefix="/billing", tags=["billing"])
+require_billing_owner = require_instance_permission("admin:billing")
 
 
 class CheckoutRequest(BaseModel):
     price_id: str = Field(min_length=1, max_length=255)
-    quantity: int = Field(default=1, ge=1, le=1000)
+    quantity: int = Field(default=1, ge=1, le=1)
     customer_email: str = Field(default="", max_length=320)
 
 
@@ -119,10 +122,10 @@ class CheckoutRequest(BaseModel):
 async def create_checkout(
     body: CheckoutRequest,
     audit: AuditRecorder = Depends(audit_recorder),
-    _: None = Depends(require_permission("admin:billing")),
+    _: object = Depends(require_billing_owner),
 ) -> dict:
     """Start a Stripe Checkout session for a subscription."""
-    if body.price_id not in settings.stripe_price_tiers:
+    if settings.stripe_price_tiers.get(body.price_id) not in {"pro", "enterprise"}:
         # Refusing unknown prices stops a caller buying a price this deployment
         # has no mapping for, which would take payment and grant nothing.
         raise HTTPException(
@@ -130,12 +133,13 @@ async def create_checkout(
             "Unknown price id. Add it to stripe_price_tiers with the edition it grants.",
         )
     try:
+        license_issuer.validate_signing_configuration()
         session_obj = await billing.create_checkout_session(
             price_id=body.price_id,
             quantity=body.quantity,
             customer_email=body.customer_email,
         )
-    except billing.BillingNotConfigured as exc:
+    except (billing.BillingNotConfigured, license_issuer.IssuerNotConfigured) as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
     await audit(
@@ -144,18 +148,19 @@ async def create_checkout(
         str(session_obj.get("id") or ""),
         f"price={body.price_id} quantity={body.quantity}",
     )
-    return {"checkout_url": session_obj.get("url"), "session_id": session_obj.get("id")}
+    if not session_obj.get("url") or not session_obj.get("id"):
+        raise HTTPException(502, "Stripe did not return a checkout URL; no checkout link is available.")
+    return {"checkout_url": session_obj["url"], "session_id": session_obj["id"]}
 
 
 class PortalRequest(BaseModel):
     provider_customer_id: str = Field(min_length=1, max_length=255)
-    return_url: str = Field(min_length=1, max_length=2000)
 
 
 @issuer_router.post("/portal")
 async def create_portal(
     body: PortalRequest,
-    _: None = Depends(require_permission("admin:billing")),
+    _: object = Depends(require_billing_owner),
 ) -> dict:
     """Hand the customer a Stripe billing-portal link.
 
@@ -163,11 +168,15 @@ async def create_portal(
     no card data ever reaches this codebase.
     """
     try:
+        if not settings.billing_success_url:
+            raise billing.BillingNotConfigured("billing_success_url is required for the customer portal")
         session_obj = await billing.create_portal_session(
-            provider_customer_id=body.provider_customer_id, return_url=body.return_url
+            provider_customer_id=body.provider_customer_id, return_url=settings.billing_success_url
         )
     except billing.BillingNotConfigured as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    if not session_obj.get("url"):
+        raise HTTPException(502, "Stripe did not return a customer portal URL.")
     return {"portal_url": session_obj.get("url")}
 
 
@@ -211,20 +220,31 @@ async def _apply_event(
         row.customer_name = event.customer_name
     if event.tier:
         row.tier = event.tier
-    if event.seats:
-        row.seats = event.seats
+    row.seats = event.seats
     row.status = event.status
-    if event.ends_at:
-        row.expires_at = datetime.fromtimestamp(event.ends_at, tz=UTC)
-
-    # A subscription that has become entitled and has no refresh token yet gets
-    # one now, so the very first licence handed over is renewable.
-    if row.status in license_issuer.ENTITLED_STATUSES and not row.refresh_token_hash:
-        token, digest = license_issuer.new_refresh_token()
-        row.refresh_token_hash = digest
-        # Surfaced once, on this response only; never stored in the clear.
-        row._issued_refresh_token = token  # type: ignore[attr-defined]
+    row.expires_at = datetime.fromtimestamp(event.ends_at, tz=UTC) if event.ends_at else None
     return row
+
+
+async def _lock_subscription(session: AsyncSession, subscription_id: str) -> None:
+    # Serialize registry updates across issuer workers, including first insert.
+    # Fetch Stripe's current state inside the lock, not before it.
+    if session.get_bind().dialect.name == "postgresql":
+        lock_id = int.from_bytes(hashlib.sha256(subscription_id.encode()).digest()[:8], "big", signed=True)
+        await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_id})
+
+
+async def _current_subscription(event: billing.SubscriptionEvent) -> billing.SubscriptionEvent:
+    try:
+        latest = await billing.retrieve_subscription(event.provider_subscription_id)
+    except billing.BillingNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    current = billing.interpret_event({
+        "id": event.event_id,
+        "type": "customer.subscription.updated",
+        "data": {"object": latest},
+    })
+    return replace(current, customer_email=event.customer_email, customer_name=event.customer_name)
 
 
 @issuer_router.post("/webhook", include_in_schema=False)
@@ -243,8 +263,7 @@ async def stripe_webhook(
             payload, request.headers.get("stripe-signature", "")
         )
     except billing.WebhookVerificationError as exc:
-        # 400, not 401: Stripe treats 4xx as "do not retry", which is right for
-        # a body we can never accept.
+        # Reject invalid signatures; only a 2xx acknowledges delivery to Stripe.
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     except billing.BillingNotConfigured as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
@@ -254,13 +273,17 @@ async def stripe_webhook(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "event has no id")
 
     with run_as_system():
+        interpreted = billing.interpret_event(event)
+        if interpreted is not None and not interpreted.provider_subscription_id:
+            raise HTTPException(400, "Subscription event has no subscription id")
+        if interpreted is not None:
+            await _lock_subscription(session, interpreted.provider_subscription_id)
         # Idempotency first. Stripe retries until it sees a 2xx and can deliver
         # the same event twice even after one; without this a retried checkout
         # would mint a second licence for a single payment.
         if await session.get(ProcessedWebhookEvent, event_id) is not None:
             return {"status": "duplicate", "event_id": event_id}
 
-        interpreted = billing.interpret_event(event)
         session.add(
             ProcessedWebhookEvent(
                 id=event_id,
@@ -273,6 +296,9 @@ async def stripe_webhook(
             await session.commit()
             return {"status": "ignored", "event_id": event_id}
 
+        # Event payloads can arrive late or out of order. Stripe's current
+        # subscription, never checkout completion alone, determines access.
+        interpreted = await _current_subscription(interpreted)
         row = await _apply_event(session, interpreted)
         await session.commit()
         await session.refresh(row)
@@ -284,11 +310,47 @@ async def stripe_webhook(
         row.status,
         row.tier,
     )
-    response: dict = {"status": "applied", "event_id": event_id, "subscription_id": row.id}
-    token = getattr(row, "_issued_refresh_token", None)
-    if token:
-        response["refresh_token"] = token
-    return response
+    # Webhook responses are delivered to Stripe, not to the purchaser.
+    # Never strand customer credentials in a webhook response or its logs.
+    return {"status": "applied", "event_id": event_id, "subscription_id": row.id}
+
+
+@issuer_router.post("/subscriptions/{subscription_id}/activation")
+async def create_activation(
+    subscription_id: str,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+    actor: object = Depends(require_billing_owner),
+) -> dict:
+    """Issue/rotate an activation package for the vendor to deliver privately."""
+    with run_as_system():
+        row = await session.scalar(select(LicenseSubscription).where(or_(
+            LicenseSubscription.id == subscription_id,
+            LicenseSubscription.provider_subscription_id == subscription_id,
+        )))
+        if row is None:
+            raise HTTPException(404, "Subscription not found; wait for the verified payment webhook")
+        if row.provider == "stripe":
+            await _lock_subscription(session, row.provider_subscription_id)
+            await session.refresh(row)
+            latest = billing.SubscriptionEvent("activation", "", row.provider_subscription_id, None, "", "", None, 0, "pending", None)
+            row = await _apply_event(session, await _current_subscription(latest))
+        try:
+            issued = license_issuer.issue_for_subscription(row)
+        except license_issuer.IssuerNotConfigured as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(402, str(exc)) from exc
+        token, row.refresh_token_hash = license_issuer.new_refresh_token()
+        await log_audit(
+            session, "license_activation_issued", "subscription", row.id,
+            "Activation package issued; previous refresh token revoked",
+            actor_id=getattr(actor, "id", None),
+            actor_email=getattr(actor, "email", None),
+        )
+        await session.commit()
+    response.headers["Cache-Control"] = "no-store"
+    return {"license_key": issued.key, "refresh_token": token, "expires_at": int(issued.expires_at.timestamp()), "tier": issued.tier}
 
 
 class LicenseRequest(BaseModel):
@@ -299,12 +361,13 @@ class LicenseRequest(BaseModel):
 async def fetch_license(
     body: LicenseRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Mint a fresh licence for a subscription, given its refresh token.
 
     This is what a customer's instance calls on its own to renew. It is
-    authenticated by the bearer token issued at checkout, not by a Nodyra
+    authenticated by the bearer token delivered with activation, not by a Nodyra
     session: the caller is a machine with no user.
     """
     # Unauthenticated, and every call costs a lookup plus an Ed25519 signature.
@@ -331,6 +394,13 @@ async def fetch_license(
             # Same answer for an unknown token and a revoked one, so the
             # endpoint cannot be used to probe which tokens ever existed.
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Unknown or revoked token")
+        if row.provider == "stripe":
+            await _lock_subscription(session, row.provider_subscription_id)
+            await session.refresh(row)
+            if row.refresh_token_hash != digest:
+                raise HTTPException(403, "Unknown or revoked token")
+            latest = billing.SubscriptionEvent("refresh", "", row.provider_subscription_id, None, "", "", None, 0, "pending", None)
+            row = await _apply_event(session, await _current_subscription(latest))
         if row.status not in license_issuer.ENTITLED_STATUSES:
             raise HTTPException(
                 status.HTTP_402_PAYMENT_REQUIRED,
@@ -340,11 +410,14 @@ async def fetch_license(
             issued = license_issuer.issue_for_subscription(row)
         except license_issuer.IssuerNotConfigured as exc:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(402, str(exc)) from exc
 
         row.last_refreshed_at = datetime.now(UTC)
         row.refresh_count += 1
         await session.commit()
 
+    response.headers["Cache-Control"] = "no-store"
     return {
         "license_key": issued.key,
         "expires_at": int(issued.expires_at.timestamp()),

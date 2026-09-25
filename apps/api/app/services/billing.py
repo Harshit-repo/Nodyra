@@ -1,7 +1,7 @@
 """Stripe checkout and webhook handling for self-serve subscriptions.
 
 Deliberately talks to Stripe's REST API over ``httpx`` rather than pulling in the
-``stripe`` SDK: the three calls needed here are simple form posts, and the SDK
+``stripe`` SDK: the calls needed here are simple form posts and lookups, and the SDK
 brings a large transitive tree into an image that already ships a workflow
 engine. The one piece worth writing carefully is webhook signature
 verification, which is implemented below to Stripe's documented scheme.
@@ -19,6 +19,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -125,7 +126,7 @@ def verify_webhook(payload: bytes, signature_header: str, *, now: float | None =
     expected = hmac.new(
         secret.encode(), f"{timestamp}.".encode() + payload, hashlib.sha256
     ).hexdigest()
-    if not any(hmac.compare_digest(expected, candidate) for candidate in signatures):
+    if not any(candidate.isascii() and hmac.compare_digest(expected, candidate) for candidate in signatures):
         raise WebhookVerificationError("webhook signature mismatch")
 
     try:
@@ -146,8 +147,8 @@ _STATUS_MAP = {
     "active": "active",
     "trialing": "trialing",
     "past_due": "past_due",
-    "unpaid": "past_due",
-    "incomplete": "past_due",
+    "unpaid": "cancelled",
+    "incomplete": "cancelled",
     "paused": "cancelled",
     "canceled": "cancelled",
     "incomplete_expired": "cancelled",
@@ -196,21 +197,33 @@ def interpret_event(event: dict) -> SubscriptionEvent | None:
             # that follows does, and it is what sets the tier.
             tier=None,
             seats=0,
-            status="active",
+            # Checkout itself is not proof of payment or of an entitled tier.
+            status="pending",
             ends_at=None,
         )
 
     item = _first_item(obj)
-    price_id = _as_id((item.get("price") or {}).get("id") or item.get("price"))
+    price_id = _as_id(item.get("price"))
     stripe_status = str(obj.get("status") or "")
     status = (
         "cancelled"
         if event_type == "customer.subscription.deleted"
         else _STATUS_MAP.get(stripe_status, "cancelled")
     )
-    # cancel_at_period_end keeps the subscription active until the period ends;
-    # the row stays entitled and simply stops renewing.
-    ends_at = obj.get("cancel_at") or obj.get("current_period_end")
+    # Basil moved billing periods onto subscription items. A normal renewal
+    # gets bounded outage grace; scheduled cancellation is a hard stop.
+    period_end = item.get("current_period_end") or obj.get("current_period_end")
+    ends_at = obj.get("cancel_at")
+    if not ends_at and period_end:
+        ends_at = int(period_end) + (
+            0 if obj.get("cancel_at_period_end") else settings.license_validity_days * 86400
+        )
+    tier = _tier_for_price(price_id)
+    # One installation subscription grants the advertised edition's seats.
+    # Unknown/add-on/multi-item prices must not inherit an old or default tier.
+    items = (obj.get("items") or {}).get("data") or []
+    if tier not in {"pro", "enterprise"} or len(items) != 1 or item.get("quantity", 1) != 1 or not ends_at:
+        status = "cancelled"
     return SubscriptionEvent(
         event_id=str(event.get("id") or ""),
         event_type=event_type,
@@ -218,8 +231,8 @@ def interpret_event(event: dict) -> SubscriptionEvent | None:
         provider_customer_id=_as_id(obj.get("customer")),
         customer_email="",
         customer_name="",
-        tier=_tier_for_price(price_id),
-        seats=int(item.get("quantity") or 0),
+        tier=tier,
+        seats=0,
         status=status,
         ends_at=int(ends_at) if ends_at else None,
     )
@@ -243,42 +256,34 @@ async def create_checkout_session(
 ) -> dict:
     """Create a Stripe Checkout session and return it.
 
-    The caller sends the customer to ``result["url"]``. Nothing is issued here —
-    the licence is minted from the webhook, so a checkout the customer abandons
-    at the card form leaves no trace.
+    The vendor sends the customer to ``result["url"]``. Nothing is issued here;
+    verified payment updates the registry, then the vendor issues activation.
     """
     if not settings.billing_success_url or not settings.billing_cancel_url:
         raise BillingNotConfigured(
             "billing_success_url and billing_cancel_url must be set before checkout"
         )
+    if quantity != 1:
+        raise BillingNotConfigured("Checkout sells one installation per subscription")
+    for url in (settings.billing_success_url, settings.billing_cancel_url):
+        parsed = urlsplit(url)
+        if not parsed.hostname or parsed.username or parsed.password or (
+            parsed.scheme != "https" and not (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"})
+        ):
+            raise BillingNotConfigured("Billing return URLs require HTTPS (loopback HTTP is allowed for testing)")
     form: dict[str, str] = {
         "mode": "subscription",
         "line_items[0][price]": price_id,
-        "line_items[0][quantity]": str(max(1, quantity)),
+        "line_items[0][quantity]": "1",
         "success_url": settings.billing_success_url,
         "cancel_url": settings.billing_cancel_url,
-        # Lets the customer manage seats from the Stripe-hosted page.
-        "line_items[0][adjustable_quantity][enabled]": "true",
-        "line_items[0][adjustable_quantity][minimum]": "1",
     }
     if customer_email:
         form["customer_email"] = customer_email
     if client_reference:
         form["client_reference_id"] = client_reference
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        response = await client.post(
-            f"{STRIPE_API_BASE}/checkout/sessions", data=form, headers=_headers()
-        )
-    if response.status_code >= 400:
-        # Stripe's error body names the offending parameter; surfacing it is the
-        # difference between a five-second fix and a support ticket. It contains
-        # no secret — the API key travels in the header, not the body.
-        raise BillingNotConfigured(
-            f"Stripe rejected the checkout session ({response.status_code}): "
-            f"{response.text[:400]}"
-        )
-    return response.json()
+    return await _request("POST", "/checkout/sessions", data=form)
 
 
 async def create_portal_session(*, provider_customer_id: str, return_url: str) -> dict:
@@ -288,13 +293,27 @@ async def create_portal_session(*, provider_customer_id: str, return_url: str) -
     page, which keeps card data and dunning entirely out of this codebase.
     """
     form = {"customer": provider_customer_id, "return_url": return_url}
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        response = await client.post(
-            f"{STRIPE_API_BASE}/billing_portal/sessions", data=form, headers=_headers()
-        )
-    if response.status_code >= 400:
-        raise BillingNotConfigured(
-            f"Stripe rejected the portal session ({response.status_code}): "
-            f"{response.text[:400]}"
-        )
-    return response.json()
+    return await _request("POST", "/billing_portal/sessions", data=form)
+
+
+async def _request(method: str, endpoint: str, **kwargs) -> dict:
+    headers = _headers()
+    headers["Stripe-Version"] = "2025-03-31.basil"
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            response = await client.request(method, STRIPE_API_BASE + endpoint, headers=headers, **kwargs)
+        response.raise_for_status()
+        result = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        # Do not echo provider bodies, customer information, or credentials.
+        raise BillingNotConfigured("Stripe is unavailable or rejected the request; check the issuer configuration and retry.") from exc
+    if not isinstance(result, dict):
+        raise BillingNotConfigured("Stripe returned an invalid response")
+    return result
+
+
+async def retrieve_subscription(subscription_id: str) -> dict:
+    subscription = await _request("GET", "/subscriptions/" + quote(subscription_id, safe=""))
+    if subscription.get("id") != subscription_id:
+        raise BillingNotConfigured("Stripe returned an unexpected subscription")
+    return subscription

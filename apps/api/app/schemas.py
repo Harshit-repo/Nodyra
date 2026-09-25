@@ -1051,10 +1051,11 @@ class LicenseInfo(BaseModel):
     entitlements: list[str]
     limits: dict[str, int]
     notice: str | None = None
+    managed_by_environment: bool = False
 
 
 class LicenseApply(BaseModel):
-    license_key: str = Field(min_length=1)
+    license_key: str = Field(min_length=1, max_length=16384)
 
 
 class DeploymentCreate(BaseModel):

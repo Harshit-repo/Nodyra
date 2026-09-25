@@ -24,6 +24,9 @@ import pytest
 from app.services.licensing import TIER_DEFAULTS, Edition, Feature
 
 PAGE = Path(__file__).resolve().parents[3] / "brand" / "homepage" / "nodyra.html"
+# The product page is also generated as index.html for the site's root URL.
+# docs.html is a deployment guide and does not advertise pricing tiers.
+PAGES = [PAGE.parent / name for name in ("index.html", "nodyra.html")]
 
 pytestmark = pytest.mark.skipif(
     not PAGE.exists(), reason="marketing page is not present in this checkout"
@@ -50,15 +53,15 @@ CARD_EDITIONS = {
 }
 
 
-def _pricing_section() -> str:
-    html = PAGE.read_text(encoding="utf-8")
+def _pricing_section(page: Path = PAGE) -> str:
+    html = page.read_text(encoding="utf-8")
     start = html.index('<section id="pricing"')
     return html[start : html.index("</section>", start)]
 
 
-def _cards() -> dict[Edition, str]:
+def _cards(page: Path = PAGE) -> dict[Edition, str]:
     """Split the pricing grid into one chunk of HTML per tier."""
-    section = _pricing_section()
+    section = _pricing_section(page)
     chunks = re.split(r'<!--\s*(Community|Pro|Enterprise)[^>]*?-->', section)
     out: dict[Edition, str] = {}
     # re.split with one capture group yields [pre, tag, body, tag, body, ...],
@@ -91,10 +94,11 @@ def _claims(card: str) -> tuple[list[str], list[str]]:
     return asserted, muted
 
 
-def test_every_card_was_found():
+@pytest.mark.parametrize("page", PAGES, ids=lambda p: p.name)
+def test_every_card_was_found(page):
     """Guard the guard: if the markup is restructured, the checks below must not
     silently pass by matching nothing."""
-    cards = _cards()
+    cards = _cards(page)
     assert set(cards) == set(Edition), cards.keys()
     for edition, card in cards.items():
         asserted, _ = _claims(card)
@@ -134,12 +138,13 @@ def test_a_card_does_not_disclaim_a_feature_it_actually_has(edition):
             )
 
 
+@pytest.mark.parametrize("page", PAGES, ids=lambda p: p.name)
 @pytest.mark.parametrize("edition", list(Edition), ids=lambda e: e.value)
-def test_the_advertised_caps_match_the_licence(edition):
+def test_the_advertised_caps_match_the_licence(edition, page):
     """Seats, environments, runners and deployments are the real difference
     between the tiers, so the numbers on the page have to be the real ones."""
     limits = TIER_DEFAULTS[edition][1]
-    card = _cards()[edition]
+    card = _cards(page)[edition]
 
     shown = {
         label.strip().lower().rstrip("s"): value.strip()
@@ -150,7 +155,7 @@ def test_the_advertised_caps_match_the_licence(edition):
             re.S,
         )
     }
-    assert shown, f"the {edition.value} card shows no resource caps"
+    assert shown, f"{page.name}: the {edition.value} card shows no resource caps"
 
     for key, actual in (
         ("user", limits.seats),
@@ -158,10 +163,10 @@ def test_the_advertised_caps_match_the_licence(edition):
         ("runner", limits.runners),
         ("deployment", limits.deployments),
     ):
-        assert key in shown, (edition.value, key, shown)
+        assert key in shown, (page.name, edition.value, key, shown)
         expected = "&infin;" if actual == 0 else str(actual)
         assert shown[key] == expected, (
-            f"the {edition.value} card advertises {shown[key]} {key}s "
+            f"{page.name}: the {edition.value} card advertises {shown[key]} {key}s "
             f"but the licence allows {expected}"
         )
 
@@ -245,19 +250,14 @@ def test_no_placeholder_survives_into_the_marketing_pages():
 
 # ── Every marketing page, not just the one that had the bug ────────────────
 #
-# index.html is a second, independently written landing page — it is what a
-# static host serves by default — and it carried the same errors on its own:
-# sandboxing badged Pro, 2 seats instead of 5, 3 deployments instead of 10.
+# index.html is what a static host serves by default. It is now generated from
+# nodyra.html, but both entry points must continue to state the real entitlements.
 #
 # Naive "nearest tier word above" attribution does not work on these pages.
 # The Pro card opens with "Everything in <b>Community</b>, plus:", so a bare
 # proximity search reads every Pro bullet as a Community one and the check
 # silently passes. Both places a tier is asserted are matched explicitly
 # instead.
-
-# These landing pages advertise pricing tiers. The adjacent docs.html is a
-# deployment guide, so requiring pricing cards there would test the wrong surface.
-PAGES = [PAGE.parent / name for name in ("index.html", "nodyra.html")]
 
 #: A badge pinned to a feature card, e.g. ``<span class="tag pro">Pro</span>``
 #: or ``<span class="pro-badge">Pro</span>``. Whatever follows it, up to the
@@ -344,35 +344,6 @@ def test_a_pricing_card_does_not_sell_a_community_feature_as_an_upgrade(page):
                     f"{page.name}: the {edition.value} card sells {phrase!r} as "
                     f"an upgrade, but {feature.value} is a Community entitlement"
                 )
-
-
-def test_the_secondary_landing_page_states_the_real_caps():
-    """index.html is a second, independently written landing page — it is what a
-    static host serves by default — and it drifted on its own: 2 seats instead
-    of 5, 3 deployments instead of 10.
-
-    Its caps are prose, so they are asserted as exact strings built from
-    TIER_DEFAULTS rather than parsed out of the markup.
-    """
-    page = PAGE.parent / "index.html"
-    if not page.exists():
-        pytest.skip("index.html is not present in this checkout")
-    html = page.read_text(encoding="utf-8")
-
-    community = TIER_DEFAULTS[Edition.COMMUNITY][1]
-    pro = TIER_DEFAULTS[Edition.PRO][1]
-
-    expected = [
-        f"{community.environments} environments · {community.runners} runner"
-        f" · {community.seats} seats",
-        f"Up to {community.deployments} active deployments",
-        f"{pro.environments} environments · {pro.runners} runners"
-        f" · {pro.seats} seats",
-    ]
-    missing = [line for line in expected if line not in html]
-    assert not missing, (
-        f"index.html no longer states these caps, or states them wrongly: {missing}"
-    )
 
 
 # ── The same claim, in the other places a buyer reads it ──────────────────

@@ -8,6 +8,7 @@ Stripe integration and a real customer instance would use.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import hmac
 import json
@@ -20,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI
 
 from app.config import settings
-from app.services import license_issuer, licensing
+from app.services import billing, license_issuer, licensing
 
 # A throwaway signing keypair. The real private key never enters the repo; this
 # one exists so tests can verify the whole sign → verify round trip.
@@ -58,7 +59,7 @@ def _issuer(monkeypatch):
 
 
 @pytest.fixture
-async def issuer_client(client):
+async def issuer_client(client, monkeypatch):
     """A client for an instance acting as the vendor's licence server.
 
     Built as a separate ASGI app rather than by mounting the issuer router onto
@@ -76,9 +77,19 @@ async def issuer_client(client):
     issuer_app.include_router(billing_router.issuer_router)
     # Same session/tenancy wiring the `client` fixture installed.
     issuer_app.dependency_overrides = dict(main_app.dependency_overrides)
+    # Exercise vendor operations separately from their authorization boundary.
+    issuer_app.dependency_overrides[billing_router.require_billing_owner] = lambda: None
+    stripe_state = {}
+
+    async def retrieve(subscription_id):
+        return copy.deepcopy(stripe_state[subscription_id])
+
+    monkeypatch.setattr(billing, "retrieve_subscription", retrieve)
 
     transport = ASGITransport(app=issuer_app)
     async with AsyncClient(transport=transport, base_url="http://issuer") as http_client:
+        http_client.stripe_state = stripe_state
+        http_client.issuer_app = issuer_app
         yield http_client
 
 
@@ -231,15 +242,29 @@ def _subscription_payload(event_id: str, *, status: str = "active", sub: str = "
                 "customer": "cus_e2e",
                 "status": status,
                 "current_period_end": int(time.time()) + 30 * 86400,
-                "items": {"data": [{"price": {"id": "price_pro"}, "quantity": 4}]},
+                "items": {"data": [{"price": {"id": "price_pro"}, "quantity": 1}]},
             }
         },
     }
 
 
 async def _post_webhook(client, payload: dict):
+    obj = copy.deepcopy(payload.get("data", {}).get("object", {}))
+    if payload["type"].startswith("customer.subscription."):
+        if payload["type"] == "customer.subscription.deleted":
+            obj["status"] = "canceled"
+        client.stripe_state[obj["id"]] = obj
+    elif payload["type"] == "checkout.session.completed" and obj.get("subscription"):
+        client.stripe_state.setdefault(obj["subscription"], _subscription_payload("state", sub=obj["subscription"])["data"]["object"])
     body, headers = _signed(payload)
     return await client.post("/billing/webhook", content=body, headers=headers)
+
+
+async def _activate(client, subscription_id):
+    response = await client.post(f"/billing/subscriptions/{subscription_id}/activation")
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    return response.json()
 
 
 async def test_a_purchase_creates_a_renewable_subscription(issuer_client):
@@ -248,14 +273,16 @@ async def test_a_purchase_creates_a_renewable_subscription(issuer_client):
     assert resp.status_code == 200, resp.text
     created = resp.json()
     assert created["status"] == "applied"
-    token = created["refresh_token"]
+    assert "refresh_token" not in created
+    token = (await _activate(issuer_client, created["subscription_id"]))["refresh_token"]
 
     licence = await issuer_client.post("/billing/license", json={"refresh_token": token})
     assert licence.status_code == 200, licence.text
     key = licence.json()["license_key"]
 
     payload = licensing._verify(key)
-    assert payload is not None and payload["tier"] == "pro" and payload["seats"] == 4
+    assert payload is not None and payload["tier"] == "pro"
+    assert licensing.verify_license_key(key).limits.seats == 10
 
 
 async def test_a_retried_webhook_does_not_issue_a_second_licence(issuer_client):
@@ -273,7 +300,7 @@ async def test_cancelling_stops_renewal(issuer_client):
     """The gap manual minting could never close: a self-contained key cannot be
     revoked, so a cancelled customer kept their entitlement until expiry."""
     created = await _post_webhook(issuer_client, _subscription_payload("evt_c1"))
-    token = created.json()["refresh_token"]
+    token = (await _activate(issuer_client, created.json()["subscription_id"]))["refresh_token"]
     assert (
         await issuer_client.post("/billing/license", json={"refresh_token": token})
     ).status_code == 200
@@ -306,7 +333,7 @@ async def test_an_unsigned_webhook_is_refused(issuer_client):
 
 async def test_a_tampered_webhook_is_refused(issuer_client):
     body, headers = _signed(_subscription_payload("evt_tamper"))
-    tampered = body.replace(b'"quantity": 4', b'"quantity": 4000')
+    tampered = body.replace(b'"quantity": 1', b'"quantity": 4000')
     resp = await issuer_client.post("/billing/webhook", content=tampered, headers=headers)
     assert resp.status_code == 400
 
@@ -342,9 +369,8 @@ async def test_checkout_then_subscription_merge_into_one_row(issuer_client):
     )
     assert second.json()["subscription_id"] == subscription_id, "a second row was created"
 
-    licence = await issuer_client.post(
-        "/billing/license", json={"refresh_token": first.json()["refresh_token"]}
-    )
+    activation = await _activate(issuer_client, subscription_id)
+    licence = await issuer_client.post("/billing/license", json={"refresh_token": activation["refresh_token"]})
     payload = licensing._verify(licence.json()["license_key"])
     assert payload["tier"] == "pro"
     assert payload["customer"] == "Merge Co"
@@ -407,3 +433,177 @@ async def test_a_zero_limit_disables_throttling(issuer_client, monkeypatch):
             "/billing/license", json={"refresh_token": "y" * 40}
         )
         assert resp.status_code == 403, resp.text
+
+
+async def test_activation_rotation_revokes_only_the_previous_refresh_token(issuer_client):
+    created = (await _post_webhook(issuer_client, _subscription_payload("evt_rotate"))).json()
+    first = await _activate(issuer_client, created["subscription_id"])
+    second = await _activate(issuer_client, "sub_e2e")
+    assert (await issuer_client.post("/billing/license", json={"refresh_token": first["refresh_token"]})).status_code == 403
+    assert (await issuer_client.post("/billing/license", json={"refresh_token": second["refresh_token"]})).status_code == 200
+    assert licensing.verify_license_key(first["license_key"]).valid
+
+
+@pytest.mark.parametrize("payment_status", ["unpaid", "incomplete", "canceled"])
+async def test_checkout_does_not_grant_access_for_an_unpaid_subscription(issuer_client, payment_status):
+    issuer_client.stripe_state["sub_unpaid"] = _subscription_payload("current", status=payment_status, sub="sub_unpaid")["data"]["object"]
+    checkout = {"id": "evt_unpaid", "type": "checkout.session.completed", "data": {"object": {"subscription": "sub_unpaid", "customer": "cus_test"}}}
+    response = await _post_webhook(issuer_client, checkout)
+    assert response.status_code == 200
+    assert "refresh_token" not in response.json()
+    activation = await issuer_client.post("/billing/subscriptions/sub_unpaid/activation")
+    assert activation.status_code == 402
+
+
+async def test_stale_active_event_cannot_reactivate_a_cancelled_subscription(issuer_client):
+    await _post_webhook(issuer_client, _subscription_payload("evt_live"))
+    issuer_client.stripe_state["sub_e2e"]["status"] = "canceled"
+    body, headers = _signed(_subscription_payload("evt_old"))
+    assert (await issuer_client.post("/billing/webhook", content=body, headers=headers)).status_code == 200
+    assert (await issuer_client.post("/billing/subscriptions/sub_e2e/activation")).status_code == 402
+
+
+async def test_unmapped_price_never_grants_the_default_pro_tier(issuer_client):
+    event = _subscription_payload("evt_unknown_price")
+    event["data"]["object"]["items"]["data"][0]["price"]["id"] = "price_unknown"
+    assert (await _post_webhook(issuer_client, event)).status_code == 200
+    assert (await issuer_client.post("/billing/subscriptions/sub_e2e/activation")).status_code == 402
+
+
+async def test_refresh_rechecks_cancellation_even_if_webhook_was_missed(issuer_client):
+    await _post_webhook(issuer_client, _subscription_payload("evt_paid"))
+    activation = await _activate(issuer_client, "sub_e2e")
+    issuer_client.stripe_state["sub_e2e"]["status"] = "unpaid"
+    assert (await issuer_client.post("/billing/license", json={"refresh_token": activation["refresh_token"]})).status_code == 402
+
+
+async def test_missing_stripe_response_is_retryable_and_not_acknowledged(issuer_client, monkeypatch):
+    async def unavailable(_):
+        raise billing.BillingNotConfigured("Stripe unavailable")
+    monkeypatch.setattr(billing, "retrieve_subscription", unavailable)
+    assert (await _post_webhook(issuer_client, _subscription_payload("evt_retry"))).status_code == 503
+
+
+@pytest.mark.parametrize("role,expected", [(None, 401), ("viewer", 403), ("admin", 403), ("owner", 404)])
+async def test_activation_requires_signed_in_instance_owner(issuer_client, role, expected):
+    from app.models import User
+    from app.routers.billing import require_billing_owner
+    from app.security import optional_current_user
+
+    issuer_client.issuer_app.dependency_overrides.pop(require_billing_owner)
+    issuer_client.issuer_app.dependency_overrides[optional_current_user] = lambda: User(id="owner-test", email="vendor@example.test", role=role) if role else None
+    response = await issuer_client.post("/billing/subscriptions/missing/activation")
+    assert response.status_code == expected, response.text
+
+
+def test_expired_contract_cannot_receive_an_already_expired_key():
+    with pytest.raises(ValueError, match="expired"):
+        license_issuer.issue_for_subscription(_Row(expires_at=datetime.now(UTC) - timedelta(days=1)))
+
+
+@pytest.mark.parametrize("tier", ["community", "unknown"])
+def test_issuer_refuses_non_paid_tiers(tier):
+    with pytest.raises(ValueError, match="edition"):
+        license_issuer.issue_for_subscription(_Row(tier=tier))
+
+
+async def test_vendor_checkout_uses_hosted_subscription_and_fixed_installation_price(issuer_client, monkeypatch):
+    from urllib.parse import parse_qs
+
+    import httpx
+
+    monkeypatch.setattr(settings, "billing_success_url", "https://nodyra.example/docs.html#/licensing")
+    monkeypatch.setattr(settings, "billing_cancel_url", "https://nodyra.example/#pricing")
+    captured = []
+    def stripe(request):
+        captured.append(request)
+        return httpx.Response(200, json={"id": "cs_test_ready", "url": "https://checkout.stripe.com/c/pay/cs_test_ready"})
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(**kw, transport=httpx.MockTransport(stripe)))
+    response = await issuer_client.post("/billing/checkout", json={"price_id": "price_pro", "customer_email": "buyer@example.test"})
+    assert response.status_code == 200, response.text
+    assert response.json()["checkout_url"].startswith("https://checkout.stripe.com/")
+    form = parse_qs(captured[0].content.decode())
+    assert form["mode"] == ["subscription"]
+    assert form["line_items[0][quantity]"] == ["1"]
+    assert not any("adjustable_quantity" in key for key in form)
+    assert captured[0].headers["stripe-version"] == "2025-03-31.basil"
+    assert (await issuer_client.post("/billing/checkout", json={"price_id": "price_pro", "quantity": 2})).status_code == 422
+
+
+async def test_checkout_refuses_bad_price_or_unusable_signing_configuration(issuer_client, monkeypatch):
+    assert (await issuer_client.post("/billing/checkout", json={"price_id": "price_unknown"})).status_code == 400
+    monkeypatch.setattr(settings, "license_signing_key", "")
+    assert (await issuer_client.post("/billing/checkout", json={"price_id": "price_pro"})).status_code == 503
+
+
+async def test_provider_failure_is_actionable_without_exposing_response_secrets(issuer_client, monkeypatch):
+    import httpx
+    monkeypatch.setattr(settings, "billing_success_url", "https://nodyra.example/done")
+    monkeypatch.setattr(settings, "billing_cancel_url", "https://nodyra.example/cancel")
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(**kw, transport=httpx.MockTransport(lambda request: httpx.Response(400, text="private-provider-detail"))))
+    response = await issuer_client.post("/billing/checkout", json={"price_id": "price_pro"})
+    assert response.status_code == 503
+    assert "private-provider-detail" not in response.text
+
+
+async def test_portal_return_url_is_chosen_by_the_vendor_configuration(issuer_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(settings, "billing_success_url", "https://nodyra.example/done")
+    async def portal(**kwargs):
+        captured.update(kwargs)
+        return {"url": "https://billing.stripe.com/p/session/test"}
+    monkeypatch.setattr(billing, "create_portal_session", portal)
+    response = await issuer_client.post("/billing/portal", json={"provider_customer_id": "cus_test", "return_url": "https://untrusted.example"})
+    assert response.status_code == 200
+    assert captured["return_url"] == "https://nodyra.example/done"
+
+
+def test_test_signing_authorities_differ_from_the_production_verifier():
+    from tests._license_keys import TEST_PUBLIC_KEY_PEM
+    assert PUBLIC_PEM.strip() != licensing._BAKED_PUBLIC_KEY_PEM.strip()
+    assert TEST_PUBLIC_KEY_PEM.strip() != licensing._BAKED_PUBLIC_KEY_PEM.strip()
+
+
+async def test_buyer_installs_delivered_key_and_bad_replacement_preserves_it(issuer_client, client):
+    await _post_webhook(issuer_client, _subscription_payload("evt_buyer"))
+    activation = await _activate(issuer_client, "sub_e2e")
+    installed = await client.put("/system-settings/license", json={"license_key": activation["license_key"]})
+    assert installed.status_code == 200, installed.text
+    assert installed.json()["edition"] == "pro"
+    assert installed.json()["limits"]["seats"] == 10
+    assert (await client.put("/system-settings/license", json={"license_key": "invalid-replacement"})).status_code == 400
+    assert (await client.get("/system-settings/license")).json()["edition"] == "pro"
+
+
+async def test_duplicate_webhooks_are_serialized_on_postgresql(issuer_client):
+    import asyncio
+
+    from tests.conftest import TEST_DATABASE_URL
+
+    if not (TEST_DATABASE_URL or "").startswith("postgresql"):
+        pytest.skip("PostgreSQL advisory-lock integration test")
+    event = _subscription_payload("evt_concurrent")
+    issuer_client.stripe_state["sub_e2e"] = event["data"]["object"]
+    body, headers = _signed(event)
+    responses = await asyncio.gather(*[
+        issuer_client.post("/billing/webhook", content=body, headers=headers)
+        for _ in range(2)
+    ])
+    assert all(response.status_code == 200 for response in responses)
+    assert sorted(response.json()["status"] for response in responses) == ["applied", "duplicate"]
+
+
+async def test_failed_activation_audit_does_not_revoke_existing_refresh_token(issuer_client, monkeypatch):
+    from app.routers import billing as router
+
+    await _post_webhook(issuer_client, _subscription_payload("evt_atomic"))
+    activation = await _activate(issuer_client, "sub_e2e")
+    async def unavailable(*args, **kwargs):
+        raise RuntimeError("audit storage unavailable")
+    monkeypatch.setattr(router, "log_audit", unavailable)
+    with pytest.raises(RuntimeError, match="audit storage unavailable"):
+        await issuer_client.post("/billing/subscriptions/sub_e2e/activation")
+    renewal = await issuer_client.post("/billing/license", json={"refresh_token": activation["refresh_token"]})
+    assert renewal.status_code == 200, renewal.text

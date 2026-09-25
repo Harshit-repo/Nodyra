@@ -169,6 +169,56 @@ async def test_apply_and_remove_license_endpoint(client, monkeypatch):
     assert d.json()["edition"] == "community"
 
 
+@pytest.mark.parametrize("seats", [0, 1, 25])
+def test_legacy_seat_grant_is_enforced(seats):
+    lic = licensing.verify_license_key(make_key({"tier": "pro", "seats": seats}))
+    assert lic.valid and lic.limits.seats == seats
+
+
+@pytest.mark.parametrize("payload", [
+    [], "pro", {"tier": "pro", "expires_at": "tomorrow"},
+    {"tier": "pro", "limits": {"seats": -1}}, {"tier": "pro", "seats": True},
+    {"tier": "pro", "limits": "unlimited"}, {"tier": "pro", "features": "sso"},
+])
+def test_malformed_signed_payload_fails_closed(payload):
+    assert not licensing.verify_license_key(make_key(payload)).valid
+
+
+@pytest.mark.parametrize("bad_key", ["garbage", make_key({"tier": "pro", "expires_at": 1}), make_key({"tier": "unknown"})])
+async def test_bad_replacement_does_not_destroy_paid_license(client, bad_key):
+    good = pro_key()
+    assert (await client.put("/system-settings/license", json={"license_key": good})).status_code == 200
+    rejected = await client.put("/system-settings/license", json={"license_key": bad_key})
+    assert rejected.status_code == 400
+    assert (await client.get("/system-settings/license")).json()["edition"] == "pro"
+
+
+async def test_env_managed_license_cannot_be_silently_overwritten(client, monkeypatch):
+    monkeypatch.setattr(settings, "license_key", pro_key())
+    licensing.invalidate_license_cache()
+    assert (await client.get("/system-settings/license")).json()["managed_by_environment"]
+    assert (await client.put("/system-settings/license", json={"license_key": enterprise_key()})).status_code == 409
+    assert (await client.delete("/system-settings/license")).status_code == 409
+
+
+@pytest.mark.parametrize("seats,expected", [(None, 10), (0, 0), (27, 27)])
+def test_manual_vendor_mint_round_trip_enforces_seats(tmp_path, capsys, seats, expected):
+    from argparse import Namespace
+
+    from cryptography.hazmat.primitives import serialization
+    from tools.mint_license import _sign
+
+    from tests._license_keys import _PRIV
+
+    private = tmp_path / "throwaway-private.pem"
+    private.write_bytes(_PRIV.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    _sign(Namespace(private=str(private), tier="pro", customer="Manual test buyer", seats=seats, days=30, feature=[]))
+    license = licensing.verify_license_key(capsys.readouterr().out.strip())
+    assert license.valid
+    assert license.customer == "Manual test buyer"
+    assert license.limits.seats == expected
+
+
 @pytest.mark.asyncio
 async def test_auth_required_exposes_edition(client):
     r = await client.get("/auth/required")

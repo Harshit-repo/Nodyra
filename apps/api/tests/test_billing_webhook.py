@@ -134,17 +134,17 @@ def _subscription_event(event_type: str, **obj) -> dict:
         "customer": "cus_456",
         "status": "active",
         "current_period_end": 1800000000,
-        "items": {"data": [{"price": {"id": "price_pro"}, "quantity": 5}]},
+        "items": {"data": [{"price": {"id": "price_pro"}, "quantity": 1}]},
     }
     base.update(obj)
     return {"id": "evt_x", "type": event_type, "data": {"object": base}}
 
 
-def test_a_new_subscription_maps_price_to_tier_and_quantity_to_seats():
+def test_a_new_subscription_maps_price_to_tier_and_keeps_edition_seats():
     event = billing.interpret_event(_subscription_event("customer.subscription.created"))
     assert event is not None
     assert event.tier == "pro"
-    assert event.seats == 5
+    assert event.seats == 0  # use the edition's included seats
     assert event.status == "active"
     assert event.provider_subscription_id == "sub_123"
     assert event.provider_customer_id == "cus_456"
@@ -169,7 +169,8 @@ def test_an_unmapped_price_grants_no_tier():
         ("active", "active"),
         ("trialing", "trialing"),
         ("past_due", "past_due"),
-        ("unpaid", "past_due"),
+        ("unpaid", "cancelled"),
+        ("incomplete", "cancelled"),
         ("canceled", "cancelled"),
         ("incomplete_expired", "cancelled"),
         ("paused", "cancelled"),
@@ -239,3 +240,24 @@ def test_cancel_at_takes_precedence_over_period_end():
         _subscription_event("customer.subscription.updated", cancel_at=1700000000)
     )
     assert event is not None and event.ends_at == 1700000000
+
+
+def test_modern_item_period_gives_bounded_outage_grace(monkeypatch):
+    monkeypatch.setattr(settings, "license_validity_days", 45)
+    event = billing.interpret_event(_subscription_event(
+        "customer.subscription.updated", current_period_end=None,
+        items={"data": [{"price": "price_pro", "quantity": 1, "current_period_end": 1800000000}]},
+    ))
+    assert event.status == "active"
+    assert event.ends_at == 1800000000 + 45 * 86400
+
+
+def test_cancel_at_period_end_does_not_extend_the_paid_term():
+    event = billing.interpret_event(_subscription_event("customer.subscription.updated", cancel_at_period_end=True))
+    assert event.ends_at == 1800000000
+
+
+@pytest.mark.parametrize("quantity", [0, 2, 100])
+def test_checkout_quantity_is_not_mistaken_for_licensed_seats(quantity):
+    event = billing.interpret_event(_subscription_event("customer.subscription.updated", items={"data": [{"price": "price_pro", "quantity": quantity}]}))
+    assert event.status == "cancelled"

@@ -16,6 +16,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -152,31 +153,52 @@ def _verify(raw: str) -> dict | None:
     body, sig = raw.rsplit(".", 1)
     try:
         key.verify(_b64url_decode(sig), body.encode())
-        return json.loads(_b64url_decode(body))
+        payload = json.loads(_b64url_decode(body))
+        return payload if isinstance(payload, dict) else None
     except (InvalidSignature, ValueError, json.JSONDecodeError):
         return None
 
 
 def _community(notice: str | None) -> License:
-    return replace(_COMMUNITY, notice=notice) if notice else _COMMUNITY
+    return replace(_COMMUNITY, notice=notice, valid=False) if notice else _COMMUNITY
 
 
 def _build(payload: dict) -> License:
     try:
         edition = Edition(payload.get("tier", "community"))
-    except ValueError:
+    except (ValueError, TypeError):
         return _community("Unknown license tier; treating as Community.")
     exp = payload.get("expires_at")
-    if exp is not None and time.time() > exp:
-        return _community("License expired; reverted to Community.")
+    if exp is not None:
+        if isinstance(exp, bool) or not isinstance(exp, (int, float)) or not math.isfinite(exp) or exp <= 0:
+            return _community("Invalid license expiry; treating as Community.")
+        if time.time() >= exp:
+            # Keep the expiry so an opted-in renewal can recover after downtime.
+            return replace(_community("License expired; reverted to Community."), expires_at=int(exp))
     base_features, base_limits = TIER_DEFAULTS[edition]
     extra = set()
-    for name in payload.get("features", []) or []:
+    features = payload.get("features", []) or []
+    if not isinstance(features, list) or any(not isinstance(name, str) for name in features):
+        return _community("Invalid license features; treating as Community.")
+    for name in features:
         try:
             extra.add(Feature(name))
         except ValueError:
             pass
     overrides = payload.get("limits", {}) or {}
+    if not isinstance(overrides, dict):
+        return _community("Invalid license limits; treating as Community.")
+    # Older minting tools and subscription issuers use a top-level seat grant.
+    # Explicit limits.seats takes precedence, including zero (unlimited).
+    overrides = dict(overrides)
+    if "seats" in payload:
+        overrides.setdefault("seats", payload["seats"])
+    for name in ("environments", "runners", "deployments", "seats"):
+        value = overrides.get(name, getattr(base_limits, name))
+        if type(value) is not int or value < 0:
+            return _community("Invalid license limits; treating as Community.")
+    if payload.get("customer") is not None and not isinstance(payload["customer"], str):
+        return _community("Invalid license customer; treating as Community.")
     limits = ResourceLimits(
         environments=overrides.get("environments", base_limits.environments),
         runners=overrides.get("runners", base_limits.runners),
@@ -191,6 +213,16 @@ def _build(payload: dict) -> License:
         expires_at=exp,
         valid=True,
         notice=None,
+    )
+
+
+def verify_license_key(raw: str) -> License:
+    """Validate a candidate without installing it or changing the active cache."""
+    payload = _verify(raw)
+    return (
+        _build(payload)
+        if payload is not None
+        else _community("License key signature invalid; treating as Community.")
     )
 
 
@@ -225,12 +257,7 @@ async def current_license() -> License:
     if not raw:
         lic = _COMMUNITY
     else:
-        payload = _verify(raw)
-        lic = (
-            _build(payload)
-            if payload is not None
-            else _community("License key signature invalid; treating as Community.")
-        )
+        lic = verify_license_key(raw)
     _cache = (now + _CACHE_TTL_SECONDS, lic)
     return lic
 

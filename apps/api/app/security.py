@@ -637,7 +637,7 @@ def validate_custom_role_permissions(permissions: list[str]) -> None:
 # let an anonymous request create or delete users, including owners — and the
 # "only owner can manage owners" guard short-circuits because the actor is
 # None. Anything that modifies the user/role surface itself goes here.
-_REQUIRES_AUTHENTICATED = frozenset({"user:manage"})
+_REQUIRES_AUTHENTICATED = frozenset({"user:manage", "admin:billing"})
 
 
 def require_permission(permission: str) -> Callable[..., Awaitable[User | None]]:

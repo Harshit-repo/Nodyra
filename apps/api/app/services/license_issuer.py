@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.config import settings
+from app.services.licensing import Edition, _public_key
 
 # Statuses that entitle a subscription to a freshly-signed key. ``past_due`` is
 # deliberately included: a failed payment should not cut off production
@@ -62,7 +63,16 @@ def _signing_key() -> Ed25519PrivateKey:
             "license_signing_key must be an Ed25519 private key "
             f"(got {type(key).__name__})"
         )
+    verifier = _public_key()
+    if verifier is None or key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    ) != verifier.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw):
+        raise IssuerNotConfigured("The signing key does not match this build's license verification key")
     return key
+
+
+def validate_signing_configuration() -> None:
+    _signing_key()
 
 
 def _b64url(raw: bytes) -> str:
@@ -107,6 +117,10 @@ def issue_for_subscription(subscription, *, now: datetime | None = None) -> Issu
             f"subscription {subscription.id} is {subscription.status!r}; "
             f"only {sorted(ENTITLED_STATUSES)} may be issued a licence"
         )
+    if subscription.tier not in {Edition.PRO.value, Edition.ENTERPRISE.value}:
+        raise ValueError("Subscription has no recognized paid edition")
+    if type(subscription.seats) is not int or subscription.seats < 0:
+        raise ValueError("Subscription seats must be a nonnegative integer")
 
     expires = moment + timedelta(days=max(1, settings.license_validity_days))
     # Never issue past a hard subscription end date (a cancellation scheduled
@@ -116,6 +130,8 @@ def issue_for_subscription(subscription, *, now: datetime | None = None) -> Issu
         if hard_stop.tzinfo is None:
             hard_stop = hard_stop.replace(tzinfo=UTC)
         expires = min(expires, hard_stop)
+    if expires <= moment:
+        raise ValueError("Subscription entitlement has expired")
 
     payload = {
         "tier": subscription.tier,

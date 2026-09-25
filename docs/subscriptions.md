@@ -1,151 +1,147 @@
-# Subscriptions and automatic licence renewal
+# Paid licenses and Stripe preparation
 
-Nodyra licences are Ed25519-signed strings verified **offline**. That has always
-been the right design — an air-gapped instance can validate its own entitlement
-with no call to us, and nobody can forge a key without the private signing key.
+Nodyra launches with **manual invoicing and license delivery**. The website and
+Settings → Plan & license direct buyers to sales. There is no live card checkout
+or automatic license email. Community remains available without payment.
 
-The cost of it was that a key is self-contained: nothing renewed it, nothing
-revoked it when a card failed, and nothing recorded who had what. Keys were
-minted by hand with `tools/mint_license.py`, which works for one customer at a
-time and not for a subscription.
+The optional Stripe backend supports **vendor-assisted checkout**: the instance
+owner creates a hosted checkout link, shares it with a buyer, and delivers an
+activation package after verified payment. The issuer is separate from the
+static product website and from customers' self-hosted installations.
 
-This page describes the layer that closes that gap. Offline verification is
-unchanged; everything here is optional and additive.
+## Manual sales today
 
----
+1. Agree on edition, customer name, seats, term, price, currency, taxes, and
+   renewal date. Keep the agreement and invoice in private business records.
+2. Confirm payment through your invoicing/payment process. Do not collect card
+   details through Nodyra or email.
+3. On the vendor machine, mint a key with the existing private signing key.
+   Do not generate a replacement pair: shipped builds trust the existing public
+   key. From `apps/api`, using your installed Python runtime:
 
-## The two sides
+   ```sh
+   python -m tools.mint_license sign \
+     --private /secure/path/license_signing_private.pem \
+     --tier pro --customer "Example Company" --seats 10 --days 365
+   ```
 
-| | Runs where | Turned on by | What it does |
-|---|---|---|---|
-| **Issuer** | One instance, operated by the vendor | `LICENSE_ISSUER_ENABLED=true` | Receives Stripe events, keeps the subscription registry, signs licences |
-| **Refresh** | Every customer instance | `LICENSE_SERVER_URL` | Renews its own licence before the current one lapses |
+   The command prints a sensitive license key. Deliver it privately and record
+   its customer, term, and invoice reference outside the repository. The annual
+   term above is an example, not a pricing commitment. Omitting `--seats` uses
+   edition defaults; `--seats 0` explicitly means unlimited. Omitting `--days`
+   produces a perpetual key, so specify the agreed term for a time-limited sale.
+4. The buyer signs in as an instance administrator, opens **Settings → Plan &
+   license**, pastes the key, and selects **Apply license**. Confirm the displayed
+   customer, expiry, and limits. Restart API and worker processes to apply
+   features configured at startup.
+5. Before expiry, invoice for the next agreed term and deliver a replacement.
+   Invalid or expired replacements cannot overwrite a working key.
 
-The issuer routes are **not mounted at all** unless `LICENSE_ISSUER_ENABLED` is
-on. A customer deployment cannot expose issuance even if it is handed a signing
-key by mistake.
+Alternatively, set `NODYRA_LICENSE_KEY` on the API and workers. This environment
+value takes precedence; the UI cannot replace or remove it. Update the deployment
+environment and restart to change an environment-managed key.
 
----
+## What stays private
 
-## Running the issuer
+Private signing keys, customer license keys, refresh tokens, Stripe secret keys,
+and webhook secrets are confidential. The **public verification key** embedded
+in the app is meant to ship. Test signing keys use a different authority.
 
-Set these on the one instance that acts as your licence server:
+The local `.secrets/` directory, environment files, and internal licensing notes
+are gitignored. Back up the signing key privately. Do not upload it into the
+website, a release archive, customer image, issue, or pull request.
 
-```bash
+## Configure Stripe later
+
+After business and Stripe account setup, use Stripe test mode first. Run a
+separate vendor issuer with PostgreSQL, authentication, an instance owner,
+HTTPS, and backups. Do not enable issuance on customer instances.
+
+```dotenv
 LICENSE_ISSUER_ENABLED=true
-# The Ed25519 PRIVATE key whose public half is baked into every build.
-# Mount it as a secret. Possession of this is possession of unlimited free
-# Enterprise licences.
-LICENSE_SIGNING_KEY="$(cat .secrets/license_signing_private.pem)"
-
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_PRICE_TIERS='{"price_1AbcPro":"pro","price_1XyzEnt":"enterprise"}'
-
-BILLING_SUCCESS_URL=https://nodyra.example.com/settings#license
-BILLING_CANCEL_URL=https://nodyra.example.com/pricing
+AUTH_REQUIRED=true
+STRIPE_SECRET_KEY=sk_test_REPLACE_IN_PRIVATE_ENVIRONMENT
+STRIPE_WEBHOOK_SECRET=whsec_REPLACE_IN_PRIVATE_ENVIRONMENT
+STRIPE_PRICE_TIERS={"price_REPLACE_PRO":"pro","price_REPLACE_ENTERPRISE":"enterprise"}
+LICENSE_VALIDITY_DAYS=45
+BILLING_SUCCESS_URL=https://your-site.example/docs.html#/licensing
+BILLING_CANCEL_URL=https://your-site.example/#pricing
 ```
 
-Point a Stripe webhook endpoint at `https://<issuer>/billing/webhook` and
-subscribe it to:
+Supply `LICENSE_SIGNING_KEY` privately as PEM text through the issuer's secret
+configuration. Its public half must match the verifier distributed to buyers.
+Checkout refuses unknown paid tiers and unusable signing keys. For an isolated
+test environment, use a throwaway pair and configure its public key only there.
+
+Create recurring Stripe prices **per installation**, with quantity fixed at one.
+Pro includes its edition's ten seats; quantity is not a seat count. Configure the
+Stripe portal to allow only mapped prices and quantity one. Unknown prices and
+unsupported multi-item subscriptions fail closed.
+
+Register these snapshot events:
 
 - `checkout.session.completed`
 - `customer.subscription.created`
 - `customer.subscription.updated`
 - `customer.subscription.deleted`
 
-### What happens on a purchase
+Use the externally reachable issuer URL, for example
+`https://licenses.your-domain.example/api/billing/webhook` when web ingress proxies
+`/api` to the API. A direct API ingress uses `/billing/webhook` instead.
 
-1. Checkout completes. Stripe posts `checkout.session.completed`; the registry
-   records the customer and mints a **refresh token**, returned once in that
-   webhook response and never stored in the clear (only a SHA-256 digest is).
-2. `customer.subscription.created` follows carrying the price. The price is
-   mapped to an edition through `STRIPE_PRICE_TIERS` and merged into the same
-   registry row.
-3. The customer's instance calls `POST /billing/license` with its refresh token
-   and receives a signed key.
+Only a signed-in **instance owner** may use these vendor endpoints.
+Organization-scoped API tokens and workspace-owner membership do not grant
+access. Use an owner session and its CSRF token where cookie authentication is used.
 
-A price with no mapping is **refused at checkout** rather than taking payment
-and granting nothing.
+| Operation | Endpoint | Request |
+| --- | --- | --- |
+| Create checkout link | `POST /billing/checkout` | `{"price_id":"price_REPLACE_PRO","customer_email":"buyer@example.com"}` |
+| Open customer portal | `POST /billing/portal` | `{"provider_customer_id":"cus_REPLACE"}` |
+| Issue/rotate activation | `POST /billing/subscriptions/{id}/activation` | No body; registry ID or Stripe `sub_...` ID |
 
-### Idempotency
+Share `checkout_url` privately. Stripe's signed webhook synchronizes the registry
+after payment. The activation endpoint returns `license_key`, `refresh_token`,
+`expires_at`, and `tier`; deliver them privately to the buyer. Reissuing activation
+revokes the old refresh token, while existing offline keys remain valid until
+expiry. Webhook responses never contain credentials: they go to Stripe, not the
+buyer. No public storefront or automated email delivery is configured.
 
-Stripe retries a webhook until it sees a 2xx, and can deliver the same event
-twice even after one. Every processed event id is recorded, keyed by the
-provider's own id, so a retried `checkout.session.completed` cannot mint a
-second licence for one payment.
+## Payment correctness and renewal
 
-### Authentication
+Webhooks verify signatures on raw bytes, enforce freshness, and record event IDs.
+PostgreSQL serializes subscription updates. The issuer fetches current Stripe
+state inside the lock, preventing late events from reactivating cancelled
+subscriptions. Activation and renewal also recheck Stripe, covering missed
+webhooks. Provider outages return a retryable error and preserve installed keys.
 
-The webhook holds no Nodyra credential, so the HMAC signature over the **raw
-request body** is the authentication: signature match in constant time, plus a
-five-minute timestamp tolerance that bounds replay of a captured body. A
-malformed or mis-signed request gets a 400 — `4xx` tells Stripe not to retry
-something we can never accept.
+`active`, `trialing`, and `past_due` may receive keys; `unpaid`, `incomplete`,
+cancelled, paused, and unknown states may not. Normal subscriptions receive a
+bounded outage margin of `LICENSE_VALIDITY_DAYS` after the reported billing-period
+end. Scheduled cancellation caps new keys at the cancellation date or period end.
+Expired contracts cannot receive already-expired keys.
 
----
+Customers install the supplied key first, then optionally configure:
 
-## Customer-side renewal
-
-On a customer instance:
-
-```bash
-LICENSE_SERVER_URL=https://licences.nodyra.com
-LICENSE_REFRESH_TOKEN=<the token issued at checkout>
-# Renew once the key is inside this many days of expiry.
+```dotenv
+LICENSE_SERVER_URL=https://licenses.your-domain.example/api
+LICENSE_REFRESH_TOKEN=REPLACE_WITH_PRIVATE_REFRESH_TOKEN
 LICENSE_REFRESH_WINDOW_DAYS=14
 ```
 
-An hourly loop checks the installed key and renews it when it enters the window.
+The hourly renewal loop is off unless both settings are present. An environment-
+pinned key disables automatic replacement. Verification is offline; opted-in
+renewal uses HTTPS. Replacements are verified before storage, and renewal can
+recover after the previous key expired. Network failures and invalid replacements
+preserve the installed key. Offline keys cannot be instantly revoked after a
+refund or cancellation; their expiry is the enforcement boundary.
 
-**Leaving `LICENSE_SERVER_URL` blank disables the loop entirely.** An air-gapped
-deployment never reaches out and keeps verifying offline exactly as before.
+## Before enabling real payments
 
-### Why issued keys outlive the billing period
+Once an account exists, run a real Stripe test-mode checkout: payment, webhook,
+owner activation, buyer installation, duplicate/out-of-order events, portal
+cancellation, and renewal refusal. Local tests use simulated Stripe responses
+and throwaway keys. They do not verify an account, live payment, payout, tax
+setup, or business registration.
 
-`LICENSE_VALIDITY_DAYS` defaults to **45** — deliberately longer than a monthly
-subscription. The margin is the safety property: a licence server outage, a DNS
-failure or a missed renewal costs weeks of grace rather than cutting a customer
-off at the period boundary.
-
-### What failure looks like
-
-| Situation | Behaviour |
-|---|---|
-| Licence server unreachable, slow, or returning errors | Logged; the installed key is untouched and keeps working |
-| Subscription cancelled (`402`) | Logged as an error; the current key still runs to its own expiry, giving an operator days to notice |
-| Renewed key fails signature verification | Logged loudly as a probable signing-key rotation, rather than surfacing as features quietly disappearing |
-| `NODYRA_LICENSE_KEY` pinned in the environment | The loop does nothing — an explicit operator choice wins, and a database write they cannot see would not take effect anyway |
-
-Nothing in this path can degrade a running instance. That is the design
-constraint it is written to.
-
-### `past_due` is still entitled
-
-A failed payment does not stop production automation the same hour. Stripe's
-dunning has days to succeed; the key's own expiry is the backstop if it never
-does.
-
----
-
-## Manual subscriptions
-
-Enterprise contracts, trials and comped accounts do not need Stripe. Insert a
-`license_subscriptions` row directly with a tier, seats and status, generate a
-refresh token, and the same renewal path works. `STRIPE_SECRET_KEY` can stay
-blank; only the Stripe-specific routes are inert.
-
-`tools/mint_license.py` also still works and produces **byte-identical**
-keys — moving a hand-managed customer onto a subscription does not invalidate
-the key they already installed.
-
----
-
-## What customers see
-
-*Settings → Plan & licence* shows the current edition, its caps, and a
-comparison of what each edition adds. A Community user who hits the five-seat
-cap can see which edition lifts it instead of only being told no.
-
-The comparison is served from the same `TIER_DEFAULTS` the enforcement code
-reads, so what is advertised cannot drift from what is granted.
+See Stripe's [webhook guidance](https://docs.stripe.com/webhooks) and
+[subscription lifecycle](https://docs.stripe.com/billing/subscriptions/overview).

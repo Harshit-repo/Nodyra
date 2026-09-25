@@ -1118,6 +1118,7 @@ export interface LicenseInfo {
   entitlements: string[];
   limits: Record<string, number>;
   notice: string | null;
+  managed_by_environment?: boolean;
 }
 
 export interface OrgInfo {

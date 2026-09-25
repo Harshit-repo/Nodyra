@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from urllib.parse import urlsplit
 
 import httpx
 
 from app.config import settings
 from app.db import SessionLocal
 from app.services.license_issuer import should_refresh
-from app.services.licensing import current_license, invalidate_license_cache
+from app.services.licensing import current_license, invalidate_license_cache, verify_license_key
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,12 @@ async def refresh_once() -> bool:
         return False
 
     url = settings.license_server_url.rstrip("/") + "/billing/license"
+    parsed = urlsplit(url)
+    if parsed.username or parsed.password or parsed.query or parsed.fragment or not parsed.hostname or (
+        parsed.scheme != "https" and not (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"})
+    ):
+        logger.error("licence refresh: license_server_url requires HTTPS without embedded credentials (loopback HTTP is allowed for testing)")
+        return False
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             response = await client.post(
@@ -98,23 +105,22 @@ async def refresh_once() -> bool:
         return False
     if response.status_code >= 400:
         logger.warning(
-            "licence refresh: server returned %s: %s",
+            "licence refresh: server returned HTTP %s",
             response.status_code,
-            response.text[:200],
         )
         return False
 
     try:
-        key = str((response.json() or {}).get("license_key") or "")
+        payload = response.json()
     except ValueError:
         logger.warning("licence refresh: response was not JSON")
         return False
-    if not key:
+    key = payload.get("license_key") if isinstance(payload, dict) else None
+    if not isinstance(key, str) or not key or len(key) > 16384:
         logger.warning("licence refresh: response carried no licence key")
         return False
 
-    await _store_key(key)
-    renewed = await current_license()
+    renewed = verify_license_key(key)
     if not renewed.valid or renewed.edition.value == "community":
         # A key that verifies to Community means the server signed something
         # this build cannot honour — a key rotation, most likely. Say so
@@ -125,6 +131,8 @@ async def refresh_once() -> bool:
             "build's public key. Check for a signing-key rotation."
         )
         return False
+
+    await _store_key(key)
 
     logger.info(
         "licence refreshed: edition=%s expires_at=%s",
