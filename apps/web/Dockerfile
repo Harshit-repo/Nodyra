@@ -7,7 +7,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Serve the static bundle with nginx
-FROM cgr.dev/chainguard/nginx:latest-dev@sha256:3313b8400eb5278c193ac72d28803eeb27631f7fc1a42c0841cf68d5685a0946 AS production
+FROM cgr.dev/chainguard/nginx:latest-dev@sha256:e92db04e930b50b9a44168a7c21b333e5947b35e045cc408454a8af23a8c8aed AS production
 USER root
 RUN apk add --no-cache gettext-envsubst \
     && mkdir -p /var/cache/nginx /var/run /etc/nginx/conf.d \
